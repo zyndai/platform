@@ -1,0 +1,39 @@
+# Core Server
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+python-dotenv>=1.0.0
+
+# Supabase
+supabase>=2.0.0
+
+# OAuth & HTTP
+httpx>=0.27.0
+authlib>=1.3.0
+
+# Twitter/X
+tweepy>=4.14.0
+
+# Google Calendar
+google-api-python-client>=2.130.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+
+# LinkedIn
+requests>=2.31.0
+
+# Zynd AI (agent network)
+zyndai-agent>=0.1.0
+
+# MCP dependencies (from contextaware)
+duckduckgo_search
+googlesearch-python
+beautifulsoup4
+flask
+
+# AI / LLM
+openai>=1.30.0
+google-genai>=1.0.0
+
+# Utilities
+pydantic>=2.0.0
+python-jose[cryptography]>=3.3.0

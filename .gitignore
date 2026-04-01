@@ -1,0 +1,43 @@
+# Root directories and files to exclude
+/.zyndai-agent/
+/supabase/
+/out.txt
+
+# Common language/environment files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.env
+.env.*
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
+
+# Backend specific
+/backend/.env
+/backend/.agent-zynd-networking/
+
+# Webapp specific
+/webapp/.next/
+/webapp/.vercel/
+/webapp/out/
+/webapp/build/
+/webapp/coverage/
+/webapp/*.tsbuildinfo
+/webapp/.pnp
+/webapp/.pnp.*
+/webapp/.yarn/*
+!/webapp/.yarn/patches
+!/webapp/.yarn/plugins
+!/webapp/.yarn/releases
+!/webapp/.yarn/versions
+/webapp/npm-debug.log*
+/webapp/yarn-debug.log*
+/webapp/yarn-error.log*
+/webapp/.pnpm-debug.log*

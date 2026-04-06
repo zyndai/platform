@@ -48,6 +48,12 @@ NOTION_REDIRECT_URI: str = os.getenv(
 
 # ── Zynd AI ──────────────────────────────────────────────────────────
 ZYND_API_KEY: str = os.getenv("ZYND_API_KEY", "")
+ZYND_REGISTRY_URL: str = os.getenv("ZYND_REGISTRY_URL", "https://registry.zynd.ai")
+ZYND_WEBHOOK_BASE_URL: str = os.getenv("ZYND_WEBHOOK_BASE_URL", "")
+NGROK_AUTH_TOKEN: str = os.getenv("NGROK_AUTH_TOKEN", "")
+
+# ── Telegram ─────────────────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
 # ── OpenAI ───────────────────────────────────────────────────────────
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")

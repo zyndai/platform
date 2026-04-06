@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { apiPost } from "@/lib/api";
 
 interface Message {
@@ -204,7 +206,17 @@ export default function ChatInterface() {
                 lineHeight: 1.6,
               }}
             >
-              <p style={{ whiteSpace: "pre-wrap" }}>{msg.content}</p>
+              <div className="markdown-content">
+                <ReactMarkdown
+                  components={{
+                    h1: ({node, ...props}) => <h1 style={{ fontSize: '1.8rem', fontWeight: 800, margin: '20px 0 12px', color: '#fff', display: 'block' }} {...props} />,
+                    h2: ({node, ...props}) => <h2 style={{ fontSize: '1.4rem', fontWeight: 700, margin: '18px 0 10px', color: '#fff', display: 'block' }} {...props} />,
+                    p: ({node, ...props}) => <p style={{ marginBottom: '12px', lineHeight: '1.6', display: 'block' }} {...props} />,
+                  }}
+                >
+                  {msg.content}
+                </ReactMarkdown>
+              </div>
 
               {/* Show actions taken */}
               {msg.actions && msg.actions.length > 0 && (
@@ -228,20 +240,37 @@ export default function ChatInterface() {
                     Actions performed:
                   </p>
                   {msg.actions.map((action, j) => (
-                    <div
+                    <details
                       key={j}
                       style={{
-                        padding: "6px 10px",
+                        padding: "8px 12px",
                         borderRadius: "6px",
-                        background: "rgba(0,0,0,0.2)",
+                        background: "rgba(0,0,0,0.25)",
                         fontSize: "0.78rem",
                         fontFamily: "monospace",
                         color: "var(--success)",
-                        marginBottom: "4px",
+                        marginBottom: "6px",
+                        cursor: "pointer",
+                        outline: "none",
                       }}
                     >
-                      ✓ {action.tool}
-                    </div>
+                      <summary style={{ outline: "none", userSelect: "none" }}>✓ {action.tool}</summary>
+                      {action.result !== undefined && action.result !== null && (
+                        <div style={{ 
+                          marginTop: '8px', 
+                          padding: '8px', 
+                          background: 'rgba(0,0,0,0.4)', 
+                          borderRadius: '4px', 
+                          overflowX: 'auto', 
+                          color: 'rgba(255,255,255,0.85)', 
+                          fontSize: '0.7rem' 
+                        }}>
+                          <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                            {typeof action.result === 'object' ? JSON.stringify(action.result, null, 2) : String(action.result as any)}
+                          </pre>
+                        </div>
+                      )}
+                    </details>
                   ))}
                 </div>
               )}

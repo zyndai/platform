@@ -6,12 +6,15 @@ import { getSupabase } from "@/lib/supabase";
 import { type User } from "@supabase/supabase-js";
 import ChatInterface from "@/components/ChatInterface";
 import ConnectionsPanel from "@/components/ConnectionsPanel";
+import PersonaBuilder from "@/components/PersonaBuilder";
+import MessagesPanel from "@/components/MessagesPanel";
 
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"chat" | "connections">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "connections" | "persona" | "messages">("chat");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const sb = getSupabase();
@@ -75,13 +78,26 @@ export default function DashboardPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-primary)" }} className="dot-grid">
+      {/* ── Mobile top header block ── */}
+      <div className="mobile-header">
+        <button onClick={() => setSidebarOpen(true)} className="btn btn-outline" style={{ padding: "8px 12px", border: "none" }}>
+          ☰
+        </button>
+        <span style={{ fontSize: "1.1rem", fontWeight: 700, marginLeft: "12px" }}>Zynd AI</span>
+      </div>
+
+      <div 
+        className={`mobile-overlay ${sidebarOpen ? 'open' : ''}`}
+        onClick={() => setSidebarOpen(false)}
+      />
+
       {/* ── Sidebar ────────────────────────────────────── */}
       <aside
+        className={`desktop-sidebar ${sidebarOpen ? 'open' : ''}`}
         style={{
           position: "fixed",
           top: 0,
           left: 0,
-          width: "260px",
           height: "100vh",
           background: "var(--bg-secondary)",
           borderRight: "1px solid var(--border-color)",
@@ -105,6 +121,7 @@ export default function DashboardPage() {
             style={{
               width: "32px",
               height: "32px",
+              minWidth: "32px",
               borderRadius: "8px",
               background: "linear-gradient(135deg, var(--accent-primary), #8b5cf6)",
               display: "flex",
@@ -117,13 +134,15 @@ export default function DashboardPage() {
           >
             Z
           </div>
-          <span style={{ fontSize: "1.15rem", fontWeight: 700 }}>Zynd AI</span>
+          <span className="sidebar-text" style={{ fontSize: "1.15rem", fontWeight: 700 }}>Zynd AI</span>
         </div>
 
         {/* Navigation */}
         <nav style={{ display: "flex", flexDirection: "column", gap: "4px", flex: 1 }}>
           {[
             { id: "chat" as const, label: "AI Chat", icon: "💬" },
+            { id: "messages" as const, label: "Network Messages", icon: "📬" },
+            { id: "persona" as const, label: "My Persona", icon: "🧬" },
             { id: "connections" as const, label: "Connections", icon: "🔗" },
           ].map((tab) => (
             <button
@@ -152,14 +171,15 @@ export default function DashboardPage() {
                 fontFamily: "var(--font-sans)",
               }}
             >
-              <span style={{ fontSize: "1.1rem" }}>{tab.icon}</span>
-              {tab.label}
+              <span style={{ fontSize: "1.1rem", minWidth: "24px" }}>{tab.icon}</span>
+              <span className="sidebar-text">{tab.label}</span>
             </button>
           ))}
         </nav>
 
         {/* User profile */}
         <div
+          className="user-profile-widget"
           style={{
             borderTop: "1px solid var(--border-color)",
             paddingTop: "16px",
@@ -242,8 +262,10 @@ export default function DashboardPage() {
       </aside>
 
       {/* ── Main content ──────────────────────────────── */}
-      <main style={{ marginLeft: "260px", minHeight: "100vh" }}>
+      <main className="desktop-main" style={{ minHeight: "100vh" }}>
         {activeTab === "chat" && <ChatInterface />}
+        {activeTab === "messages" && <MessagesPanel />}
+        {activeTab === "persona" && <PersonaBuilder userId={user?.id || ""} />}
         {activeTab === "connections" && <ConnectionsPanel />}
       </main>
     </div>

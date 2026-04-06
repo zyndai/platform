@@ -36,6 +36,9 @@ from mcp.tools.notion import (
     append_to_notion_page
 )
 
+# ── Import Network Tools ──
+from mcp.tools.zynd_network import search_zynd_personas, message_zynd_agent
+
 
 def create_mcp_server(disable_security: bool = True) -> ContextAware:
     """
@@ -96,6 +99,10 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(get_notion_page_content, name="get_notion_page_content", description="Read all blocks (text, TODOs, etc) of a Notion page with pagination")
     mcp.register(create_notion_database, name="create_notion_database", description="Create a new database with specific properties in a Notion page")
     mcp.register(append_to_notion_page, name="append_notion_blocks", description="Append rich blocks (headings, TODOs, bullets) to a Notion page")
+
+    # ── Zynd Network interaction tools ─────────────────────────────
+    mcp.register(search_zynd_personas, name="search_zynd_personas", description="Search the global open registry for other users' agents")
+    mcp.register(message_zynd_agent, name="message_zynd_agent", description="Send a structured natural language request to another user's agent")
 
     # ── Default utility tools ──────────────────────
     mcp.register_default(names=["internet_search", "webpage_scrape", "get_current_time", "calculate"])

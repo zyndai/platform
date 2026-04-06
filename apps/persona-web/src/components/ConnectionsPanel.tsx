@@ -70,6 +70,18 @@ const PROVIDERS = [
     gradient: "linear-gradient(135deg, #0077b5, #005fa3)",
     features: ["Post to feed", "DMs (coming soon)"],
   },
+  {
+    id: "telegram",
+    name: "Telegram Bot",
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.539.818-1.084.508l-3-2.21-1.446 1.394c-.14.18-.357.295-.6.295-.002 0-.003 0-.005 0l.213-3.054 5.56-5.022c.24-.213-.054-.334-.373-.121l-6.869 4.326-2.96-.924c-.64-.203-.658-.64.135-.954l11.566-4.458c.538-.196 1.006.128.832.94z"/>
+      </svg>
+    ),
+    color: "#0088cc",
+    gradient: "linear-gradient(135deg, #0088cc, #005f8e)",
+    features: ["Talk to agent from mobile", "Hands-free mobile experience"],
+  },
 ];
 
 const GOOGLE_SERVICES = [
@@ -158,6 +170,16 @@ export default function ConnectionsPanel() {
       if (googleFeatures.docs) selected.push("docs");
       if (googleFeatures.sheets) selected.push("sheets");
       extraParams = `&features=${selected.join(",")}`;
+    }
+
+    if (providerId === "telegram") {
+      const telegramBotUsername = "zynd_persona_telegram_bot"; 
+      window.open(`https://t.me/${telegramBotUsername}?start=${session.user.id}`, "_blank");
+      
+      // Assume success since clicking deep link auto-sends message in telegram
+      setToast({ message: "Opened Telegram app! Please click 'Start' in the bot.", type: "success" });
+      setTimeout(fetchConnections, 5000); // refresh after a few sec to see if they connected
+      return;
     }
 
     const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";

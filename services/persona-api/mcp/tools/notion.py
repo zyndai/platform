@@ -65,9 +65,9 @@ def build_notion_properties(data: dict, schema: dict = None) -> dict:
             elif isinstance(val, list): prop_type = "multi_select"
 
         if prop_type == "title":
-            props[key] = {"title": [{"text": {"content": str(val)}}]}
+            props[key] = {"title": [{"type": "text", "text": {"content": str(val)}}]}
         elif prop_type == "rich_text":
-            props[key] = {"rich_text": [{"text": {"content": str(val)}}]}
+            props[key] = {"rich_text": [{"type": "text", "text": {"content": str(val)}}]}
         elif prop_type == "select":
             props[key] = {"select": {"name": str(val)}}
         elif prop_type == "multi_select":
@@ -120,6 +120,7 @@ def format_notion_blocks(blocks: list[dict]) -> list[dict]:
 def search_notion(user_id: str, query: str = "", filter_type: str = None) -> dict:
     """
     Search Notion for pages or databases with pagination support.
+    Empty query will return all authorised pages.
     """
     results = []
     has_more = True
@@ -192,12 +193,16 @@ def query_database(user_id: str, database_id: str, filter_data: dict = None, sor
     return {"success": True, "results": res["data"].get("results", [])}
 
 
-def create_notion_page(user_id: str, parent_id: str, properties: dict, content: list = None) -> dict:
+def create_notion_page(user_id: str, parent_id: str, properties: dict = None, title: str = None, content: list = None) -> dict:
     """
     Create a new page in a database or as a child of another page.
     """
     is_db = False
     schema = None
+    
+    properties = properties or {}
+    if title:
+        properties["title"] = title
     
     db_res = get_notion_database(user_id, parent_id)
     if db_res["success"]:
@@ -221,10 +226,14 @@ def create_notion_page(user_id: str, parent_id: str, properties: dict, content: 
     return res
 
 
-def update_notion_page(user_id: str, page_id: str, properties: dict) -> dict:
+def update_notion_page(user_id: str, page_id: str, properties: dict = None, title: str = None) -> dict:
     """
     Update properties of an existing page or database item.
     """
+    properties = properties or {}
+    if title:
+        properties["title"] = title
+
     res_get = _notion_request("GET", f"pages/{page_id}", user_id)
     schema = None
     if res_get["success"]:
@@ -267,10 +276,22 @@ def create_notion_database(user_id: str, parent_page_id: str, title: str, schema
     Create a new database in Notion.
     """
     notion_props = {}
-    for name, p_type in schema.items():
-        notion_props[name] = {p_type: {}}
     
-    if not any(v.get("title") for v in notion_props.values()):
+    if "properties" in schema and isinstance(schema["properties"], dict):
+        schema = schema["properties"]
+        
+    for name, p_type in schema.items():
+        if isinstance(p_type, str):
+            notion_props[name] = {p_type: {}}
+        elif isinstance(p_type, dict):
+            if "type" in p_type:
+                notion_props[name] = {p_type["type"]: {}}
+            else:
+                notion_props[name] = p_type
+        else:
+            notion_props[name] = {"rich_text": {}}
+    
+    if not any("title" in v for v in notion_props.values()):
         notion_props["Name"] = {"title": {}}
 
     payload = {

@@ -251,3 +251,130 @@ body {
   background-image: radial-gradient(circle, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
   background-size: 32px 32px;
 }
+
+/* ── Dashboard Layout ───────────────────────────────────────── */
+.desktop-sidebar {
+  width: 260px;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 100;
+}
+.desktop-main {
+  margin-left: 260px;
+  transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.mobile-header {
+  display: none;
+}
+.mobile-overlay {
+  display: none;
+}
+
+@media (max-width: 850px) {
+  .desktop-sidebar {
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    transform: translateX(-100%);
+  }
+  .desktop-sidebar.open {
+    transform: translateX(0);
+  }
+  .desktop-main {
+    margin-left: 0 !important;
+    padding-top: 60px; /* Space for mobile header */
+  }
+  .mobile-header {
+    display: flex;
+    align-items: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    z-index: 50;
+    padding: 0 16px;
+  }
+  .mobile-overlay.open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 90;
+    backdrop-filter: blur(4px);
+  }
+}
+
+/* ── Markdown Content ────────────────────────────────── */
+.markdown-content {
+  line-height: 1.6;
+}
+.markdown-content p {
+  margin-bottom: 0.8rem;
+}
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+.markdown-content h1, .markdown-content h2, .markdown-content h3 {
+  margin-top: 1.2rem;
+  margin-bottom: 0.6rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.markdown-content ul, .markdown-content ol {
+  margin-left: 1.2rem;
+  margin-bottom: 0.8rem;
+}
+.markdown-content li {
+  margin-bottom: 0.4rem;
+}
+.markdown-content code {
+  background: rgba(255, 255, 255, 0.12);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace);
+  font-size: 0.85em;
+}
+.markdown-content pre {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 1rem;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  margin-bottom: 0.8rem;
+  border: 1px solid var(--border-color);
+}
+.markdown-content pre code {
+  background: transparent;
+  padding: 0;
+  display: block;
+  font-size: 0.8rem;
+}
+.markdown-content a {
+  color: var(--accent-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.markdown-content blockquote {
+  border-left: 3px solid var(--accent-primary);
+  padding-left: 1rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin-bottom: 0.8rem;
+}
+.markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0.8rem;
+  font-size: 0.85rem;
+}
+.markdown-content th, .markdown-content td {
+  border: 1px solid var(--border-color);
+  padding: 0.6rem;
+  text-align: left;
+}
+.markdown-content th {
+  background: rgba(255, 255, 255, 0.05);
+  font-weight: 600;
+}

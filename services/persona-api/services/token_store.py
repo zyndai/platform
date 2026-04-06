@@ -78,7 +78,7 @@ def get_tokens(user_id: str, provider: str) -> dict | None:
         .execute()
     )
 
-    if not result.data:
+    if not result or not hasattr(result, 'data') or not result.data:
         return None
 
     row = result.data

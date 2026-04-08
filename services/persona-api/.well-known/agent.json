@@ -1,0 +1,87 @@
+{
+  "agent_id": "agdns:49d8ebb230915a79841d32387ee61b9a",
+  "public_key": "ed25519:7qsO9MLAIdsldATwrRgX+oPgifMqpJCiX3DJSxMNlGY=",
+  "name": "ZyndNetworkingAgent",
+  "description": "A personal AI networking assistant that manages social media (X/Twitter, LinkedIn), Google Calendar, and communications on behalf of authenticated users.",
+  "version": "1.0",
+  "category": "general",
+  "capabilities": [
+    {
+      "name": "nlp",
+      "category": "ai"
+    },
+    {
+      "name": "social_media_management",
+      "category": "ai"
+    },
+    {
+      "name": "calendar_management",
+      "category": "ai"
+    },
+    {
+      "name": "http",
+      "category": "protocols"
+    },
+    {
+      "name": "post_tweet",
+      "category": "services"
+    },
+    {
+      "name": "read_timeline",
+      "category": "services"
+    },
+    {
+      "name": "send_twitter_dm",
+      "category": "services"
+    },
+    {
+      "name": "read_twitter_dms",
+      "category": "services"
+    },
+    {
+      "name": "post_to_linkedin",
+      "category": "services"
+    },
+    {
+      "name": "create_calendar_event",
+      "category": "services"
+    },
+    {
+      "name": "list_calendar_events",
+      "category": "services"
+    },
+    {
+      "name": "delete_calendar_event",
+      "category": "services"
+    },
+    {
+      "name": "internet_search",
+      "category": "services"
+    },
+    {
+      "name": "webpage_scrape",
+      "category": "services"
+    }
+  ],
+  "pricing": {
+    "model": "per-request",
+    "currency": "USDC",
+    "rates": {
+      "default": 0.001
+    },
+    "payment_methods": [
+      "x402"
+    ]
+  },
+  "agent_url": "http://localhost:5050",
+  "endpoints": {
+    "invoke": "http://localhost:5050/webhook/sync",
+    "invoke_async": "http://localhost:5050/webhook",
+    "health": "http://localhost:5050/health",
+    "agent_card": "http://localhost:5050/.well-known/agent.json"
+  },
+  "status": "online",
+  "last_heartbeat": "2026-04-08T04:34:16Z",
+  "signed_at": "2026-04-08T04:34:16Z",
+  "signature": "ed25519:x1kDqpif8fFSpTZ7m4IKSI1KNmkAsL6AwgcadqRaILDC4O5t9zibILGlEOu1dJ7w+JxbT8YIUq//RkwqC7ozDw=="
+}

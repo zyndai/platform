@@ -73,21 +73,38 @@ export default function ChatInterface() {
         display: "flex",
         flexDirection: "column",
         height: "100vh",
+        background: "var(--bg-base)",
       }}
     >
       {/* ── Header ──────────────────────────────────────── */}
-      <div
-        style={{
-          padding: "20px 32px",
-          borderBottom: "1px solid var(--border-color)",
-          background: "rgba(10, 10, 15, 0.8)",
-          backdropFilter: "blur(12px)",
-        }}
-      >
-        <h1 style={{ fontSize: "1.3rem", fontWeight: 700 }}>AI Chat</h1>
-        <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginTop: "4px" }}>
-          Tell your agent what to do — post tweets, schedule events, send messages.
-        </p>
+      <div className="topbar" style={{ justifyContent: "space-between" }}>
+        <div>
+          <h1
+            style={{
+              fontFamily: "Syne, sans-serif",
+              fontSize: "15px",
+              fontWeight: 700,
+              color: "var(--text-primary)",
+            }}
+          >
+            AI Chat
+          </h1>
+          <p
+            style={{
+              fontFamily: "IBM Plex Mono, monospace",
+              fontSize: "10px",
+              color: "var(--text-muted)",
+              letterSpacing: "0.5px",
+              marginTop: "2px",
+            }}
+          >
+            AGENT INTERFACE · ACTIVE
+          </p>
+        </div>
+        <div className="status-pill">
+          <span className="status-dot" />
+          Online
+        </div>
       </div>
 
       {/* ── Messages ────────────────────────────────────── */}
@@ -95,10 +112,10 @@ export default function ChatInterface() {
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: "32px",
+          padding: "24px",
           display: "flex",
           flexDirection: "column",
-          gap: "20px",
+          gap: "16px",
         }}
       >
         {messages.length === 0 && (
@@ -112,22 +129,43 @@ export default function ChatInterface() {
               gap: "16px",
             }}
           >
+            {/* AI Avatar */}
             <div
               className="animate-float"
-              style={{ fontSize: "3rem", opacity: 0.6 }}
+              style={{
+                width: "56px",
+                height: "56px",
+                borderRadius: "var(--r-md)",
+                background:
+                  "linear-gradient(135deg, var(--accent-teal), var(--accent-blue))",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontFamily: "Syne, sans-serif",
+                fontWeight: 800,
+                fontSize: "24px",
+                color: "var(--bg-void)",
+                boxShadow: "var(--glow-teal)",
+              }}
             >
-              🤖
+              Z
             </div>
             <p
               style={{
-                color: "var(--text-muted)",
-                fontSize: "1rem",
+                color: "var(--text-secondary)",
+                fontSize: "14px",
                 textAlign: "center",
-                maxWidth: "400px",
+                maxWidth: "380px",
                 lineHeight: 1.6,
               }}
             >
-              Start a conversation. Try something like:
+              Start a conversation with your AI agent.
+            </p>
+            <p
+              className="section-label"
+              style={{ marginTop: "4px" }}
+            >
+              SUGGESTED COMMANDS
             </p>
             <div
               style={{
@@ -135,40 +173,27 @@ export default function ChatInterface() {
                 flexDirection: "column",
                 gap: "8px",
                 width: "100%",
-                maxWidth: "420px",
+                maxWidth: "400px",
               }}
             >
               {[
-                '"Post a tweet about AI agents"',
-                '"Schedule a meeting tomorrow at 3pm"',
-                '"Show my upcoming calendar events"',
+                "Post a tweet about AI agents",
+                "Schedule a meeting tomorrow at 3pm",
+                "Show my upcoming calendar events",
               ].map((suggestion, i) => (
                 <button
                   key={i}
-                  onClick={() => {
-                    setInput(suggestion.replace(/"/g, ""));
-                  }}
+                  onClick={() => setInput(suggestion)}
+                  className="card"
                   style={{
-                    padding: "12px 16px",
-                    borderRadius: "var(--radius-sm)",
-                    background: "rgba(108, 92, 231, 0.06)",
-                    border: "1px solid var(--border-color)",
-                    color: "var(--text-secondary)",
-                    fontSize: "0.85rem",
-                    cursor: "pointer",
                     textAlign: "left",
-                    transition: "all 0.2s ease",
-                    fontFamily: "var(--font-sans)",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = "var(--accent-primary)";
-                    e.currentTarget.style.background = "rgba(108, 92, 231, 0.1)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = "var(--border-color)";
-                    e.currentTarget.style.background = "rgba(108, 92, 231, 0.06)";
+                    padding: "12px 16px",
+                    fontSize: "13px",
+                    color: "var(--text-secondary)",
+                    fontFamily: "DM Sans, sans-serif",
                   }}
                 >
+                  <span style={{ color: "var(--accent-teal)", marginRight: "8px", fontFamily: "IBM Plex Mono, monospace", fontSize: "11px" }}>→</span>
                   {suggestion}
                 </button>
               ))}
@@ -182,38 +207,22 @@ export default function ChatInterface() {
             style={{
               display: "flex",
               justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
-              animation: "fadeInUp 0.3s ease forwards",
+              gap: "12px",
+              animation: "slideIn 0.2s ease",
             }}
           >
+            {/* AI Avatar */}
+            {msg.role === "assistant" && (
+              <div className="msg-avatar">Z</div>
+            )}
+
             <div
-              style={{
-                maxWidth: "70%",
-                padding: "14px 18px",
-                borderRadius:
-                  msg.role === "user"
-                    ? "var(--radius) var(--radius) 4px var(--radius)"
-                    : "var(--radius) var(--radius) var(--radius) 4px",
-                background:
-                  msg.role === "user"
-                    ? "linear-gradient(135deg, var(--accent-primary), #8b5cf6)"
-                    : "var(--bg-card)",
-                border:
-                  msg.role === "assistant"
-                    ? "1px solid var(--border-color)"
-                    : "none",
-                color: "#fff",
-                fontSize: "0.9rem",
-                lineHeight: 1.6,
-              }}
+              className={
+                msg.role === "user" ? "msg-bubble-user" : "msg-bubble-ai"
+              }
             >
               <div className="markdown-content">
-                <ReactMarkdown
-                  components={{
-                    h1: ({node, ...props}) => <h1 style={{ fontSize: '1.8rem', fontWeight: 800, margin: '20px 0 12px', color: '#fff', display: 'block' }} {...props} />,
-                    h2: ({node, ...props}) => <h2 style={{ fontSize: '1.4rem', fontWeight: 700, margin: '18px 0 10px', color: '#fff', display: 'block' }} {...props} />,
-                    p: ({node, ...props}) => <p style={{ marginBottom: '12px', lineHeight: '1.6', display: 'block' }} {...props} />,
-                  }}
-                >
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {msg.content}
                 </ReactMarkdown>
               </div>
@@ -224,49 +233,47 @@ export default function ChatInterface() {
                   style={{
                     marginTop: "12px",
                     paddingTop: "10px",
-                    borderTop: "1px solid rgba(255,255,255,0.1)",
+                    borderTop: "1px solid var(--border-subtle)",
                   }}
                 >
-                  <p
-                    style={{
-                      fontSize: "0.72rem",
-                      fontWeight: 600,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.5px",
-                      color: "rgba(255,255,255,0.5)",
-                      marginBottom: "6px",
-                    }}
-                  >
-                    Actions performed:
+                  <p className="section-label" style={{ marginBottom: "8px" }}>
+                    ACTIONS PERFORMED
                   </p>
                   {msg.actions.map((action, j) => (
                     <details
                       key={j}
                       style={{
                         padding: "8px 12px",
-                        borderRadius: "6px",
-                        background: "rgba(0,0,0,0.25)",
-                        fontSize: "0.78rem",
-                        fontFamily: "monospace",
-                        color: "var(--success)",
+                        borderRadius: "var(--r-sm)",
+                        background: "var(--bg-void)",
+                        border: "1px solid var(--border-subtle)",
+                        fontSize: "12px",
+                        fontFamily: "IBM Plex Mono, monospace",
+                        color: "var(--accent-teal)",
                         marginBottom: "6px",
                         cursor: "pointer",
                         outline: "none",
                       }}
                     >
-                      <summary style={{ outline: "none", userSelect: "none" }}>✓ {action.tool}</summary>
+                      <summary style={{ outline: "none", userSelect: "none" }}>
+                        ✓ {action.tool}
+                      </summary>
                       {action.result !== undefined && action.result !== null && (
-                        <div style={{ 
-                          marginTop: '8px', 
-                          padding: '8px', 
-                          background: 'rgba(0,0,0,0.4)', 
-                          borderRadius: '4px', 
-                          overflowX: 'auto', 
-                          color: 'rgba(255,255,255,0.85)', 
-                          fontSize: '0.7rem' 
-                        }}>
-                          <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                            {typeof action.result === 'object' ? JSON.stringify(action.result, null, 2) : String(action.result as any)}
+                        <div
+                          style={{
+                            marginTop: "8px",
+                            padding: "8px",
+                            background: "rgba(0,0,0,0.3)",
+                            borderRadius: "4px",
+                            overflowX: "auto",
+                            color: "var(--text-secondary)",
+                            fontSize: "11px",
+                          }}
+                        >
+                          <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                            {typeof action.result === "object"
+                              ? JSON.stringify(action.result, null, 2)
+                              : String(action.result as string)}
                           </pre>
                         </div>
                       )}
@@ -275,14 +282,7 @@ export default function ChatInterface() {
                 </div>
               )}
 
-              <p
-                style={{
-                  fontSize: "0.68rem",
-                  color: "rgba(255,255,255,0.35)",
-                  marginTop: "8px",
-                  textAlign: "right",
-                }}
-              >
+              <p className="msg-timestamp" style={{ marginTop: "8px", textAlign: msg.role === "user" ? "right" : "left" }}>
                 {msg.timestamp.toLocaleTimeString([], {
                   hour: "2-digit",
                   minute: "2-digit",
@@ -293,30 +293,18 @@ export default function ChatInterface() {
         ))}
 
         {loading && (
-          <div style={{ display: "flex", justifyContent: "flex-start" }}>
+          <div style={{ display: "flex", gap: "12px", animation: "slideIn 0.2s ease" }}>
+            <div className="msg-avatar">Z</div>
             <div
-              className="shimmer-bg"
-              style={{
-                padding: "14px 18px",
-                borderRadius: "var(--radius) var(--radius) var(--radius) 4px",
-                background: "var(--bg-card)",
-                border: "1px solid var(--border-color)",
-              }}
+              className="msg-bubble-ai"
+              style={{ display: "flex", alignItems: "center", gap: "8px" }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  gap: "6px",
-                  alignItems: "center",
-                }}
-              >
-                <span style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-                  Thinking
-                </span>
-                <span className="animate-float" style={{ fontSize: "0.6rem" }}>●</span>
-                <span className="animate-float" style={{ fontSize: "0.6rem", animationDelay: "0.2s" }}>●</span>
-                <span className="animate-float" style={{ fontSize: "0.6rem", animationDelay: "0.4s" }}>●</span>
-              </div>
+              <span style={{ fontSize: "12px", color: "var(--text-muted)", fontFamily: "IBM Plex Mono, monospace" }}>
+                Processing
+              </span>
+              <span style={{ animation: "typingDot 1.2s ease infinite" }}>●</span>
+              <span style={{ animation: "typingDot 1.2s ease 0.2s infinite" }}>●</span>
+              <span style={{ animation: "typingDot 1.2s ease 0.4s infinite" }}>●</span>
             </div>
           </div>
         )}
@@ -327,45 +315,44 @@ export default function ChatInterface() {
       {/* ── Input bar ───────────────────────────────────── */}
       <div
         style={{
-          padding: "16px 32px 24px",
-          borderTop: "1px solid var(--border-color)",
-          background: "rgba(10, 10, 15, 0.9)",
-          backdropFilter: "blur(12px)",
+          padding: "16px 24px 20px",
+          borderTop: "1px solid var(--border-subtle)",
+          background: "rgba(13, 17, 23, 0.9)",
+          backdropFilter: "blur(8px)",
         }}
       >
         <div
           style={{
-            display: "flex",
-            gap: "12px",
-            maxWidth: "800px",
+            maxWidth: "720px",
             margin: "0 auto",
           }}
         >
-          <input
-            className="input"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-              }
-            }}
-            placeholder="Tell your agent what to do…"
-            disabled={loading}
-            style={{ flex: 1 }}
-          />
-          <button
-            className="btn btn-primary"
-            onClick={sendMessage}
-            disabled={loading || !input.trim()}
-            style={{
-              opacity: loading || !input.trim() ? 0.5 : 1,
-              minWidth: "100px",
-            }}
-          >
-            {loading ? "…" : "Send"}
-          </button>
+          <div className="input-wrap">
+            <input
+              className="chat-input"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendMessage();
+                }
+              }}
+              placeholder="Tell your agent what to do…"
+              disabled={loading}
+            />
+            <button
+              className="btn-primary"
+              onClick={sendMessage}
+              disabled={loading || !input.trim()}
+              style={{
+                padding: "8px 18px",
+                fontSize: "12px",
+              }}
+            >
+              {loading ? "..." : "Send"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

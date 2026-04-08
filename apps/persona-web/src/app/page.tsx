@@ -9,12 +9,9 @@ export default function LandingPage() {
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
 
-  // ── On mount: detect existing session or hash-fragment token ─────
   useEffect(() => {
     const sb = getSupabase();
 
-    // Supabase JS client automatically detects #access_token=... in the URL
-    // and exchanges it for a session. We listen for that event.
     const {
       data: { subscription },
     } = sb.auth.onAuthStateChange((event, session) => {
@@ -24,7 +21,6 @@ export default function LandingPage() {
           event === "TOKEN_REFRESHED" ||
           event === "INITIAL_SESSION")
       ) {
-        // Clean the hash fragment from the URL before redirecting
         if (window.location.hash) {
           window.history.replaceState(null, "", window.location.pathname);
         }
@@ -32,7 +28,6 @@ export default function LandingPage() {
       }
     });
 
-    // Also do an immediate check (covers page refresh while logged in)
     sb.auth.getSession().then(({ data: { session } }) => {
       if (session) {
         router.replace("/dashboard");
@@ -52,8 +47,6 @@ export default function LandingPage() {
     const { error } = await sb.auth.signInWithOAuth({
       provider,
       options: {
-        // Supabase will redirect back here with #access_token=...
-        // The onAuthStateChange listener above will catch it and push to /dashboard
         redirectTo: window.location.origin,
       },
     });
@@ -63,7 +56,6 @@ export default function LandingPage() {
     }
   };
 
-  // Show nothing while checking for existing session to prevent flash
   if (checkingSession) {
     return (
       <div
@@ -72,24 +64,30 @@ export default function LandingPage() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "var(--bg-primary)",
+          background: "var(--bg-void)",
         }}
-      />
+      >
+        <div className="status-pill">
+          <span className="status-dot" />
+          <span>Initializing...</span>
+        </div>
+      </div>
     );
   }
 
   return (
-    <div className="dot-grid" style={{ minHeight: "100vh", position: "relative", overflow: "hidden" }}>
+    <div className="page-bg" style={{ minHeight: "100vh", overflow: "hidden" }}>
       {/* ── Ambient glow orbs ─────────────────────────────── */}
       <div
         style={{
           position: "absolute",
-          top: "-180px",
-          left: "-120px",
+          top: "-200px",
+          left: "-150px",
           width: "500px",
           height: "500px",
           borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(108,92,231,0.15), transparent 70%)",
+          background:
+            "radial-gradient(circle, rgba(0, 212, 180, 0.07), transparent 70%)",
           filter: "blur(80px)",
           pointerEvents: "none",
         }}
@@ -102,7 +100,8 @@ export default function LandingPage() {
           width: "600px",
           height: "600px",
           borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(139,92,246,0.12), transparent 70%)",
+          background:
+            "radial-gradient(circle, rgba(79, 142, 247, 0.06), transparent 70%)",
           filter: "blur(100px)",
           pointerEvents: "none",
         }}
@@ -122,21 +121,36 @@ export default function LandingPage() {
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <div
             style={{
-              width: "36px",
-              height: "36px",
-              borderRadius: "10px",
-              background: "linear-gradient(135deg, var(--accent-primary), #8b5cf6)",
+              width: "30px",
+              height: "30px",
+              borderRadius: "var(--r-sm)",
+              background:
+                "linear-gradient(135deg, var(--accent-teal), var(--accent-blue))",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              fontSize: "1.1rem",
+              fontFamily: "Syne, sans-serif",
               fontWeight: 800,
-              color: "#fff",
+              fontSize: "14px",
+              color: "var(--bg-void)",
             }}
           >
             Z
           </div>
-          <span style={{ fontSize: "1.3rem", fontWeight: 700 }}>Zynd</span>
+          <span
+            style={{
+              fontFamily: "Syne, sans-serif",
+              fontSize: "16px",
+              fontWeight: 700,
+              letterSpacing: "0.5px",
+            }}
+          >
+            Zynd <span style={{ color: "var(--accent-teal)" }}>AI</span>
+          </span>
+        </div>
+        <div className="status-pill">
+          <span className="status-dot" />
+          Network Live
         </div>
       </nav>
 
@@ -148,7 +162,7 @@ export default function LandingPage() {
           alignItems: "center",
           justifyContent: "center",
           textAlign: "center",
-          padding: "80px 24px 120px",
+          padding: "60px 24px 100px",
           position: "relative",
           zIndex: 10,
         }}
@@ -160,51 +174,51 @@ export default function LandingPage() {
             display: "inline-flex",
             alignItems: "center",
             gap: "8px",
-            padding: "6px 16px",
-            borderRadius: "99px",
-            background: "rgba(108, 92, 231, 0.1)",
-            border: "1px solid rgba(108, 92, 231, 0.2)",
-            fontSize: "0.8rem",
-            fontWeight: 600,
-            color: "var(--accent-secondary)",
             marginBottom: "32px",
           }}
         >
-          <span
-            style={{
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              background: "var(--success)",
-              boxShadow: "0 0 8px var(--success)",
-            }}
-          />
-          Powered by the Zynd AI Network
+          <span className="tag tag-teal" style={{ fontSize: "11px", padding: "4px 12px" }}>
+            <span className="status-dot" style={{ marginRight: "4px" }} />
+            Powered by the Zynd AI Network
+          </span>
         </div>
 
         {/* Heading */}
         <h1
           className="animate-fade-in-up"
           style={{
-            fontSize: "clamp(2.5rem, 6vw, 4.5rem)",
+            fontFamily: "Syne, sans-serif",
+            fontSize: "clamp(2.2rem, 5.5vw, 4rem)",
             fontWeight: 800,
             lineHeight: 1.1,
-            maxWidth: "800px",
-            marginBottom: "24px",
+            maxWidth: "750px",
+            marginBottom: "20px",
             animationDelay: "0.1s",
+            color: "var(--text-primary)",
           }}
         >
           Your AI-Powered{" "}
-          <span className="gradient-text">Networking Agent</span>
+          <span
+            style={{
+              background:
+                "linear-gradient(135deg, var(--accent-teal), var(--accent-blue))",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              backgroundClip: "text",
+            }}
+          >
+            Networking Agent
+          </span>
         </h1>
 
         {/* Subtitle */}
         <p
           className="animate-fade-in-up"
           style={{
-            fontSize: "1.15rem",
+            fontFamily: "DM Sans, sans-serif",
+            fontSize: "15px",
             color: "var(--text-secondary)",
-            maxWidth: "600px",
+            maxWidth: "550px",
             lineHeight: 1.7,
             marginBottom: "48px",
             animationDelay: "0.2s",
@@ -214,23 +228,23 @@ export default function LandingPage() {
           handle posting, scheduling, and responding on your behalf.
         </p>
 
-        {/* Login Cards */}
+        {/* Login Buttons */}
         <div
           className="animate-fade-in-up"
           style={{
             display: "flex",
             flexDirection: "column",
-            gap: "14px",
+            gap: "12px",
             width: "100%",
-            maxWidth: "380px",
+            maxWidth: "360px",
             animationDelay: "0.3s",
           }}
         >
           <button
-            className="btn btn-google"
+            className="btn-google"
             onClick={() => handleOAuthLogin("google")}
             disabled={loading}
-            style={{ width: "100%", padding: "14px 24px", fontSize: "0.95rem" }}
+            style={{ width: "100%", padding: "14px 24px" }}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
@@ -242,10 +256,10 @@ export default function LandingPage() {
           </button>
 
           <button
-            className="btn btn-twitter"
+            className="btn-twitter"
             onClick={() => handleOAuthLogin("twitter")}
             disabled={loading}
-            style={{ width: "100%", padding: "14px 24px", fontSize: "0.95rem" }}
+            style={{ width: "100%", padding: "14px 24px" }}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
@@ -254,10 +268,10 @@ export default function LandingPage() {
           </button>
 
           <button
-            className="btn btn-linkedin"
+            className="btn-linkedin"
             onClick={() => handleOAuthLogin("linkedin_oidc")}
             disabled={loading}
-            style={{ width: "100%", padding: "14px 24px", fontSize: "0.95rem" }}
+            style={{ width: "100%", padding: "14px 24px" }}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
@@ -271,11 +285,11 @@ export default function LandingPage() {
           className="animate-fade-in-up"
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
-            gap: "20px",
-            maxWidth: "900px",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: "16px",
+            maxWidth: "800px",
             width: "100%",
-            marginTop: "100px",
+            marginTop: "80px",
             animationDelay: "0.5s",
           }}
         >
@@ -284,43 +298,43 @@ export default function LandingPage() {
               icon: "📱",
               title: "Multi-Platform",
               desc: "Post to X, LinkedIn, and manage Google Calendar from one place.",
+              color: "var(--accent-teal)",
             },
             {
               icon: "🤖",
               title: "AI Agent",
               desc: "Just tell the AI what to do. It handles posting, scheduling, and replies.",
+              color: "var(--accent-purple)",
             },
             {
               icon: "🌐",
               title: "Zynd Network",
               desc: "Your agent is discoverable on the open Zynd AI agent network.",
+              color: "var(--accent-blue)",
             },
           ].map((f, i) => (
             <div
               key={i}
-              className="glass-card"
-              style={{ padding: "28px 24px", textAlign: "left" }}
+              className="card"
+              style={{ padding: "24px 20px", cursor: "default" }}
             >
-              <div
-                style={{
-                  fontSize: "1.8rem",
-                  marginBottom: "14px",
-                }}
-              >
+              <div style={{ fontSize: "1.6rem", marginBottom: "12px" }}>
                 {f.icon}
               </div>
               <h3
                 style={{
-                  fontSize: "1.05rem",
-                  fontWeight: 700,
+                  fontFamily: "Syne, sans-serif",
+                  fontSize: "14px",
+                  fontWeight: 600,
                   marginBottom: "8px",
+                  color: "var(--text-primary)",
                 }}
               >
                 {f.title}
               </h3>
               <p
                 style={{
-                  fontSize: "0.88rem",
+                  fontSize: "13px",
                   color: "var(--text-secondary)",
                   lineHeight: 1.6,
                 }}
@@ -330,6 +344,22 @@ export default function LandingPage() {
             </div>
           ))}
         </div>
+
+        {/* Bottom mono text */}
+        <p
+          className="animate-fade-in-up"
+          style={{
+            fontFamily: "IBM Plex Mono, monospace",
+            fontSize: "10px",
+            letterSpacing: "1.5px",
+            textTransform: "uppercase",
+            color: "var(--text-muted)",
+            marginTop: "48px",
+            animationDelay: "0.6s",
+          }}
+        >
+          Decentralized · Autonomous · Trustless
+        </p>
       </main>
     </div>
   );

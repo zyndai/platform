@@ -1,23 +1,26 @@
 "use client";
 
 import { useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
+import TaskToasts from "@/components/TaskToasts";
 
 const NAV_ITEMS = [
-  { href: "/dashboard/chat", label: "AI Chat", icon: "⚡" },
-  { href: "/dashboard/messages", label: "Network DMs", icon: "◈" },
-  { href: "/dashboard/identity", label: "Identity", icon: "◎" },
-  { href: "/dashboard/connections", label: "Connections", icon: "⬡" },
+  { href: "/dashboard/chat", label: "AI Chat", icon: "⚡", requiresPersona: true },
+  { href: "/dashboard/messages", label: "Network DMs", icon: "◈", requiresPersona: true },
+  { href: "/dashboard/tasks", label: "Tasks", icon: "▤", requiresPersona: true },
+  { href: "/dashboard/identity", label: "Identity", icon: "◎", requiresPersona: false },
+  { href: "/dashboard/connections", label: "Connections", icon: "⬡", requiresPersona: true },
 ];
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
-  const { user, loading, handleLogout } = useDashboard();
+  const { user, loading, hasPersona, personaLoading, handleLogout } = useDashboard();
   const pathname = usePathname();
+  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  if (loading) {
+  if (loading || personaLoading) {
     return (
       <div
         style={{
@@ -47,7 +50,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="page-bg">
-      {/* ── Mobile top header ── */}
+      {/* -- Mobile top header -- */}
       <div className="mobile-header">
         <button
           onClick={() => setSidebarOpen(true)}
@@ -87,7 +90,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         onClick={() => setSidebarOpen(false)}
       />
 
-      {/* ── Sidebar ────────────────────────────────────── */}
+      {/* -- Sidebar -- */}
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         {/* Logo */}
         <div className="sidebar-logo">
@@ -116,6 +119,38 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         >
           {NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+            const isLocked = item.requiresPersona && !hasPersona;
+
+            if (isLocked) {
+              return (
+                <div
+                  key={item.href}
+                  onClick={() => router.push("/dashboard/identity")}
+                  className="nav-item"
+                  style={{
+                    textDecoration: "none",
+                    opacity: 0.4,
+                    cursor: "pointer",
+                    position: "relative",
+                  }}
+                  title="Deploy your persona first"
+                >
+                  <span className="nav-item-icon">{item.icon}</span>
+                  <span>{item.label}</span>
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      fontSize: "10px",
+                      fontFamily: "IBM Plex Mono, monospace",
+                      color: "var(--text-muted)",
+                    }}
+                  >
+                    ⊘
+                  </span>
+                </div>
+              );
+            }
+
             return (
               <Link
                 key={item.href}
@@ -170,8 +205,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* ── Main content ──────────────────────────────── */}
+      {/* -- Main content -- */}
       <main className="dashboard-main">{children}</main>
+
+      {/* -- Global task toasts -- */}
+      <TaskToasts />
     </div>
   );
 }

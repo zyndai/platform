@@ -21,8 +21,12 @@ google-auth-oauthlib>=1.2.0
 # LinkedIn
 requests>=2.31.0
 
-# Zynd AI (agent network)
-zyndai-agent>=0.1.0
+# Zynd Network identity + messaging is now handled by our own modules
+# (agent/zynd_identity.py, agent/agent_message.py) using `cryptography`
+# directly. No zyndai-agent SDK dependency.
+
+# Ed25519 crypto (already pulled in by google-auth etc, listing explicitly)
+cryptography>=42.0.0
 
 # MCP dependencies (from contextaware)
 duckduckgo_search
@@ -37,3 +41,6 @@ google-genai>=1.0.0
 # Utilities
 pydantic>=2.0.0
 python-jose[cryptography]>=3.3.0
+
+# Async WebSocket (for batched heartbeat manager)
+websockets>=14.0

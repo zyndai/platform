@@ -37,7 +37,22 @@ from mcp.tools.notion import (
 )
 
 # ── Import Network Tools ──
-from mcp.tools.zynd_network import search_zynd_personas, message_zynd_agent
+from mcp.tools.zynd_network import (
+    search_zynd_personas,
+    get_persona_profile,
+    list_my_connections,
+    request_connection,
+    check_connection_status,
+    message_zynd_agent,
+    read_agent_channel,
+)
+
+# ── Import Scheduling Tools ──
+from mcp.tools.scheduling import (
+    propose_meeting,
+    respond_to_meeting,
+    list_pending_meetings,
+)
 
 
 def create_mcp_server(disable_security: bool = True) -> ContextAware:
@@ -101,8 +116,18 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(append_to_notion_page, name="append_notion_blocks", description="Append rich blocks (headings, TODOs, bullets) to a Notion page")
 
     # ── Zynd Network interaction tools ─────────────────────────────
-    mcp.register(search_zynd_personas, name="search_zynd_personas", description="Search the global open registry for other users' agents")
-    mcp.register(message_zynd_agent, name="message_zynd_agent", description="Send a structured natural language request to another user's agent")
+    mcp.register(search_zynd_personas, name="search_zynd_personas", description="Search the Zynd Network for people, personas, or agents. Use this FIRST when looking for someone.")
+    mcp.register(get_persona_profile, name="get_persona_profile", description="Get the full profile of a specific persona (social links, capabilities, description)")
+    mcp.register(list_my_connections, name="list_my_connections", description="List all the user's existing network connections and pending requests")
+    mcp.register(request_connection, name="request_connection", description="Send a connection request to another persona on the Zynd Network")
+    mcp.register(check_connection_status, name="check_connection_status", description="Check if the user is connected to a specific persona")
+    mcp.register(message_zynd_agent, name="message_zynd_agent", description="Send a message to another persona's agent on the Zynd Network")
+    mcp.register(read_agent_channel, name="read_agent_channel", description="Read recent agent-channel messages on a DM thread. Use to check what was said across turns, verify replies arrived, or reconstruct context. Never reads the human Conversation tab.")
+
+    # ── Scheduling / meeting tools ─────────────────────────────────
+    mcp.register(propose_meeting, name="propose_meeting", description="Formalise a negotiated meeting as a ticket on a DM thread. Only call AFTER negotiating a time and getting your principal's explicit confirmation.")
+    mcp.register(respond_to_meeting, name="respond_to_meeting", description="Accept, counter, decline, or cancel an existing meeting ticket.")
+    mcp.register(list_pending_meetings, name="list_pending_meetings", description="List the principal's open meeting tickets, split by who needs to act next.")
 
     # ── Default utility tools ──────────────────────
     mcp.register_default(names=["internet_search", "webpage_scrape", "get_current_time", "calculate"])

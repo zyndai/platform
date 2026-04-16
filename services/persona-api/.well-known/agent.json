@@ -1,6 +1,6 @@
 {
-  "agent_id": "agdns:49d8ebb230915a79841d32387ee61b9a",
-  "public_key": "ed25519:7qsO9MLAIdsldATwrRgX+oPgifMqpJCiX3DJSxMNlGY=",
+  "agent_id": "agdns:0bf73edced8d3a59519f626119baf251",
+  "public_key": "ed25519:c2yGvjRExYkQ1DKScCTf6Mio+dw2tjstpYH4v0kVotE=",
   "name": "ZyndNetworkingAgent",
   "description": "A personal AI networking assistant that manages social media (X/Twitter, LinkedIn), Google Calendar, and communications on behalf of authenticated users.",
   "version": "1.0",
@@ -81,7 +81,7 @@
     "agent_card": "http://localhost:5050/.well-known/agent.json"
   },
   "status": "online",
-  "last_heartbeat": "2026-04-08T04:34:16Z",
-  "signed_at": "2026-04-08T04:34:16Z",
-  "signature": "ed25519:x1kDqpif8fFSpTZ7m4IKSI1KNmkAsL6AwgcadqRaILDC4O5t9zibILGlEOu1dJ7w+JxbT8YIUq//RkwqC7ozDw=="
+  "last_heartbeat": "2026-04-15T17:38:05Z",
+  "signed_at": "2026-04-15T17:38:05Z",
+  "signature": "ed25519:rh/7CtrenTwf9GOTSe34IJIThh0pFL8Bd9xcLjDAxhc0TH+290OE5S4yZn/hABRCHbaxkiXPL8p3shyrTEgADQ=="
 }

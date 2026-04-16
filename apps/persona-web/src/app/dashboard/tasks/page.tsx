@@ -3,9 +3,9 @@
 import { useDashboard } from "@/contexts/DashboardContext";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import ConnectionsPanel from "@/components/ConnectionsPanel";
+import TasksPanel from "@/components/TasksPanel";
 
-export default function ConnectionsPage() {
+export default function TasksPage() {
   const { hasPersona, personaLoading } = useDashboard();
   const router = useRouter();
 
@@ -17,5 +17,5 @@ export default function ConnectionsPage() {
 
   if (personaLoading || !hasPersona) return null;
 
-  return <ConnectionsPanel />;
+  return <TasksPanel />;
 }

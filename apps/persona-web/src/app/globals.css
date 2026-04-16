@@ -630,6 +630,8 @@ html, body {
   line-height: 1.65;
   color: var(--text-primary);
   position: relative;
+  max-width: 75%;
+  min-width: 0;
 }
 .msg-bubble-ai::before {
   content: '';

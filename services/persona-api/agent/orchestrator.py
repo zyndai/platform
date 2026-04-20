@@ -113,6 +113,84 @@ def _filter_tools_by_allowlist(tools: list[dict], allowed: set[str]) -> list[dic
 # LLM Provider Abstraction
 # =====================================================================
 
+class ThinkTagParser:
+    """
+    Stateful parser that separates <think>...</think> blocks from visible text.
+
+    Feed it text chunks via `feed(chunk)` — it yields (type, text) tuples where
+    type is either "thinking" or "text". Handles tags split across chunks
+    (e.g. chunk ends with "<thi" and next chunk starts with "nk>").
+    """
+
+    def __init__(self):
+        self._inside_think = False
+        self._buffer = ""  # holds partial tag matches
+
+    @staticmethod
+    def _find_partial_suffix(text: str, tag: str) -> int:
+        """Return length of the longest suffix of `text` that is a prefix of `tag`, or 0."""
+        for i in range(min(len(text), len(tag) - 1), 0, -1):
+            if text.endswith(tag[:i]):
+                return i
+        return 0
+
+    def feed(self, chunk: str):
+        """Yield (event_type, text) tuples for each segment of the chunk."""
+        self._buffer += chunk
+
+        while self._buffer:
+            if self._inside_think:
+                close_idx = self._buffer.find("</think>")
+                if close_idx != -1:
+                    before = self._buffer[:close_idx]
+                    if before:
+                        yield ("thinking", before)
+                    self._buffer = self._buffer[close_idx + len("</think>"):]
+                    self._inside_think = False
+                else:
+                    # Check if buffer ends with a partial "</think>"
+                    partial = self._find_partial_suffix(self._buffer, "</think>")
+                    if partial:
+                        safe = self._buffer[:-partial]
+                        if safe:
+                            yield ("thinking", safe)
+                        self._buffer = self._buffer[-partial:]
+                        return  # wait for more data
+                    yield ("thinking", self._buffer)
+                    self._buffer = ""
+            else:
+                open_idx = self._buffer.find("<think>")
+                if open_idx != -1:
+                    before = self._buffer[:open_idx]
+                    if before:
+                        yield ("text", before)
+                    self._buffer = self._buffer[open_idx + len("<think>"):]
+                    self._inside_think = True
+                else:
+                    partial = self._find_partial_suffix(self._buffer, "<think>")
+                    if partial:
+                        safe = self._buffer[:-partial]
+                        if safe:
+                            yield ("text", safe)
+                        self._buffer = self._buffer[-partial:]
+                        return  # wait for more data
+                    yield ("text", self._buffer)
+                    self._buffer = ""
+
+    def flush(self):
+        """Flush any remaining buffer content (call at end of stream)."""
+        if self._buffer:
+            etype = "thinking" if self._inside_think else "text"
+            yield (etype, self._buffer)
+            self._buffer = ""
+
+
+def strip_think_tags(text: str) -> str:
+    """Remove all <think>...</think> blocks from a string (for non-streaming paths)."""
+    import re
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
 class LLMProvider:
     """Base class for LLM providers."""
 
@@ -186,6 +264,10 @@ class OpenAIProvider(LLMProvider):
 
         choice = response.choices[0]
 
+        # Return RAW text with <think> tags intact. The orchestrator stores
+        # this in conversation history so the model can see its own prior
+        # reasoning on subsequent turns. The user-facing `reply` is stripped
+        # by the orchestrator before returning to the client.
         if not choice.message.tool_calls:
             return choice.message.content or "", None
 
@@ -197,7 +279,7 @@ class OpenAIProvider(LLMProvider):
             }
             for tc in choice.message.tool_calls
         ]
-        return choice.message.content, tool_calls
+        return choice.message.content or "", tool_calls
 
     def chat_with_tools_stream(self, messages, tools):
         """
@@ -216,8 +298,15 @@ class OpenAIProvider(LLMProvider):
             stream=True,
         )
 
-        # Accumulators across the stream
-        full_text_parts: list[str] = []
+        # Accumulators across the stream.
+        # raw_text_parts   = EVERYTHING the model produced, including thinking
+        #                    wrapped in <think>...</think> tags. Stored in
+        #                    conversation history so the model sees its own
+        #                    prior reasoning on future turns.
+        # The parser additionally routes segments to "text" vs "thinking"
+        # events for the frontend UI — but for history we keep raw.
+        raw_text_parts: list[str] = []
+        think_parser = ThinkTagParser()
         # tool_calls keyed by index — OpenAI streams fragments per index:
         #   index 0: id + name + args chunk, then more args chunks, ...
         #   index 1: another call's id + name + args chunks, ...
@@ -242,16 +331,23 @@ class OpenAIProvider(LLMProvider):
             if delta is None:
                 continue
 
-            # Text delta
+            # Text delta — route through <think> tag parser for UI events,
+            # but ALSO keep the raw piece for history.
             text_piece = _get_attr(delta, "content")
             if text_piece:
-                full_text_parts.append(text_piece)
-                yield {"type": "text", "delta": text_piece}
+                raw_text_parts.append(text_piece)
+                for etype, segment in think_parser.feed(text_piece):
+                    if etype == "text":
+                        yield {"type": "text", "delta": segment}
+                    else:
+                        yield {"type": "thinking", "delta": segment}
 
-            # Thinking / reasoning delta (best-effort across compat providers)
+            # Native thinking / reasoning delta (best-effort across compat providers)
+            # Wrap in <think>...</think> when adding to raw so history round-trips.
             for k in ("reasoning_content", "thinking", "reasoning"):
                 think_piece = _get_attr(delta, k)
                 if think_piece:
+                    raw_text_parts.append(f"<think>{think_piece}</think>")
                     yield {"type": "thinking", "delta": think_piece}
                     break
 
@@ -299,6 +395,13 @@ class OpenAIProvider(LLMProvider):
             if finish == "stop":
                 break
 
+        # Flush any remaining content in the think-tag parser
+        for etype, segment in think_parser.flush():
+            if etype == "text":
+                yield {"type": "text", "delta": segment}
+            else:
+                yield {"type": "thinking", "delta": segment}
+
         # Finalize any accumulated tool calls.
         final_tool_calls = []
         for idx in sorted(pending_tools.keys()):
@@ -323,7 +426,9 @@ class OpenAIProvider(LLMProvider):
 
         yield {
             "type": "turn_done",
-            "text": "".join(full_text_parts),
+            # RAW text (with <think> tags) — orchestrator stores this in
+            # history and strips for the user-facing reply.
+            "text": "".join(raw_text_parts),
             "tool_calls": final_tool_calls if final_tool_calls else None,
         }
 
@@ -399,12 +504,16 @@ class GeminiProvider(LLMProvider):
             config=gen_config,
         )
 
-        # Check if the response contains function calls
+        # Return RAW text with <think> tags intact. Orchestrator stores this
+        # in history so the model sees its own past reasoning. User-facing
+        # reply gets stripped by the orchestrator before returning.
         candidate = response.candidates[0] if response.candidates else None
         if not candidate:
             return response.text or "", None
 
-        # Collect function calls from all parts
+        # Collect function calls from all parts. For native thinking parts
+        # (Gemini 2.5 Flash with `part.thought=True`), wrap the text in
+        # <think>...</think> so it round-trips through our tag-based memory.
         function_calls = []
         text_parts = []
         for part in candidate.content.parts:
@@ -416,10 +525,14 @@ class GeminiProvider(LLMProvider):
                     "arguments": dict(fc.args) if fc.args else {},
                 })
             elif hasattr(part, "text") and part.text:
-                text_parts.append(part.text)
+                if getattr(part, "thought", False):
+                    text_parts.append(f"<think>{part.text}</think>")
+                else:
+                    text_parts.append(part.text)
 
         if function_calls:
-            return "\n".join(text_parts) if text_parts else None, function_calls
+            joined = "\n".join(text_parts) if text_parts else None
+            return joined, function_calls
 
         return response.text or "", None
 
@@ -445,8 +558,12 @@ class GeminiProvider(LLMProvider):
             config=gen_config,
         )
 
-        full_text_parts: list[str] = []
+        # raw_text_parts accumulates the FULL model output (including any
+        # thinking wrapped in <think> tags) for storage in history so the
+        # model can see its own reasoning on subsequent turns.
+        raw_text_parts: list[str] = []
         tool_calls: list[dict] = []
+        think_parser = ThinkTagParser()
 
         for chunk in stream:
             candidates = getattr(chunk, "candidates", None) or []
@@ -474,14 +591,35 @@ class GeminiProvider(LLMProvider):
                     }
                     continue
 
+                # Native thinking parts (Gemini 2.5 Flash etc.)
+                is_thought = getattr(part, "thought", False)
                 text_piece = getattr(part, "text", None)
                 if text_piece:
-                    full_text_parts.append(text_piece)
-                    yield {"type": "text", "delta": text_piece}
+                    if is_thought:
+                        # Native thinking — wrap in tags for history, emit as thinking for UI
+                        raw_text_parts.append(f"<think>{text_piece}</think>")
+                        yield {"type": "thinking", "delta": text_piece}
+                    else:
+                        # Regular text — keep raw for history, split for UI
+                        raw_text_parts.append(text_piece)
+                        for etype, segment in think_parser.feed(text_piece):
+                            if etype == "text":
+                                yield {"type": "text", "delta": segment}
+                            else:
+                                yield {"type": "thinking", "delta": segment}
+
+        # Flush remaining parser buffer (UI only; raw was already captured)
+        for etype, segment in think_parser.flush():
+            if etype == "text":
+                yield {"type": "text", "delta": segment}
+            else:
+                yield {"type": "thinking", "delta": segment}
 
         yield {
             "type": "turn_done",
-            "text": "".join(full_text_parts),
+            # RAW text (with <think> tags) — orchestrator stores this in
+            # history and strips for the user-facing reply.
+            "text": "".join(raw_text_parts),
             "tool_calls": tool_calls or None,
         }
 
@@ -779,6 +917,19 @@ def _build_system_prompt(
 
 You are NOT a human. You are NOT your principal. You are an AI agent that has been deployed by a human principal and you act on their behalf. Treat the principal as a third party — when you talk ABOUT them, use third person ("my principal", "they", "{principal_name}"). When you talk about yourself, use first person ("I", "me") and make it clear you are an AI agent.
 
+## CRITICAL: Thinking vs. Response Format
+You MUST separate your internal reasoning from your visible reply using think tags.
+
+- Wrap ALL internal reasoning, planning, deliberation, and self-talk inside <think>...</think> tags.
+- ONLY text OUTSIDE <think> tags is shown to the user. Everything inside is hidden.
+- Your visible reply must be ONLY the clean, final answer — no meta-commentary, no "let me think about this", no reasoning traces.
+- You may use multiple <think> blocks if needed (e.g. think → reply → think again → reply more).
+- If you have nothing to reason about, skip the <think> block entirely and just reply.
+
+Example:
+<think>The user said "ey". This looks like a greeting. I should introduce myself as the agent.</think>
+Hi! I'm {agent_handle or ("the AI agent representing " + principal_name)}, here to help. What can I do for you?
+
 ## Who Your Principal Is
 The following is a briefing your principal ('{principal_name}') wrote about themselves so you can represent them accurately:
 
@@ -1007,12 +1158,15 @@ async def handle_user_message(
             provider.chat_with_tools, messages, tools
         )
 
-        # If no tool calls, we have the final answer
+        # If no tool calls, we have the final answer. The provider returns
+        # RAW text (with <think> tags) — we store that raw version in history
+        # so the model sees its own reasoning on the next turn, but strip
+        # tags for the user-facing reply.
         if not tool_calls:
-            reply = text_response or ""
-            history.append({"role": "assistant", "content": reply})
+            raw_reply = text_response or ""
+            history.append({"role": "assistant", "content": raw_reply})
             return {
-                "reply": reply,
+                "reply": strip_think_tags(raw_reply),
                 "actions_taken": actions_taken,
                 "conversation_id": conversation_id,
             }
@@ -1031,15 +1185,16 @@ async def handle_user_message(
 
         # If all tool calls were duplicates, break the loop
         if not new_tool_calls:
-            reply = text_response or "Done! Let me know if you need anything else."
-            history.append({"role": "assistant", "content": reply})
+            raw_reply = text_response or "Done! Let me know if you need anything else."
+            history.append({"role": "assistant", "content": raw_reply})
             return {
-                "reply": reply,
+                "reply": strip_think_tags(raw_reply),
                 "actions_taken": actions_taken,
                 "conversation_id": conversation_id,
             }
 
-        # Add assistant message with tool calls
+        # Add assistant message with tool calls. We keep RAW text here too so
+        # the model sees its own reasoning when this turn is fed back in.
         messages.append(
             provider.build_assistant_tool_message(text_response, new_tool_calls)
         )
@@ -1104,7 +1259,15 @@ async def handle_user_message(
             try:
                 print(f"[orchestrator] Executing local tool '{fn_name}' with args: {fn_args}")
                 result = await asyncio.to_thread(mcp_server._call, fn_name, fn_args)
-                print(f"[orchestrator] Tool '{fn_name}' succeeded.")
+                # Distinguish a real success from a tool-returned error dict.
+                # Many tools return {"error": "..."} on validation failures
+                # without raising — if we only log "succeeded" the user can't
+                # tell the difference.
+                _preview = json.dumps(result, default=str)[:400] if isinstance(result, (dict, list)) else str(result)[:400]
+                if isinstance(result, dict) and "error" in result:
+                    print(f"[orchestrator] ⚠ Tool '{fn_name}' returned error: {_preview}")
+                else:
+                    print(f"[orchestrator] ✓ Tool '{fn_name}' ok: {_preview}")
             except Exception as e:
                 result = {"error": f"Tool execution failed: {str(e)}"}
                 print(f"[orchestrator] ⚠️ Tool '{fn_name}' CRASHED: {str(e)}")
@@ -1270,15 +1433,15 @@ async def handle_user_message_stream(
         if turn_tool_calls:
             yield {"type": "text_to_thinking"}
 
-        # No tool calls → final answer. Only the text from THIS (final)
-        # iteration is the reply; earlier iterations' text was thinking
-        # that we already moved to the frontend's thinking dropdown.
+        # No tool calls → final answer. `turn_text` is RAW (with <think>
+        # tags) — we store raw in history so the model sees its own past
+        # reasoning on future turns, and strip for the user-facing reply.
         if not turn_tool_calls:
-            reply = turn_text
-            history.append({"role": "assistant", "content": reply})
+            raw_reply = turn_text
+            history.append({"role": "assistant", "content": raw_reply})
             yield {
                 "type": "done",
-                "reply": reply,
+                "reply": strip_think_tags(raw_reply),
                 "actions_taken": actions_taken,
                 "conversation_id": conversation_id,
             }
@@ -1295,11 +1458,11 @@ async def handle_user_message_stream(
             new_tool_calls.append(tc)
 
         if not new_tool_calls:
-            reply = turn_text or "Done! Let me know if you need anything else."
-            history.append({"role": "assistant", "content": reply})
+            raw_reply = turn_text or "Done! Let me know if you need anything else."
+            history.append({"role": "assistant", "content": raw_reply})
             yield {
                 "type": "done",
-                "reply": reply,
+                "reply": strip_think_tags(raw_reply),
                 "actions_taken": actions_taken,
                 "conversation_id": conversation_id,
             }
@@ -1351,10 +1514,17 @@ async def handle_user_message_stream(
                     print(f"[orchestrator/stream] Failed to resolve foreign user: {e}")
 
             # Run the tool in a thread
+            print(f"[orchestrator/stream] Executing local tool '{fn_name}' with args: {fn_args}")
             try:
                 result = await asyncio.to_thread(mcp_server._call, fn_name, fn_args)
+                _preview = json.dumps(result, default=str)[:400] if isinstance(result, (dict, list)) else str(result)[:400]
+                if isinstance(result, dict) and "error" in result:
+                    print(f"[orchestrator/stream] ⚠ Tool '{fn_name}' returned error: {_preview}")
+                else:
+                    print(f"[orchestrator/stream] ✓ Tool '{fn_name}' ok: {_preview}")
             except Exception as e:
                 result = {"error": f"Tool execution failed: {str(e)}"}
+                print(f"[orchestrator/stream] ⚠️ Tool '{fn_name}' CRASHED: {str(e)}")
 
             executed_tools.add(fn_name)
             actions_taken.append({"tool": fn_name, "args": fn_args, "result": result})

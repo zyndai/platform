@@ -301,6 +301,7 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend):
     import requests as req_lib
 
     target_webhook = _find_agent_webhook(partner_agent_id)
+    print(f"[agent-send] user={user_id[:8]} thread={req.thread_id} partner={partner_agent_id} webhook={target_webhook}")
     if target_webhook:
         # Always hit the async webhook (strip /sync) — same reasoning as
         # message_zynd_agent: the sync endpoint blocks until the full
@@ -318,14 +319,17 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend):
             # event loop stays free while the request is in flight. Without
             # this, the async_webhook handler on the same backend couldn't
             # even be dispatched to serve our own POST.
-            await asyncio.to_thread(
+            resp = await asyncio.to_thread(
                 req_lib.post, async_url, json=msg.to_dict(), timeout=15
             )
+            print(f"[agent-send] → POST {async_url} returned {resp.status_code}: {resp.text[:200]}")
         except Exception as e:
-            print(f"[agent-send] Webhook delivery failed: {e}")
+            print(f"[agent-send] ⚠ Webhook delivery failed for {async_url}: {type(e).__name__}: {e}")
             # Don't fail the whole request — the message is already in DB.
             # The other side just won't get a webhook push (they'll still
             # see it via realtime if they're on the same platform).
+    else:
+        print(f"[agent-send] ⚠ No webhook URL found for partner {partner_agent_id} — partner won't receive push notification")
 
     return {
         "status": "sent",

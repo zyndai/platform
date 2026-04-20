@@ -111,10 +111,12 @@ def search_zynd_personas(query: str, top_k: int = 5) -> dict:
             if not is_persona:
                 continue
 
-            aid = a.get("agent_id", "")
+            # Registry switched from `agent_id` to `entity_id` in the new schema;
+            # accept either so this works across versions.
+            aid = a.get("entity_id") or a.get("agent_id") or ""
             # Prefer webhook from search result's inline card (enrich=true), then service_endpoint,
             # then fall back to a card lookup, then to local DB.
-            webhook = _webhook_from_card(a.get("card")) or a.get("service_endpoint") or ""
+            webhook = _webhook_from_card(a.get("card")) or a.get("service_endpoint") or a.get("entity_url") or ""
             if not webhook:
                 webhook = _webhook_from_card(_fetch_agent_card(aid))
             if not webhook:
@@ -383,22 +385,27 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
         # webhook handler will NOT re-insert (B2) — it just triggers the
         # orchestrator when needed.
         thread_id = None
+        print(f"[message_zynd_agent] sender={sender_agent_id} user={user_id} target={target_agent_id}")
         try:
             sb = _get_supabase()
             r1 = sb.table("dm_threads").select("id").in_("initiator_id", [sender_agent_id, user_id]).eq("receiver_id", target_agent_id).execute()
             r2 = sb.table("dm_threads").select("id").eq("initiator_id", target_agent_id).in_("receiver_id", [sender_agent_id, user_id]).execute()
             t_data = r1.data or r2.data
+            print(f"[message_zynd_agent] thread lookup: r1={len(r1.data or [])} r2={len(r2.data or [])}")
             if t_data:
                 thread_id = t_data[0]["id"]
-                sb.table("dm_messages").insert({
+                ins = sb.table("dm_messages").insert({
                     "thread_id": thread_id,
                     "sender_id": sender_agent_id,
                     "sender_type": "agent",
                     "channel": "agent",
                     "content": message,
                 }).execute()
+                print(f"[message_zynd_agent] ✓ outbound row inserted on thread={thread_id} rows={len(ins.data or [])}")
+            else:
+                print(f"[message_zynd_agent] ⚠ NO thread found for (me={sender_agent_id}, partner={target_agent_id}) — outbound NOT logged, poll will be skipped")
         except Exception as e:
-            print(f"[message_zynd_agent] sender-side log failed: {e}")
+            print(f"[message_zynd_agent] ⚠ sender-side log failed: {type(e).__name__}: {e}")
 
         # Always hit the ASYNC webhook (strip /sync suffix if present).
         # The async endpoint returns instantly with {"status": "received"}
@@ -483,15 +490,71 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
                     reply_text = found
                     print(f"[message_zynd_agent] reply found on grace check ({len(found)} chars)")
 
+        # Before returning, check whether the other side created any meeting
+        # proposals on this thread during the exchange. Without surfacing
+        # these, our AI might re-create a duplicate proposal because the
+        # reply text alone doesn't tell it that a ticket already exists.
+        recent_proposals: list[dict] = []
+        if thread_id:
+            try:
+                sb = _get_supabase()
+                # "Recent" = created at or after we started this send.
+                pr = (
+                    sb.table("agent_tasks")
+                    .select("id,status,initiator_user_id,recipient_user_id,payload,created_at")
+                    .eq("thread_id", thread_id)
+                    .eq("type", "meeting")
+                    .gte("created_at", send_time_iso)
+                    .order("created_at", desc=True)
+                    .execute()
+                )
+                for row in (pr.data or []):
+                    payload = row.get("payload") or {}
+                    recent_proposals.append({
+                        "task_id": row["id"],
+                        "status": row["status"],
+                        "title": payload.get("title"),
+                        "start_time": payload.get("start_time"),
+                        "end_time": payload.get("end_time"),
+                        "proposed_by_me": row.get("initiator_user_id") == user_id,
+                    })
+                if recent_proposals:
+                    print(f"[message_zynd_agent] found {len(recent_proposals)} recent proposal(s) on thread")
+            except Exception as e:
+                print(f"[message_zynd_agent] proposal lookup failed (non-fatal): {e}")
+
+        # Build a guidance note about the proposals so the LLM knows
+        # whether to re-propose or just report back to the user.
+        proposal_note = ""
+        if recent_proposals:
+            peer_created = [p for p in recent_proposals if not p["proposed_by_me"]]
+            mine = [p for p in recent_proposals if p["proposed_by_me"]]
+            parts = []
+            if peer_created:
+                parts.append(
+                    f"IMPORTANT: the other side already created {len(peer_created)} meeting "
+                    f"proposal(s) on this thread during this exchange. "
+                    f"DO NOT call propose_meeting — it would be a duplicate. "
+                    f"Instead tell the user the proposal is waiting for their review in the Meetings tab, "
+                    f"and offer to accept/counter/decline on their behalf via respond_to_meeting."
+                )
+            if mine:
+                parts.append(f"You already created {len(mine)} proposal(s) on this thread; do not duplicate.")
+            proposal_note = " ".join(parts)
+
         if reply_text:
-            return {
+            result = {
                 "status": "success",
                 "reply_status": "reply_received",
                 "reply": reply_text,
                 "thread_id": thread_id,
                 "partner_agent_id": target_agent_id,
+                "recent_proposals": recent_proposals,
                 "message": "Reply received from the other agent — quote or paraphrase it for the user as your final answer.",
             }
+            if proposal_note:
+                result["message"] = proposal_note + " Then, " + result["message"]
+            return result
 
         # No reply was found within the polling window.
         if post_error:
@@ -501,6 +564,7 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
                 "thread_id": thread_id,
                 "partner_agent_id": target_agent_id,
                 "post_error": post_error,
+                "recent_proposals": recent_proposals,
                 "message": (
                     "I tried to send the message but the delivery confirmation didn't come back, "
                     "and no reply has appeared on the thread yet. The other side may not have "
@@ -508,11 +572,12 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
                 ),
             }
 
-        return {
+        result = {
             "status": "success",
             "reply_status": "no_reply_yet",
             "thread_id": thread_id,
             "partner_agent_id": target_agent_id,
+            "recent_proposals": recent_proposals,
             "message": (
                 "Message delivered. No reply arrived within ~60s — the other agent "
                 "may still be processing, or the other side may be in manual mode "
@@ -520,6 +585,9 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
                 "and the reply will appear in the Agent Activity tab when it arrives."
             ),
         }
+        if proposal_note:
+            result["message"] = proposal_note + " Additionally: " + result["message"]
+        return result
     except Exception as e:
         return {"error": str(e)}
 

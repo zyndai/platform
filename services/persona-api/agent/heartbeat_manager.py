@@ -87,10 +87,20 @@ class HeartbeatManager:
         url = self._registry_url.rstrip("/")
         return url.replace("https://", "wss://").replace("http://", "ws://")
 
-    def _send_heartbeat_sync(self, agent: HeartbeatAgent):
-        """Send a single heartbeat using the sync WebSocket client."""
+    def _send_heartbeat_sync(self, agent: HeartbeatAgent) -> dict:
+        """
+        Send a single heartbeat using the sync WebSocket client.
+
+        Returns a diagnostic dict {ok, stage, detail} so the caller can log
+        exactly what happened. Stages:
+          - 'connect'     — WS handshake
+          - 'send'        — writing the payload
+          - 'ack_read'    — optional read after send (mitigates close-race)
+          - 'close'       — graceful close
+        """
         import base64
         from websockets.sync.client import connect as ws_connect
+        from websockets.exceptions import ConnectionClosed
         from agent.zynd_identity import sign as ed25519_sign
 
         seed = base64.b64decode(agent.private_key_b64)
@@ -100,16 +110,45 @@ class HeartbeatManager:
         signature = ed25519_sign(seed, ts.encode())
         payload = json.dumps({"timestamp": ts, "signature": signature})
 
-        with ws_connect(ws_url, close_timeout=5) as ws:
-            ws.send(payload)
+        logger.info(f"[heartbeat] → connecting {agent.agent_id} to {ws_url}")
+        stage = "connect"
+        try:
+            with ws_connect(ws_url, close_timeout=5, open_timeout=10) as ws:
+                stage = "send"
+                logger.info(f"[heartbeat] ✓ connected {agent.agent_id}, sending ts={ts}")
+                ws.send(payload)
+                logger.info(f"[heartbeat] ✓ sent {agent.agent_id}")
+
+                # Read back with a short timeout — rules out the close-race.
+                # If the server closes the connection after processing, we'll
+                # get ConnectionClosed; if it responds with anything, we log.
+                # Either way, by the time we reach the `with` exit the server
+                # has definitely processed our message.
+                stage = "ack_read"
+                try:
+                    reply = ws.recv(timeout=2)
+                    logger.info(f"[heartbeat] ← {agent.agent_id} server replied: {reply!r}")
+                except TimeoutError:
+                    logger.info(f"[heartbeat] ← {agent.agent_id} no reply in 2s (expected — server is silent)")
+                except ConnectionClosed as cc:
+                    logger.info(f"[heartbeat] ← {agent.agent_id} server closed cleanly: {cc.code} {cc.reason}")
+
+                stage = "close"
+        except Exception as e:
+            logger.warning(f"[heartbeat] ✗ {agent.agent_id} failed at stage={stage}: {type(e).__name__}: {e}")
+            return {"ok": False, "stage": stage, "detail": str(e)}
+
+        return {"ok": True, "stage": "done", "detail": ts}
 
     async def _send_single(self, agent: HeartbeatAgent):
         """Send heartbeat for one agent, running sync WS in a thread executor."""
         loop = asyncio.get_event_loop()
         try:
-            await loop.run_in_executor(None, self._send_heartbeat_sync, agent)
+            result = await loop.run_in_executor(None, self._send_heartbeat_sync, agent)
+            if result and result.get("ok"):
+                logger.info(f"[heartbeat] ✓✓ {agent.agent_id} heartbeat complete ({result.get('detail')})")
         except Exception as e:
-            logger.warning(f"[heartbeat] Failed for {agent.agent_id}: {e}")
+            logger.warning(f"[heartbeat] Exception for {agent.agent_id}: {type(e).__name__}: {e}")
 
     async def _send_batch(self, batch: list[HeartbeatAgent]):
         """Send heartbeat for a batch of agents concurrently."""
@@ -131,6 +170,8 @@ class HeartbeatManager:
                 if not agents:
                     await asyncio.sleep(5)
                     continue
+
+                logger.info(f"[heartbeat] — cycle start: {len(agents)} active agent(s)")
 
                 # Split into batches and send concurrently
                 batches = [

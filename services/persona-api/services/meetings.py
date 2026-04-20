@@ -182,6 +182,27 @@ def create_proposal(
     if actor_user_id not in (participants["initiator_user_id"], participants["receiver_user_id"]):
         raise MeetingError("Actor is not a participant of this thread.")
 
+    # Idempotency guard: refuse if an active proposal already exists on this
+    # thread. Either side can duplicate if they call propose_meeting twice in
+    # a row (e.g. LLM doesn't realize the peer already created one), so hard-
+    # enforce "one open proposal per thread" here.
+    existing = (
+        sb.table("agent_tasks")
+        .select("id,status,initiator_user_id,recipient_user_id,payload")
+        .eq("thread_id", thread_id)
+        .eq("type", "meeting")
+        .in_("status", ["proposed", "countered", "accepted"])
+        .execute()
+    )
+    if existing.data:
+        existing_row = existing.data[0]
+        raise MeetingError(
+            f"There is already an active meeting proposal on this thread "
+            f"(task_id={existing_row['id']}, status={existing_row['status']}). "
+            f"Respond to it with respond_to_meeting (accept/counter/decline) "
+            f"instead of creating a duplicate."
+        )
+
     cleaned = _clean_payload(payload)
 
     # Figure out which side the actor is so the row's initiator/recipient

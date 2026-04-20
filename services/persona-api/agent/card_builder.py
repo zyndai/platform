@@ -129,7 +129,7 @@ def build_persona_card(user_id: str) -> dict | None:
         "name": persona["name"],
         "description": persona.get("description") or "",
         "summary": (persona.get("description") or "")[:200],
-        "category": "assistant",
+        "category": "persona",
         "tags": ["persona"],
         "version": "1.0",
         "public_key": keypair.public_key_string,

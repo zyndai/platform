@@ -28,6 +28,8 @@ from agent.zynd_identity import (
     keypair_from_seed,
     derive_agent_seed,
     load_developer_seed as _load_dev_seed,
+    generate_developer_id,
+    build_derivation_proof,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,50 +43,70 @@ def _register_entity_v2(
     summary: str,
     tags: list[str],
     capability_summary: dict | None = None,
+    version: str | None = None,
+    entity_type: str | None = None,
+    entity_name: str | None = None,
+    developer_id: str | None = None,
+    developer_proof: dict | None = None,
 ) -> str:
     """
     Register an agent on the v2 Zynd registry (POST /v1/entities).
 
-    The canonical signable payload was tightened on the server side: it
-    now excludes any `type` field entirely and only includes the six
-    core fields (category, entity_url, name, public_key, summary, tags).
-    Signing with extra fields like `type` produces a mismatched canonical
-    JSON on the server and yields 401 "invalid agent signature".
-
-    Signable (canonical JSON, sorted keys, no whitespace):
+    Canonical signable payload (sorted keys, no whitespace, ensure_ascii=False):
         {category, entity_url, name, public_key, summary, tags}
+        + entity_type (only if set)
 
-    The POST body carries the same fields plus `signature` and optional
-    extras (capability_summary, entity_type, etc.). The server uses
-    `entity_type` if you need to distinguish agent vs service — NOT the
-    old `type` key.
+    Signing must use ensure_ascii=False so non-ASCII chars in name/summary
+    (em-dash, emoji, non-English names) serialize as raw UTF-8 — matching
+    Go's json.Marshal default. Python's default ensure_ascii=True escapes
+    to \\uXXXX which produces different bytes and yields 401 "invalid agent
+    signature".
 
-    Source of truth: zyndai/zyndai-agent dns_registry.py::register_agent.
+    The POST body carries the signable fields plus `signature` and optional
+    extras (capability_summary, entity_type, version, entity_name,
+    developer_id, developer_proof).
+
+    Source of truth: zyndai/zyndai-agent dns_registry.py::register_entity
+    and the AgentDNS Go server's handleRegisterEntity.
     """
     import requests as req_lib
 
     signable = {
         "category": category,
-        "entity_url": entity_url,
+        "entity_url": entity_url or "",
         "name": name,
         "public_key": keypair.public_key_string,
         "summary": summary or "",
         "tags": tags or [],
     }
-    canonical = json.dumps(signable, sort_keys=True, separators=(",", ":")).encode()
+    if entity_type:
+        signable["entity_type"] = entity_type
+    canonical = json.dumps(
+        signable, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
     signature = keypair.sign(canonical)
 
     body = {
         "name": name,
-        "entity_url": entity_url,
+        "entity_url": entity_url or "",
         "category": category,
         "tags": tags or [],
         "summary": summary or "",
         "public_key": keypair.public_key_string,
         "signature": signature,
     }
+    if entity_type:
+        body["entity_type"] = entity_type
     if capability_summary:
         body["capability_summary"] = capability_summary
+    if version:
+        body["version"] = version
+    if entity_name:
+        body["entity_name"] = entity_name
+    if developer_id:
+        body["developer_id"] = developer_id
+    if developer_proof:
+        body["developer_proof"] = developer_proof
 
     resp = req_lib.post(
         f"{config.ZYND_REGISTRY_URL}/v1/entities",
@@ -271,15 +293,27 @@ async def create_persona(
         "skills": ["persona"],
     }
 
+    # Build developer identity + derivation proof. The registry requires
+    # these to confirm this agent key was HD-derived from a known developer
+    # key. The proof message is: agent_pub_bytes || big_endian_uint32(index)
+    # signed by the developer key.
+    dev_keypair = keypair_from_seed(developer_seed)
+    developer_id = generate_developer_id(dev_keypair.public_key_bytes)
+    developer_proof = build_derivation_proof(developer_seed, public_key_bytes, index)
+
     try:
         agent_id = _register_entity_v2(
             keypair=keypair,
             name=name,
             entity_url=webhook_url,
-            category="assistant",
+            category="persona",
             summary=description[:200] if description else "",
             tags=["persona"],
             capability_summary=capabilities_dict,
+            version="1.0",
+            entity_type="agent",
+            developer_id=developer_id,
+            developer_proof=developer_proof,
         )
         logger.info(f"[persona] Registered {agent_id} on registry")
     except RuntimeError as e:

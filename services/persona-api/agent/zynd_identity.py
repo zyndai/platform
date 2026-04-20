@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import struct
 from dataclasses import dataclass
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -108,3 +109,48 @@ def sign(seed: bytes, message: bytes) -> str:
     priv = Ed25519PrivateKey.from_private_bytes(seed)
     sig = priv.sign(message)
     return "ed25519:" + base64.b64encode(sig).decode()
+
+
+# ── Developer identity / derivation proof ────────────────────────────
+
+def generate_developer_id(public_key_bytes: bytes) -> str:
+    """
+    Compute the canonical developer ID from an Ed25519 public key.
+    Format: zns:dev:<sha256(pub)[:16].hex()>
+
+    Matches the Go registry's identity.go::GenerateDeveloperID.
+    """
+    digest = hashlib.sha256(public_key_bytes).digest()
+    return "zns:dev:" + digest[:16].hex()
+
+
+def build_derivation_proof(
+    developer_seed: bytes,
+    agent_public_key_bytes: bytes,
+    index: int,
+) -> dict:
+    """
+    Build a `developer_proof` dict proving that `agent_public_key_bytes`
+    was HD-derived from the developer key at `index`.
+
+    The developer signs the exact bytes:
+        agent_public_key_bytes || big_endian_uint32(index)
+
+    This matches the Go registry's identity.go::buildProofMessage and
+    zyndai_agent.ed25519_identity.create_derivation_proof.
+
+    Returns a dict the registry expects in the `developer_proof` field:
+        {
+          "developer_public_key": "ed25519:<b64>",
+          "entity_index": int,
+          "developer_signature": "ed25519:<b64>"
+        }
+    """
+    dev_kp = keypair_from_seed(developer_seed)
+    message = agent_public_key_bytes + struct.pack(">I", index)
+    signature = dev_kp.sign(message)
+    return {
+        "developer_public_key": dev_kp.public_key_string,
+        "entity_index": index,
+        "developer_signature": signature,
+    }

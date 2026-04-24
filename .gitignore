@@ -43,3 +43,7 @@ Thumbs.db
 /webapp/.pnpm-debug.log*
 
 .agent-*
+
+SCREENS.md 
+UX_BRIEF.md 
+prototype.html 

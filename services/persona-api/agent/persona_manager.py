@@ -617,12 +617,19 @@ async def startup():
     sb = _get_supabase()
     result = sb.table("persona_agents").select("*").eq("active", True).execute()
 
+    hb = get_heartbeat_manager()
+
+    # Always start the heartbeat loop — even with zero active personas — so
+    # that personas created later in this process's lifetime get heartbeated
+    # without requiring a server restart. The loop idles cheaply when
+    # _agents is empty (heartbeat_manager._heartbeat_loop sleeps 5s).
+    await hb.start()
+
     if not result.data:
-        logger.info("[persona] No active personas to rehydrate")
+        logger.info("[persona] No active personas to rehydrate; heartbeat loop started idle")
         return
 
     developer_seed = _load_developer_seed()
-    hb = get_heartbeat_manager()
 
     count = 0
     for persona in result.data:
@@ -636,7 +643,6 @@ async def startup():
         except Exception as e:
             logger.error(f"[persona] Failed to rehydrate {persona['agent_id']}: {e}")
 
-    await hb.start()
     logger.info(f"[persona] Rehydrated {count} active personas, heartbeat started")
 
 

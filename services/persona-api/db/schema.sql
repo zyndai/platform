@@ -301,7 +301,81 @@ CREATE POLICY "Service role full access on telegram_chat_history" ON telegram_ch
 
 
 -- ================================================================
--- 8. REALTIME SETUP
+-- 8. LINKEDIN PROFILES — cached Apify scrape per user.
+--    Apify hits cost credits, so we keep one row per user_id and
+--    refresh on demand. raw_profile/raw_posts are stored verbatim
+--    so the matcher / Aria's bio-synth can re-derive structured
+--    fields without going back to Apify.
+-- ================================================================
+CREATE TABLE IF NOT EXISTS linkedin_profiles (
+    user_id      UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    profile_url  TEXT,
+    scraped_at   TIMESTAMPTZ,
+    raw_profile  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    raw_posts    JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at   TIMESTAMPTZ DEFAULT now(),
+    updated_at   TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE linkedin_profiles ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users read own linkedin profile" ON linkedin_profiles
+    FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users delete own linkedin profile" ON linkedin_profiles
+    FOR DELETE USING (auth.uid() = user_id);
+
+CREATE POLICY "Service role full access on linkedin_profiles" ON linkedin_profiles
+    FOR ALL USING (auth.role() = 'service_role');
+
+
+-- ================================================================
+-- 9. PENDING APPROVALS — external-mode tool-call gate.
+--    When a foreign agent's request would invoke a commitment-class
+--    tool (propose_meeting, send_email, post on socials, etc.), the
+--    orchestrator stages it here instead of firing. The user resolves
+--    each row from the UI; on approve we re-run the tool with the
+--    saved args, on decline we drop a polite refusal back to the
+--    foreign side.
+-- ================================================================
+CREATE TABLE IF NOT EXISTS pending_approvals (
+    id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id     UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    thread_id   UUID REFERENCES dm_threads(id) ON DELETE CASCADE,
+    tool_name   TEXT NOT NULL,
+    tool_args   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    summary     TEXT,
+    status      TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'approved', 'declined', 'expired')),
+    result      JSONB,
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    decided_at  TIMESTAMPTZ,
+    -- Auto-expire so abandoned approvals don't pile up forever. The
+    -- list endpoint also lazily flips overdue rows to 'expired' as it
+    -- reads them, so this default just needs to be far enough in the
+    -- future that real users have time to decide.
+    expires_at  TIMESTAMPTZ DEFAULT (now() + interval '24 hours')
+);
+
+CREATE INDEX IF NOT EXISTS pending_approvals_user_status_idx
+    ON pending_approvals (user_id, status);
+CREATE INDEX IF NOT EXISTS pending_approvals_thread_idx
+    ON pending_approvals (thread_id);
+
+ALTER TABLE pending_approvals ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users read own approvals" ON pending_approvals
+    FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users update own approvals" ON pending_approvals
+    FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Service role full access on pending_approvals" ON pending_approvals
+    FOR ALL USING (auth.role() = 'service_role');
+
+
+-- ================================================================
+-- 10. REALTIME SETUP
 -- ================================================================
 BEGIN;
   DROP PUBLICATION IF EXISTS supabase_realtime;
@@ -310,3 +384,4 @@ COMMIT;
 ALTER PUBLICATION supabase_realtime ADD TABLE dm_messages;
 ALTER PUBLICATION supabase_realtime ADD TABLE dm_threads;
 ALTER PUBLICATION supabase_realtime ADD TABLE agent_tasks;
+ALTER PUBLICATION supabase_realtime ADD TABLE pending_approvals;

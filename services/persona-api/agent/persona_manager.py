@@ -376,28 +376,32 @@ async def delete_persona(user_id: str) -> dict:
     hb = get_heartbeat_manager()
     await hb.remove_agent(agent_id)
 
-    # 2. Deregister from registry
+    # 2. Deregister from registry. Signing format matches the canonical
+    # zyndai-agent SDK (dns_registry.delete_entity): sign the raw entity_id
+    # bytes; send Authorization: Bearer ed25519:<sig>. The older
+    # X-Agent-Signature / X-Timestamp scheme this used to use was wrong —
+    # the registry never accepted it and every deregister silently 401'd.
     try:
         import requests as req_lib
-        import time as _time
 
         developer_seed = _load_developer_seed()
         private_seed, _ = _derive_agent_keypair(developer_seed, index)
         keypair = keypair_from_seed(private_seed)
 
-        timestamp = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
-        sign_message = f"{agent_id}:{timestamp}"
-        signature = keypair.sign(sign_message.encode())
+        auth_sig = keypair.sign(agent_id.encode())
 
-        req_lib.delete(
+        resp = req_lib.delete(
             f"{config.ZYND_REGISTRY_URL}/v1/entities/{agent_id}",
-            headers={
-                "X-Agent-Signature": signature,
-                "X-Timestamp": timestamp,
-            },
+            headers={"Authorization": f"Bearer {auth_sig}"},
             timeout=10,
         )
-        logger.info(f"[persona] Deregistered {agent_id} from registry")
+        if resp.status_code in (200, 204, 404):
+            logger.info(f"[persona] Deregistered {agent_id} from registry (HTTP {resp.status_code})")
+        else:
+            logger.warning(
+                f"[persona] Registry deregister returned HTTP {resp.status_code} "
+                f"for {agent_id}: {resp.text[:200]}"
+            )
     except Exception as e:
         logger.warning(f"[persona] Failed to deregister from registry: {e}")
 
@@ -458,28 +462,29 @@ async def purge_user_account(user_id: str) -> dict:
         except Exception as e:
             result["warnings"].append(f"heartbeat stop failed: {e}")
 
-        # Deregister from the Zynd DNS registry
+        # Deregister from the Zynd DNS registry. Sign the raw entity_id
+        # bytes and send Authorization: Bearer ed25519:<sig> — same scheme
+        # the zyndai-agent SDK (dns_registry.delete_entity) uses.
         try:
             import requests as req_lib
-            import time as _time
 
             developer_seed = _load_developer_seed()
             private_seed, _ = _derive_agent_keypair(developer_seed, index)
             keypair = keypair_from_seed(private_seed)
 
-            timestamp = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
-            sign_message = f"{agent_id}:{timestamp}"
-            signature = keypair.sign(sign_message.encode())
+            auth_sig = keypair.sign(agent_id.encode())
 
-            req_lib.delete(
+            resp = req_lib.delete(
                 f"{config.ZYND_REGISTRY_URL}/v1/entities/{agent_id}",
-                headers={
-                    "X-Agent-Signature": signature,
-                    "X-Timestamp": timestamp,
-                },
+                headers={"Authorization": f"Bearer {auth_sig}"},
                 timeout=10,
             )
-            result["steps"].append(f"deregistered {agent_id} from registry")
+            if resp.status_code in (200, 204, 404):
+                result["steps"].append(f"deregistered {agent_id} from registry (HTTP {resp.status_code})")
+            else:
+                result["warnings"].append(
+                    f"registry deregister returned HTTP {resp.status_code}: {resp.text[:160]}"
+                )
         except Exception as e:
             result["warnings"].append(f"registry deregister failed: {e}")
 

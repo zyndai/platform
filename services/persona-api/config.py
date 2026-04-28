@@ -5,6 +5,23 @@ Central config module.  Reads from .env and exposes typed settings
 used by every other module so nothing is hard-coded elsewhere.
 """
 
+# ── Prefer IPv4 for outbound DNS ────────────────────────────────────
+# Python's getaddrinfo returns IPv6 records first when a host has both
+# AAAA and A records. On boxes whose IPv6 path is broken (common with
+# Cloudflare tunnels on residential networks), every fresh outbound
+# connection hangs ~30s on the IPv6 TLS handshake before falling back.
+# curl avoids this with Happy Eyeballs; Python doesn't. We install this
+# patch at config-import time (every backend entrypoint imports config
+# first) so every later HTTP/TLS call goes IPv4-first. Falls back to
+# whatever DNS returned if no IPv4 record exists.
+import socket as _socket
+_orig_getaddrinfo = _socket.getaddrinfo
+def _ipv4_first(host, *args, **kwargs):
+    results = _orig_getaddrinfo(host, *args, **kwargs)
+    v4 = [r for r in results if r[0] == _socket.AF_INET]
+    return v4 or results
+_socket.getaddrinfo = _ipv4_first  # type: ignore[assignment]
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -78,6 +95,9 @@ CUSTOM_LLM_MODEL: str = os.getenv("CUSTOM_LLM_MODEL", "")
 # ── LLM Provider Selection ──────────────────────────────────────────
 # "openai", "gemini", or "custom"
 LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
+
+# ── Apify (LinkedIn scraping) ────────────────────────────────────────
+APIFY_API_TOKEN: str = os.getenv("APIFY_API_TOKEN", "")
 
 # ── App ──────────────────────────────────────────────────────────────
 APP_SECRET_KEY: str = os.getenv("APP_SECRET_KEY", "change-me-in-production")

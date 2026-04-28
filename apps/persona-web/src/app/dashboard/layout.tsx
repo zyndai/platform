@@ -1,39 +1,72 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
+import {
+  Home,
+  Calendar,
+  Users,
+  FileText,
+  Settings,
+  LogOut,
+  Menu,
+  MessageSquare,
+} from "lucide-react";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
 import TaskToasts from "@/components/TaskToasts";
+import { Monogram, Avatar, ThinkingDot } from "@/components/ui";
+import { stepToPath } from "@/lib/onboarding";
 
-const NAV_ITEMS = [
-  { href: "/dashboard/chat", label: "AI Chat", icon: "⚡", requiresPersona: true },
-  { href: "/dashboard/messages", label: "Network DMs", icon: "◈", requiresPersona: true },
-  { href: "/dashboard/tasks", label: "Tasks", icon: "▤", requiresPersona: true },
-  { href: "/dashboard/identity", label: "Identity", icon: "◎", requiresPersona: false },
-  { href: "/dashboard/connections", label: "Connections", icon: "⬡", requiresPersona: true },
+type NavItem = {
+  href: string;
+  label: string;
+  icon: typeof Home;
+};
+
+const ARIA_NAV: NavItem[] = [
+  { href: "/dashboard/chat",     label: "Home",     icon: Home },
+  { href: "/dashboard/messages", label: "Threads",  icon: MessageSquare },
+  { href: "/dashboard/meetings", label: "Meetings", icon: Calendar },
+  { href: "/dashboard/people",   label: "People",   icon: Users },
+];
+
+const YOU_NAV: NavItem[] = [
+  { href: "/dashboard/brief",    label: "Your brief", icon: FileText },
+  { href: "/dashboard/settings", label: "Settings",   icon: Settings },
 ];
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
-  const { user, loading, hasPersona, personaLoading, handleLogout } = useDashboard();
+  const {
+    user,
+    loading,
+    onboardingStep,
+    onboardingLoading,
+    handleLogout,
+  } = useDashboard();
   const pathname = usePathname();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  if (loading || personaLoading) {
+  // If the user hasn't finished onboarding, kick them to the right screen.
+  useEffect(() => {
+    if (!loading && !onboardingLoading && onboardingStep && onboardingStep !== "done") {
+      router.replace(stepToPath(onboardingStep));
+    }
+  }, [loading, onboardingLoading, onboardingStep, router]);
+
+  const stillBooting =
+    loading ||
+    onboardingLoading ||
+    (onboardingStep !== null && onboardingStep !== "done");
+
+  if (stillBooting) {
     return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "var(--bg-void)",
-        }}
-      >
-        <div className="status-pill">
-          <span className="status-dot" />
-          <span>Connecting to network...</span>
+      <div className="boot-loader">
+        <Monogram size="md" />
+        <div className="line">
+          <ThinkingDot />
+          <span>Just a sec…</span>
         </div>
       </div>
     );
@@ -43,172 +76,92 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     user?.user_metadata?.full_name ||
     user?.user_metadata?.name ||
     user?.email?.split("@")[0] ||
-    "User";
+    "You";
 
   const avatarUrl =
     user?.user_metadata?.avatar_url || user?.user_metadata?.picture || null;
 
+  const renderItem = (item: NavItem) => {
+    const Icon = item.icon;
+    const isActive =
+      pathname === item.href || pathname.startsWith(item.href + "/");
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        onClick={() => setSidebarOpen(false)}
+        className={`nav-item ${isActive ? "active" : ""}`}
+      >
+        <Icon />
+        <span>{item.label}</span>
+      </Link>
+    );
+  };
+
   return (
-    <div className="page-bg">
-      {/* -- Mobile top header -- */}
+    <div className="app-shell no-rail">
+      {/* Mobile top header */}
       <div className="mobile-header">
         <button
+          className="menu-btn"
           onClick={() => setSidebarOpen(true)}
-          style={{
-            background: "none",
-            border: "1px solid var(--border-default)",
-            borderRadius: "var(--r-sm)",
-            padding: "6px 10px",
-            color: "var(--text-primary)",
-            cursor: "pointer",
-            fontSize: "14px",
-          }}
+          aria-label="Open menu"
         >
-          ☰
+          <Menu size={20} strokeWidth={1.5} />
         </button>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <div
-            className="sidebar-logo-icon"
-            style={{ width: 24, height: 24, fontSize: 10 }}
-          >
-            Z
-          </div>
-          <span
-            style={{
-              fontFamily: "Syne, sans-serif",
-              fontWeight: 700,
-              fontSize: "14px",
-            }}
-          >
-            Zynd <span style={{ color: "var(--accent-teal)" }}>AI</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Monogram size="sm" />
+          <span style={{ fontFamily: "var(--font-fraunces), serif", fontWeight: 500, fontSize: 15 }}>
+            Zynd
           </span>
         </div>
       </div>
 
-      <div
-        className={`mobile-overlay ${sidebarOpen ? "open" : ""}`}
-        onClick={() => setSidebarOpen(false)}
-      />
+      {sidebarOpen && (
+        <div
+          className="mobile-overlay open"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
-      {/* -- Sidebar -- */}
-      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
-        {/* Logo */}
-        <div className="sidebar-logo">
-          <div className="sidebar-logo-icon">Z</div>
-          <span className="sidebar-logo-text">
-            Zynd <span className="ai">AI</span>
-          </span>
+      {/* Sidebar */}
+      <aside className={`app-sidebar ${sidebarOpen ? "open" : ""}`}>
+        <div className="brand">
+          <Monogram size="sm" />
+          <span className="brand-text">Zynd</span>
         </div>
 
-        {/* Section label */}
-        <p
-          className="section-label"
-          style={{ padding: "0 4px", marginBottom: "12px" }}
-        >
-          Navigation
-        </p>
-
-        {/* Navigation */}
-        <nav
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "2px",
-            flex: 1,
-          }}
-        >
-          {NAV_ITEMS.map((item) => {
-            const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
-            const isLocked = item.requiresPersona && !hasPersona;
-
-            if (isLocked) {
-              return (
-                <div
-                  key={item.href}
-                  onClick={() => router.push("/dashboard/identity")}
-                  className="nav-item"
-                  style={{
-                    textDecoration: "none",
-                    opacity: 0.4,
-                    cursor: "pointer",
-                    position: "relative",
-                  }}
-                  title="Deploy your persona first"
-                >
-                  <span className="nav-item-icon">{item.icon}</span>
-                  <span>{item.label}</span>
-                  <span
-                    style={{
-                      marginLeft: "auto",
-                      fontSize: "10px",
-                      fontFamily: "IBM Plex Mono, monospace",
-                      color: "var(--text-muted)",
-                    }}
-                  >
-                    ⊘
-                  </span>
-                </div>
-              );
-            }
-
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setSidebarOpen(false)}
-                className={`nav-item ${isActive ? "active" : ""}`}
-                style={{ textDecoration: "none" }}
-              >
-                <span className="nav-item-icon">{item.icon}</span>
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
+        <div className="nav-group-label">Aria</div>
+        <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {ARIA_NAV.map(renderItem)}
         </nav>
 
-        {/* User card */}
+        <div className="nav-group-label">You</div>
+        <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {YOU_NAV.map(renderItem)}
+        </nav>
+
         <div className="user-card">
-          <div className="user-card-avatar">
-            {avatarUrl ? (
-              <img src={avatarUrl} alt="" />
-            ) : (
-              <div className="user-card-avatar-fallback">
-                {displayName[0]?.toUpperCase()}
-              </div>
-            )}
-            <span className="online-dot" />
-          </div>
-          <div className="user-card-info">
-            <p className="user-card-name">{displayName}</p>
-            <p className="user-card-did">{user?.email}</p>
+          <Avatar size="sm" src={avatarUrl} name={displayName} />
+          <div className="info">
+            <div className="name">{displayName}</div>
+            <div className="email">{user?.email}</div>
           </div>
           <button
             onClick={handleLogout}
+            className="logout"
             title="Sign out"
-            className="user-card-logout"
+            aria-label="Sign out"
           >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
-              <polyline points="16 17 21 12 16 7" />
-              <line x1="21" y1="12" x2="9" y2="12" />
-            </svg>
+            <LogOut size={14} strokeWidth={1.5} />
           </button>
         </div>
       </aside>
 
-      {/* -- Main content -- */}
-      <main className="dashboard-main">{children}</main>
+      {/* Main */}
+      <main className="app-main">{children}</main>
 
-      {/* -- Global task toasts -- */}
+      {/* Global task toasts */}
       <TaskToasts />
     </div>
   );

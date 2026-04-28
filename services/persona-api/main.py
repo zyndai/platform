@@ -19,6 +19,10 @@ from api.connections import router as connections_router
 from api.persona import router as persona_router
 from api.meetings import router as meetings_router
 from api.telegram import router as telegram_router
+from api.linkedin import router as linkedin_router
+from api.approvals import router as approvals_router
+from api.matches import router as matches_router
+from api.brief import router as brief_router
 
 # ─────────────────────────────────────────────────────────────────────
 
@@ -77,6 +81,10 @@ app.include_router(connections_router, prefix="/api/connections", tags=["Connect
 app.include_router(persona_router, prefix="/api/persona", tags=["Persona"])
 app.include_router(meetings_router, prefix="/api/meetings", tags=["Meetings"])
 app.include_router(telegram_router, prefix="/api/telegram", tags=["Telegram"])
+app.include_router(linkedin_router, prefix="/api/linkedin", tags=["LinkedIn"])
+app.include_router(approvals_router, prefix="/api/approvals", tags=["Approvals"])
+app.include_router(matches_router, prefix="/api/matches", tags=["Matches"])
+app.include_router(brief_router,   prefix="/api/brief",   tags=["Brief"])
 
 
 # Temporary diagnostic endpoint — remove after debugging

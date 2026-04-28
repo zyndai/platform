@@ -29,6 +29,97 @@ from agent.persona_manager import (
 router = APIRouter()
 
 
+# Soft cap on agent-to-agent auto-replies per thread. Once we hit this,
+# a one-shot "let me check with my person" halt note is inserted and the
+# orchestrator stops auto-responding. The two halves of the cap (initiator
+# and recipient) split it ~3 turns each before the halt fires.
+AGENT_TURN_CAP = 6
+HALT_NOTE_TEXT = (
+    "I'd want to check with my person before saying more. "
+    "Taking this off the agent channel for now."
+)
+
+# Phrases the orchestrator emits when it's giving up on auto-handling and
+# wants the principal to take over. The webhook handler checks for these
+# in outgoing replies; matched replies are treated as terminal — inserted
+# as system notes, lifecycle flips to needs_human, and we DO NOT callback
+# the sender's webhook. That stops the "both agents escalate at each
+# other forever" loop we saw on the first multi-turn test.
+_ESCALATION_HINTS = (
+    # "my principal / my person" form
+    "bring this to my principal",
+    "bring this to my person",
+    "loop in my principal",
+    "loop in my person",
+    "check with my principal",
+    "check with my person",
+    "pass this along to my principal",
+    "pass this along to my person",
+    "take this off the agent channel",
+    "off the agent channel",
+    # Name-agnostic phrasings — catch the variants where the LLM uses the
+    # principal's actual name ("I'll check with Maya") instead of "my
+    # principal". Lower-cased and conservative on false positives.
+    "have them follow up",
+    "they'll follow up",
+    "they will follow up",
+    "they'll come back to you",
+    "they will come back to you",
+    "they'll get back to you",
+    "they will get back to you",
+    "i'll check with",
+    "let me check with",
+    "i'll loop in",
+    "i'll loop my",
+    "passing this along",
+    "circle back",
+)
+
+
+def _looks_like_escalation(text: str) -> bool:
+    """Lightweight heuristic for 'the agent is escalating to its human'.
+    Matches the phrasing patterns we encourage in the system prompt; if
+    we see one, we don't keep the conversation running on autopilot."""
+    if not text:
+        return False
+    t = text.lower()
+    return any(hint in t for hint in _ESCALATION_HINTS)
+
+
+# Thread lifecycle. Lives in dm_threads.lifecycle (separate column from
+# `status`, which tracks connection-request state pending/accepted/blocked).
+# These move through as agents converse, hit the cap, or get taken over.
+# The frontend reads this to render the "What's happening?" pill at the
+# top of the thread surface.
+LIFECYCLE_PENDING        = "pending"          # created, waiting for the first reply
+LIFECYCLE_ACTIVE         = "active"           # at least one auto-reply has landed
+LIFECYCLE_NEEDS_HUMAN    = "needs_human"      # turn cap hit; human takeover required
+LIFECYCLE_HUMAN_HANDLING = "human_handling"   # one or both sides taken over by a human
+
+# Aliases retained because earlier in this file's history they were named
+# THREAD_*. Don't add new uses of these — prefer LIFECYCLE_*.
+THREAD_PENDING        = LIFECYCLE_PENDING
+THREAD_ACTIVE         = LIFECYCLE_ACTIVE
+THREAD_NEEDS_HUMAN    = LIFECYCLE_NEEDS_HUMAN
+THREAD_HUMAN_HANDLING = LIFECYCLE_HUMAN_HANDLING
+
+
+def _set_thread_status(sb, thread_id: str, new_lifecycle: str, allowed_from: list[str] | None = None) -> None:
+    """Idempotent lifecycle transition. If `allowed_from` is given, only
+    advance when the current value is in that list — protects later states
+    from being clobbered by earlier transitions firing late."""
+    try:
+        if allowed_from is not None:
+            cur = sb.table("dm_threads").select("lifecycle").eq("id", thread_id).execute()
+            if not cur.data:
+                return
+            if cur.data[0].get("lifecycle") not in allowed_from:
+                return
+        sb.table("dm_threads").update({"lifecycle": new_lifecycle}).eq("id", thread_id).execute()
+    except Exception as e:
+        print(f"[thread-lifecycle] couldn't set {thread_id} → {new_lifecycle}: {e}")
+
+
 # ── Connection permissions ───────────────────────────────────────────
 #
 # The four v1 permission flags. Defaults are conservative — only meeting
@@ -441,6 +532,12 @@ async def update_thread_mode(thread_id: str, req: ThreadModeUpdate):
     column = "initiator_mode" if side == "initiator" else "receiver_mode"
     sb.table("dm_threads").update({column: req.mode}).eq("id", thread_id).execute()
 
+    # When either side flips to human, the thread is no longer purely an
+    # agent-to-agent automation. Flag the status so the UI can render the
+    # right pill for both participants.
+    if req.mode == "human":
+        _set_thread_status(sb, thread_id, THREAD_HUMAN_HANDLING)
+
     return {
         "status": "ok",
         "thread_id": thread_id,
@@ -504,6 +601,73 @@ async def async_webhook(user_id: str, request: Request, background_tasks: Backgr
     }
 
 
+async def _callback_sender(
+    sender_agent_id: str,
+    my_agent_id: str,
+    reply: str,
+    log_prefix: str,
+) -> None:
+    """Wake the sender's orchestrator with our reply so the conversation
+    can continue. Looks up their webhook (DB first, registry fallback) and
+    POSTs an AgentMessage. Failures are non-fatal — the reply is already in
+    the shared DB row, so the human still sees it via realtime even if the
+    other side's orchestrator doesn't get pinged."""
+    try:
+        from mcp.tools.zynd_network import _find_agent_webhook
+        import requests as req_lib
+
+        target_webhook = _find_agent_webhook(sender_agent_id)
+        if not target_webhook:
+            print(f"{log_prefix} ⚠ no webhook for sender {sender_agent_id} — can't wake them")
+            return
+        async_url = target_webhook
+        if async_url.endswith("/sync"):
+            async_url = async_url[:-5]
+
+        msg = AgentMessage(
+            content=reply,
+            sender_id=my_agent_id,
+            message_type="query",
+        )
+        resp = await asyncio.to_thread(
+            req_lib.post, async_url, json=msg.to_dict(), timeout=15
+        )
+        print(f"{log_prefix} → callback POST {async_url} returned {resp.status_code}")
+    except Exception as e:
+        print(f"{log_prefix} ⚠ callback to sender failed: {type(e).__name__}: {e}")
+
+
+async def _maybe_insert_halt_note(sb, thread_id: str, user_id: str, log_prefix: str) -> None:
+    """When the turn cap is hit, drop a single 'checking with my person'
+    note and stop. Detects an existing halt by `sender_type='system'` on
+    the most recent message — no marker text needed, so the user-visible
+    content stays clean."""
+    try:
+        last = (
+            sb.table("dm_messages")
+            .select("sender_type")
+            .eq("thread_id", thread_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if last.data and last.data[0].get("sender_type") == "system":
+            print(f"{log_prefix} halt note already present — skipping")
+            return
+        persona = get_persona_status(user_id)
+        my_agent_id = persona.get("agent_id", user_id)
+        sb.table("dm_messages").insert({
+            "thread_id": thread_id,
+            "sender_id": my_agent_id,
+            "sender_type": "system",
+            "channel": "agent",
+            "content": HALT_NOTE_TEXT,
+        }).execute()
+        print(f"{log_prefix} halt note inserted")
+    except Exception as e:
+        print(f"{log_prefix} ⚠ couldn't insert halt note: {e}")
+
+
 async def process_async_webhook(user_id: str, message: AgentMessage):
     """
     Background task: process an incoming agent-channel webhook message.
@@ -560,6 +724,31 @@ async def process_async_webhook(user_id: str, message: AgentMessage):
         print(f"{log_prefix} my side is TAKEN OVER — skipping orchestrator (no auto-reply)")
         return
 
+    # Turn cap: count how many auto-replies (sender_type='agent') already
+    # exist on this thread. After AGENT_TURN_CAP rounds, fall through to
+    # a one-shot halt note instead of running the orchestrator again. This
+    # prevents two LLMs ping-ponging indefinitely once the simple cases
+    # have been exhausted, and surfaces a clear "needs human" signal.
+    if thread_id:
+        try:
+            count_resp = (
+                sb.table("dm_messages")
+                .select("id", count="exact")
+                .eq("thread_id", thread_id)
+                .eq("sender_type", "agent")
+                .eq("channel", "agent")
+                .execute()
+            )
+            agent_turns = count_resp.count or 0
+        except Exception:
+            agent_turns = 0
+        if agent_turns >= AGENT_TURN_CAP:
+            print(f"{log_prefix} turn cap hit ({agent_turns}/{AGENT_TURN_CAP}) — emitting halt note")
+            await _maybe_insert_halt_note(sb, thread_id, user_id, log_prefix)
+            _set_thread_status(sb, thread_id, THREAD_NEEDS_HUMAN,
+                               allowed_from=[THREAD_PENDING, THREAD_ACTIVE])
+            return
+
     # Run the orchestrator. Any exception gets logged as an agent-channel
     # row so the sender sees what went wrong instead of silent failure.
     print(f"{log_prefix} → orchestrator")
@@ -584,13 +773,32 @@ async def process_async_webhook(user_id: str, message: AgentMessage):
 
     print(f"{log_prefix} reply ready ({len(reply)} chars): {reply[:80]!r}")
 
-    # Insert the reply as a new dm_messages row. This IS the delivery —
-    # both sender and receiver see it via realtime on the shared DB. No
-    # HTTP callback needed (B4).
+    # Insert the reply as a new dm_messages row.
+    # If the reply is an escalation ("I'll bring this to my person..."),
+    # it's the END of the agent-channel exchange. Insert as a system note,
+    # flip lifecycle to needs_human, and DO NOT callback the sender —
+    # otherwise both sides keep escalating-at-each-other in a loop.
+    # Otherwise it's a normal back-and-forth turn: insert as agent, flip
+    # lifecycle to active on first reply, and ping the sender's webhook
+    # so their orchestrator can produce the next turn.
     if thread_id:
         try:
             persona = get_persona_status(user_id)
             my_agent_id = persona.get("agent_id", user_id)
+
+            if _looks_like_escalation(reply):
+                sb.table("dm_messages").insert({
+                    "thread_id": thread_id,
+                    "sender_id": my_agent_id,
+                    "sender_type": "system",
+                    "channel": "agent",
+                    "content": reply,
+                }).execute()
+                print(f"{log_prefix} escalation detected — inserted as system, no callback")
+                _set_thread_status(sb, thread_id, THREAD_NEEDS_HUMAN,
+                                   allowed_from=[THREAD_PENDING, THREAD_ACTIVE])
+                return
+
             sb.table("dm_messages").insert({
                 "thread_id": thread_id,
                 "sender_id": my_agent_id,
@@ -599,6 +807,16 @@ async def process_async_webhook(user_id: str, message: AgentMessage):
                 "content": reply,
             }).execute()
             print(f"{log_prefix} reply logged to thread {thread_id}")
+
+            # First successful auto-reply on a thread = it's now active.
+            _set_thread_status(sb, thread_id, THREAD_ACTIVE,
+                               allowed_from=[THREAD_PENDING])
+
+            # Notify the sender so their side's orchestrator wakes up and
+            # can produce the next turn. Failure here just means the other
+            # side won't auto-respond — the row is in the DB either way,
+            # so the human user still sees it via realtime.
+            await _callback_sender(sender_id, my_agent_id, reply, log_prefix)
         except Exception as e:
             print(f"{log_prefix} ⚠ failed to insert reply row: {e}")
     else:

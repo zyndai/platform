@@ -1,19 +1,27 @@
 "use client";
 
 /**
- * Global task notifier — listens for agent_tasks realtime events and shows
- * ephemeral toast cards so the user learns about meeting proposals,
+ * Global task notifier — listens for `agent_tasks` realtime events and
+ * shows ephemeral toast cards so the user learns about meeting proposals,
  * counters, accepts, and bookings even when they aren't currently looking
- * at the relevant thread. Click a toast to jump straight to the message
- * thread that owns the ticket.
+ * at the relevant thread. Click a toast to jump to the thread.
  *
  * Mounted once at the dashboard layout level. Auto-dismisses each toast
- * after a few seconds; the user can also click the × to dismiss early.
+ * after a few seconds; the user can also click × to dismiss early.
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
+import {
+  Calendar,
+  CornerUpLeft,
+  CheckCircle,
+  AlertTriangle,
+  X,
+} from "lucide-react";
 import { getSupabase } from "@/lib/supabase";
+
+type Tone = "info" | "success" | "warn" | "danger";
 
 interface Toast {
   id: string;
@@ -21,60 +29,79 @@ interface Toast {
   taskId: string;
   title: string;
   body: string;
-  tone: "info" | "success" | "warn" | "danger";
+  tone: Tone;
 }
 
 const TOAST_TTL_MS = 8000;
 
-// Map an agent_tasks status change to a toast title/body/tone.
-// Returns null if the change isn't worth notifying about (e.g. cancelled,
-// declined — those are dead ends).
+interface AgentTask {
+  id: string;
+  thread_id: string;
+  status: string;
+  initiator_user_id: string | null;
+  recipient_user_id: string | null;
+  payload?: { title?: string };
+}
+
 function describeChange(
-  task: any,
-  meIsInitiator: boolean
-): { title: string; body: string; tone: Toast["tone"] } | null {
-  const status: string = task.status;
-  const payload = task.payload || {};
-  const title = payload.title || "Untitled meeting";
+  task: AgentTask,
+  meIsInitiator: boolean,
+): { title: string; body: string; tone: Tone } | null {
+  const status = task.status;
+  const title = task.payload?.title || "Untitled meeting";
 
   if (status === "proposed") {
-    if (meIsInitiator) return null; // I'm the one who sent it
+    if (meIsInitiator) return null;
     return {
-      title: "📅 New meeting proposal",
+      title: "New meeting proposal",
       body: `Someone wants to schedule "${title}" with you.`,
       tone: "info",
     };
   }
   if (status === "countered") {
     return {
-      title: "↩ Meeting countered",
+      title: "Meeting countered",
       body: `The other side suggested a different time for "${title}".`,
       tone: "warn",
     };
   }
   if (status === "accepted") {
     return {
-      title: "✓ Meeting accepted",
-      body: `"${title}" was accepted. Booking calendars now…`,
+      title: "Meeting accepted",
+      body: `"${title}" was accepted. I'm booking calendars now.`,
       tone: "success",
     };
   }
   if (status === "scheduled") {
     return {
-      title: "✓ Meeting on your calendar",
+      title: "On your calendar",
       body: `"${title}" was added to both calendars.`,
       tone: "success",
     };
   }
   if (status === "book_failed") {
     return {
-      title: "⚠ Calendar booking failed",
-      body: `"${title}" could not be added to a calendar. Open the thread to retry.`,
+      title: "Couldn't book that one",
+      body: `"${title}" didn't make it onto a calendar. Open the thread to retry.`,
       tone: "danger",
     };
   }
   return null;
 }
+
+const TONE_ICON: Record<Tone, typeof Calendar> = {
+  info:    Calendar,
+  warn:    CornerUpLeft,
+  success: CheckCircle,
+  danger:  AlertTriangle,
+};
+
+const TONE_COLOR: Record<Tone, string> = {
+  info:    "var(--info)",
+  warn:    "var(--warning)",
+  success: "var(--success)",
+  danger:  "var(--danger)",
+};
 
 export default function TaskToasts() {
   const router = useRouter();
@@ -82,7 +109,6 @@ export default function TaskToasts() {
   const [userId, setUserId] = useState<string | null>(null);
   const dismissTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-  // Resolve current user once.
   useEffect(() => {
     getSupabase()
       .auth.getSession()
@@ -108,9 +134,12 @@ export default function TaskToasts() {
       });
       const existing = dismissTimers.current[toast.id];
       if (existing) clearTimeout(existing);
-      dismissTimers.current[toast.id] = setTimeout(() => dismiss(toast.id), TOAST_TTL_MS);
+      dismissTimers.current[toast.id] = setTimeout(
+        () => dismiss(toast.id),
+        TOAST_TTL_MS,
+      );
     },
-    [dismiss]
+    [dismiss],
   );
 
   useEffect(() => {
@@ -123,9 +152,12 @@ export default function TaskToasts() {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "agent_tasks" },
         (payload) => {
-          const task = payload.new as any;
-          // Only notify if the user is a participant
-          if (task.initiator_user_id !== userId && task.recipient_user_id !== userId) return;
+          const task = payload.new as AgentTask;
+          if (
+            task.initiator_user_id !== userId &&
+            task.recipient_user_id !== userId
+          )
+            return;
           const desc = describeChange(task, task.initiator_user_id === userId);
           if (!desc) return;
           pushToast({
@@ -134,16 +166,19 @@ export default function TaskToasts() {
             taskId: task.id,
             ...desc,
           });
-        }
+        },
       )
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "agent_tasks" },
         (payload) => {
-          const task = payload.new as any;
-          const old = payload.old as any;
-          if (task.initiator_user_id !== userId && task.recipient_user_id !== userId) return;
-          // Only fire when the status actually changed (skip payload edits etc.)
+          const task = payload.new as AgentTask;
+          const old = payload.old as AgentTask;
+          if (
+            task.initiator_user_id !== userId &&
+            task.recipient_user_id !== userId
+          )
+            return;
           if (old?.status === task.status) return;
           const desc = describeChange(task, task.initiator_user_id === userId);
           if (!desc) return;
@@ -153,13 +188,12 @@ export default function TaskToasts() {
             taskId: task.id,
             ...desc,
           });
-        }
+        },
       )
       .subscribe();
 
     return () => {
       sb.removeChannel(channel);
-      // Clean up any pending dismiss timers
       Object.values(dismissTimers.current).forEach(clearTimeout);
       dismissTimers.current = {};
     };
@@ -168,87 +202,40 @@ export default function TaskToasts() {
   if (toasts.length === 0) return null;
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        bottom: "24px",
-        right: "24px",
-        display: "flex",
-        flexDirection: "column",
-        gap: "10px",
-        zIndex: 1000,
-        maxWidth: "340px",
-      }}
-    >
+    <div className="task-toast-stack">
       {toasts.map((t) => {
-        const accent =
-          t.tone === "success"
-            ? "var(--accent-teal)"
-            : t.tone === "warn"
-            ? "#f59e0b"
-            : t.tone === "danger"
-            ? "var(--accent-coral)"
-            : "var(--accent-blue)";
+        const Icon = TONE_ICON[t.tone];
+        const accent = TONE_COLOR[t.tone];
         return (
           <div
             key={t.id}
+            className="task-toast"
+            style={{ borderLeftColor: accent }}
+            role="status"
             onClick={() => {
               router.push(`/dashboard/messages?thread=${t.threadId}`);
               dismiss(t.id);
             }}
-            style={{
-              cursor: "pointer",
-              background: "var(--bg-overlay)",
-              border: `1px solid ${accent}`,
-              borderLeft: `3px solid ${accent}`,
-              borderRadius: "var(--r-md)",
-              padding: "12px 14px",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
-              animation: "slideIn 0.2s ease",
-              display: "flex",
-              gap: "10px",
-              alignItems: "flex-start",
-            }}
           >
+            <Icon
+              size={16}
+              strokeWidth={1.5}
+              style={{ color: accent, flexShrink: 0, marginTop: 2 }}
+            />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <p
-                style={{
-                  fontFamily: "Syne, sans-serif",
-                  fontSize: "13px",
-                  fontWeight: 700,
-                  color: "var(--text-primary)",
-                  marginBottom: "2px",
-                }}
-              >
-                {t.title}
-              </p>
-              <p
-                style={{
-                  fontFamily: "DM Sans, sans-serif",
-                  fontSize: "11.5px",
-                  color: "var(--text-secondary)",
-                  lineHeight: 1.45,
-                }}
-              >
-                {t.body}
-              </p>
+              <p className="task-toast-title">{t.title}</p>
+              <p className="task-toast-body">{t.body}</p>
             </div>
             <button
+              type="button"
+              className="task-toast-dismiss"
               onClick={(e) => {
                 e.stopPropagation();
                 dismiss(t.id);
               }}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "var(--text-muted)",
-                cursor: "pointer",
-                padding: 0,
-                fontSize: "14px",
-                lineHeight: 1,
-              }}
+              aria-label="Dismiss"
             >
-              ✕
+              <X size={14} strokeWidth={1.5} />
             </button>
           </div>
         );

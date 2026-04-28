@@ -1,23 +1,21 @@
 "use client";
 
-import { useDashboard } from "@/contexts/DashboardContext";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import MessagesPanel from "@/components/MessagesPanel";
 
-export default function MessagesPage() {
-  const { hasPersona, personaLoading } = useDashboard();
-  const router = useRouter();
+// Auth + onboarding-completion are enforced by DashboardShell, so this
+// page just renders. Wrapped in Suspense because useSearchParams needs it.
+function MessagesContent() {
   const searchParams = useSearchParams();
   const initialThread = searchParams.get("thread");
-
-  useEffect(() => {
-    if (!personaLoading && !hasPersona) {
-      router.replace("/dashboard/identity");
-    }
-  }, [hasPersona, personaLoading, router]);
-
-  if (personaLoading || !hasPersona) return null;
-
   return <MessagesPanel initialThreadId={initialThread} />;
+}
+
+export default function MessagesPage() {
+  return (
+    <Suspense fallback={null}>
+      <MessagesContent />
+    </Suspense>
+  );
 }

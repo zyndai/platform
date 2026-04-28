@@ -93,6 +93,111 @@ EXTERNAL_PERMISSION_GATES: dict[str, set[str]] = {
 }
 
 
+# ── Approval gate ────────────────────────────────────────────────────
+# Tool calls in this set are commitment-class — they bind the user to
+# something other agents (or other users) will see. In external mode we
+# never let them fire silently. We persist a row to pending_approvals
+# instead, and the LLM's reply for that turn becomes a "I've staged this
+# with my principal" line. The user resolves the approval from the home
+# chat or the thread page; on yes the tool re-fires with the saved args.
+APPROVAL_REQUIRED_TOOLS: set[str] = {"propose_meeting"}
+
+
+def _summarize_for_approval(fn_name: str, fn_args: dict, sender_agent_id: str | None) -> str:
+    if fn_name == "propose_meeting":
+        title = fn_args.get("title") or "Untitled meeting"
+        start = fn_args.get("start_time") or "?"
+        end   = fn_args.get("end_time")   or ""
+        partner = sender_agent_id or "the other agent"
+        when = f"{start}" + (f" → {end}" if end else "")
+        return f"Propose “{title}” ({when}) with {partner}"
+    return f"Run {fn_name}"
+
+
+def _thread_id_from_conv(conversation_id: str | None) -> str | None:
+    """conversation_id is `thread:<uuid>` for agent-to-agent webhook turns
+    (set by api/persona.py:process_async_webhook). For internal user chat
+    it's a different shape, so we only return the uuid when the prefix
+    matches."""
+    if not conversation_id:
+        return None
+    if conversation_id.startswith("thread:"):
+        return conversation_id.split(":", 1)[1]
+    return None
+
+
+def _is_seeded_user(user_id: str) -> bool:
+    """Seeded test personas (created by scripts/seed_personas.py) have
+    `user_metadata.seeded = true` on their auth row. Real human users
+    don't. We bypass the approval gate for seeded users so end-to-end
+    testing doesn't dead-end on an approval card no human can resolve."""
+    try:
+        import requests as _req
+        url = f"{config.SUPABASE_URL.rstrip('/')}/auth/v1/admin/users/{user_id}"
+        headers = {
+            "apikey": config.SUPABASE_SERVICE_KEY,
+            "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
+        }
+        r = _req.get(url, headers=headers, timeout=5)
+        if not r.ok:
+            return False
+        meta = (r.json() or {}).get("user_metadata") or {}
+        return bool(meta.get("seeded"))
+    except Exception:
+        return False
+
+
+def _maybe_stage_approval(
+    user_id: str,
+    fn_name: str,
+    fn_args: dict,
+    is_external: bool,
+    conversation_id: str | None,
+    sender_agent_id: str | None,
+) -> dict | None:
+    """If this tool call needs gating, persist a pending_approvals row
+    and return a structured 'queued' result for the LLM to summarize back
+    to the foreign agent. Returns None when no gating is needed (caller
+    proceeds with normal tool execution)."""
+    if not is_external:
+        return None
+    if fn_name not in APPROVAL_REQUIRED_TOOLS:
+        return None
+    # Bypass for seeded test personas — no human is watching their chat.
+    if _is_seeded_user(user_id):
+        print(f"[orchestrator] approval gate bypassed for seeded user {user_id[:8]}")
+        return None
+    try:
+        from supabase import create_client
+        sb = create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+        thread_id = _thread_id_from_conv(conversation_id)
+        summary = _summarize_for_approval(fn_name, fn_args, sender_agent_id)
+        row = sb.table("pending_approvals").insert({
+            "user_id":   user_id,
+            "thread_id": thread_id,
+            "tool_name": fn_name,
+            "tool_args": fn_args,
+            "summary":   summary,
+            "status":    "pending",
+        }).execute()
+        approval_id = row.data[0]["id"] if row.data else None
+        print(f"[orchestrator] staged approval {approval_id} for {fn_name}: {summary}")
+        return {
+            "status": "queued_for_approval",
+            "approval_id": approval_id,
+            "summary": summary,
+            "instruction": (
+                "Do NOT call this tool again on this turn. The action is queued "
+                "for human approval. In your reply, tell the foreign agent the "
+                "request has been staged with your principal and they'll get "
+                "back when it's confirmed. Then stop — escalate to your human."
+            ),
+        }
+    except Exception as e:
+        print(f"[orchestrator] ⚠ couldn't stage approval for {fn_name}: {e}")
+        return None
+
+
 def _allowed_external_tools(permissions: dict | None) -> set[str]:
     """Compute the full external-mode tool allowlist for a given permission set."""
     allowed = set(EXTERNAL_DEFAULT_ALLOWED)
@@ -1008,11 +1113,33 @@ If the foreign agent is asking to schedule a meeting, and `propose_meeting` is i
   - Do NOT try to accept or finalize a meeting yourself — only the principal can act on incoming proposals.
 If `propose_meeting` is NOT in your allowlist, refuse any scheduling request politely, explaining that the principal has not granted this connection permission to request meetings.
 
+## Conversation Pace (CRITICAL — read carefully)
+You operate on a STRICT turn budget. After ~3 of your replies on this thread, the system inserts a halt note and you stop being run on this thread. So every reply must move things forward — no filler.
+
+On EVERY turn, do exactly one of these:
+  (a) **Act with a tool.** If `propose_meeting` is allowed and the request is to schedule, call it on this turn with concrete times. If they need profile info you can share, share it.
+  (b) **Escalate to your principal.** When you can't act because you lack data, lack a permission, or the request needs human judgment, say so plainly. The exact phrasing is up to you, but the message must clearly indicate that you're handing this off to your human and they will follow up. Some natural ways: "I'll loop my principal in on this — they'll follow up directly", "Let me check with my person and circle back", "Passing this along to {principal_name}; they'll be in touch". Vary the phrasing — don't paste a canned line. Once you escalate, the system will mark the thread as needing your principal's attention and stop running you on it. This is the RIGHT outcome when you can't act.
+  (c) **Ask ONE specific question** that, when answered, lets you do (a) on the next turn. Examples: "Which 30-minute window works — Tuesday 3pm UTC or Friday 10am UTC?" Never ask vague open questions like "when's good?"
+
+Things you must NEVER do:
+  - "Sounds good, I'll keep an eye out."
+  - "Looking forward to hearing from you!"
+  - "Have a great day!"
+  - "I'll be in touch soon."
+  - "Thank you for the response." as a standalone reply.
+  - Any reply that's pure acknowledgment with no concrete next step.
+
+These look polite but they burn turns and produce no outcome. They are FORBIDDEN as standalone replies. If you would otherwise reply with one of these, replace it with option (b) — your principal can take it from there.
+
+## When the foreign agent has already escalated
+If the foreign agent's most recent message indicates that THEY are bringing the conversation back to their human (e.g. "I'll bring this to my principal", "Let me check with my person", "Passing this to <name>", "Off the agent channel for now") — do NOT reply at all. Their conversation has paused; replying just creates a polite-loop with no progress. Output an empty reply or a single short acknowledgment that itself escalates: "Same here — I'll bring this to my principal." Then stop. Do not ask follow-up questions; do not propose anything new.
+
 ## Rules
 1. When calling a tool, ALWAYS pass the `user_id` parameter as "{user_id}".
 2. ONLY call tools in the per-thread allowlist above. Anything else WILL be blocked.
 3. Keep your reply brief, professional, and clearly framed as coming from the agent (not the principal).
 4. When refusing, be polite and concrete: name what was asked, name the missing permission, and offer an alternative if you can.
+5. End every turn with EITHER a tool call (option a) OR a clear escalation phrase (option b) OR a single specific question (option c). If none of those fit, escalate.
 """
 
     # ── Internal mode: chatting directly with the principal ──────────
@@ -1249,6 +1376,25 @@ async def handle_user_message(
                         print(f"[orchestrator] propose_meeting external: overriding user_id → {foreign_user_id} (foreign proposer)")
                 except Exception as e:
                     print(f"[orchestrator] Failed to resolve foreign user for propose_meeting: {e}")
+
+            # Approval gate: in external mode, certain commitment-class
+            # tools never fire silently. Stage a pending_approvals row and
+            # return a "queued" stub to the LLM instead of running the tool.
+            staged = _maybe_stage_approval(
+                user_id=user_id,
+                fn_name=fn_name,
+                fn_args=fn_args,
+                is_external=is_external,
+                conversation_id=conversation_id,
+                sender_agent_id=sender_agent_id,
+            )
+            if staged is not None:
+                actions_taken.append({"tool": fn_name, "args": fn_args, "result": staged})
+                if isinstance(provider, GeminiProvider):
+                    messages.append(provider.build_tool_result_message(tc["id"], json.dumps(staged), tool_name=fn_name))
+                else:
+                    messages.append(provider.build_tool_result_message(tc["id"], json.dumps(staged)))
+                continue
 
             # Execute via MCP — run the (sync) tool in a thread pool so we
             # don't pin the FastAPI event loop. This matters especially for
@@ -1512,6 +1658,25 @@ async def handle_user_message_stream(
                         fn_args["user_id"] = r.data[0]["user_id"]
                 except Exception as e:
                     print(f"[orchestrator/stream] Failed to resolve foreign user: {e}")
+
+            # Approval gate (external mode commitment-class tools).
+            staged = _maybe_stage_approval(
+                user_id=user_id,
+                fn_name=fn_name,
+                fn_args=fn_args,
+                is_external=is_external,
+                conversation_id=conversation_id,
+                sender_agent_id=sender_agent_id,
+            )
+            if staged is not None:
+                executed_tools.add(fn_name)
+                actions_taken.append({"tool": fn_name, "args": fn_args, "result": staged})
+                yield {"type": "tool_result", "id": tc["id"], "name": fn_name, "result": staged}
+                if isinstance(provider, GeminiProvider):
+                    messages.append(provider.build_tool_result_message(tc["id"], json.dumps(staged), tool_name=fn_name))
+                else:
+                    messages.append(provider.build_tool_result_message(tc["id"], json.dumps(staged)))
+                continue
 
             # Run the tool in a thread
             print(f"[orchestrator/stream] Executing local tool '{fn_name}' with args: {fn_args}")

@@ -12,6 +12,10 @@ interface Thread {
   initiator_name: string;
   receiver_name: string;
   status: "pending" | "accepted" | "blocked";
+  // Agent-conversation phase, separate from the connection-request `status`
+  // above. Backed by dm_threads.lifecycle. May be missing on older rows
+  // — treat undefined as "pending".
+  lifecycle?: "pending" | "active" | "needs_human" | "human_handling";
   // Per-side modes — each participant owns their own half independently.
   // The legacy single `mode` field may still come back from older rows;
   // we read it as a fallback but the two new fields are authoritative.
@@ -20,6 +24,15 @@ interface Thread {
   mode?: "human" | "agent";
   created_at: string;
 }
+
+// Friendly per-state copy + tag color for the lifecycle pill at the top
+// of an open thread.
+const LIFECYCLE_LABEL: Record<NonNullable<Thread["lifecycle"]>, { text: string; tag: string }> = {
+  pending:         { text: "Waiting for them",     tag: "tag-amber" },
+  active:          { text: "Agents talking",       tag: "tag-teal"  },
+  needs_human:     { text: "Needs you",            tag: "tag-amber" },
+  human_handling:  { text: "You're handling this", tag: "tag-teal"  },
+};
 
 interface ConnectionPermissions {
   can_request_meetings: boolean;
@@ -160,19 +173,24 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
       if (data && isMounted) {
         setThreads(data);
 
-        // If the page was opened with ?thread=<id>, auto-select it once
-        // the row is in the list. We use functional setState (instead of
-        // reading `activeThread` from a stale closure) so we ONLY set it
-        // when there isn't already an active thread — otherwise the poll
-        // would re-set it on every cycle and bounce the user out of any
-        // tab they had switched to.
-        if (initialThreadId) {
-          setActiveThread((current) => {
-            if (current) return current;
+        // Keep the currently-open thread fresh — if it's in the list,
+        // patch in the latest row so columns updated by the backend
+        // (lifecycle, status, mode flips) propagate to the header pill
+        // and message styling without needing a full page reload.
+        setActiveThread((current) => {
+          if (current) {
+            const fresh = data.find((t: Thread) => t.id === current.id);
+            if (fresh) return fresh;
+            return current;
+          }
+          // First-load: if the page was opened with ?thread=<id>, auto-
+          // select that thread once it's in the list.
+          if (initialThreadId) {
             const target = data.find((t: Thread) => t.id === initialThreadId);
             return target ?? null;
-          });
-        }
+          }
+          return current;
+        });
       }
     };
 
@@ -978,13 +996,21 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                 </p>
               </div>
               <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px" }}>
-                {activeThread.status === "accepted" ? (
-                  <span className="tag tag-teal" style={{ fontSize: "9px" }}>CONNECTED</span>
-                ) : activeThread.status === "pending" ? (
-                  <span className="tag tag-amber" style={{ fontSize: "9px" }}>PENDING</span>
-                ) : (
-                  <span className="tag tag-coral" style={{ fontSize: "9px" }}>BLOCKED</span>
-                )}
+                {(() => {
+                  // Connection request was rejected — show that loud, ignore lifecycle.
+                  if (activeThread.status === "blocked") {
+                    return <span className="tag tag-coral" style={{ fontSize: "9px" }}>BLOCKED</span>;
+                  }
+                  // Otherwise surface the friendly conversation phase
+                  // (pending → active → needs_human → human_handling).
+                  const phase = activeThread.lifecycle || "pending";
+                  const label = LIFECYCLE_LABEL[phase] || LIFECYCLE_LABEL.pending;
+                  return (
+                    <span className={`tag ${label.tag}`} style={{ fontSize: "9px" }}>
+                      {label.text}
+                    </span>
+                  );
+                })()}
 
                 {/* ── Connection settings (permissions drawer) ── */}
                 <button
@@ -1493,6 +1519,41 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
               {messages
                 .filter((m) => (m.channel || "human") === activeChannel)
                 .map((m) => {
+                // System notes (halt notes, agent escalation summaries)
+                // render as a single centered, ink-muted line — no bubble,
+                // no avatar. Per the brief's S8 system-note pattern.
+                if (m.sender_type === "system") {
+                  return (
+                    <div
+                      key={m.id}
+                      style={{
+                        alignSelf: "center",
+                        maxWidth: "90%",
+                        textAlign: "center",
+                        padding: "8px 14px",
+                        fontFamily: "DM Sans, sans-serif",
+                        fontSize: "12.5px",
+                        fontStyle: "italic",
+                        color: "var(--text-muted)",
+                        lineHeight: 1.5,
+                        opacity: 0.85,
+                      }}
+                    >
+                      {m.content}
+                      <span
+                        style={{
+                          fontFamily: "IBM Plex Mono, monospace",
+                          fontSize: "10px",
+                          marginLeft: "8px",
+                          opacity: 0.7,
+                        }}
+                      >
+                        · {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </div>
+                  );
+                }
+
                 const isMe =
                   m.sender_id === sessionUser.id ||
                   m.sender_id === sessionAgentId;

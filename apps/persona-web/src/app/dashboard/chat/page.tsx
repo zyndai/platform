@@ -1,21 +1,12 @@
 "use client";
 
-import { useDashboard } from "@/contexts/DashboardContext";
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
-import ChatInterface from "@/components/ChatInterface";
+import ChatInterface from "@/components/chat/ChatInterface";
 
-export default function ChatPage() {
-  const { hasPersona, personaLoading } = useDashboard();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!personaLoading && !hasPersona) {
-      router.replace("/dashboard/identity");
-    }
-  }, [hasPersona, personaLoading, router]);
-
-  if (personaLoading || !hasPersona) return null;
-
+/**
+ * Home — Aria's primary daily surface (S8 in SCREENS.md).
+ * The DashboardShell already gates on auth and onboarding completion,
+ * so by the time this renders we know the user has a persona.
+ */
+export default function HomePage() {
   return <ChatInterface />;
 }

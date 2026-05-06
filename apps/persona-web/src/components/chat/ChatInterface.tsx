@@ -59,7 +59,11 @@ function ThinkingPanel({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const preview = lastLine(thinking);
+  // While streaming, the last-line preview re-renders with every token —
+  // it visually flickers through partial words and feels laggy. Show a
+  // stable "Thinking…" indicator instead, and only switch to the
+  // (now static) preview once the stream completes.
+  const preview = streaming ? "" : lastLine(thinking);
   return (
     <div className="thinking-panel">
       <button type="button" className="thinking-head" onClick={onToggle}>
@@ -69,7 +73,12 @@ function ThinkingPanel({
           className={`chev ${expanded ? "open" : ""}`}
         />
         <span className="label">{streaming ? "Thinking" : "Thought process"}</span>
-        {!expanded && preview && (
+        {streaming && !expanded && (
+          <span className="preview thinking-streaming">
+            <ThinkingDot />
+          </span>
+        )}
+        {!streaming && !expanded && preview && (
           <span className="preview">{preview}</span>
         )}
       </button>
@@ -84,8 +93,14 @@ function ToolActivity({
   toolCalls: ChatMessage["toolCalls"];
 }) {
   if (!toolCalls || toolCalls.length === 0) return null;
-  const visible = toolCalls.filter((t) => t.status === "running" || t.status === "error");
-  if (visible.length === 0) return null;
+  const running = toolCalls.filter(
+    (t) => t.status === "running" || t.status === "error",
+  );
+  // When nothing is currently running, keep the most recent finished tool
+  // visible as the "last status" — otherwise the bubble flashes blank
+  // between tool steps until the next event arrives.
+  const visible =
+    running.length > 0 ? running : [toolCalls[toolCalls.length - 1]];
   return (
     <div className="tool-activity">
       {visible.map((tc) => (
@@ -198,12 +213,21 @@ function MessageRow({
   const isAria = message.role === "assistant";
   const personaHits = isAria ? extractPersonaHits(message.actions) : [];
   const handoffs = isAria ? extractHandoffs(message.actions) : [];
+  // Show the placeholder whenever we're streaming but have nothing else
+  // to render right now — the prior version hid it as soon as ANY tool
+  // existed (even a finished one), leaving the bubble blank during the
+  // gap between tool steps.
+  const hasRunningTool =
+    !!message.toolCalls?.some(
+      (t) => t.status === "running" || t.status === "error",
+    );
   const showPlaceholder =
     isAria &&
-    message.streaming &&
+    !!message.streaming &&
     !message.content &&
     !message.thinking &&
-    !(message.toolCalls && message.toolCalls.length > 0);
+    !hasRunningTool &&
+    !message.toolCalls?.length;
 
   return (
     <>

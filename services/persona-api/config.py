@@ -92,8 +92,15 @@ CUSTOM_LLM_BASE_URL: str = os.getenv("CUSTOM_LLM_BASE_URL", "")
 CUSTOM_LLM_API_KEY: str = os.getenv("CUSTOM_LLM_API_KEY", "")
 CUSTOM_LLM_MODEL: str = os.getenv("CUSTOM_LLM_MODEL", "")
 
+# ── OpenRouter ───────────────────────────────────────────────────────
+OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "")
+OPENROUTER_BASE_URL: str = os.getenv(
+    "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+)
+
 # ── LLM Provider Selection ──────────────────────────────────────────
-# "openai", "gemini", or "custom"
+# "openai", "gemini", "openrouter", or "custom"
 LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
 
 # ── Apify (LinkedIn scraping) ────────────────────────────────────────

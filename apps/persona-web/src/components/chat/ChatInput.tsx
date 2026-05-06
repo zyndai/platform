@@ -49,9 +49,7 @@ export default function ChatInput({
   return (
     <div
       style={{
-        padding: "16px 48px 28px",
-        maxWidth: 800,
-        margin: "0 auto",
+        padding: "16px 16px 20px",
         width: "100%",
       }}
     >

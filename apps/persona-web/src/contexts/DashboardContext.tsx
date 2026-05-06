@@ -134,7 +134,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       if (!session) {
         router.replace("/");
       } else {
-        setUser(session.user);
+        // Token refreshes ship a new `session.user` reference with the
+        // same id — keep the prev object so downstream effects don't
+        // re-run on every tab refocus (which used to flash the
+        // "Just a sec…" loader).
+        setUser((prev) =>
+          prev?.id === session.user.id ? prev : session.user,
+        );
         setLoading(false);
       }
     });
@@ -143,7 +149,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       if (!session) {
         router.replace("/");
       } else {
-        setUser(session.user);
+        setUser((prev) =>
+          prev?.id === session.user.id ? prev : session.user,
+        );
         setLoading(false);
       }
     });

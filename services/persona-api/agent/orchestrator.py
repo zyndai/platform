@@ -344,14 +344,27 @@ class LLMProvider:
 class OpenAIProvider(LLMProvider):
     """OpenAI GPT models with function calling."""
 
-    def __init__(self, base_url: str | None = None, api_key: str | None = None, model: str | None = None):
+    def __init__(
+        self,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        model: str | None = None,
+        default_headers: dict | None = None,
+    ):
         from openai import OpenAI
         kwargs = {}
+        headers: dict = {}
         if base_url:
             kwargs["base_url"] = base_url
             # Bypass Cloudflare WAF bot blocking if using a custom mapped domain
-            kwargs["default_headers"] = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) width/1920"}
-            
+            headers["User-Agent"] = (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) width/1920"
+            )
+        if default_headers:
+            headers.update(default_headers)
+        if headers:
+            kwargs["default_headers"] = headers
+
         # Some API gateways reject empty Bearer tokens
         safe_api_key = api_key or config.OPENAI_API_KEY or "dummy-key"
         self._client = OpenAI(api_key=safe_api_key, **kwargs)
@@ -879,6 +892,16 @@ def _get_provider() -> LLMProvider:
     provider_name = config.LLM_PROVIDER.lower()
     if provider_name == "gemini":
         return GeminiProvider()
+    elif provider_name == "openrouter":
+        return OpenAIProvider(
+            base_url=config.OPENROUTER_BASE_URL,
+            api_key=config.OPENROUTER_API_KEY,
+            model=config.OPENROUTER_MODEL,
+            default_headers={
+                "HTTP-Referer": config.FRONTEND_URL or "https://persona.zynd.ink",
+                "X-Title": "Zynd",
+            },
+        )
     elif provider_name == "custom":
         return OpenAIProvider(
             base_url=config.CUSTOM_LLM_BASE_URL,

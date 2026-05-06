@@ -24,8 +24,10 @@ export interface ChatMessage {
   toolCalls?: ToolCallState[];
   /** Final actions array from the orchestrator's `done` event. */
   actions?: ActionRecord[];
-  /** Synthetic = client-only message (welcome line). Don't persist or count. */
+  /** Synthetic = client-only message (welcome line, callback banner). Don't persist or count. */
   synthetic?: boolean;
+  /** Set on synthetic A2A-callback banners — used for dedup if realtime re-delivers. */
+  callbackId?: string;
   /** True while the SSE is open. */
   streaming?: boolean;
   error?: string;

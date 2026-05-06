@@ -14,6 +14,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
+import { ChatProvider } from "@/contexts/ChatContext";
 import TaskToasts from "@/components/TaskToasts";
 import { Monogram, Avatar, ThinkingDot } from "@/components/ui";
 import { stepToPath } from "@/lib/onboarding";
@@ -174,7 +175,9 @@ export default function DashboardLayout({
 }) {
   return (
     <DashboardProvider>
-      <DashboardShell>{children}</DashboardShell>
+      <ChatProvider>
+        <DashboardShell>{children}</DashboardShell>
+      </ChatProvider>
     </DashboardProvider>
   );
 }

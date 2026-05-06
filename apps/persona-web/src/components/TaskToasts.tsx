@@ -190,6 +190,47 @@ export default function TaskToasts() {
           });
         },
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "callback_results",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          // Inbound A2A push notification — another persona's reply
+          // landed asynchronously. Surface it as a toast so the user
+          // notices even if they're on a different page; clicking
+          // jumps to the source thread.
+          const row = payload.new as {
+            id: string;
+            thread_id: string;
+            peer_agent_id: string;
+            reply_text: string | null;
+            task_state: string;
+          };
+          const peerLabel = row.peer_agent_id.includes(":")
+            ? row.peer_agent_id.split(":").pop()!.slice(0, 8)
+            : row.peer_agent_id.slice(0, 8);
+          const body =
+            row.reply_text?.trim() ||
+            (row.task_state === "completed"
+              ? "They acknowledged."
+              : `Status: ${row.task_state}`);
+          pushToast({
+            id: `cb-${row.id}-${Date.now()}`,
+            threadId: row.thread_id,
+            taskId: row.id,
+            title: `Reply from ${peerLabel}`,
+            body,
+            tone:
+              row.task_state === "failed" || row.task_state === "rejected"
+                ? "warn"
+                : "info",
+          });
+        },
+      )
       .subscribe();
 
     return () => {

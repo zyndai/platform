@@ -1530,17 +1530,22 @@ async def a2a_push_inbound(user_id: str, request: Request):
     interrupted state. The body is a signed wrapper Message whose
     DataPart carries a TaskStatusUpdateEvent.
 
-    We:
-      1. Verify the wrapper's x-zynd-auth (strict).
-      2. Match the optional Bearer token against any token we registered
-         when sending to that peer (best-effort — phase 3.5 doesn't yet
-         persist outbound push tokens; we accept any signed wrapper).
-      3. Extract the inner TaskStatusUpdateEvent and log it.
+    Verification chain (each step rejects on failure):
 
-    Returns 200 with a tiny ack body. The opener-side handling
-    (correlating push events to outbound tasks they opened, surfacing
-    replies in the UI) lands in a later phase when outbound task
-    tracking is added.
+      1. Strict x-zynd-auth verification on the wrapper.
+      2. ``Authorization: Bearer <token>`` MUST match a row in
+         ``outbound_callbacks`` we issued when sending. Without this,
+         any signed peer could write into any user's callback log.
+      3. The matched callback row must belong to ``user_id`` from the
+         path — defends against a peer using a token issued for one
+         persona to push into another.
+      4. The matched callback row's ``peer_agent_id`` must match the
+         verified sender. Defends against token theft + replay between
+         peers.
+
+    On success: write a ``callback_results`` row, flip parent status if
+    terminal, return ack. Frontend's Supabase realtime subscription on
+    ``callback_results`` picks the row up and renders it live.
     """
     persona = get_persona_status(user_id)
     if not persona.get("deployed"):
@@ -1577,17 +1582,96 @@ async def a2a_push_inbound(user_id: str, request: Request):
     if event is None:
         raise HTTPException(status_code=400, detail="Push wrapper has no status-update DataPart.")
 
+    # ── Bearer token correlation ────────────────────────────────────
+    # Mandatory: a push that doesn't claim a token we issued is
+    # rejected outright. The peer learned this token from our original
+    # message/send pushNotificationConfig.
+    auth_header = request.headers.get("authorization") or ""
+    bearer = ""
+    if auth_header.lower().startswith("bearer "):
+        bearer = auth_header[7:].strip()
+    if not bearer:
+        raise HTTPException(
+            status_code=401,
+            detail="Push requires Authorization: Bearer <push_token> we issued.",
+        )
+
+    from services import callbacks as cb_service
+
+    callback = cb_service.lookup_by_token(bearer)
+    if callback is None:
+        raise HTTPException(status_code=401, detail="Unknown push token.")
+
+    if callback.get("user_id") != user_id:
+        # Token issued to a different persona — refuse.
+        raise HTTPException(
+            status_code=403,
+            detail="Push token does not belong to this persona.",
+        )
+
+    if callback.get("peer_agent_id") != sender_entity_id:
+        # Token was meant for a different peer — refuse.
+        raise HTTPException(
+            status_code=403,
+            detail="Push sender does not match the peer the token was issued for.",
+        )
+
+    # Extract a readable reply text from the event's status.message
+    # (A2A v0.3: TaskStatusUpdateEvent.status is a TaskStatus with an
+    # optional Message). Concatenate all TextParts; ignore DataParts
+    # for the readable summary (they're available in raw_event).
+    task_state = (event.get("status") or {}).get("state") or "unknown"
+    reply_text = _extract_reply_text(event)
+
+    try:
+        result_id = cb_service.record_result(
+            callback=callback,
+            task_state=task_state,
+            reply_text=reply_text,
+            raw_event=event,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception(
+            "[a2a push-inbound] record_result failed cb=%s: %s",
+            callback.get("id"), e,
+        )
+        # If the DB write fails we still ack so the peer doesn't retry
+        # in a tight loop. The result is lost — log loudly instead.
+        return {
+            "status": "ack_no_persistence",
+            "task_id": event.get("taskId"),
+            "task_state": task_state,
+            "from": sender_entity_id,
+        }
+
     logger.info(
-        f"[a2a push-inbound user={user_id[:8]}] from={sender_entity_id[:12]} "
-        f"task={event.get('taskId','')[:8]} state={(event.get('status') or {}).get('state')} "
-        f"final={event.get('final')}"
+        f"[a2a push-inbound user={user_id[:8]}] cb={result_id[:8]} "
+        f"from={sender_entity_id[:12]} task={event.get('taskId','')[:8]} "
+        f"state={task_state} final={event.get('final')}"
     )
 
-    # Phase 3.5: just acknowledge. Outbound task tracking + UI surfacing
-    # of pushed replies is a later-phase enhancement.
     return {
         "status": "received",
+        "callback_result_id": result_id,
         "task_id": event.get("taskId"),
-        "task_state": (event.get("status") or {}).get("state"),
+        "task_state": task_state,
         "from": sender_entity_id,
     }
+
+
+def _extract_reply_text(event: dict[str, Any]) -> Optional[str]:
+    """Pull a flat string from a TaskStatusUpdateEvent's status.message.
+    Returns None when the event carries no message at all (e.g.
+    intermediate state transitions with no narration)."""
+    status = event.get("status") or {}
+    msg = status.get("message")
+    if not isinstance(msg, dict):
+        return None
+    parts = msg.get("parts") or []
+    chunks: list[str] = []
+    for p in parts:
+        if isinstance(p, dict) and p.get("kind") == "text":
+            t = p.get("text")
+            if isinstance(t, str) and t:
+                chunks.append(t)
+    return "\n".join(chunks) if chunks else None

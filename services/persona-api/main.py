@@ -49,6 +49,12 @@ async def lifespan(app: FastAPI):
     from agent.a2a_router import start_a2a_lifecycle
     await start_a2a_lifecycle()
 
+    # Wire the outbound-callback registrar into agent.a2a.transport.
+    # Importing this module performs the wiring as a side effect — no
+    # function call needed. Without this, push-mode dispatches degrade
+    # to sync SEND because the dispatcher has no place to persist them.
+    import services.callbacks  # noqa: F401
+
     yield
 
     # ── Shutdown ──

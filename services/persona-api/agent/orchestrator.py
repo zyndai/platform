@@ -21,8 +21,45 @@ import config
 from mcp.server import mcp_server
 from services.token_store import list_connected_providers
 
-# ── Conversation memory (in-memory; move to Supabase for persistence) ─
+# ── Conversation memory ──────────────────────────────────────────────
+# In-memory cache for the LLM turn loop (same conversation can fire
+# many tool-call iterations within a single send), backed by a row
+# per message in `chat_messages` so /api/chat/history can rehydrate
+# on page reload. The cache is best-effort — losing it on restart
+# just means the first message after a redeploy starts a slightly
+# fresh prompt, which is fine.
 _conversations: dict[str, list[dict]] = {}
+
+
+def _persist_chat_message(
+    user_id: str,
+    conversation_id: str,
+    role: str,
+    content: str,
+    actions: list[dict] | None = None,
+) -> None:
+    """Best-effort write to `chat_messages`. Failures don't break the
+    LLM turn — we log and move on. Skipped for agent-to-agent
+    conversations (which use a `thread:<uuid>` conversation_id and
+    have their own DM-side persistence in dm_messages)."""
+    if not conversation_id or conversation_id.startswith("thread:"):
+        return
+    if not content:
+        return
+    try:
+        from supabase import create_client
+        sb = create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+        row = {
+            "user_id": user_id,
+            "conversation_id": conversation_id,
+            "role": role,
+            "content": content,
+        }
+        if actions:
+            row["actions"] = actions
+        sb.table("chat_messages").insert(row).execute()
+    except Exception as e:  # noqa: BLE001
+        print(f"[orchestrator] persist chat_messages failed: {type(e).__name__}: {e}")
 
 
 # =====================================================================
@@ -1300,6 +1337,8 @@ async def handle_user_message(
     print("System Prompt: ", system_msg)
     user_msg = {"role": "user", "content": message}
     history.append(user_msg)
+    if not is_external:
+        _persist_chat_message(user_id, conversation_id, "user", message)
 
     messages = [system_msg] + history
 
@@ -1343,8 +1382,13 @@ async def handle_user_message(
         if not tool_calls:
             raw_reply = text_response or ""
             history.append({"role": "assistant", "content": raw_reply})
+            final_reply = strip_think_tags(raw_reply)
+            if not is_external:
+                _persist_chat_message(
+                    user_id, conversation_id, "assistant", final_reply, actions_taken,
+                )
             return {
-                "reply": strip_think_tags(raw_reply),
+                "reply": final_reply,
                 "actions_taken": actions_taken,
                 "conversation_id": conversation_id,
             }
@@ -1365,8 +1409,13 @@ async def handle_user_message(
         if not new_tool_calls:
             raw_reply = text_response or "Done! Let me know if you need anything else."
             history.append({"role": "assistant", "content": raw_reply})
+            final_reply = strip_think_tags(raw_reply)
+            if not is_external:
+                _persist_chat_message(
+                    user_id, conversation_id, "assistant", final_reply, actions_taken,
+                )
             return {
-                "reply": strip_think_tags(raw_reply),
+                "reply": final_reply,
                 "actions_taken": actions_taken,
                 "conversation_id": conversation_id,
             }
@@ -1586,6 +1635,8 @@ async def handle_user_message_stream(
     }
     user_msg = {"role": "user", "content": message}
     history.append(user_msg)
+    if not is_external:
+        _persist_chat_message(user_id, conversation_id, "user", message)
     messages = [system_msg] + history
 
     tools = _capabilities_to_generic_tools()
@@ -1636,9 +1687,14 @@ async def handle_user_message_stream(
         if not turn_tool_calls:
             raw_reply = turn_text
             history.append({"role": "assistant", "content": raw_reply})
+            final_reply = strip_think_tags(raw_reply)
+            if not is_external:
+                _persist_chat_message(
+                    user_id, conversation_id, "assistant", final_reply, actions_taken,
+                )
             yield {
                 "type": "done",
-                "reply": strip_think_tags(raw_reply),
+                "reply": final_reply,
                 "actions_taken": actions_taken,
                 "conversation_id": conversation_id,
             }
@@ -1657,9 +1713,14 @@ async def handle_user_message_stream(
         if not new_tool_calls:
             raw_reply = turn_text or "Done! Let me know if you need anything else."
             history.append({"role": "assistant", "content": raw_reply})
+            final_reply = strip_think_tags(raw_reply)
+            if not is_external:
+                _persist_chat_message(
+                    user_id, conversation_id, "assistant", final_reply, actions_taken,
+                )
             yield {
                 "type": "done",
-                "reply": strip_think_tags(raw_reply),
+                "reply": final_reply,
                 "actions_taken": actions_taken,
                 "conversation_id": conversation_id,
             }
@@ -1766,6 +1827,10 @@ async def handle_user_message_stream(
         "I performed the requested actions but ran out of reasoning steps before I could "
         f"summarize. Tools called: {tools_called}. Ask me to summarize and I'll do it now."
     )
+    if not is_external:
+        _persist_chat_message(
+            user_id, conversation_id, "assistant", fallback, actions_taken,
+        )
     yield {
         "type": "done",
         "reply": fallback,

@@ -348,19 +348,38 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend):
     developer_proof = build_derivation_proof(dev_seed, public_key_bytes, index)
 
     client = A2AClient(keypair=keypair, entity_id=my_agent_id, developer_proof=developer_proof)
+    # Card URL is sibling to the a2a URL (same base + `/.well-known/agent-card.json`).
+    # The dispatcher fetches it (cached 5min), reads capabilities + the
+    # x-zynd.requiresPushNotification hint, and picks the transport.
+    card_url = a2a_url.replace("/a2a/v1", "/.well-known/agent-card.json")
+    from agent.a2a.transport import dispatch, Intent
     delivery_result: dict = {"delivered": False}
     try:
-        task = await client.send(
-            a2a_url,
-            text=req.content,
+        result = await dispatch(
+            client,
+            peer_entity_id=partner_agent_id,
+            peer_a2a_url=a2a_url,
+            peer_card_url=card_url,
+            user_id=user_id,
+            thread_id=req.thread_id,
             context_id=req.thread_id,
+            text=req.content,
+            intent=Intent.AGENT_TO_AGENT,
+            origin_kind="agent_send",
+            origin_ref={"thread_id": req.thread_id},
         )
+        task = result.task or {}
         delivery_result = {
             "delivered": True,
+            "transport": result.transport.value,
             "task_id": task.get("id"),
             "task_state": (task.get("status") or {}).get("state"),
+            "callback_id": result.callback_id,
         }
-        print(f"[agent-send] → {a2a_url} task={task.get('id', '')[:8]} state={delivery_result['task_state']}")
+        print(
+            f"[agent-send] → {a2a_url} via={result.transport.value} "
+            f"task={task.get('id', '')[:8]} state={delivery_result['task_state']}"
+        )
     except A2AError as e:
         print(f"[agent-send] ⚠ receiver rejected: {e.code} {e.message} (reason={e.reason})")
         delivery_result = {"delivered": False, "error_code": e.code, "error_reason": e.reason}
@@ -400,13 +419,18 @@ async def create_thread(user_id: str, req: ThreadCreateRequest):
     if existing:
         return {"status": "exists", "thread": existing}
 
+    # The schema replaced the single `mode` column with per-side
+    # `initiator_mode` / `receiver_mode` (see patch_dm_thread_modes_per_side.sql).
+    # The caller's `req.mode` describes how *they* want their side to
+    # behave; the receiver's side defaults to 'agent' (their orchestrator
+    # picks up first) and they can flip to 'human' from their UI.
     inserted = sb.table("dm_threads").insert({
         "initiator_id": my_agent_id,
         "receiver_id": req.target_agent_id,
         "initiator_name": my_name,
         "receiver_name": req.target_name or "Network Agent",
         "status": "pending",
-        "mode": req.mode,
+        "initiator_mode": req.mode,
     }).execute()
 
     if not inserted.data:

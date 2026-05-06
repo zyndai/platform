@@ -14,6 +14,8 @@ Tools:
 import asyncio
 import json
 import logging
+from typing import Optional
+
 import requests
 
 import config
@@ -416,15 +418,34 @@ def _send_via_a2a_v3(
         developer_proof=developer_proof,
     )
 
-    async def _go() -> dict:
-        return await client.send(
-            a2a_url,
-            text=message_text,
+    # Card URL is sibling to the A2A URL — replacing the path segment
+    # is correct for both our scheme and SDK-built peers.
+    card_url = a2a_url.replace("/a2a/v1", "/.well-known/agent-card.json")
+
+    from agent.a2a.transport import dispatch, Intent, Transport, infer_intent
+
+    async def _go() -> tuple[dict, Transport, Optional[str]]:
+        result = await dispatch(
+            client,
+            peer_entity_id=target_agent_id,
+            peer_a2a_url=a2a_url,
+            peer_card_url=card_url,
+            user_id=sender_user_id,
+            thread_id=context_id,
             context_id=context_id,
+            text=message_text,
+            # context_id is a thread id; the tool is invoked from the
+            # LLM tool loop, so the eventual reply should route back to
+            # the orchestrator. origin_ref carries the thread so the
+            # frontend can also pin it to a chat.
+            intent=infer_intent(target_agent_id),
+            origin_kind="mcp_tool",
+            origin_ref={"thread_id": context_id, "tool": "message_zynd_agent"},
         )
+        return (result.task or {}), result.transport, result.callback_id
 
     try:
-        task = asyncio.run(_go())
+        task, transport_used, callback_id = asyncio.run(_go())
     except A2AError as e:
         # Translate the receiver's named error reason into a structured
         # tool result so the LLM can refuse / retry / escalate cleanly.
@@ -458,11 +479,25 @@ def _send_via_a2a_v3(
 
     state = ((task.get("status") or {}).get("state")) or "unknown"
     reply_text = extract_reply_text(task)
-    return {
+    base = {
         "task": task,
         "task_state": state,
         "reply_text": reply_text,
+        "transport": transport_used.value,
     }
+    if transport_used == Transport.PUSH:
+        # The receiver acked our message but the reply will arrive later
+        # via push notification. Tell the LLM the message is in flight
+        # and not to keep waiting in the same tool loop.
+        base["callback_id"] = callback_id
+        base["pending"] = True
+        base["message"] = (
+            "The message was delivered. The other persona is processing it — "
+            "their reply will arrive asynchronously and surface in the chat "
+            "when it's ready. Tell the user you've sent the message and "
+            "they'll see the response come in shortly."
+        )
+    return base
 
 
 def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: str, message: str) -> dict:

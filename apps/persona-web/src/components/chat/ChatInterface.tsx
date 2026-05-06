@@ -13,6 +13,7 @@ import {
 } from "@/components/ui";
 import { getSupabase } from "@/lib/supabase";
 import { useDashboard } from "@/contexts/DashboardContext";
+import { useChat } from "@/contexts/ChatContext";
 import type {
   ChatMessage,
   PersonaHit,
@@ -281,11 +282,17 @@ function MessageRow({
 export default function ChatInterface() {
   const router = useRouter();
   const { user } = useDashboard();
-
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Chat history + conversation id live in ChatProvider so they persist
+  // across dashboard navigation. Local-only state (input, busy flags,
+  // expanded thinking panels) stays here — they're per-mount.
+  const {
+    messages,
+    setMessages,
+    conversationId,
+    setConversationId,
+  } = useChat();
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [conversationId, setConversationId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expandedThinking, setExpandedThinking] = useState<Set<number>>(new Set());
 
@@ -340,6 +347,11 @@ export default function ChatInterface() {
     };
   }, [user, fetchApprovals]);
 
+  // Note: the global callback_results subscription lives in
+  // ChatProvider so a reply that arrives while the user is on a
+  // different page still gets injected into the shared thread state
+  // by the time they navigate back here.
+
   const decideApproval = useCallback(
     async (approvalId: string, decision: "approve" | "decline") => {
       const sb = getSupabase();
@@ -387,51 +399,9 @@ export default function ChatInterface() {
     return () => { cancelled = true; };
   }, [user]);
 
-  // Hydrate chat history on mount. Without this the home thread starts
-  // empty every refresh, which the user explicitly called out — Aria
-  // forgets the entire conversation. We pull the latest conversation
-  // and seed state with its messages so the user can pick up where
-  // they left off.
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const sb = getSupabase();
-        const {
-          data: { session },
-        } = await sb.auth.getSession();
-        if (!session?.access_token) return;
-        const res = await fetch(`${API}/api/chat/history`, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (cancelled) return;
-        if (data.conversation_id) {
-          setConversationId(data.conversation_id);
-        }
-        type Row = {
-          role: "user" | "assistant";
-          content: string;
-          actions?: ChatMessage["actions"];
-        };
-        const rows: Row[] = data.messages || [];
-        if (rows.length > 0) {
-          setMessages(
-            rows.map((r) => ({
-              role: r.role,
-              content: r.content,
-              actions: r.actions || undefined,
-            })),
-          );
-        }
-      } catch {
-        /* ignore — chat just starts fresh */
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [user]);
+  // Note: chat history hydration lives in ChatProvider — runs once
+  // per signed-in user at dashboard mount, so navigating back to
+  // /dashboard/chat doesn't trigger a refetch or flash a loader.
 
   // Display the welcome message synthetically while the thread is empty.
   // This isn't persisted and isn't sent to the orchestrator.
@@ -678,6 +648,22 @@ export default function ChatInterface() {
       body: JSON.stringify({ thread_id: threadId, content: message }),
     });
     if (!sendRes.ok) throw new Error(await sendRes.text());
+    // The backend returns 200 even when the receiver rejects (so the
+    // sender's local DB row isn't lost). We need to look at the
+    // delivery_result body to spot peer-side rejections like
+    // "awaiting_acceptance".
+    const sendData = await sendRes.json().catch(() => null);
+    const delivery = sendData?.delivery;
+    if (delivery && delivery.delivered === false) {
+      const reason = delivery.error_reason || delivery.error || "delivery_failed";
+      if (reason === "awaiting_acceptance") {
+        throw new Error(
+          "I sent the connection request — they need to accept before I can deliver the message. " +
+            "I'll try again automatically once they do.",
+        );
+      }
+      throw new Error(`The other agent rejected the message (${reason}).`);
+    }
     return threadId;
   };
 
@@ -685,12 +671,12 @@ export default function ChatInterface() {
     const targetName = introTarget?.name || "their assistant";
     setIntroTarget(null);
     setToast(`Sent to ${targetName}'s assistant · just now.`);
-    // Linger on Home for a moment so the toast registers, then jump to
-    // the new thread so the user can see the conversation continue.
-    setTimeout(() => {
-      setToast(null);
-      router.push(`/dashboard/messages?thread=${threadId}`);
-    }, 1400);
+    // Stay on Home — the eventual reply arrives over the
+    // callback_results realtime channel and renders inline.
+    // Thread id is logged for debug; the user can still open the DM
+    // surface from the Threads tab if they want to.
+    void threadId;
+    setTimeout(() => setToast(null), 3500);
   };
 
   // For meeting hand-offs: just navigate (keep AI mode). For DM hand-offs:

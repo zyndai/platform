@@ -6,14 +6,20 @@ Produces the JSON document served at
 
 The card is signed with the persona's Ed25519 keypair using a
 JWS-detached signature over JCS-canonical bytes (RFC 7515 + RFC 8785).
-This is the format any A2A v0.3-compliant peer expects.
+This is the format any A2A v0.3-compliant peer expects — both the
+TypeScript SDK (`zyndai`) and the Python SDK (`zyndai-agent`).
 
-Why a custom builder rather than using the SDK's BuildCardOptions
+Why a custom builder rather than calling into the SDK's BuildCardOptions
 plumbing: agent-persona is multi-tenant — every persona shares one
-FastAPI process — and the SDK's defaults assume a per-agent base URL.
+FastAPI process — and the SDK's helpers assume a per-agent base URL.
 We have a per-persona path scheme (/api/persona/{user_id}/...) that
-needs explicit `url` and `a2a_path` plumbing, and we don't yet need
-the Pydantic payload/output_model schema advertisement machinery.
+needs explicit `url` and `a2a_path` plumbing.
+
+Field-level parity with `zyndai_agent.a2a.card.build_agent_card` is
+maintained explicitly — anything that ships a `requiresPushNotification`
+hint, a `pricing` block, an `inputSchema`/`outputSchema`, or per-tool
+skills must round-trip the same shape so SDK-built peers can read our
+cards without special-casing.
 """
 
 import base64
@@ -39,6 +45,91 @@ from agent.zynd_identity import (
 
 
 _PROTOCOL_VERSION = "0.3.0"
+
+# Catalog of human-readable skill metadata keyed by the capability name
+# stored on persona_agents.capabilities. Anything not in the catalog
+# still becomes a skill — it just gets a generic description.
+_SKILL_CATALOG: dict[str, dict[str, Any]] = {
+    "search": {
+        "name": "Network search",
+        "description": "Find people on the Zynd Network and pull profile context.",
+        "examples": ["Find designers in NYC who ship a lot"],
+    },
+    "calendar": {
+        "name": "Calendar",
+        "description": "Read calendars and propose meeting times.",
+        "examples": ["When am I free for a 30-min on Wednesday?"],
+    },
+    "twitter": {
+        "name": "Twitter / X",
+        "description": "Post tweets and send DMs on X.",
+        "examples": ["Draft a tweet announcing the new feature"],
+    },
+    "linkedin": {
+        "name": "LinkedIn",
+        "description": "Post updates, send DMs, and look up LinkedIn profiles.",
+        "examples": ["Send a follow-up note to Alice on LinkedIn"],
+    },
+    "notion": {
+        "name": "Notion",
+        "description": "Read, search, and write to Notion databases and pages.",
+        "examples": ["Save this idea to my Notion inbox"],
+    },
+    "gmail": {
+        "name": "Gmail",
+        "description": "Search, send, and triage Gmail.",
+        "examples": ["Draft a reply to the latest message from Acme"],
+    },
+    "docs": {
+        "name": "Google Docs",
+        "description": "Create and edit Google Docs and Sheets.",
+        "examples": ["Spin up a doc with the meeting notes"],
+    },
+    "messaging": {
+        "name": "Agent messaging",
+        "description": "Initiate and respond to A2A conversations with other Zynd agents.",
+        "examples": ["Reach out to Bob's agent about a coffee chat"],
+    },
+}
+
+# Default-free pricing block. We advertise the persona as free-to-message
+# until x402 micropayments are wired in. Shape matches the SDK's
+# `pricing` field semantics so peers can parse it without branching.
+_PRICING_FREE_STUB: dict[str, Any] = {
+    "model": "free",
+    "currency": "USD",
+    "rates": {},
+    "paymentMethods": [],
+}
+
+# Minimal advertised input/output schema. The SDK's builder derives a
+# Zod-equivalent JSON schema from a Pydantic model; we hand-roll a
+# permissive text+attachments schema that matches what every persona
+# accepts via /a2a/v1 message/send.
+_DEFAULT_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "text": {"type": "string"},
+        "files": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "mimeType": {"type": "string"},
+                    "uri": {"type": "string"},
+                },
+            },
+        },
+    },
+    "required": [],
+}
+_DEFAULT_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "text": {"type": "string"},
+    },
+}
 
 
 def _persona_base_url(user_id: str) -> str:
@@ -94,28 +185,35 @@ def build_persona_card_v3(user_id: str) -> Optional[dict[str, Any]]:
     base = _persona_base_url(user_id)
     a2a_url = f"{base}/a2a/v1"
 
+    profile = persona.get("profile") or {}
+    persona_caps = persona.get("capabilities") or []
+    if not isinstance(persona_caps, list):
+        persona_caps = []
+    cap_tags = [str(c) for c in persona_caps]
+
+    # Personas always serve streaming + push. The persona-side
+    # `requiresPushNotification` hint is a service-side declaration —
+    # personas leave it false (a peer is allowed to send sync if they
+    # want to). A service that only handles async callback responses
+    # would set this to true via its config, forcing peers to register
+    # a callback before sending.
+    requires_push = bool(profile.get("requires_push_notification", False))
+
     capabilities = {
-        "streaming": True,        # we serve message/stream (phase 3)
-        "pushNotifications": True, # we serve tasks/pushNotificationConfig/* (phase 3)
+        "streaming": True,
+        "pushNotifications": True,
         "stateTransitionHistory": False,
     }
 
-    profile = persona.get("profile") or {}
-
-    # Capabilities the persona advertises (informational; permission
-    # enforcement is per-connection on dm_threads.permissions, not here).
-    persona_caps = persona.get("capabilities") or []
-    skill_tags = list(persona_caps) if isinstance(persona_caps, list) else []
-
-    skill: dict[str, Any] = {
-        "id": "default",
-        "name": persona.get("name") or "Persona",
-        "description": persona.get("description") or "",
-        "inputModes": ["text/plain", "application/json"],
-        "outputModes": ["text/plain", "application/json"],
-    }
-    if skill_tags:
-        skill["tags"] = skill_tags
+    # One skill per capability, with friendly metadata from the catalog.
+    # Personas with no declared capabilities still advertise a "default"
+    # skill so the card is not skill-empty (the A2A spec requires at
+    # least one).
+    skills: list[dict[str, Any]] = _build_skills(
+        persona_name=persona.get("name") or "Persona",
+        persona_description=persona.get("description") or "",
+        capabilities=cap_tags,
+    )
 
     security_schemes = {
         "zyndSig": {
@@ -138,8 +236,18 @@ def build_persona_card_v3(user_id: str) -> Optional[dict[str, Any]]:
         "developerProof": developer_proof,
         "registry": config.ZYND_REGISTRY_URL,
         "category": "persona",
-        "tags": ["persona"],
+        "tags": ["persona", *cap_tags],
+        "pricing": _PRICING_FREE_STUB,
+        "inputSchema": _DEFAULT_INPUT_SCHEMA,
+        "outputSchema": _DEFAULT_OUTPUT_SCHEMA,
+        "acceptsFiles": True,
+        # Service-style "callback only" hint. Defaults to false for
+        # personas. Peers should switch to push-mode transport when true.
+        "requiresPushNotification": requires_push,
     }
+    desc = persona.get("description") or ""
+    if desc:
+        x_zynd["summary"] = desc[:200]
     if profile.get("title"):
         x_zynd["title"] = profile["title"]
     if profile.get("organization"):
@@ -157,13 +265,70 @@ def build_persona_card_v3(user_id: str) -> Optional[dict[str, Any]]:
         "capabilities": capabilities,
         "defaultInputModes": ["text/plain", "application/json"],
         "defaultOutputModes": ["text/plain", "application/json"],
-        "skills": [skill],
+        "skills": skills,
         "securitySchemes": security_schemes,
         "security": [{"zyndSig": []}],
         "x-zynd": x_zynd,
     }
 
+    # Top-level optional fields. Provider lets peers attribute the
+    # persona to its parent organization; iconUrl supplies an avatar
+    # the network UI can render in search results.
+    org = profile.get("organization")
+    if org:
+        unsigned["provider"] = {
+            "organization": org,
+            "url": config.ZYND_WEBHOOK_BASE_URL,
+        }
+    avatar = profile.get("avatar_url") or profile.get("picture")
+    if avatar:
+        unsigned["iconUrl"] = avatar
+
     return _sign_card(unsigned, keypair)
+
+
+def _build_skills(
+    *,
+    persona_name: str,
+    persona_description: str,
+    capabilities: list[str],
+) -> list[dict[str, Any]]:
+    """Emit one skill per capability, falling back to a default skill
+    when the persona declares no capabilities. Mirrors the SDK pattern
+    of advertising one skill per advertised tool category.
+    """
+    in_modes = ["text/plain", "application/json"]
+    out_modes = ["text/plain", "application/json"]
+
+    if not capabilities:
+        return [{
+            "id": "default",
+            "name": persona_name,
+            "description": persona_description,
+            "inputModes": in_modes,
+            "outputModes": out_modes,
+            "tags": ["persona"],
+        }]
+
+    skills: list[dict[str, Any]] = []
+    for cap in capabilities:
+        meta = _SKILL_CATALOG.get(cap, {
+            "name": cap.replace("_", " ").title(),
+            "description": f"Persona capability: {cap}.",
+            "examples": [],
+        })
+        skill: dict[str, Any] = {
+            "id": cap,
+            "name": meta["name"],
+            "description": meta["description"],
+            "inputModes": in_modes,
+            "outputModes": out_modes,
+            "tags": [cap],
+        }
+        if meta.get("examples"):
+            skill["examples"] = meta["examples"]
+        skills.append(skill)
+    return skills
 
 
 def _sign_card(card: dict[str, Any], keypair: Keypair) -> dict[str, Any]:

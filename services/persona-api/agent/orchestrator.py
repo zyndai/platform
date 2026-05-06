@@ -619,16 +619,26 @@ class GeminiProvider(LLMProvider):
         # Collect function calls from all parts. For native thinking parts
         # (Gemini 2.5 Flash with `part.thought=True`), wrap the text in
         # <think>...</think> so it round-trips through our tag-based memory.
+        #
+        # Gemini 3 Flash + thinking REQUIRES the model's `thought_signature`
+        # to be echoed back on the function_call Part when we feed history
+        # in for the next turn — otherwise the API rejects the request with
+        # 400 INVALID_ARGUMENT (see docs.gemini-api/thought-signatures).
+        # We capture it here and round-trip via _convert_messages below.
         function_calls = []
         text_parts = []
         for part in candidate.content.parts:
             if hasattr(part, "function_call") and part.function_call:
                 fc = part.function_call
-                function_calls.append({
+                tc: dict = {
                     "id": fc.id if hasattr(fc, "id") else str(uuid.uuid4()),
                     "name": fc.name,
                     "arguments": dict(fc.args) if fc.args else {},
-                })
+                }
+                ts = getattr(part, "thought_signature", None)
+                if ts:
+                    tc["_thought_signature"] = ts
+                function_calls.append(tc)
             elif hasattr(part, "text") and part.text:
                 if getattr(part, "thought", False):
                     text_parts.append(f"<think>{part.text}</think>")
@@ -686,7 +696,16 @@ class GeminiProvider(LLMProvider):
                     name = getattr(fc, "name", "") or ""
                     args_raw = getattr(fc, "args", None)
                     args = dict(args_raw) if args_raw else {}
-                    tool_calls.append({"id": tc_id, "name": name, "arguments": args})
+                    tc: dict = {"id": tc_id, "name": name, "arguments": args}
+                    # Gemini 3 + thinking attaches a thought_signature to
+                    # function_call parts. Capture it so _convert_messages
+                    # can echo it back on the next turn — otherwise Gemini
+                    # rejects the request (400 INVALID_ARGUMENT, see
+                    # https://ai.google.dev/gemini-api/docs/thought-signatures).
+                    ts = getattr(part, "thought_signature", None)
+                    if ts:
+                        tc["_thought_signature"] = ts
+                    tool_calls.append(tc)
                     yield {"type": "tool_call_start", "id": tc_id, "name": name}
                     yield {
                         "type": "tool_call_end",
@@ -798,10 +817,19 @@ class GeminiProvider(LLMProvider):
                     if msg.get("content"):
                         parts.append(types.Part.from_text(text=msg["content"]))
                     for tc in msg["tool_calls"]:
-                        parts.append(types.Part.from_function_call(
+                        fc_part = types.Part.from_function_call(
                             name=tc["name"],
                             args=tc.get("arguments", {}),
-                        ))
+                        )
+                        # Gemini 3 + thinking REQUIRES the model's original
+                        # thought_signature to ride along on the function_call
+                        # Part when echoed back. Captured at read time and
+                        # passed through here. Older / non-thinking models
+                        # leave _thought_signature unset, which is harmless.
+                        ts = tc.get("_thought_signature")
+                        if ts:
+                            fc_part.thought_signature = ts
+                        parts.append(fc_part)
                     contents.append(types.Content(role="model", parts=parts))
                 else:
                     contents.append(types.Content(

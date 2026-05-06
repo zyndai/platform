@@ -11,7 +11,10 @@ interface Thread {
   receiver_id: string;
   initiator_name: string;
   receiver_name: string;
-  status: "pending" | "accepted" | "blocked";
+  // ConnectionFSM status. Older rows may pre-date `declined`/`revoked`,
+  // but the column accepts them since the v3 migration patched the
+  // CHECK constraint.
+  status: "pending" | "accepted" | "declined" | "blocked" | "revoked";
   // Agent-conversation phase, separate from the connection-request `status`
   // above. Backed by dm_threads.lifecycle. May be missing on older rows
   // — treat undefined as "pending".
@@ -28,10 +31,10 @@ interface Thread {
 // Friendly per-state copy + tag color for the lifecycle pill at the top
 // of an open thread.
 const LIFECYCLE_LABEL: Record<NonNullable<Thread["lifecycle"]>, { text: string; tag: string }> = {
-  pending:         { text: "Waiting for them",     tag: "tag-amber" },
-  active:          { text: "Agents talking",       tag: "tag-teal"  },
-  needs_human:     { text: "Needs you",            tag: "tag-amber" },
-  human_handling:  { text: "You're handling this", tag: "tag-teal"  },
+  pending: { text: "Waiting for them", tag: "tag-amber" },
+  active: { text: "Agents talking", tag: "tag-teal" },
+  needs_human: { text: "Needs you", tag: "tag-amber" },
+  human_handling: { text: "You're handling this", tag: "tag-teal" },
 };
 
 interface ConnectionPermissions {
@@ -301,6 +304,26 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     );
   };
 
+  // ConnectionFSM transitions handled by the v3 backend (decline/revoke
+  // touch in-flight a2a_tasks too, so we don't update Supabase directly).
+  const transitionConnection = async (action: "decline" | "revoke" | "unblock") => {
+    if (!activeThread || !sessionUser) return;
+    const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const res = await fetch(`${API}/api/persona/threads/${activeThread.id}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, user_id: sessionUser.id }),
+    });
+    if (!res.ok) {
+      console.error(`[transitionConnection] ${action} failed:`, await res.text());
+      return;
+    }
+    const data = await res.json();
+    setActiveThread((prev) =>
+      prev ? { ...prev, status: data.new_status } : null
+    );
+  };
+
   // Which side of a thread belongs to me. Returns 'initiator', 'receiver', or null.
   const mySide = (thread: Thread | null): "initiator" | "receiver" | null => {
     if (!thread || !sessionAgentId) return null;
@@ -315,7 +338,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     if (!thread) return "agent";
     const side = mySide(thread);
     if (side === "initiator") return thread.initiator_mode ?? thread.mode ?? "agent";
-    if (side === "receiver")  return thread.receiver_mode  ?? thread.mode ?? "agent";
+    if (side === "receiver") return thread.receiver_mode ?? thread.mode ?? "agent";
     return "agent";
   };
 
@@ -350,12 +373,12 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
 
   const getPartnerId = (thread: Thread) =>
     thread.initiator_id === sessionUser.id ||
-    thread.initiator_id === sessionAgentId
+      thread.initiator_id === sessionAgentId
       ? thread.receiver_id
       : thread.initiator_id;
   const getPartnerName = (thread: Thread) =>
     thread.initiator_id === sessionUser.id ||
-    thread.initiator_id === sessionAgentId
+      thread.initiator_id === sessionAgentId
       ? thread.receiver_name
       : thread.initiator_name;
 
@@ -556,7 +579,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     const timer = setTimeout(async () => {
       setIsSearching(true);
       try {
-        // Use new v2 search endpoint on dns01.zynd.ai
+        // Use new v2 search endpoint on zns01.zynd.ai
         const res = await fetch(
           `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/persona/search?query=${encodeURIComponent(newChatQuery)}&limit=10`
         );
@@ -569,7 +592,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
         } else {
           // Direct registry fallback
           const registryRes = await fetch(
-            `https://dns01.zynd.ai/v1/search`,
+            `https://zns01.zynd.ai/v1/search`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -587,7 +610,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
               const caps = a.capabilities || {};
               let parsed = caps;
               if (typeof caps === "string")
-                try { parsed = JSON.parse(caps); } catch {}
+                try { parsed = JSON.parse(caps); } catch { }
               return (
                 tags.includes("persona") ||
                 (typeof parsed === "object" &&
@@ -997,9 +1020,17 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
               </div>
               <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px" }}>
                 {(() => {
-                  // Connection request was rejected — show that loud, ignore lifecycle.
+                  // Terminal connection states take precedence over the
+                  // conversation-phase pill — blocked/declined/revoked
+                  // mean no traffic flows here at all.
                   if (activeThread.status === "blocked") {
                     return <span className="tag tag-coral" style={{ fontSize: "9px" }}>BLOCKED</span>;
+                  }
+                  if (activeThread.status === "declined") {
+                    return <span className="tag tag-coral" style={{ fontSize: "9px" }}>DECLINED</span>;
+                  }
+                  if (activeThread.status === "revoked") {
+                    return <span className="tag tag-coral" style={{ fontSize: "9px" }}>ENDED</span>;
                   }
                   // Otherwise surface the friendly conversation phase
                   // (pending → active → needs_human → human_handling).
@@ -1126,304 +1157,304 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                   ["proposed", "countered", "accepted", "scheduled", "book_failed"].includes(m.status)
                 )
                 .map((m) => {
-                const lastActor = m.history[m.history.length - 1]?.actor_user_id;
-                const awaitingMe =
-                  !!myUserId &&
-                  (m.status === "proposed" || m.status === "countered") &&
-                  lastActor !== myUserId;
-                const iProposed = m.initiator_user_id === myUserId;
-                return (
-                  <div
-                    key={m.id}
-                    style={{
-                      alignSelf: "stretch",
-                      background: "var(--bg-surface)",
-                      border: `1px solid ${awaitingMe ? "rgba(245, 158, 11, 0.35)" : "var(--border-default)"}`,
-                      borderRadius: "var(--r-md)",
-                      padding: "16px 18px",
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", marginBottom: "10px" }}>
-                      <div style={{ fontSize: "18px", lineHeight: 1, marginTop: "1px" }}>📅</div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <p
-                          style={{
-                            fontFamily: "Syne, sans-serif",
-                            fontSize: "14px",
-                            fontWeight: 700,
-                            color: "var(--text-primary)",
-                            marginBottom: "2px",
-                          }}
-                        >
-                          {m.payload?.title || "Untitled meeting"}
-                        </p>
-                        <p
-                          style={{
-                            fontFamily: "DM Sans, sans-serif",
-                            fontSize: "12px",
-                            color: "var(--text-secondary)",
-                          }}
-                        >
-                          {formatMeetingTime(m.payload?.start_time, m.payload?.end_time)}
-                        </p>
-                        {m.payload?.location && (
-                          <p style={{ fontFamily: "DM Sans, sans-serif", fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
-                            📍 {m.payload.location}
-                          </p>
-                        )}
-                        {m.payload?.description && (
-                          <p style={{ fontFamily: "DM Sans, sans-serif", fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: 1.5 }}>
-                            {m.payload.description}
-                          </p>
-                        )}
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
-                        <span
-                          className={
-                            m.status === "proposed" || m.status === "countered"
-                              ? "tag tag-amber"
-                              : m.status === "scheduled"
-                              ? "tag tag-teal"
-                              : m.status === "accepted"
-                              ? "tag tag-teal"
-                              : m.status === "book_failed"
-                              ? "tag tag-coral"
-                              : "tag"
-                          }
-                          style={{ fontSize: "9px" }}
-                        >
-                          {m.status === "scheduled" ? "✓ ON CALENDAR" : m.status.toUpperCase()}
-                        </span>
-                        <button
-                          onClick={() => setHistoryModal(m)}
-                          title="View history"
-                          style={{
-                            background: "transparent",
-                            border: "1px solid var(--border-default)",
-                            borderRadius: "999px",
-                            width: "20px",
-                            height: "20px",
-                            color: "var(--text-muted)",
-                            cursor: "pointer",
-                            fontSize: "10px",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          ⓘ
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Action row */}
-                    {counterEditing === m.id ? (
-                      <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "10px" }}>
-                        <p className="section-label">COUNTER WITH A NEW TIME</p>
-                        <div style={{ display: "flex", gap: "6px" }}>
-                          <input
-                            type="datetime-local"
-                            className="input"
-                            value={counterStart}
-                            onChange={(e) => setCounterStart(e.target.value)}
-                            style={{ fontSize: "12px", padding: "6px 10px" }}
-                          />
-                          <input
-                            type="datetime-local"
-                            className="input"
-                            value={counterEnd}
-                            onChange={(e) => setCounterEnd(e.target.value)}
-                            style={{ fontSize: "12px", padding: "6px 10px" }}
-                          />
-                        </div>
-                        <div style={{ display: "flex", gap: "6px", marginTop: "4px" }}>
-                          <button
-                            onClick={() => {
-                              if (!counterStart || !counterEnd) return;
-                              respondToMeeting(m.id, "counter", {
-                                // datetime-local gives no TZ; append Z to treat as UTC
-                                start_time: new Date(counterStart).toISOString(),
-                                end_time: new Date(counterEnd).toISOString(),
-                              });
+                  const lastActor = m.history[m.history.length - 1]?.actor_user_id;
+                  const awaitingMe =
+                    !!myUserId &&
+                    (m.status === "proposed" || m.status === "countered") &&
+                    lastActor !== myUserId;
+                  const iProposed = m.initiator_user_id === myUserId;
+                  return (
+                    <div
+                      key={m.id}
+                      style={{
+                        alignSelf: "stretch",
+                        background: "var(--bg-surface)",
+                        border: `1px solid ${awaitingMe ? "rgba(245, 158, 11, 0.35)" : "var(--border-default)"}`,
+                        borderRadius: "var(--r-md)",
+                        padding: "16px 18px",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", marginBottom: "10px" }}>
+                        <div style={{ fontSize: "18px", lineHeight: 1, marginTop: "1px" }}>📅</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p
+                            style={{
+                              fontFamily: "Syne, sans-serif",
+                              fontSize: "14px",
+                              fontWeight: 700,
+                              color: "var(--text-primary)",
+                              marginBottom: "2px",
                             }}
-                            disabled={meetingBusy === m.id || !counterStart || !counterEnd}
-                            className="btn-primary"
-                            style={{ padding: "6px 14px", fontSize: "11px" }}
                           >
-                            Send counter
-                          </button>
+                            {m.payload?.title || "Untitled meeting"}
+                          </p>
+                          <p
+                            style={{
+                              fontFamily: "DM Sans, sans-serif",
+                              fontSize: "12px",
+                              color: "var(--text-secondary)",
+                            }}
+                          >
+                            {formatMeetingTime(m.payload?.start_time, m.payload?.end_time)}
+                          </p>
+                          {m.payload?.location && (
+                            <p style={{ fontFamily: "DM Sans, sans-serif", fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
+                              📍 {m.payload.location}
+                            </p>
+                          )}
+                          {m.payload?.description && (
+                            <p style={{ fontFamily: "DM Sans, sans-serif", fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: 1.5 }}>
+                              {m.payload.description}
+                            </p>
+                          )}
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                          <span
+                            className={
+                              m.status === "proposed" || m.status === "countered"
+                                ? "tag tag-amber"
+                                : m.status === "scheduled"
+                                  ? "tag tag-teal"
+                                  : m.status === "accepted"
+                                    ? "tag tag-teal"
+                                    : m.status === "book_failed"
+                                      ? "tag tag-coral"
+                                      : "tag"
+                            }
+                            style={{ fontSize: "9px" }}
+                          >
+                            {m.status === "scheduled" ? "✓ ON CALENDAR" : m.status.toUpperCase()}
+                          </span>
                           <button
-                            onClick={() => setCounterEditing(null)}
-                            className="btn-secondary"
-                            style={{ padding: "6px 14px", fontSize: "11px" }}
+                            onClick={() => setHistoryModal(m)}
+                            title="View history"
+                            style={{
+                              background: "transparent",
+                              border: "1px solid var(--border-default)",
+                              borderRadius: "999px",
+                              width: "20px",
+                              height: "20px",
+                              color: "var(--text-muted)",
+                              cursor: "pointer",
+                              fontSize: "10px",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                            }}
                           >
-                            Cancel
+                            ⓘ
                           </button>
                         </div>
                       </div>
-                    ) : awaitingMe ? (
-                      <div style={{ display: "flex", gap: "6px", marginTop: "10px", flexWrap: "wrap" }}>
-                        <button
-                          onClick={() => respondToMeeting(m.id, "accept")}
-                          disabled={meetingBusy === m.id}
-                          className="btn-primary"
-                          style={{ padding: "6px 14px", fontSize: "11px" }}
-                        >
-                          Accept
-                        </button>
-                        <button
-                          onClick={() => {
-                            setCounterEditing(m.id);
-                            // Prefill with current payload
-                            if (m.payload?.start_time) {
-                              setCounterStart(new Date(m.payload.start_time).toISOString().slice(0, 16));
-                            }
-                            if (m.payload?.end_time) {
-                              setCounterEnd(new Date(m.payload.end_time).toISOString().slice(0, 16));
-                            }
-                          }}
-                          disabled={meetingBusy === m.id}
-                          className="btn-secondary"
-                          style={{ padding: "6px 14px", fontSize: "11px" }}
-                        >
-                          Counter
-                        </button>
-                        <button
-                          onClick={() => respondToMeeting(m.id, "decline")}
-                          disabled={meetingBusy === m.id}
-                          className="btn-danger"
-                          style={{ padding: "6px 14px", fontSize: "11px" }}
-                        >
-                          Decline
-                        </button>
-                      </div>
-                    ) : m.status === "scheduled" ? (
-                      // Booked on both calendars — show a confirmation line
-                      // and a cancel button that removes both events.
-                      <div
-                        style={{
-                          marginTop: "10px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: "8px",
-                        }}
-                      >
-                        <p
-                          style={{
-                            fontFamily: "IBM Plex Mono, monospace",
-                            fontSize: "10px",
-                            color: "var(--accent-teal)",
-                          }}
-                        >
-                          ✓ Added to both calendars
-                        </p>
-                        <button
-                          onClick={() => {
-                            if (confirm("Cancel this meeting? It will be removed from both calendars.")) {
-                              respondToMeeting(m.id, "cancel");
-                            }
-                          }}
-                          disabled={meetingBusy === m.id}
-                          style={{
-                            padding: "4px 10px",
-                            fontSize: "10px",
-                            fontFamily: "IBM Plex Mono, monospace",
-                            background: "transparent",
-                            border: "1px solid rgba(255, 95, 109, 0.35)",
-                            color: "var(--accent-coral)",
-                            borderRadius: "var(--r-sm)",
-                            cursor: "pointer",
-                          }}
-                        >
-                          CANCEL MEETING
-                        </button>
-                      </div>
-                    ) : m.status === "book_failed" ? (
-                      // Booking failed — show the reason (pulled from the
-                      // most recent book_failed history entry) and offer
-                      // retry / abandon controls.
-                      <div style={{ marginTop: "10px" }}>
-                        {(() => {
-                          const failure = [...m.history].reverse().find((h) => h.action === "book_failed");
-                          const reason = (failure as any)?.reason || "Calendar booking failed.";
-                          return (
-                            <p
-                              style={{
-                                fontFamily: "DM Sans, sans-serif",
-                                fontSize: "11px",
-                                color: "var(--accent-coral)",
-                                marginBottom: "8px",
-                                lineHeight: 1.5,
+
+                      {/* Action row */}
+                      {counterEditing === m.id ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "10px" }}>
+                          <p className="section-label">COUNTER WITH A NEW TIME</p>
+                          <div style={{ display: "flex", gap: "6px" }}>
+                            <input
+                              type="datetime-local"
+                              className="input"
+                              value={counterStart}
+                              onChange={(e) => setCounterStart(e.target.value)}
+                              style={{ fontSize: "12px", padding: "6px 10px" }}
+                            />
+                            <input
+                              type="datetime-local"
+                              className="input"
+                              value={counterEnd}
+                              onChange={(e) => setCounterEnd(e.target.value)}
+                              style={{ fontSize: "12px", padding: "6px 10px" }}
+                            />
+                          </div>
+                          <div style={{ display: "flex", gap: "6px", marginTop: "4px" }}>
+                            <button
+                              onClick={() => {
+                                if (!counterStart || !counterEnd) return;
+                                respondToMeeting(m.id, "counter", {
+                                  // datetime-local gives no TZ; append Z to treat as UTC
+                                  start_time: new Date(counterStart).toISOString(),
+                                  end_time: new Date(counterEnd).toISOString(),
+                                });
                               }}
+                              disabled={meetingBusy === m.id || !counterStart || !counterEnd}
+                              className="btn-primary"
+                              style={{ padding: "6px 14px", fontSize: "11px" }}
                             >
-                              ⚠ {reason}
-                            </p>
-                          );
-                        })()}
-                        <div style={{ display: "flex", gap: "6px" }}>
+                              Send counter
+                            </button>
+                            <button
+                              onClick={() => setCounterEditing(null)}
+                              className="btn-secondary"
+                              style={{ padding: "6px 14px", fontSize: "11px" }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : awaitingMe ? (
+                        <div style={{ display: "flex", gap: "6px", marginTop: "10px", flexWrap: "wrap" }}>
                           <button
                             onClick={() => respondToMeeting(m.id, "accept")}
                             disabled={meetingBusy === m.id}
                             className="btn-primary"
                             style={{ padding: "6px 14px", fontSize: "11px" }}
                           >
-                            Retry booking
+                            Accept
                           </button>
                           <button
-                            onClick={() => respondToMeeting(m.id, "cancel")}
+                            onClick={() => {
+                              setCounterEditing(m.id);
+                              // Prefill with current payload
+                              if (m.payload?.start_time) {
+                                setCounterStart(new Date(m.payload.start_time).toISOString().slice(0, 16));
+                              }
+                              if (m.payload?.end_time) {
+                                setCounterEnd(new Date(m.payload.end_time).toISOString().slice(0, 16));
+                              }
+                            }}
                             disabled={meetingBusy === m.id}
                             className="btn-secondary"
                             style={{ padding: "6px 14px", fontSize: "11px" }}
                           >
-                            Abandon
+                            Counter
+                          </button>
+                          <button
+                            onClick={() => respondToMeeting(m.id, "decline")}
+                            disabled={meetingBusy === m.id}
+                            className="btn-danger"
+                            style={{ padding: "6px 14px", fontSize: "11px" }}
+                          >
+                            Decline
                           </button>
                         </div>
-                      </div>
-                    ) : (
-                      <div
-                        style={{
-                          marginTop: "10px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: "8px",
-                        }}
-                      >
-                        <p
+                      ) : m.status === "scheduled" ? (
+                        // Booked on both calendars — show a confirmation line
+                        // and a cancel button that removes both events.
+                        <div
                           style={{
-                            fontFamily: "IBM Plex Mono, monospace",
-                            fontSize: "10px",
-                            color: "var(--text-muted)",
+                            marginTop: "10px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: "8px",
                           }}
                         >
-                          {m.status === "accepted"
-                            ? "Booking in progress…"
-                            : `Waiting for ${awaitingMe ? "you" : "the other side"}…`}
-                        </p>
-                        {iProposed && (m.status === "proposed" || m.status === "countered") && (
+                          <p
+                            style={{
+                              fontFamily: "IBM Plex Mono, monospace",
+                              fontSize: "10px",
+                              color: "var(--accent-teal)",
+                            }}
+                          >
+                            ✓ Added to both calendars
+                          </p>
                           <button
-                            onClick={() => respondToMeeting(m.id, "cancel")}
+                            onClick={() => {
+                              if (confirm("Cancel this meeting? It will be removed from both calendars.")) {
+                                respondToMeeting(m.id, "cancel");
+                              }
+                            }}
                             disabled={meetingBusy === m.id}
                             style={{
                               padding: "4px 10px",
                               fontSize: "10px",
                               fontFamily: "IBM Plex Mono, monospace",
                               background: "transparent",
-                              border: "1px solid var(--border-default)",
-                              color: "var(--text-muted)",
+                              border: "1px solid rgba(255, 95, 109, 0.35)",
+                              color: "var(--accent-coral)",
                               borderRadius: "var(--r-sm)",
                               cursor: "pointer",
                             }}
                           >
-                            WITHDRAW
+                            CANCEL MEETING
                           </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                        </div>
+                      ) : m.status === "book_failed" ? (
+                        // Booking failed — show the reason (pulled from the
+                        // most recent book_failed history entry) and offer
+                        // retry / abandon controls.
+                        <div style={{ marginTop: "10px" }}>
+                          {(() => {
+                            const failure = [...m.history].reverse().find((h) => h.action === "book_failed");
+                            const reason = (failure as any)?.reason || "Calendar booking failed.";
+                            return (
+                              <p
+                                style={{
+                                  fontFamily: "DM Sans, sans-serif",
+                                  fontSize: "11px",
+                                  color: "var(--accent-coral)",
+                                  marginBottom: "8px",
+                                  lineHeight: 1.5,
+                                }}
+                              >
+                                ⚠ {reason}
+                              </p>
+                            );
+                          })()}
+                          <div style={{ display: "flex", gap: "6px" }}>
+                            <button
+                              onClick={() => respondToMeeting(m.id, "accept")}
+                              disabled={meetingBusy === m.id}
+                              className="btn-primary"
+                              style={{ padding: "6px 14px", fontSize: "11px" }}
+                            >
+                              Retry booking
+                            </button>
+                            <button
+                              onClick={() => respondToMeeting(m.id, "cancel")}
+                              disabled={meetingBusy === m.id}
+                              className="btn-secondary"
+                              style={{ padding: "6px 14px", fontSize: "11px" }}
+                            >
+                              Abandon
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          style={{
+                            marginTop: "10px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: "8px",
+                          }}
+                        >
+                          <p
+                            style={{
+                              fontFamily: "IBM Plex Mono, monospace",
+                              fontSize: "10px",
+                              color: "var(--text-muted)",
+                            }}
+                          >
+                            {m.status === "accepted"
+                              ? "Booking in progress…"
+                              : `Waiting for ${awaitingMe ? "you" : "the other side"}…`}
+                          </p>
+                          {iProposed && (m.status === "proposed" || m.status === "countered") && (
+                            <button
+                              onClick={() => respondToMeeting(m.id, "cancel")}
+                              disabled={meetingBusy === m.id}
+                              style={{
+                                padding: "4px 10px",
+                                fontSize: "10px",
+                                fontFamily: "IBM Plex Mono, monospace",
+                                background: "transparent",
+                                border: "1px solid var(--border-default)",
+                                color: "var(--text-muted)",
+                                borderRadius: "var(--r-sm)",
+                                cursor: "pointer",
+                              }}
+                            >
+                              WITHDRAW
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
 
               {/* Agent-mode banner — shows when MY side has AI handling on */}
               {myMode === "agent" && activeThread.status !== "blocked" && (
@@ -1506,6 +1537,21 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                         Accept Request
                       </button>
                       <button
+                        onClick={() => transitionConnection("decline")}
+                        style={{
+                          padding: "8px 20px",
+                          fontSize: "12px",
+                          fontFamily: "IBM Plex Mono, monospace",
+                          background: "transparent",
+                          border: "1px solid var(--border-default)",
+                          color: "var(--text-secondary)",
+                          borderRadius: "var(--r-sm)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Decline
+                      </button>
+                      <button
                         onClick={() => updateThreadStatus("blocked")}
                         className="btn-danger"
                         style={{ padding: "8px 20px", fontSize: "12px" }}
@@ -1519,125 +1565,125 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
               {messages
                 .filter((m) => (m.channel || "human") === activeChannel)
                 .map((m) => {
-                // System notes (halt notes, agent escalation summaries)
-                // render as a single centered, ink-muted line — no bubble,
-                // no avatar. Per the brief's S8 system-note pattern.
-                if (m.sender_type === "system") {
+                  // System notes (halt notes, agent escalation summaries)
+                  // render as a single centered, ink-muted line — no bubble,
+                  // no avatar. Per the brief's S8 system-note pattern.
+                  if (m.sender_type === "system") {
+                    return (
+                      <div
+                        key={m.id}
+                        style={{
+                          alignSelf: "center",
+                          maxWidth: "90%",
+                          textAlign: "center",
+                          padding: "8px 14px",
+                          fontFamily: "DM Sans, sans-serif",
+                          fontSize: "12.5px",
+                          fontStyle: "italic",
+                          color: "var(--text-muted)",
+                          lineHeight: 1.5,
+                          opacity: 0.85,
+                        }}
+                      >
+                        {m.content}
+                        <span
+                          style={{
+                            fontFamily: "IBM Plex Mono, monospace",
+                            fontSize: "10px",
+                            marginLeft: "8px",
+                            opacity: 0.7,
+                          }}
+                        >
+                          · {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                    );
+                  }
+
+                  const isMe =
+                    m.sender_id === sessionUser.id ||
+                    m.sender_id === sessionAgentId;
                   return (
                     <div
                       key={m.id}
                       style={{
-                        alignSelf: "center",
-                        maxWidth: "90%",
-                        textAlign: "center",
-                        padding: "8px 14px",
-                        fontFamily: "DM Sans, sans-serif",
-                        fontSize: "12.5px",
-                        fontStyle: "italic",
-                        color: "var(--text-muted)",
-                        lineHeight: 1.5,
-                        opacity: 0.85,
+                        alignSelf: isMe ? "flex-end" : "flex-start",
+                        maxWidth: "75%",
+                        display: "flex",
+                        gap: "10px",
+                        animation: "slideIn 0.2s ease",
                       }}
                     >
-                      {m.content}
-                      <span
-                        style={{
-                          fontFamily: "IBM Plex Mono, monospace",
-                          fontSize: "10px",
-                          marginLeft: "8px",
-                          opacity: 0.7,
-                        }}
+                      {/* Partner avatar */}
+                      {!isMe && (
+                        <div
+                          style={{
+                            width: "28px",
+                            height: "28px",
+                            borderRadius: "var(--r-sm)",
+                            background:
+                              "linear-gradient(135deg, var(--accent-blue), var(--accent-purple))",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontFamily: "Syne, sans-serif",
+                            fontWeight: 800,
+                            fontSize: "11px",
+                            color: "#fff",
+                            flexShrink: 0,
+                            marginTop: "2px",
+                          }}
+                        >
+                          {getPartnerName(activeThread)?.charAt(0) || "A"}
+                        </div>
+                      )}
+                      <div
+                        className={isMe ? "msg-bubble-user" : "msg-bubble-ai"}
+                        style={{ maxWidth: "100%" }}
                       >
-                        · {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </span>
+                        <div className="markdown-content">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {m.content}
+                          </ReactMarkdown>
+                        </div>
+                        <p
+                          className="msg-timestamp"
+                          style={{
+                            marginTop: "6px",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            justifyContent: isMe ? "flex-end" : "flex-start",
+                          }}
+                        >
+                          {m.sender_type === "agent" && (
+                            <span
+                              title="Sent by an AI agent"
+                              style={{
+                                fontFamily: "IBM Plex Mono, monospace",
+                                fontSize: "9px",
+                                padding: "1px 6px",
+                                borderRadius: "999px",
+                                background: "rgba(0, 212, 180, 0.10)",
+                                border: "1px solid rgba(0, 212, 180, 0.25)",
+                                color: "var(--accent-teal)",
+                                letterSpacing: "0.4px",
+                              }}
+                            >
+                              🤖 AGENT
+                            </span>
+                          )}
+                          <span>
+                            {new Date(m.created_at).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        </p>
+                      </div>
                     </div>
                   );
-                }
-
-                const isMe =
-                  m.sender_id === sessionUser.id ||
-                  m.sender_id === sessionAgentId;
-                return (
-                  <div
-                    key={m.id}
-                    style={{
-                      alignSelf: isMe ? "flex-end" : "flex-start",
-                      maxWidth: "75%",
-                      display: "flex",
-                      gap: "10px",
-                      animation: "slideIn 0.2s ease",
-                    }}
-                  >
-                    {/* Partner avatar */}
-                    {!isMe && (
-                      <div
-                        style={{
-                          width: "28px",
-                          height: "28px",
-                          borderRadius: "var(--r-sm)",
-                          background:
-                            "linear-gradient(135deg, var(--accent-blue), var(--accent-purple))",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontFamily: "Syne, sans-serif",
-                          fontWeight: 800,
-                          fontSize: "11px",
-                          color: "#fff",
-                          flexShrink: 0,
-                          marginTop: "2px",
-                        }}
-                      >
-                        {getPartnerName(activeThread)?.charAt(0) || "A"}
-                      </div>
-                    )}
-                    <div
-                      className={isMe ? "msg-bubble-user" : "msg-bubble-ai"}
-                      style={{ maxWidth: "100%" }}
-                    >
-                      <div className="markdown-content">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {m.content}
-                        </ReactMarkdown>
-                      </div>
-                      <p
-                        className="msg-timestamp"
-                        style={{
-                          marginTop: "6px",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "6px",
-                          justifyContent: isMe ? "flex-end" : "flex-start",
-                        }}
-                      >
-                        {m.sender_type === "agent" && (
-                          <span
-                            title="Sent by an AI agent"
-                            style={{
-                              fontFamily: "IBM Plex Mono, monospace",
-                              fontSize: "9px",
-                              padding: "1px 6px",
-                              borderRadius: "999px",
-                              background: "rgba(0, 212, 180, 0.10)",
-                              border: "1px solid rgba(0, 212, 180, 0.25)",
-                              color: "var(--accent-teal)",
-                              letterSpacing: "0.4px",
-                            }}
-                          >
-                            🤖 AGENT
-                          </span>
-                        )}
-                        <span>
-                          {new Date(m.created_at).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
+                })}
               <div ref={scrollRef} />
             </div>
 
@@ -1733,18 +1779,18 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                             action === "proposed"
                               ? "proposed the meeting"
                               : action === "countered"
-                              ? "countered with new times"
-                              : action === "accepted"
-                              ? "accepted"
-                              : action === "declined"
-                              ? "declined"
-                              : action === "cancelled"
-                              ? "cancelled"
-                              : action === "booked"
-                              ? "booked on both calendars"
-                              : action === "book_failed"
-                              ? "booking failed"
-                              : action;
+                                ? "countered with new times"
+                                : action === "accepted"
+                                  ? "accepted"
+                                  : action === "declined"
+                                    ? "declined"
+                                    : action === "cancelled"
+                                      ? "cancelled"
+                                      : action === "booked"
+                                        ? "booked on both calendars"
+                                        : action === "book_failed"
+                                          ? "booking failed"
+                                          : action;
                           return (
                             <div
                               key={i}
@@ -1766,8 +1812,8 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                                     action === "book_failed"
                                       ? "var(--accent-coral)"
                                       : action === "booked"
-                                      ? "var(--accent-teal)"
-                                      : "var(--accent-blue)",
+                                        ? "var(--accent-teal)"
+                                        : "var(--accent-blue)",
                                   marginTop: "5px",
                                   flexShrink: 0,
                                 }}
@@ -2001,6 +2047,91 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                         })}
                       </div>
                     )}
+
+                    {/* Connection management — Revoke for accepted, Unblock for blocked */}
+                    {activeThread.status === "accepted" && (
+                      <div
+                        style={{
+                          marginTop: "20px",
+                          padding: "16px",
+                          background: "var(--bg-surface)",
+                          borderRadius: "var(--r-md)",
+                          border: "1px solid var(--border-default)",
+                        }}
+                      >
+                        <p
+                          style={{
+                            fontFamily: "DM Sans, sans-serif",
+                            fontSize: "12px",
+                            color: "var(--text-muted)",
+                            lineHeight: 1.5,
+                            marginBottom: "10px",
+                          }}
+                        >
+                          End this connection. Past messages stay visible for
+                          your records, but no new traffic flows in either
+                          direction. Any in-flight agent work is canceled.
+                        </p>
+                        <button
+                          onClick={async () => {
+                            if (
+                              window.confirm(
+                                "End this connection? The other side will see it as ended.",
+                              )
+                            ) {
+                              await transitionConnection("revoke");
+                              setPermissionsOpen(false);
+                            }
+                          }}
+                          className="btn-danger"
+                          style={{ padding: "6px 14px", fontSize: "11px" }}
+                        >
+                          End connection
+                        </button>
+                      </div>
+                    )}
+                    {activeThread.status === "blocked" && (
+                      <div
+                        style={{
+                          marginTop: "20px",
+                          padding: "16px",
+                          background: "var(--bg-surface)",
+                          borderRadius: "var(--r-md)",
+                          border: "1px solid var(--border-default)",
+                        }}
+                      >
+                        <p
+                          style={{
+                            fontFamily: "DM Sans, sans-serif",
+                            fontSize: "12px",
+                            color: "var(--text-muted)",
+                            lineHeight: 1.5,
+                            marginBottom: "10px",
+                          }}
+                        >
+                          You blocked this connection. Unblocking restores it
+                          to accepted; future messages flow normally.
+                        </p>
+                        <button
+                          onClick={async () => {
+                            await transitionConnection("unblock");
+                            setPermissionsOpen(false);
+                          }}
+                          style={{
+                            padding: "6px 14px",
+                            fontSize: "11px",
+                            fontFamily: "IBM Plex Mono, monospace",
+                            background: "transparent",
+                            border: "1px solid rgba(0, 212, 180, 0.40)",
+                            color: "var(--accent-teal)",
+                            borderRadius: "var(--r-sm)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Unblock
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2031,18 +2162,22 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                       placeholder={
                         activeThread.status === "accepted"
                           ? "Type a message..."
-                          : "Awaiting approval..."
+                          : activeThread.status === "declined"
+                            ? "Connection declined."
+                            : activeThread.status === "revoked"
+                              ? "Connection ended."
+                              : activeThread.status === "blocked"
+                                ? "Blocked."
+                                : "Awaiting approval..."
                       }
                       disabled={
-                        activeThread.status !== "accepted" &&
-                        (activeThread.receiver_id === sessionUser.id ||
-                          activeThread.receiver_id === sessionAgentId)
+                        activeThread.status !== "accepted"
                       }
                     />
                     <button
                       onClick={handleSend}
                       disabled={
-                        !draft.trim() || activeThread.status === "blocked"
+                        !draft.trim() || activeThread.status !== "accepted"
                       }
                       className="btn-primary"
                       style={{ padding: "8px 18px", fontSize: "12px" }}

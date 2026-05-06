@@ -1,23 +1,18 @@
 """
-Persona API routes — registration, status, webhooks, and deletion.
+Persona API routes — registration, profile, threads, search proxy.
 
-v2 migration:
-  - Uses persona_manager for HD-derived Ed25519 identities
-  - Queries persona_agents table instead of filesystem configs
-  - Uses agent_id (zns:...) instead of DID (did:polygon:...)
-  - Registry at dns01.zynd.ai
+Phase 4 migration: cross-agent traffic moved to A2A v0.3 in agent/a2a_router.py.
+This file no longer hosts the legacy webhooks; all the anti-loop heuristics
+(turn cap, escalation phrase matcher, halt-note insertion, callback-sender)
+went away with them. The TaskFSM in a2a_router naturally produces deterministic
+terminal/interrupted states, so the band-aids aren't needed.
 """
 
-from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Any, List
-import time
-
-import asyncio
 
 import config
-from agent.agent_message import AgentMessage
-from agent.orchestrator import handle_user_message
 from agent.persona_manager import (
     create_persona,
     delete_persona,
@@ -29,79 +24,19 @@ from agent.persona_manager import (
 router = APIRouter()
 
 
-# Soft cap on agent-to-agent auto-replies per thread. Once we hit this,
-# a one-shot "let me check with my person" halt note is inserted and the
-# orchestrator stops auto-responding. The two halves of the cap (initiator
-# and recipient) split it ~3 turns each before the halt fires.
-AGENT_TURN_CAP = 6
-HALT_NOTE_TEXT = (
-    "I'd want to check with my person before saying more. "
-    "Taking this off the agent channel for now."
-)
-
-# Phrases the orchestrator emits when it's giving up on auto-handling and
-# wants the principal to take over. The webhook handler checks for these
-# in outgoing replies; matched replies are treated as terminal — inserted
-# as system notes, lifecycle flips to needs_human, and we DO NOT callback
-# the sender's webhook. That stops the "both agents escalate at each
-# other forever" loop we saw on the first multi-turn test.
-_ESCALATION_HINTS = (
-    # "my principal / my person" form
-    "bring this to my principal",
-    "bring this to my person",
-    "loop in my principal",
-    "loop in my person",
-    "check with my principal",
-    "check with my person",
-    "pass this along to my principal",
-    "pass this along to my person",
-    "take this off the agent channel",
-    "off the agent channel",
-    # Name-agnostic phrasings — catch the variants where the LLM uses the
-    # principal's actual name ("I'll check with Maya") instead of "my
-    # principal". Lower-cased and conservative on false positives.
-    "have them follow up",
-    "they'll follow up",
-    "they will follow up",
-    "they'll come back to you",
-    "they will come back to you",
-    "they'll get back to you",
-    "they will get back to you",
-    "i'll check with",
-    "let me check with",
-    "i'll loop in",
-    "i'll loop my",
-    "passing this along",
-    "circle back",
-)
-
-
-def _looks_like_escalation(text: str) -> bool:
-    """Lightweight heuristic for 'the agent is escalating to its human'.
-    Matches the phrasing patterns we encourage in the system prompt; if
-    we see one, we don't keep the conversation running on autopilot."""
-    if not text:
-        return False
-    t = text.lower()
-    return any(hint in t for hint in _ESCALATION_HINTS)
-
-
-# Thread lifecycle. Lives in dm_threads.lifecycle (separate column from
-# `status`, which tracks connection-request state pending/accepted/blocked).
-# These move through as agents converse, hit the cap, or get taken over.
-# The frontend reads this to render the "What's happening?" pill at the
-# top of the thread surface.
-LIFECYCLE_PENDING        = "pending"          # created, waiting for the first reply
-LIFECYCLE_ACTIVE         = "active"           # at least one auto-reply has landed
-LIFECYCLE_NEEDS_HUMAN    = "needs_human"      # turn cap hit; human takeover required
-LIFECYCLE_HUMAN_HANDLING = "human_handling"   # one or both sides taken over by a human
-
-# Aliases retained because earlier in this file's history they were named
-# THREAD_*. Don't add new uses of these — prefer LIFECYCLE_*.
-THREAD_PENDING        = LIFECYCLE_PENDING
-THREAD_ACTIVE         = LIFECYCLE_ACTIVE
-THREAD_NEEDS_HUMAN    = LIFECYCLE_NEEDS_HUMAN
-THREAD_HUMAN_HANDLING = LIFECYCLE_HUMAN_HANDLING
+# Thread lifecycle values written to dm_threads.lifecycle — read by the
+# frontend to render the top-of-panel pill. The values are still meaningful
+# even though the legacy auto-flips around turn-cap / escalation phrases
+# are gone:
+#   pending         — thread created, no successful task yet
+#   active          — at least one task has completed (set by v3 router)
+#   needs_human     — set when the user manually flags a thread for attention
+#                     (currently only via UI; phase 4 doesn't auto-flip here)
+#   human_handling  — one or both sides flipped their mode to 'human'
+LIFECYCLE_PENDING        = "pending"
+LIFECYCLE_ACTIVE         = "active"
+LIFECYCLE_NEEDS_HUMAN    = "needs_human"
+LIFECYCLE_HUMAN_HANDLING = "human_handling"
 
 
 def _set_thread_status(sb, thread_id: str, new_lifecycle: str, allowed_from: list[str] | None = None) -> None:
@@ -246,14 +181,7 @@ class ThreadPermissionsUpdate(BaseModel):
     can_post_on_my_behalf: Optional[bool] = None
 
 
-class SyncWebhookResponse(BaseModel):
-    status: str
-    message_id: str
-    response: Any
-    timestamp: float
-
-
-# ── Persona Lifecycle ─────────────��─────────────────────────────────
+# ── Persona Lifecycle ───────────────────────────────────────────────
 
 @router.get("/{user_id}/status")
 async def persona_status(user_id: str):
@@ -265,7 +193,7 @@ async def persona_status(user_id: str):
 async def register_persona(req: PersonaRegisterRequest):
     """
     Register a user as a discoverable agent persona on the Zynd AI Network.
-    Derives an Ed25519 keypair from the developer key and registers on dns01.zynd.ai.
+    Derives an Ed25519 keypair from the developer key and registers on zns01.zynd.ai.
     """
     import traceback as _tb
 
@@ -358,6 +286,11 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend):
     Send a human-typed message on the agent channel. Used when the user
     has clicked "Take Over" in the Agent Activity tab and is replying
     manually instead of letting their AI handle it.
+
+    Phase 4.2: routes via A2A v0.3 (signed JSON-RPC message/send) instead
+    of the legacy unsigned webhook. The receiver sees a normal v3 message
+    on their /a2a/v1 endpoint and processes it like any other inbound
+    cross-agent traffic.
     """
     persona = get_persona_status(user_id)
     if not persona.get("deployed"):
@@ -370,7 +303,7 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend):
         raise HTTPException(status_code=404, detail="Thread not found.")
     t = thread.data[0]
 
-    # Figure out who the partner is on this thread
+    # Figure out who the partner is on this thread.
     if t["initiator_id"] in (user_id, my_agent_id):
         partner_agent_id = t["receiver_id"]
     elif t["receiver_id"] in (user_id, my_agent_id):
@@ -378,54 +311,68 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend):
     else:
         raise HTTPException(status_code=403, detail="You are not a participant of this thread.")
 
-    # 1. Insert the message into db
+    # 1. Insert the message into db (sender-side log; receiver sees it
+    #    via A2A inbound which mirrors to dm_messages on their side).
     row = sb.table("dm_messages").insert({
         "thread_id": req.thread_id,
         "sender_id": my_agent_id,
-        "sender_type": "human",   # the human is typing, not the orchestrator
-        "channel": "agent",       # but it's on the agent channel
+        "sender_type": "human",  # the human is typing, not the orchestrator
+        "channel": "agent",      # on the agent channel
         "content": req.content,
     }).execute()
 
-    # 2. Send via webhook to the partner (same protocol as message_zynd_agent)
-    from mcp.tools.zynd_network import _find_agent_webhook
-    import requests as req_lib
+    # 2. Look up the partner's stored URL → resolve to the v3 endpoint.
+    partner = sb.table("persona_agents").select("webhook_url").eq("agent_id", partner_agent_id).execute()
+    partner_url = partner.data[0].get("webhook_url") if partner.data else None
+    from agent.a2a.client import A2AClient, A2AError, resolve_a2a_url
+    a2a_url = resolve_a2a_url(partner_url) if partner_url else None
+    if not a2a_url:
+        print(f"[agent-send] ⚠ No A2A endpoint resolvable for {partner_agent_id} — message saved locally only")
+        return {
+            "status": "saved_only",
+            "thread_id": req.thread_id,
+            "message": row.data[0] if row.data else None,
+            "warning": "Partner has no resolvable A2A endpoint; the message is in the DB but not delivered.",
+        }
 
-    target_webhook = _find_agent_webhook(partner_agent_id)
-    print(f"[agent-send] user={user_id[:8]} thread={req.thread_id} partner={partner_agent_id} webhook={target_webhook}")
-    if target_webhook:
-        # Always hit the async webhook (strip /sync) — same reasoning as
-        # message_zynd_agent: the sync endpoint blocks until the full
-        # orchestrator finishes, which can take >30s and timeout.
-        async_url = target_webhook
-        if async_url.endswith("/sync"):
-            async_url = async_url[:-5]
-        try:
-            msg = AgentMessage(
-                content=req.content,
-                sender_id=my_agent_id,
-                message_type="query",
-            )
-            # Offload the blocking POST to a worker thread so the FastAPI
-            # event loop stays free while the request is in flight. Without
-            # this, the async_webhook handler on the same backend couldn't
-            # even be dispatched to serve our own POST.
-            resp = await asyncio.to_thread(
-                req_lib.post, async_url, json=msg.to_dict(), timeout=15
-            )
-            print(f"[agent-send] → POST {async_url} returned {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            print(f"[agent-send] ⚠ Webhook delivery failed for {async_url}: {type(e).__name__}: {e}")
-            # Don't fail the whole request — the message is already in DB.
-            # The other side just won't get a webhook push (they'll still
-            # see it via realtime if they're on the same platform).
-    else:
-        print(f"[agent-send] ⚠ No webhook URL found for partner {partner_agent_id} — partner won't receive push notification")
+    # 3. Build the sender's keypair and ship a signed message.
+    from agent.persona_manager import _derive_agent_keypair, _load_developer_seed
+    from agent.zynd_identity import keypair_from_seed, build_derivation_proof
+    persona_row = sb.table("persona_agents").select("derivation_index,public_key").eq("user_id", user_id).execute()
+    if not persona_row.data:
+        raise HTTPException(status_code=500, detail="Sender persona row missing.")
+    index = persona_row.data[0]["derivation_index"]
+    dev_seed = _load_developer_seed()
+    private_seed, public_key_bytes = _derive_agent_keypair(dev_seed, index)
+    keypair = keypair_from_seed(private_seed)
+    developer_proof = build_derivation_proof(dev_seed, public_key_bytes, index)
+
+    client = A2AClient(keypair=keypair, entity_id=my_agent_id, developer_proof=developer_proof)
+    delivery_result: dict = {"delivered": False}
+    try:
+        task = await client.send(
+            a2a_url,
+            text=req.content,
+            context_id=req.thread_id,
+        )
+        delivery_result = {
+            "delivered": True,
+            "task_id": task.get("id"),
+            "task_state": (task.get("status") or {}).get("state"),
+        }
+        print(f"[agent-send] → {a2a_url} task={task.get('id', '')[:8]} state={delivery_result['task_state']}")
+    except A2AError as e:
+        print(f"[agent-send] ⚠ receiver rejected: {e.code} {e.message} (reason={e.reason})")
+        delivery_result = {"delivered": False, "error_code": e.code, "error_reason": e.reason}
+    except Exception as e:
+        print(f"[agent-send] ⚠ transport error: {type(e).__name__}: {e}")
+        delivery_result = {"delivered": False, "error": f"{type(e).__name__}: {e}"}
 
     return {
         "status": "sent",
         "thread_id": req.thread_id,
         "message": row.data[0] if row.data else None,
+        "delivery": delivery_result,
     }
 
 
@@ -509,6 +456,81 @@ async def update_thread_permissions(thread_id: str, req: ThreadPermissionsUpdate
     return {"status": "ok", "thread_id": thread_id, "permissions": merged}
 
 
+class ThreadStatusUpdate(BaseModel):
+    # 'decline' on a pending request, 'revoke' on an accepted connection,
+    # or 'unblock' to lift a block. (Accept and block keep using the
+    # existing direct-Supabase update path the UI already wires up via
+    # the dm_threads RLS policy — no behavior change there.)
+    action: str  # 'decline' | 'revoke' | 'unblock'
+    user_id: str  # whoever is acting — must be a participant
+
+
+@router.patch("/threads/{thread_id}/status")
+async def update_thread_status(thread_id: str, req: ThreadStatusUpdate):
+    """Apply a ConnectionFSM transition driven by the v3 spec §3.1.3.
+
+    Supports the transitions the existing UI doesn't already cover via
+    direct Supabase updates:
+      • decline: requested → declined  (receiver soft-rejects)
+      • revoke:  accepted  → revoked   (either side ends the relationship)
+      • unblock: blocked   → accepted  (we don't track prior state yet,
+                                         so unblock always lands at accepted
+                                         — refine in a later phase)
+
+    Any in-flight a2a_tasks on this thread are transitioned to 'canceled'
+    with reason='connection_<action>' so handlers don't keep running on
+    a connection that no longer exists (T-2 + EV_T_PERMISSION_REVOKED).
+    """
+    if req.action not in ("decline", "revoke", "unblock"):
+        raise HTTPException(status_code=400, detail="action must be 'decline', 'revoke', or 'unblock'")
+
+    sb = _supabase()
+    thread_row = sb.table("dm_threads").select("*").eq("id", thread_id).execute()
+    if not thread_row.data:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    thread = thread_row.data[0]
+
+    side = _my_side(thread, req.user_id)
+    if not side:
+        raise HTTPException(status_code=403, detail="You are not a participant of this thread.")
+
+    cur_status = thread.get("status") or "pending"
+
+    # Validate the FSM transition.
+    transitions = {
+        "decline": {"from": ("pending",),  "to": "declined"},
+        "revoke":  {"from": ("accepted",), "to": "revoked"},
+        "unblock": {"from": ("blocked",),  "to": "accepted"},
+    }
+    rule = transitions[req.action]
+    if cur_status not in rule["from"]:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot {req.action} a connection in '{cur_status}' state.",
+        )
+    new_status = rule["to"]
+
+    sb.table("dm_threads").update({"status": new_status}).eq("id", thread_id).execute()
+
+    # Cancel in-flight tasks on this thread per design §3.2.3
+    # (EV_T_PERMISSION_REVOKED).
+    try:
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
+        sb.table("a2a_tasks").update({
+            "state": "canceled",
+            "terminal_at": now_iso,
+            "failure_reason": f"connection_{req.action}",
+            "updated_at": now_iso,
+        }).eq("context_id", thread_id).in_(
+            "state", ["submitted", "working", "input-required", "auth-required"]
+        ).execute()
+    except Exception as e:
+        print(f"[thread-status] cleanup of in-flight tasks failed: {e}")
+
+    return {"status": "ok", "thread_id": thread_id, "new_status": new_status, "side": side}
+
+
 @router.patch("/threads/{thread_id}/mode")
 async def update_thread_mode(thread_id: str, req: ThreadModeUpdate):
     """
@@ -536,7 +558,7 @@ async def update_thread_mode(thread_id: str, req: ThreadModeUpdate):
     # agent-to-agent automation. Flag the status so the UI can render the
     # right pill for both participants.
     if req.mode == "human":
-        _set_thread_status(sb, thread_id, THREAD_HUMAN_HANDLING)
+        _set_thread_status(sb, thread_id, LIFECYCLE_HUMAN_HANDLING)
 
     return {
         "status": "ok",
@@ -555,357 +577,3 @@ async def search_personas(query: str = "persona", limit: int = 10):
     return search_zynd_personas(query, top_k=limit)
 
 
-# ── Persona-Hosted Agent Card (v2 discovery) ─────────────────────────
-#
-# The Zynd registry caches each agent's card and serves it via
-# GET /v1/entities/{id}/card. To play by v2 rules each persona hosts its own
-# signed AgentCard at .well-known/agent.json so the registry has an
-# authoritative source for endpoints, capabilities, and metadata.
-
-@router.get("/webhooks/{user_id}/.well-known/agent.json")
-async def persona_agent_card(user_id: str):
-    """Return the signed AgentCard for this persona — pulled by the registry."""
-    from agent.card_builder import build_persona_card
-    card = build_persona_card(user_id)
-    if not card:
-        raise HTTPException(status_code=404, detail="No active persona for this user.")
-    return card
-
-
-@router.get("/webhooks/{user_id}/health")
-async def persona_health(user_id: str):
-    """Lightweight liveness probe — referenced by the persona's AgentCard."""
-    persona = get_persona_status(user_id)
-    if not persona.get("deployed"):
-        raise HTTPException(status_code=404, detail="No active persona for this user.")
-    return {"status": "ok", "agent_id": persona.get("agent_id")}
-
-
-# ── Webhook Routers (Where network messages arrive) ──────────────────
-
-@router.post("/webhooks/{user_id}")
-async def async_webhook(user_id: str, request: Request, background_tasks: BackgroundTasks):
-    """
-    Fire-and-forget webhook listener.
-    Receives messages from other Zynd Agents and processes in background.
-    """
-    payload = await request.json()
-    message = AgentMessage.from_dict(payload)
-
-    background_tasks.add_task(process_async_webhook, user_id, message)
-
-    return {
-        "status": "received",
-        "message_id": message.message_id,
-        "timestamp": time.time()
-    }
-
-
-async def _callback_sender(
-    sender_agent_id: str,
-    my_agent_id: str,
-    reply: str,
-    log_prefix: str,
-) -> None:
-    """Wake the sender's orchestrator with our reply so the conversation
-    can continue. Looks up their webhook (DB first, registry fallback) and
-    POSTs an AgentMessage. Failures are non-fatal — the reply is already in
-    the shared DB row, so the human still sees it via realtime even if the
-    other side's orchestrator doesn't get pinged."""
-    try:
-        from mcp.tools.zynd_network import _find_agent_webhook
-        import requests as req_lib
-
-        target_webhook = _find_agent_webhook(sender_agent_id)
-        if not target_webhook:
-            print(f"{log_prefix} ⚠ no webhook for sender {sender_agent_id} — can't wake them")
-            return
-        async_url = target_webhook
-        if async_url.endswith("/sync"):
-            async_url = async_url[:-5]
-
-        msg = AgentMessage(
-            content=reply,
-            sender_id=my_agent_id,
-            message_type="query",
-        )
-        resp = await asyncio.to_thread(
-            req_lib.post, async_url, json=msg.to_dict(), timeout=15
-        )
-        print(f"{log_prefix} → callback POST {async_url} returned {resp.status_code}")
-    except Exception as e:
-        print(f"{log_prefix} ⚠ callback to sender failed: {type(e).__name__}: {e}")
-
-
-async def _maybe_insert_halt_note(sb, thread_id: str, user_id: str, log_prefix: str) -> None:
-    """When the turn cap is hit, drop a single 'checking with my person'
-    note and stop. Detects an existing halt by `sender_type='system'` on
-    the most recent message — no marker text needed, so the user-visible
-    content stays clean."""
-    try:
-        last = (
-            sb.table("dm_messages")
-            .select("sender_type")
-            .eq("thread_id", thread_id)
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
-        )
-        if last.data and last.data[0].get("sender_type") == "system":
-            print(f"{log_prefix} halt note already present — skipping")
-            return
-        persona = get_persona_status(user_id)
-        my_agent_id = persona.get("agent_id", user_id)
-        sb.table("dm_messages").insert({
-            "thread_id": thread_id,
-            "sender_id": my_agent_id,
-            "sender_type": "system",
-            "channel": "agent",
-            "content": HALT_NOTE_TEXT,
-        }).execute()
-        print(f"{log_prefix} halt note inserted")
-    except Exception as e:
-        print(f"{log_prefix} ⚠ couldn't insert halt note: {e}")
-
-
-async def process_async_webhook(user_id: str, message: AgentMessage):
-    """
-    Background task: process an incoming agent-channel webhook message.
-
-    Clean rules:
-      1. The sender already inserted the dm_messages row (B1). We NEVER
-         re-insert the inbound message here — that was the duplicate bug.
-      2. If my side's mode is 'human' (I've taken over), we log the
-         decision and STOP. The user will reply from the Agent Activity
-         tab. No notice round-trip, no HTTP callback.
-      3. If my side's mode is 'agent' (AI handling), we run the
-         orchestrator. When it finishes, we INSERT a reply row on the
-         shared thread. Both participants see it via realtime. No HTTP
-         callback to the sender — the DB is the single source of truth.
-      4. message_type='response' is no longer produced by anything we
-         control (B4 removed the callback). We still short-circuit it in
-         case the SDK or an external peer sends one.
-
-    Every branch logs its decision so backend logs show exactly what
-    happened for each inbound message.
-    """
-    sender_id = message.sender_id or "unknown"
-    log_prefix = f"[webhook {user_id[:8]} ← {sender_id[:12]}]"
-    print(f"\n{log_prefix} received type={message.message_type} content={message.content[:80]!r}")
-
-    try:
-        sb = _supabase()
-        thread = _find_thread_for(sb, user_id, sender_id)
-        thread_id = thread["id"] if thread else None
-        my_mode = _my_mode(thread, user_id) if thread else "agent"
-        thread_permissions = {**DEFAULT_CONNECTION_PERMISSIONS, **((thread or {}).get("permissions") or {})}
-        print(f"{log_prefix} thread={thread_id} my_mode={my_mode}")
-    except Exception as e:
-        print(f"{log_prefix} ⚠ setup failed: {e}")
-        return
-
-    # Response-type messages are short-circuited. We no longer emit these
-    # ourselves (B4), but handle them defensively in case some legacy
-    # peer sends one.
-    if message.message_type == "response":
-        print(f"{log_prefix} response-type message — halting without processing")
-        return
-
-    # B2: DO NOT re-insert the inbound message. The sender already logged
-    # it on the shared DB (message_zynd_agent and agent-send both insert
-    # before posting). Re-inserting here created the duplicate [Inbound]
-    # rows you've been seeing.
-
-    # B3: If we've taken over, stop here. The human owner will respond
-    # manually from the Agent Activity tab. No notice callback — the
-    # other side sees their own message in the shared thread and can
-    # see the [TAKEN OVER] status on our side if they look.
-    if my_mode == "human":
-        print(f"{log_prefix} my side is TAKEN OVER — skipping orchestrator (no auto-reply)")
-        return
-
-    # Turn cap: count how many auto-replies (sender_type='agent') already
-    # exist on this thread. After AGENT_TURN_CAP rounds, fall through to
-    # a one-shot halt note instead of running the orchestrator again. This
-    # prevents two LLMs ping-ponging indefinitely once the simple cases
-    # have been exhausted, and surfaces a clear "needs human" signal.
-    if thread_id:
-        try:
-            count_resp = (
-                sb.table("dm_messages")
-                .select("id", count="exact")
-                .eq("thread_id", thread_id)
-                .eq("sender_type", "agent")
-                .eq("channel", "agent")
-                .execute()
-            )
-            agent_turns = count_resp.count or 0
-        except Exception:
-            agent_turns = 0
-        if agent_turns >= AGENT_TURN_CAP:
-            print(f"{log_prefix} turn cap hit ({agent_turns}/{AGENT_TURN_CAP}) — emitting halt note")
-            await _maybe_insert_halt_note(sb, thread_id, user_id, log_prefix)
-            _set_thread_status(sb, thread_id, THREAD_NEEDS_HUMAN,
-                               allowed_from=[THREAD_PENDING, THREAD_ACTIVE])
-            return
-
-    # Run the orchestrator. Any exception gets logged as an agent-channel
-    # row so the sender sees what went wrong instead of silent failure.
-    print(f"{log_prefix} → orchestrator")
-    try:
-        # C1: use thread_id as the conversation_id so the orchestrator
-        # accumulates history across multi-turn agent-to-agent exchanges
-        # on the same thread. Fallback to message_id for threadless first
-        # contact (shouldn't happen in v1 same-platform but safe).
-        conv_id = f"thread:{thread_id}" if thread_id else f"msg:{message.message_id}"
-        result = await handle_user_message(
-            user_id=user_id,
-            message=message.content,
-            conversation_id=conv_id,
-            is_external=True,
-            sender_agent_id=sender_id,
-            external_permissions=thread_permissions,
-        )
-        reply = result.get("reply") or "(empty reply)"
-    except Exception as e:
-        reply = f"[orchestrator error] {e}"
-        print(f"{log_prefix} ⚠ orchestrator crashed: {e}")
-
-    print(f"{log_prefix} reply ready ({len(reply)} chars): {reply[:80]!r}")
-
-    # Insert the reply as a new dm_messages row.
-    # If the reply is an escalation ("I'll bring this to my person..."),
-    # it's the END of the agent-channel exchange. Insert as a system note,
-    # flip lifecycle to needs_human, and DO NOT callback the sender —
-    # otherwise both sides keep escalating-at-each-other in a loop.
-    # Otherwise it's a normal back-and-forth turn: insert as agent, flip
-    # lifecycle to active on first reply, and ping the sender's webhook
-    # so their orchestrator can produce the next turn.
-    if thread_id:
-        try:
-            persona = get_persona_status(user_id)
-            my_agent_id = persona.get("agent_id", user_id)
-
-            if _looks_like_escalation(reply):
-                sb.table("dm_messages").insert({
-                    "thread_id": thread_id,
-                    "sender_id": my_agent_id,
-                    "sender_type": "system",
-                    "channel": "agent",
-                    "content": reply,
-                }).execute()
-                print(f"{log_prefix} escalation detected — inserted as system, no callback")
-                _set_thread_status(sb, thread_id, THREAD_NEEDS_HUMAN,
-                                   allowed_from=[THREAD_PENDING, THREAD_ACTIVE])
-                return
-
-            sb.table("dm_messages").insert({
-                "thread_id": thread_id,
-                "sender_id": my_agent_id,
-                "sender_type": "agent",
-                "channel": "agent",
-                "content": reply,
-            }).execute()
-            print(f"{log_prefix} reply logged to thread {thread_id}")
-
-            # First successful auto-reply on a thread = it's now active.
-            _set_thread_status(sb, thread_id, THREAD_ACTIVE,
-                               allowed_from=[THREAD_PENDING])
-
-            # Notify the sender so their side's orchestrator wakes up and
-            # can produce the next turn. Failure here just means the other
-            # side won't auto-respond — the row is in the DB either way,
-            # so the human user still sees it via realtime.
-            await _callback_sender(sender_id, my_agent_id, reply, log_prefix)
-        except Exception as e:
-            print(f"{log_prefix} ⚠ failed to insert reply row: {e}")
-    else:
-        print(f"{log_prefix} no thread_id — reply not persisted (first-contact edge case)")
-
-
-@router.post("/webhooks/{user_id}/sync", response_model=SyncWebhookResponse)
-async def sync_webhook(user_id: str, request: Request):
-    """
-    Synchronous webhook. Other agents hit this when waiting for an immediate answer.
-
-    Behavior depends on the thread's `mode`:
-      - 'agent' (or no thread): run the orchestrator and reply within the request.
-      - 'human': log the message and return a polite "queued for the human" response,
-                 without invoking the orchestrator.
-    """
-    payload = await request.json()
-    try:
-        message = AgentMessage.from_dict(payload)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid AgentMessage format: {str(e)}")
-
-    sender_id = message.sender_id or "unknown"
-    log_prefix = f"[sync {user_id[:8]} ← {sender_id[:12]}]"
-    print(f"\n{log_prefix} received: {message.content[:80]!r}")
-
-    sb = _supabase()
-    thread = _find_thread_for(sb, user_id, sender_id)
-    thread_id = thread["id"] if thread else None
-    my_mode = _my_mode(thread, user_id) if thread else "agent"
-    thread_permissions = {**DEFAULT_CONNECTION_PERMISSIONS, **((thread or {}).get("permissions") or {})}
-    print(f"{log_prefix} thread={thread_id} my_mode={my_mode}")
-
-    # B2: We do NOT re-insert the inbound message. The sender already
-    # logged it (same-platform shared DB). The receiver just processes.
-
-    # B3: If we've taken over, return an ack WITHOUT running the
-    # orchestrator and WITHOUT logging anything. The sender's row is
-    # already in the shared DB; our human will reply when ready.
-    if my_mode == "human":
-        print(f"{log_prefix} my side is TAKEN OVER — returning ack")
-        return SyncWebhookResponse(
-            status="queued",
-            message_id=message.message_id,
-            response=(
-                "Thanks — the person I represent has taken over this conversation personally. "
-                "Your message has been delivered and they will reply when available."
-            ),
-            timestamp=time.time(),
-        )
-
-    # AI Handling mode: orchestrate and reply
-    try:
-        conv_id = f"thread:{thread_id}" if thread_id else f"msg:{message.message_id}"
-        result = await handle_user_message(
-            user_id=user_id,
-            message=message.content,
-            conversation_id=conv_id,
-            is_external=True,
-            sender_agent_id=sender_id,
-            external_permissions=thread_permissions,
-        )
-        reply = result.get("reply", "I am unable to assist right now.")
-        print(f"{log_prefix} reply ready ({len(reply)} chars)")
-    except Exception as e:
-        reply = f"[orchestrator error] {e}"
-        print(f"{log_prefix} ⚠ orchestrator crashed: {e}")
-
-    # Log outbound reply. The sync caller ALSO gets it in the HTTP
-    # response body, but logging to the shared thread ensures both
-    # participants see it via realtime regardless of what the caller
-    # does with the response.
-    if thread_id:
-        try:
-            persona = get_persona_status(user_id)
-            my_agent_id = persona.get("agent_id", user_id)
-            sb.table("dm_messages").insert({
-                "thread_id": thread_id,
-                "sender_id": my_agent_id,
-                "sender_type": "agent",
-                "channel": "agent",
-                "content": reply,
-            }).execute()
-        except Exception as e:
-            print(f"{log_prefix} ⚠ failed to insert reply row: {e}")
-
-    return SyncWebhookResponse(
-        status="success",
-        message_id=message.message_id,
-        response=reply,
-        timestamp=time.time(),
-    )

@@ -7,15 +7,18 @@ Tools:
   - list_my_connections: List the user's existing DM threads/connections
   - request_connection: Initiate a new DM thread with a persona
   - check_connection_status: Check if connected to a specific agent
-  - message_zynd_agent: Send a message to another persona
+  - message_zynd_agent: Send a message to another persona (A2A v3 — JSON-RPC over the
+                       receiver's /a2a/v1 endpoint, signed with x-zynd-auth)
 """
 
+import asyncio
 import json
+import logging
 import requests
-import uuid
 
 import config
-from agent.agent_message import AgentMessage
+
+logger = logging.getLogger(__name__)
 
 
 def _fetch_agent_card(agent_id: str) -> dict | None:
@@ -32,28 +35,20 @@ def _fetch_agent_card(agent_id: str) -> dict | None:
     return None
 
 
-def _webhook_from_card(card: dict | None) -> str:
-    """Extract the invoke webhook URL from an AgentCard's endpoints block."""
+def _agent_url_from_card(card: dict | None) -> str:
+    """Extract the persona's A2A endpoint URL from a card.
+
+    Handles both the v0.3 shape (top-level `url`, advertised when
+    `preferredTransport=JSONRPC`) and the legacy v2 shape
+    (`endpoints.invoke`). For v2 URLs we don't transform — callers
+    use resolve_a2a_url to derive the v3 form when sending.
+    """
     if not card:
         return ""
+    if isinstance(card.get("url"), str) and card.get("preferredTransport") == "JSONRPC":
+        return card["url"]
     endpoints = card.get("endpoints") or {}
     return endpoints.get("invoke") or endpoints.get("websocket") or ""
-
-
-def _find_agent_webhook(agent_id: str) -> str | None:
-    """Look up an agent's webhook URL — checks local DB first, then registry card endpoint."""
-    # Local DB is the source of truth for our platform's personas
-    try:
-        sb = _get_supabase()
-        local = sb.table("persona_agents").select("webhook_url").eq("agent_id", agent_id).execute()
-        if local.data and local.data[0].get("webhook_url"):
-            return local.data[0]["webhook_url"]
-    except Exception:
-        pass
-
-    # Fallback to registry card endpoint (endpoints.invoke is the live webhook URL)
-    url = _webhook_from_card(_fetch_agent_card(agent_id))
-    return url or None
 
 
 def _get_supabase():
@@ -116,9 +111,9 @@ def search_zynd_personas(query: str, top_k: int = 5) -> dict:
             aid = a.get("entity_id") or a.get("agent_id") or ""
             # Prefer webhook from search result's inline card (enrich=true), then service_endpoint,
             # then fall back to a card lookup, then to local DB.
-            webhook = _webhook_from_card(a.get("card")) or a.get("service_endpoint") or a.get("entity_url") or ""
+            webhook = _agent_url_from_card(a.get("card")) or a.get("service_endpoint") or a.get("entity_url") or ""
             if not webhook:
-                webhook = _webhook_from_card(_fetch_agent_card(aid))
+                webhook = _agent_url_from_card(_fetch_agent_card(aid))
             if not webhook:
                 try:
                     sb = _get_supabase()
@@ -178,7 +173,7 @@ def get_persona_profile(agent_id: str) -> dict:
             "agent_id": card.get("agent_id", agent_id),
             "description": metadata.get("description") or card.get("summary") or "",
             "capabilities": card.get("capabilities") or [],
-            "webhook_url": _webhook_from_card(card),
+            "webhook_url": _agent_url_from_card(card),
             "status_text": card.get("status"),
             "last_heartbeat": card.get("last_heartbeat"),
         }
@@ -350,246 +345,320 @@ def check_connection_status(user_id: str, target_agent_id: str) -> dict:
 
 # ── Messaging Tool ───────────────────────────────────────────────────
 
+
+def _send_via_a2a_v3(
+    sender_agent_id: str,
+    sender_user_id: str,
+    target_agent_id: str,
+    target_webhook_url: str,
+    context_id: str,
+    message_text: str,
+) -> dict:
+    """Run an A2A v3 JSON-RPC message/send call on a worker thread.
+
+    `mcp_server._call` invokes tool functions synchronously, so we host
+    the async A2A client inside an asyncio.run() per call. Each call gets
+    a fresh event loop scoped to this thread; httpx.AsyncClient is
+    constructed and torn down inside .send(). The overhead is microseconds.
+    """
+    from agent.a2a.client import (
+        A2AClient,
+        A2AError,
+        extract_reply_text,
+        resolve_a2a_url,
+    )
+    from agent.persona_manager import (
+        _derive_agent_keypair,
+        _load_developer_seed,
+    )
+    from agent.zynd_identity import keypair_from_seed, generate_developer_id, build_derivation_proof
+
+    sb = _get_supabase()
+
+    # Resolve the v3 URL from whatever's stored on persona_agents.
+    # Personas registered before phase 4.1 store the legacy webhook URL;
+    # newer ones store the v3 URL directly. The resolver handles both.
+    a2a_url = resolve_a2a_url(target_webhook_url)
+    if not a2a_url:
+        return {
+            "error": (
+                "Could not resolve an A2A v3 URL from the partner's stored URL. "
+                f"webhook_url={target_webhook_url!r}"
+            )
+        }
+
+    # Reconstruct the sender's keypair via the same HD-derivation path
+    # persona_manager.startup uses on rehydration. Microseconds.
+    persona_row = (
+        sb.table("persona_agents")
+        .select("derivation_index")
+        .eq("user_id", sender_user_id)
+        .eq("active", True)
+        .execute()
+    )
+    if not persona_row.data:
+        return {"error": "Sender persona not found or inactive."}
+    index = persona_row.data[0]["derivation_index"]
+
+    dev_seed = _load_developer_seed()
+    private_seed, public_key_bytes = _derive_agent_keypair(dev_seed, index)
+    keypair = keypair_from_seed(private_seed)
+
+    # Carry developer_proof on every send for now — bytes are cheap and
+    # the receiver may require it on first contact within a context. We
+    # can drop it on continuations once interrupted-state resume lands
+    # in phase 3.4.
+    developer_proof = build_derivation_proof(dev_seed, public_key_bytes, index)
+
+    client = A2AClient(
+        keypair=keypair,
+        entity_id=sender_agent_id,
+        developer_proof=developer_proof,
+    )
+
+    async def _go() -> dict:
+        return await client.send(
+            a2a_url,
+            text=message_text,
+            context_id=context_id,
+        )
+
+    try:
+        task = asyncio.run(_go())
+    except A2AError as e:
+        # Translate the receiver's named error reason into a structured
+        # tool result so the LLM can refuse / retry / escalate cleanly.
+        return {
+            "status": "delivery_failed",
+            "reply_status": "rejected",
+            "thread_id": context_id,
+            "partner_agent_id": target_agent_id,
+            "error_code": e.code,
+            "error_reason": e.reason,
+            "message": (
+                f"The receiver rejected the message ({e.code}): {e.message}. "
+                f"Tell the user what blocked it (reason: {e.reason or 'unspecified'}) "
+                f"and offer a next step."
+            ),
+        }
+    except Exception as e:
+        # Transport failure (DNS, TLS, 5xx, etc.). Same shape as above so
+        # the LLM's existing prompt branches still work.
+        return {
+            "status": "delivery_failed",
+            "reply_status": "transport_error",
+            "thread_id": context_id,
+            "partner_agent_id": target_agent_id,
+            "error": f"{type(e).__name__}: {e}",
+            "message": (
+                "The message couldn't be delivered. Tell the user the network "
+                "request failed and offer to retry."
+            ),
+        }
+
+    state = ((task.get("status") or {}).get("state")) or "unknown"
+    reply_text = extract_reply_text(task)
+    return {
+        "task": task,
+        "task_state": state,
+        "reply_text": reply_text,
+    }
+
+
 def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: str, message: str) -> dict:
     """
-    Send a structured message to another user's persona on the Zynd network.
-    The target must have a webhook URL. Use search_zynd_personas first to find it.
+    Send a structured message to another user's persona on the Zynd network
+    via the A2A v0.3 JSON-RPC transport.
+
+    Use `search_zynd_personas` first to find the target's webhook URL.
+    The webhook URL stored on the registry is the legacy v2 endpoint —
+    we transform it into the v3 `/a2a/v1` URL automatically.
 
     Args:
         user_id: The ID of the user sending the message (injected automatically).
-        target_webhook_url: The webhook URL of the agent you want to message (obtained from search_zynd_personas).
-        target_agent_id: The agent_id of the agent you are messaging (obtained from search_zynd_personas).
+        target_webhook_url: The legacy webhook URL of the agent you want to message
+                            (the v3 URL is derived from this).
+        target_agent_id: The agent_id of the agent you are messaging.
         message: The natural language request you are sending to the other agent.
     """
     from agent.persona_manager import get_persona_status
-    persona = get_persona_status(user_id)
-    sender_agent_id = persona.get("agent_id", f"anonymous:{user_id}")
 
-    msg = AgentMessage(
-        message_id=str(uuid.uuid4()),
-        sender_id=sender_agent_id,
-        receiver_id=target_agent_id,
-        content=message,
-        message_type="query",
-    )
+    persona = get_persona_status(user_id)
+    sender_agent_id = persona.get("agent_id")
+    if not sender_agent_id:
+        return {"error": "You haven't deployed a persona yet — cannot send messages."}
 
     if not target_webhook_url:
         return {"error": "The target agent does not have a webhook URL. They cannot receive messages."}
 
-    try:
-        print(f"[zynd_network] Sending to: {target_webhook_url}")
+    log_prefix = f"[message_zynd_agent {sender_agent_id[:12]}→{target_agent_id[:12]}]"
 
-        # Look up the thread_id AND insert the outbound message as a single
-        # authoritative dm_messages row on the sender side. Both participants
-        # see it immediately via realtime on the shared DB. The receiver's
-        # webhook handler will NOT re-insert (B2) — it just triggers the
-        # orchestrator when needed.
-        thread_id = None
-        print(f"[message_zynd_agent] sender={sender_agent_id} user={user_id} target={target_agent_id}")
-        try:
-            sb = _get_supabase()
-            r1 = sb.table("dm_threads").select("id").in_("initiator_id", [sender_agent_id, user_id]).eq("receiver_id", target_agent_id).execute()
-            r2 = sb.table("dm_threads").select("id").eq("initiator_id", target_agent_id).in_("receiver_id", [sender_agent_id, user_id]).execute()
-            t_data = r1.data or r2.data
-            print(f"[message_zynd_agent] thread lookup: r1={len(r1.data or [])} r2={len(r2.data or [])}")
-            if t_data:
-                thread_id = t_data[0]["id"]
-                ins = sb.table("dm_messages").insert({
-                    "thread_id": thread_id,
-                    "sender_id": sender_agent_id,
-                    "sender_type": "agent",
-                    "channel": "agent",
-                    "content": message,
-                }).execute()
-                print(f"[message_zynd_agent] ✓ outbound row inserted on thread={thread_id} rows={len(ins.data or [])}")
-            else:
-                print(f"[message_zynd_agent] ⚠ NO thread found for (me={sender_agent_id}, partner={target_agent_id}) — outbound NOT logged, poll will be skipped")
-        except Exception as e:
-            print(f"[message_zynd_agent] ⚠ sender-side log failed: {type(e).__name__}: {e}")
-
-        # Always hit the ASYNC webhook (strip /sync suffix if present).
-        # The async endpoint returns instantly with {"status": "received"}
-        # and the receiver processes in a background task. Hitting the sync
-        # endpoint would block until the full orchestrator finishes.
-        async_url = target_webhook_url
-        if async_url.endswith("/sync"):
-            async_url = async_url[:-5]
-
-        # Mark the send time BEFORE the POST so polling can spot any reply
-        # that lands afterwards.
-        from datetime import datetime, timezone
-        send_time_iso = datetime.now(timezone.utc).isoformat()
-
-        # Try to deliver. If the POST itself fails (slow server, timeout,
-        # network blip), we DON'T abort — we still poll the DB because the
-        # message may have been delivered even if the response didn't reach
-        # us, and any reply will land on the shared thread regardless.
-        post_error: str | None = None
-        try:
-            print(f"[message_zynd_agent] POST → {async_url}")
-            resp = requests.post(async_url, json=msg.to_dict(), timeout=20)
-            resp.raise_for_status()
-            print(f"[message_zynd_agent] POST OK ({resp.status_code})")
-        except Exception as e:
-            post_error = str(e)
-            print(f"[message_zynd_agent] POST failed (continuing to poll): {post_error}")
-
-        # Poll the DB for a new agent-channel message on this thread that
-        # ISN'T from us. This is the source of truth — if a reply landed,
-        # it's there, regardless of what happened to the HTTP response.
-        #
-        # Budget: 60 seconds. The receiver's orchestrator might need a few
-        # iterations (LLM call + tool call + LLM call), each of which can
-        # take 5-15s on Gemini. 30s was too tight; replies that landed at
-        # T+32s were being missed even though the row was in the DB.
-        import time
-        reply_text: str | None = None
-        if thread_id:
-            sb = _get_supabase()
-            deadline = time.time() + 60
-            print(f"[message_zynd_agent] polling thread={thread_id} for ~60s…")
-
-            def _check_for_reply() -> str | None:
-                try:
-                    r = (
-                        sb.table("dm_messages")
-                        .select("content,sender_id,created_at")
-                        .eq("thread_id", thread_id)
-                        .eq("channel", "agent")
-                        .gt("created_at", send_time_iso)
-                        .neq("sender_id", sender_agent_id)
-                        .order("created_at", desc=True)
-                        .limit(1)
-                        .execute()
-                    )
-                    if r.data:
-                        content = r.data[0]["content"] or ""
-                        # Strip legacy prefixes that might still be on old rows.
-                        for prefix in ("[Automated Reply]\n", "[Inbound]\n", "[Async Reply]\n"):
-                            if content.startswith(prefix):
-                                content = content[len(prefix):]
-                                break
-                        return content
-                except Exception as e:
-                    print(f"[message_zynd_agent] poll error: {e}")
-                return None
-
-            while time.time() < deadline:
-                time.sleep(2)
-                found = _check_for_reply()
-                if found:
-                    reply_text = found
-                    print(f"[message_zynd_agent] reply found ({len(found)} chars)")
-                    break
-
-            # One last grace check right before giving up — handles the
-            # case where the reply landed during the final sleep.
-            if not reply_text:
-                found = _check_for_reply()
-                if found:
-                    reply_text = found
-                    print(f"[message_zynd_agent] reply found on grace check ({len(found)} chars)")
-
-        # Before returning, check whether the other side created any meeting
-        # proposals on this thread during the exchange. Without surfacing
-        # these, our AI might re-create a duplicate proposal because the
-        # reply text alone doesn't tell it that a ticket already exists.
-        recent_proposals: list[dict] = []
-        if thread_id:
-            try:
-                sb = _get_supabase()
-                # "Recent" = created at or after we started this send.
-                pr = (
-                    sb.table("agent_tasks")
-                    .select("id,status,initiator_user_id,recipient_user_id,payload,created_at")
-                    .eq("thread_id", thread_id)
-                    .eq("type", "meeting")
-                    .gte("created_at", send_time_iso)
-                    .order("created_at", desc=True)
-                    .execute()
-                )
-                for row in (pr.data or []):
-                    payload = row.get("payload") or {}
-                    recent_proposals.append({
-                        "task_id": row["id"],
-                        "status": row["status"],
-                        "title": payload.get("title"),
-                        "start_time": payload.get("start_time"),
-                        "end_time": payload.get("end_time"),
-                        "proposed_by_me": row.get("initiator_user_id") == user_id,
-                    })
-                if recent_proposals:
-                    print(f"[message_zynd_agent] found {len(recent_proposals)} recent proposal(s) on thread")
-            except Exception as e:
-                print(f"[message_zynd_agent] proposal lookup failed (non-fatal): {e}")
-
-        # Build a guidance note about the proposals so the LLM knows
-        # whether to re-propose or just report back to the user.
-        proposal_note = ""
-        if recent_proposals:
-            peer_created = [p for p in recent_proposals if not p["proposed_by_me"]]
-            mine = [p for p in recent_proposals if p["proposed_by_me"]]
-            parts = []
-            if peer_created:
-                parts.append(
-                    f"IMPORTANT: the other side already created {len(peer_created)} meeting "
-                    f"proposal(s) on this thread during this exchange. "
-                    f"DO NOT call propose_meeting — it would be a duplicate. "
-                    f"Instead tell the user the proposal is waiting for their review in the Meetings tab, "
-                    f"and offer to accept/counter/decline on their behalf via respond_to_meeting."
-                )
-            if mine:
-                parts.append(f"You already created {len(mine)} proposal(s) on this thread; do not duplicate.")
-            proposal_note = " ".join(parts)
-
-        if reply_text:
-            result = {
-                "status": "success",
-                "reply_status": "reply_received",
-                "reply": reply_text,
-                "thread_id": thread_id,
-                "partner_agent_id": target_agent_id,
-                "recent_proposals": recent_proposals,
-                "message": "Reply received from the other agent — quote or paraphrase it for the user as your final answer.",
-            }
-            if proposal_note:
-                result["message"] = proposal_note + " Then, " + result["message"]
-            return result
-
-        # No reply was found within the polling window.
-        if post_error:
-            return {
-                "status": "delivery_uncertain",
-                "reply_status": "no_reply_yet",
-                "thread_id": thread_id,
-                "partner_agent_id": target_agent_id,
-                "post_error": post_error,
-                "recent_proposals": recent_proposals,
-                "message": (
-                    "I tried to send the message but the delivery confirmation didn't come back, "
-                    "and no reply has appeared on the thread yet. The other side may not have "
-                    "received it. Tell the user the delivery is uncertain and offer to retry."
-                ),
-            }
-
-        result = {
-            "status": "success",
-            "reply_status": "no_reply_yet",
-            "thread_id": thread_id,
-            "partner_agent_id": target_agent_id,
-            "recent_proposals": recent_proposals,
-            "message": (
-                "Message delivered. No reply arrived within ~60s — the other agent "
-                "may still be processing, or the other side may be in manual mode "
-                "(a human will reply later). Tell the user the message was delivered "
-                "and the reply will appear in the Agent Activity tab when it arrives."
+    # Look up the dm_thread (contextId is the dm_threads.id per design C-1).
+    sb = _get_supabase()
+    r1 = (
+        sb.table("dm_threads")
+        .select("id,status")
+        .in_("initiator_id", [sender_agent_id, user_id])
+        .eq("receiver_id", target_agent_id)
+        .execute()
+    )
+    r2 = (
+        sb.table("dm_threads")
+        .select("id,status")
+        .eq("initiator_id", target_agent_id)
+        .in_("receiver_id", [sender_agent_id, user_id])
+        .execute()
+    )
+    thread = (r1.data or r2.data or [None])[0]
+    if not thread:
+        return {
+            "error": (
+                "No connection thread exists with this agent. Call request_connection "
+                "first and wait for the receiver to accept it before messaging."
             ),
         }
-        if proposal_note:
-            result["message"] = proposal_note + " Additionally: " + result["message"]
-        return result
+    thread_id = thread["id"]
+    thread_status = thread.get("status") or "pending"
+    if thread_status not in ("accepted",):
+        return {
+            "error": (
+                f"Connection is in '{thread_status}' state — only 'accepted' "
+                f"connections may exchange messages. Wait for the other side to accept."
+            ),
+            "thread_id": thread_id,
+        }
+
+    # Insert outbound to dm_messages BEFORE the send (M-1: persist before
+    # dispatch). Both participants see it immediately via Supabase realtime.
+    try:
+        sb.table("dm_messages").insert({
+            "thread_id": thread_id,
+            "sender_id": sender_agent_id,
+            "sender_type": "agent",
+            "channel": "agent",
+            "content": message,
+        }).execute()
     except Exception as e:
-        return {"error": str(e)}
+        logger.warning(f"{log_prefix} sender-side dm_messages insert failed: {e}")
+
+    # Snapshot the time so the proposal lookup below can scope to "during
+    # this exchange". (Receiver's orchestrator may have created an
+    # agent_tasks meeting row while serving the request.)
+    from datetime import datetime, timezone
+    send_time_iso = datetime.now(timezone.utc).isoformat()
+
+    # ── The actual A2A v3 call ──────────────────────────────────────
+    delivery = _send_via_a2a_v3(
+        sender_agent_id=sender_agent_id,
+        sender_user_id=user_id,
+        target_agent_id=target_agent_id,
+        target_webhook_url=target_webhook_url,
+        context_id=thread_id,
+        message_text=message,
+    )
+    if "error" in delivery and "task" not in delivery:
+        # Pre-flight failure (no v3 URL, missing keypair, etc.) — pass
+        # the error to the LLM so it can explain to the user.
+        delivery["thread_id"] = thread_id
+        delivery["partner_agent_id"] = target_agent_id
+        return delivery
+
+    # `_send_via_a2a_v3` may have returned a `delivery_failed` shape
+    # (network or receiver-rejection); pass it through verbatim — the
+    # LLM's prompts already know how to phrase those.
+    if delivery.get("status") == "delivery_failed":
+        return delivery
+
+    task = delivery["task"]
+    task_state = delivery["task_state"]
+    reply_text = delivery["reply_text"]
+
+    # ── Recent agent_tasks (meeting) lookup ─────────────────────────
+    # Even with synchronous reply we keep this — the receiver's
+    # orchestrator may have staged a propose_meeting via the approval
+    # gate, which lands in pending_approvals; if/when the user approves,
+    # an agent_tasks row will appear. We surface any rows created during
+    # this exchange so the LLM doesn't issue a duplicate proposal.
+    recent_proposals: list[dict] = []
+    try:
+        pr = (
+            sb.table("agent_tasks")
+            .select("id,status,initiator_user_id,recipient_user_id,payload,created_at")
+            .eq("thread_id", thread_id)
+            .eq("type", "meeting")
+            .gte("created_at", send_time_iso)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        for row in (pr.data or []):
+            payload = row.get("payload") or {}
+            recent_proposals.append({
+                "task_id": row["id"],
+                "status": row["status"],
+                "title": payload.get("title"),
+                "start_time": payload.get("start_time"),
+                "end_time": payload.get("end_time"),
+                "proposed_by_me": row.get("initiator_user_id") == user_id,
+            })
+    except Exception as e:
+        logger.warning(f"{log_prefix} proposal lookup failed (non-fatal): {e}")
+
+    proposal_note = ""
+    if recent_proposals:
+        peer_created = [p for p in recent_proposals if not p["proposed_by_me"]]
+        mine = [p for p in recent_proposals if p["proposed_by_me"]]
+        parts = []
+        if peer_created:
+            parts.append(
+                f"IMPORTANT: the other side already created {len(peer_created)} meeting "
+                f"proposal(s) on this thread during this exchange. "
+                f"DO NOT call propose_meeting — it would be a duplicate. "
+                f"Instead tell the user the proposal is waiting for their review in the Meetings tab, "
+                f"and offer to accept/counter/decline on their behalf via respond_to_meeting."
+            )
+        if mine:
+            parts.append(f"You already created {len(mine)} proposal(s) on this thread; do not duplicate.")
+        proposal_note = " ".join(parts)
+
+    # ── Map task state → reply_status (back-compat with prior shape) ─
+    if task_state == "completed":
+        reply_status = "reply_received"
+        guide = "Reply received from the other agent — quote or paraphrase it for the user as your final answer."
+    elif task_state in ("input-required", "auth-required"):
+        # Phase 3.4 wires a real loop; phase 3.1 just surfaces the
+        # interrupted state so the user sees what's blocking.
+        reply_status = "needs_more_info"
+        guide = (
+            "The other agent paused mid-task and asked for more info. The question is in the reply. "
+            "Bring it to the user verbatim and ask what they'd like to do."
+        )
+    elif task_state == "failed":
+        reply_status = "remote_failed"
+        guide = "The other agent's handler failed. Tell the user something went wrong on their side and offer to retry."
+    elif task_state == "rejected":
+        reply_status = "remote_rejected"
+        guide = "The other agent refused the request. Tell the user the connection lacks the necessary permission for this action."
+    else:
+        reply_status = "no_reply_yet"
+        guide = (
+            "The other agent acknowledged but didn't produce a reply this turn. The reply will "
+            "appear in the Agent Activity tab when it arrives — tell the user we're waiting on them."
+        )
+
+    result = {
+        "status": "success" if task_state == "completed" else "partial",
+        "reply_status": reply_status,
+        "reply": reply_text,
+        "thread_id": thread_id,
+        "task_id": task.get("id"),
+        "task_state": task_state,
+        "partner_agent_id": target_agent_id,
+        "recent_proposals": recent_proposals,
+        "message": guide,
+    }
+    if proposal_note:
+        result["message"] = proposal_note + " Then, " + result["message"]
+    return result
 
 
 def read_agent_channel(user_id: str, thread_id: str, limit: int = 20) -> dict:

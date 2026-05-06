@@ -14,6 +14,15 @@ Usage (from the backend/ directory):
     python scripts/seed_personas.py                  # add the default set
     python scripts/seed_personas.py --reset          # wipe prior seeds first
     python scripts/seed_personas.py --no-linkedin    # skip linkedin_profiles
+    python scripts/seed_personas.py --with-threads   # also create accepted
+                                                     #   threads between pairs
+
+A2A v3 note: each seeded persona is registered with a v3 JSON-RPC URL
+(`/api/persona/{user_id}/a2a/v1`), so peers fetching the registry get the
+new transport directly. The seeded user_metadata.seeded=true flag also
+makes the orchestrator's external-mode bypass the approval gate for these
+personas (otherwise propose_meeting would dead-end on a card no human
+will resolve).
 
 NOTE: After seeding, restart the backend so its heartbeat manager picks
 up the new personas. Without heartbeats, the registry eventually marks
@@ -224,6 +233,51 @@ def insert_linkedin_profile(user_id: str, seed: dict) -> None:
     ).execute()
 
 
+def _persona_row_for(user_id: str) -> dict | None:
+    """Return the persona_agents row for a seeded user, or None if missing."""
+    sb = create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    r = sb.table("persona_agents").select("*").eq("user_id", user_id).execute()
+    return r.data[0] if r.data else None
+
+
+def seed_accepted_thread_pairs(persona_pairs: list[tuple[dict, dict]]) -> int:
+    """Create one accepted dm_thread per pair of personas.
+
+    Idempotent: if a thread (in either direction) already exists between
+    the two agent_ids, skip it. Returns the number of new threads created.
+
+    Threads start in 'agent' mode on both sides (so the AI handles
+    inbound traffic) with the default permission set — a useful starting
+    point for testing the A2A v3 flow without manual UI clicks.
+    """
+    sb = create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    created = 0
+    for a, b in persona_pairs:
+        a_id, b_id = a["agent_id"], b["agent_id"]
+        # Existing thread in either direction?
+        r1 = sb.table("dm_threads").select("id").eq("initiator_id", a_id).eq("receiver_id", b_id).execute()
+        r2 = sb.table("dm_threads").select("id").eq("initiator_id", b_id).eq("receiver_id", a_id).execute()
+        if (r1.data or r2.data):
+            print(f"  ~ thread {a['name']} ↔ {b['name']}: already exists, skipping")
+            continue
+
+        sb.table("dm_threads").insert({
+            "initiator_id": a_id,
+            "receiver_id": b_id,
+            "initiator_name": a["name"],
+            "receiver_name": b["name"],
+            "status": "accepted",
+            "lifecycle": "pending",
+            "initiator_mode": "agent",
+            "receiver_mode": "agent",
+            # permissions JSONB has the conservative default already
+            # (can_request_meetings only).
+        }).execute()
+        created += 1
+        print(f"  ✓ thread {a['name']} ↔ {b['name']} (accepted, both in agent mode)")
+    return created
+
+
 async def seed_one(seed: dict, with_linkedin: bool) -> dict:
     email = f"seed-{seed['slug']}@{SEED_EMAIL_DOMAIN}"
 
@@ -286,6 +340,33 @@ async def main_async(args) -> None:
         except Exception as e:
             print(f"  ✗ {seed['slug']}: {type(e).__name__}: {e}")
 
+    if args.with_threads:
+        print("\nCreating accepted threads between consecutive pairs…")
+        # Re-read every active seed persona row (handles both freshly
+        # created and pre-existing-skipped users uniformly).
+        seed_personas: list[dict] = []
+        for s in SEEDS[: args.count]:
+            email = f"seed-{s['slug']}@{SEED_EMAIL_DOMAIN}"
+            uid = (existing.get(email)
+                   or next((u["id"] for u in list_seed_users()
+                            if (u.get("email") or "").lower() == email), None))
+            if not uid:
+                continue
+            row = _persona_row_for(uid)
+            if row:
+                seed_personas.append(row)
+
+        # Pair consecutively: (0,1), (2,3), (4,5), ...
+        pairs = [
+            (seed_personas[i], seed_personas[i + 1])
+            for i in range(0, len(seed_personas) - 1, 2)
+        ]
+        if not pairs:
+            print("  (need at least 2 seeded personas to make a pair)")
+        else:
+            n = seed_accepted_thread_pairs(pairs)
+            print(f"  Created {n} new accepted thread(s).")
+
     print("\nDone. Restart the backend so the heartbeat manager picks up the new personas.")
 
 
@@ -299,6 +380,11 @@ def main() -> None:
                    help="Delete all prior seeds first (FKs cascade through persona_agents + linkedin_profiles).")
     p.add_argument("--no-linkedin", action="store_true",
                    help="Skip the linkedin_profiles mock rows.")
+    p.add_argument("--with-threads", action="store_true",
+                   help="After seeding, also create accepted dm_threads between "
+                        "consecutive pairs (seed[0]↔seed[1], seed[2]↔seed[3], …) "
+                        "with default permissions and both sides in agent mode. "
+                        "Useful for one-shot A2A v3 testing.")
     args = p.parse_args()
 
     if args.count < 1 or args.count > len(SEEDS):

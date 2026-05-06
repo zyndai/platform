@@ -25,8 +25,10 @@ import json
 import struct
 from dataclasses import dataclass
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
+    Ed25519PublicKey,
 )
 
 
@@ -49,11 +51,25 @@ class Keypair:
         """Canonical `ed25519:<b64>` form used in registry payloads."""
         return f"ed25519:{self.public_key_b64}"
 
+    @property
+    def private_key(self) -> bytes:
+        """Compat alias for `private_seed` — matches the SDK's
+        Ed25519Keypair API. The vendored a2a/auth.py reads
+        `keypair.private_key` and passes it to the module-level
+        `sign(seed_bytes, message)` helper below.
+        """
+        return self.private_seed
+
     def sign(self, message: bytes) -> str:
         """Sign `message` and return an `ed25519:<b64>` signature string."""
         priv = Ed25519PrivateKey.from_private_bytes(self.private_seed)
         sig = priv.sign(message)
         return "ed25519:" + base64.b64encode(sig).decode()
+
+
+# Compat alias — the vendored a2a/auth.py imports `Ed25519Keypair`,
+# which is the SDK's name for the same shape.
+Ed25519Keypair = Keypair
 
 
 # ── Low-level helpers ─────────────────────────────────────────────────
@@ -109,6 +125,62 @@ def sign(seed: bytes, message: bytes) -> str:
     priv = Ed25519PrivateKey.from_private_bytes(seed)
     sig = priv.sign(message)
     return "ed25519:" + base64.b64encode(sig).decode()
+
+
+def verify(public_key_b64: str, message: bytes, signature: str) -> bool:
+    """
+    Verify an Ed25519 signature against a public key.
+
+    Arguments:
+      public_key_b64: bare base64 (no `ed25519:` prefix) OR `ed25519:<b64>`
+                     — both accepted because the wire formats vary.
+      message:       the bytes that were signed.
+      signature:     `ed25519:<b64>` string (the format `sign()` returns).
+
+    Returns True on a valid signature, False on any failure (bad key, bad
+    signature, malformed input). Never raises — verify-or-not is the
+    caller's decision based on the bool.
+    """
+    try:
+        if public_key_b64.startswith("ed25519:"):
+            public_key_b64 = public_key_b64[len("ed25519:"):]
+        if signature.startswith("ed25519:"):
+            signature = signature[len("ed25519:"):]
+        pub = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key_b64))
+        pub.verify(base64.b64decode(signature), message)
+        return True
+    except (InvalidSignature, ValueError, TypeError, base64.binascii.Error):
+        return False
+
+
+def verify_derivation_proof(proof: dict, agent_public_key_b64: str) -> bool:
+    """
+    Verify a `developer_proof` block against an agent's public key.
+
+    The proof shape (matches build_derivation_proof above and the Go
+    registry's identity.go):
+        {
+          "developer_public_key": "ed25519:<b64>",
+          "entity_index":         int,
+          "developer_signature":  "ed25519:<b64>"
+        }
+
+    The signed bytes are: agent_pub_bytes || big_endian_uint32(index)
+
+    Returns True only when the developer's signature over those bytes
+    verifies against `developer_public_key`. False on any error.
+    """
+    try:
+        dev_pub = proof["developer_public_key"]
+        index = int(proof["entity_index"])
+        signature = proof["developer_signature"]
+        if agent_public_key_b64.startswith("ed25519:"):
+            agent_public_key_b64 = agent_public_key_b64[len("ed25519:"):]
+        agent_pub_bytes = base64.b64decode(agent_public_key_b64)
+        message = agent_pub_bytes + struct.pack(">I", index)
+        return verify(dev_pub, message, signature)
+    except (KeyError, ValueError, TypeError, base64.binascii.Error):
+        return False
 
 
 # ── Developer identity / derivation proof ────────────────────────────

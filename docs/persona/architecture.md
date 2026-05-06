@@ -45,7 +45,7 @@ User Creates Persona:
   1. Backend allocates next derivation_index from persona_agents table
   2. Derives Ed25519 keypair: SHA-512(dev_seed || "agdns:agent:" || index)[:32]
   3. Computes agent_id: "agdns:" + SHA-256(pubkey).hex()[:32]
-  4. Registers on dns01.zynd.ai with signature auth + "persona" tag
+  4. Registers on zns01.zynd.ai with signature auth + "persona" tag
   5. Saves to persona_agents table (user_id, agent_id, index, public_key, ...)
   6. Starts heartbeat for this agent
 ```
@@ -161,7 +161,7 @@ Browser → POST /api/persona/register
     → persona_manager.create_persona()
         → Allocate derivation_index
         → Derive Ed25519 keypair from developer key
-        → POST dns01.zynd.ai/v1/agents (signed registration)
+        → POST zns01.zynd.ai/v1/agents (signed registration)
         → INSERT persona_agents
         → heartbeat_manager.add_agent()
     → Return { agent_id, webhook_url }
@@ -194,7 +194,7 @@ External Agent → POST /api/persona/webhooks/{user_id}/sync
 
 ```
 Browser → GET /api/persona/search?query=Alice
-    → POST dns01.zynd.ai/v1/search { query, tags: ["persona"] }
+    → POST zns01.zynd.ai/v1/search { query, tags: ["persona"] }
     → Filter results to persona-tagged agents only
     → Return { results: [...] }
 ```
@@ -243,7 +243,7 @@ The webhook URL is registered with the Zynd registry during persona creation, so
 
 ---
 
-## Registry Integration (dns01.zynd.ai)
+## Registry Integration (zns01.zynd.ai)
 
 ### Endpoints Used
 
@@ -332,7 +332,7 @@ backend/
 webapp/src/
 ├── components/
 │   ├── PersonaBuilder.tsx          # Identity creation (agent_id, not DID)
-│   ├── MessagesPanel.tsx           # Network DMs (dns01.zynd.ai search)
+│   ├── MessagesPanel.tsx           # Network DMs (zns01.zynd.ai search)
 │   ├── ChatInterface.tsx           # User-to-agent chat
 │   └── ConnectionsPanel.tsx        # OAuth integrations
 ├── contexts/
@@ -351,7 +351,7 @@ webapp/src/
 ## Migration Checklist (v1 → v2)
 
 - [x] Replace `did:polygon:...` identifiers with `agdns:...` agent IDs
-- [x] Replace `registry.zynd.ai` with `dns01.zynd.ai`
+- [x] Replace `registry.zynd.ai` with `zns01.zynd.ai`
 - [x] Replace API key auth with Ed25519 signature auth
 - [x] Replace `ConfigManager.create_agent()` with HD key derivation
 - [x] Replace filesystem config (`.agent-{user_id}/`) with `persona_agents` DB table
@@ -360,7 +360,7 @@ webapp/src/
 - [x] Truncate `dm_threads` and `dm_messages` (fresh start)
 - [x] Update RLS policies to use `persona_agents` instead of `persona_dids`
 - [x] Update frontend to use `agent_id` instead of `did`/`didIdentifier`
-- [x] Update frontend search to use `dns01.zynd.ai/v1/search` (via backend proxy)
+- [x] Update frontend search to use `zns01.zynd.ai/v1/search` (via backend proxy)
 - [x] Add persona deletion endpoint (`DELETE /api/persona/{user_id}`)
 - [x] Add search proxy endpoint (`GET /api/persona/search`)
 - [x] Add profile update endpoint (`PUT /api/persona/{user_id}/profile`)

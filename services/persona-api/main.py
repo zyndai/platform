@@ -17,6 +17,7 @@ from api.oauth_routes import router as oauth_router
 from api.chat import router as chat_router
 from api.connections import router as connections_router
 from api.persona import router as persona_router
+from agent.a2a_router import router as a2a_router
 from api.meetings import router as meetings_router
 from api.telegram import router as telegram_router
 from api.linkedin import router as linkedin_router
@@ -42,9 +43,17 @@ async def lifespan(app: FastAPI):
     from agent.persona_manager import startup as persona_startup
     await persona_startup()
 
+    # A2A v3 lifecycle: reconcile orphan tasks (any 'working'/'submitted'
+    # rows from a prior process get flipped to failed/server_restart),
+    # then start the idle-TTL sweeper for interrupted tasks.
+    from agent.a2a_router import start_a2a_lifecycle
+    await start_a2a_lifecycle()
+
     yield
 
     # ── Shutdown ──
+    from agent.a2a_router import stop_a2a_lifecycle
+    await stop_a2a_lifecycle()
     from agent.persona_manager import shutdown as persona_shutdown
     await persona_shutdown()
     print("[Zynd AI] Graceful shutdown complete")
@@ -79,6 +88,11 @@ app.include_router(oauth_router, prefix="/api/oauth", tags=["OAuth"])
 app.include_router(chat_router, prefix="/api/chat", tags=["Chat"])
 app.include_router(connections_router, prefix="/api/connections", tags=["Connections"])
 app.include_router(persona_router, prefix="/api/persona", tags=["Persona"])
+# A2A v3 transport (phase 1: route shells, returns not_yet_implemented).
+# Mounted at the same prefix so the agent card lives at
+# /api/persona/{user_id}/.well-known/agent-card.json and the JSON-RPC
+# endpoint at /api/persona/{user_id}/a2a/v1.
+app.include_router(a2a_router, prefix="/api/persona", tags=["A2A"])
 app.include_router(meetings_router, prefix="/api/meetings", tags=["Meetings"])
 app.include_router(telegram_router, prefix="/api/telegram", tags=["Telegram"])
 app.include_router(linkedin_router, prefix="/api/linkedin", tags=["LinkedIn"])

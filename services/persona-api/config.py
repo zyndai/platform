@@ -70,7 +70,7 @@ ZYND_DEVELOPER_KEYPAIR_PATH: str = os.getenv(
     "ZYND_DEVELOPER_KEYPAIR_PATH",
     os.path.expanduser("~/.zynd/developer.json")
 )
-ZYND_REGISTRY_URL: str = os.getenv("ZYND_REGISTRY_URL", "https://dns01.zynd.ai")
+ZYND_REGISTRY_URL: str = os.getenv("ZYND_REGISTRY_URL", "https://zns01.zynd.ai")
 ZYND_WEBHOOK_BASE_URL: str = os.getenv("ZYND_WEBHOOK_BASE_URL", "")
 NGROK_AUTH_TOKEN: str = os.getenv("NGROK_AUTH_TOKEN", "")
 

@@ -3,7 +3,7 @@ Persona Manager — lifecycle management for user personas on the Zynd Network.
 
 Handles:
   - HD key derivation from the developer keypair
-  - Agent registration on dns01.zynd.ai with "persona" tags
+  - Agent registration on zns01.zynd.ai with "persona" tags
   - Webhook URL assignment (all routed through this server)
   - Heartbeat registration/deregistration
   - Persona status queries from Supabase
@@ -253,7 +253,7 @@ async def create_persona(
     Steps:
       1. Allocate a derivation index
       2. Derive Ed25519 keypair from developer key
-      3. Register agent on dns01.zynd.ai with 'persona' tags
+      3. Register agent on zns01.zynd.ai with 'persona' tags
       4. Save to persona_agents table
       5. Start heartbeat
 
@@ -280,9 +280,12 @@ async def create_persona(
     keypair = keypair_from_seed(private_seed)
     private_key_b64 = base64.b64encode(private_seed).decode()
 
-    # 3. Build webhook URL
+    # 3. Build the public A2A endpoint URL.
+    # Phase 4.1: this is the v3 JSON-RPC endpoint. The column is still
+    # named webhook_url for backward DB compat, but the value is the
+    # v3 endpoint a peer would POST signed JSON-RPC envelopes to.
     webhook_base = config.ZYND_WEBHOOK_BASE_URL.rstrip("/")
-    webhook_url = f"{webhook_base}/api/persona/webhooks/{user_id}"
+    webhook_url = f"{webhook_base}/api/persona/{user_id}/a2a/v1"
 
     # 4. Register on the Zynd registry. The registry assigns the
     #    canonical agent_id (currently a "zns:" prefixed string) and

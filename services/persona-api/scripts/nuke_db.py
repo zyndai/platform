@@ -58,10 +58,17 @@ from agent.zynd_identity import (
 # (table, primary-key column) — the PK is used to drive the
 # `not.is.null` DELETE filter, since PostgREST refuses to delete
 # without a WHERE clause and not every table has `updated_at`.
+#
+# Order matters: child tables (FK referrers) come before parents so we
+# don't depend on CASCADE for cleanup. The A2A v3 tables (a2a_tasks,
+# pending_approvals) both reference dm_threads, so they slot in before
+# it. Same reasoning for agent_tasks.
 WIPE_TABLES: list[tuple[str, str]] = [
     ("dm_messages",           "id"),
-    ("dm_threads",            "id"),
+    ("a2a_tasks",             "task_id"),    # A2A v3 task FSM persistence
     ("agent_tasks",           "id"),
+    ("pending_approvals",     "id"),
+    ("dm_threads",            "id"),
     ("api_tokens",            "id"),
     ("chat_messages",         "id"),
     ("telegram_chat_history", "conversation_id"),

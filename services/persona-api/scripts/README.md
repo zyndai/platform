@@ -11,13 +11,17 @@ Destructive. There is no undo. Dev environments only.
 
 1. For every row in `persona_agents`, deregisters the persona from the Zynd DNS
    registry (so the next registration doesn't hit `409 already exists`).
-2. Deletes every row from these tables:
-   - `persona_agents`
-   - `dm_threads`, `dm_messages`
-   - `agent_tasks`
+2. Deletes every row from these tables (children first, so we don't lean on CASCADE):
+   - `dm_messages`
+   - `a2a_tasks` — A2A v3 task FSM persistence
+   - `agent_tasks` — meeting tickets
+   - `pending_approvals` — staged commitment-class tool calls
+   - `dm_threads`
    - `api_tokens`
    - `chat_messages`
    - `telegram_links`, `telegram_chat_history`
+   - `linkedin_profiles`
+   - `persona_agents`
 3. *Optional* (`--wipe-users`): deletes every row from `auth.users` via the
    Supabase admin API. Fully resets sign-ins — users will have to sign in
    again from the frontend (and will get a brand new UUID).
@@ -49,7 +53,7 @@ python scripts/nuke_db.py --yes
 # 3. Full nuke — also delete every auth.users row.
 python scripts/nuke_db.py --yes --wipe-users
 
-# 4. Wipe DB only, skip registry deregister (use if dns01.zynd.ai is down).
+# 4. Wipe DB only, skip registry deregister (use if zns01.zynd.ai is down).
 #    Next registration will hit 409 and fall back to PUT-update.
 python scripts/nuke_db.py --yes --skip-deregister
 ```
@@ -60,7 +64,7 @@ python scripts/nuke_db.py --yes --skip-deregister
 ============================================================
 Zynd clean-slate nuker
 Supabase: https://supabase.shortblogs.org
-Registry: https://dns01.zynd.ai
+Registry: https://zns01.zynd.ai
 ============================================================
 
 Current row counts:

@@ -10,11 +10,29 @@ All functions accept a `user_id` to look up stored Google OAuth tokens.
 """
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from mcp.tools.google.common import get_google_creds
 from googleapiclient.discovery import build
 import config
+
+
+def _parse_iso(value: str) -> datetime:
+    """Parse an ISO-8601 timestamp the LLM (or scheduler) gave us.
+
+    Python 3.10's ``datetime.fromisoformat`` doesn't accept the trailing
+    ``Z`` (UTC) suffix that's the standard wire format we get from the
+    orchestrator and Google APIs — 3.11+ does. We normalize ``Z`` → ``+00:00``
+    so 3.10 parses cleanly. Naive timestamps are assumed UTC since every
+    caller in this codebase serializes UTC.
+    """
+    s = value.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _get_service(user_id: str):
@@ -54,10 +72,12 @@ def create_event(
         print(f"[calendar] Creating event for {user_id}: {summary} at {start_time}")
         service = _get_service(user_id)
 
-        # Parse start time and default end to +1 hour
-        start_dt = datetime.fromisoformat(start_time)
+        # Parse start time and default end to +1 hour. _parse_iso accepts
+        # the `Z` suffix that 3.10's stdlib rejects — the LLM tends to
+        # emit `2026-05-20T14:00:00Z`.
+        start_dt = _parse_iso(start_time)
         if end_time:
-            end_dt = datetime.fromisoformat(end_time)
+            end_dt = _parse_iso(end_time)
         else:
             end_dt = start_dt + timedelta(hours=1)
 

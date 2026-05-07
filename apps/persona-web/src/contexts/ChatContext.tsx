@@ -179,6 +179,134 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     };
   }, [user]);
 
+  // Inbound agent-channel messages — when a peer's persona reaches out
+  // to ours (over A2A), the server side writes the message into
+  // dm_messages with channel='agent'. We subscribe globally so the
+  // user notices the request live in the home chat without having to
+  // navigate to the Threads page first. Banner links straight to the
+  // thread for a manual reply (the thread page handles the actual
+  // composer + side-mode toggling).
+  useEffect(() => {
+    if (!user) return;
+
+    // Resolve our agent_id once so we can filter out our own outbound
+    // copies of the same dm_messages rows. Cached for the lifetime of
+    // the provider — agent ids don't change once minted.
+    let myAgentId: string | null = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `${API}/api/persona/${user.id}/status`,
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && typeof data?.agent_id === "string") {
+          myAgentId = data.agent_id;
+        }
+      } catch {
+        /* best-effort */
+      }
+    })();
+
+    const sb = getSupabase();
+    const channel = sb
+      .channel(`chat-dm-incoming-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "dm_messages",
+        },
+        async (payload) => {
+          const row = payload.new as {
+            id: string;
+            thread_id: string;
+            sender_id: string;
+            sender_type: string;
+            channel: string;
+            content: string;
+          };
+          // Only agent-channel inbound (our orchestrator's own replies
+          // are also written into dm_messages with our agent_id as
+          // sender — those we skip).
+          if (row.channel !== "agent") return;
+          if (!myAgentId || row.sender_id === myAgentId) return;
+
+          // Only surface the card when OUR side of the thread is in
+          // human mode. In agent mode (the default), the orchestrator
+          // is already handling the inbound autonomously — popping a
+          // composer would force the user to type a reply that's
+          // about to be answered by their AI anyway.
+          let shouldShow = false;
+          try {
+            const t = await sb
+              .from("dm_threads")
+              .select("initiator_id,receiver_id,initiator_mode,receiver_mode")
+              .eq("id", row.thread_id)
+              .limit(1)
+              .maybeSingle();
+            const thread = t.data as
+              | {
+                  initiator_id: string;
+                  receiver_id: string;
+                  initiator_mode: string;
+                  receiver_mode: string;
+                }
+              | null;
+            if (thread) {
+              const ourSide =
+                thread.initiator_id === myAgentId
+                  ? "initiator"
+                  : thread.receiver_id === myAgentId
+                    ? "receiver"
+                    : null;
+              if (ourSide) {
+                const mode =
+                  ourSide === "initiator"
+                    ? thread.initiator_mode
+                    : thread.receiver_mode;
+                shouldShow = mode === "human";
+              }
+            }
+          } catch {
+            /* swallow — better to show nothing than spam */
+          }
+          if (!shouldShow) return;
+
+          const peerLabel = row.sender_id.includes(":")
+            ? row.sender_id.split(":").pop()!.slice(0, 8)
+            : row.sender_id.slice(0, 8);
+
+          setMessages((prev) => {
+            if (prev.some((m) => m.callbackId === `dm:${row.id}`)) return prev;
+            return [
+              ...prev,
+              {
+                role: "assistant",
+                content: "",  // rendered by IncomingRequestCard, not markdown
+                synthetic: true,
+                callbackId: `dm:${row.id}`,
+                incoming: {
+                  threadId: row.thread_id,
+                  messageId: row.id,
+                  peerLabel,
+                  body: row.content,
+                },
+              },
+            ];
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      sb.removeChannel(channel);
+    };
+  }, [user]);
+
   const value: ChatContextValue = {
     messages,
     setMessages,

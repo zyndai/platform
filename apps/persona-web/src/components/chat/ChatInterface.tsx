@@ -29,6 +29,7 @@ import ChatInput from "./ChatInput";
 import MatchCard from "./MatchCard";
 import IntroPreviewModal from "./IntroPreviewModal";
 import ApprovalCard, { type PendingApproval } from "./ApprovalCard";
+import IncomingRequestCard from "./IncomingRequestCard";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -203,6 +204,8 @@ function MessageRow({
   busyId,
   onSayHi,
   onActOnHandoff,
+  userId,
+  onIncomingReplied,
 }: {
   message: ChatMessage;
   expanded: boolean;
@@ -210,7 +213,22 @@ function MessageRow({
   busyId: string | null;
   onSayHi: (h: PersonaHit) => void;
   onActOnHandoff: (h: ThreadHandoff) => void;
+  userId: string;
+  onIncomingReplied: () => void;
 }) {
+  // Inbound A2A request — render the inline composer card instead of
+  // a normal chat bubble. Skips the rest of the bubble plumbing
+  // (thinking panel, tool activity, etc.) which doesn't apply.
+  if (message.incoming) {
+    return (
+      <IncomingRequestCard
+        request={message.incoming}
+        userId={userId}
+        onReplied={onIncomingReplied}
+      />
+    );
+  }
+
   const isAria = message.role === "assistant";
   const personaHits = isAria ? extractPersonaHits(message.actions) : [];
   const handoffs = isAria ? extractHandoffs(message.actions) : [];
@@ -729,6 +747,16 @@ export default function ChatInterface() {
               busyId={busyId}
               onSayHi={openIntroForPersona}
               onActOnHandoff={actOnHandoff}
+              userId={user?.id || ""}
+              onIncomingReplied={() => {
+                setMessages((prev) =>
+                  prev.map((msg, idx) =>
+                    idx === i && msg.incoming
+                      ? { ...msg, incoming: { ...msg.incoming, replied: true } }
+                      : msg,
+                  ),
+                );
+              }}
             />
           ))}
           <div ref={bottomRef} />

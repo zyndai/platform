@@ -997,6 +997,94 @@ textarea.input { resize: vertical; min-height: 88px; }
   align-items: stretch;
 }
 
+/* ── Chat: inbound A2A request card with inline reply composer ─── */
+.incoming-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.incoming-card-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--ink-secondary);
+  letter-spacing: 0.2px;
+}
+.incoming-card-head strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+.incoming-card-channel {
+  color: var(--ink-muted);
+}
+.incoming-card-body {
+  font-family: var(--font-geist), 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+.incoming-card-composer {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  font-family: var(--font-geist), 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  color: var(--ink);
+  outline: none;
+  resize: none;
+  transition: border-color var(--t-micro) var(--ease-out),
+              box-shadow var(--t-micro) var(--ease-out);
+}
+.incoming-card-composer:focus {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.incoming-card-composer:disabled {
+  opacity: 0.6;
+}
+.incoming-card-composer::placeholder { color: var(--ink-muted); }
+.incoming-card-error {
+  color: var(--danger);
+}
+.incoming-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.incoming-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  text-decoration: none;
+  letter-spacing: 0.2px;
+}
+.incoming-card-link:hover { color: var(--accent); }
+.incoming-card-replied {
+  border-left-color: var(--success, var(--accent));
+  background: var(--surface);
+}
+.incoming-card-replied .incoming-card-head {
+  color: var(--ink-secondary);
+}
+
 @media (max-width: 640px) {
   .approval-card { flex-direction: column; }
   .approval-card .approval-actions { flex-direction: row; width: 100%; }

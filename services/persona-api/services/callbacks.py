@@ -56,10 +56,15 @@ def _mint_token() -> str:
 
 
 def _push_url_for(user_id: str) -> str:
-    """The endpoint a peer should POST to for this persona. Matches the
-    route mounted in agent.a2a_router.a2a_push_inbound."""
+    """The endpoint a peer should POST to for this persona. Must match
+    the route mounted in agent.a2a_router.a2a_push_inbound, which is
+    declared as ``@router.post("/push/{user_id}")`` and included with
+    ``prefix="/api/persona"`` — so the live path is
+    ``/api/persona/push/{user_id}``, not ``/api/persona/{user_id}/a2a/push``.
+    The previous shape generated 404s on every inbound push and orphaned
+    outbound_callbacks rows in 'pending' until they expired."""
     base = (config.ZYND_WEBHOOK_BASE_URL or "").rstrip("/")
-    return f"{base}/api/persona/{user_id}/a2a/push"
+    return f"{base}/api/persona/push/{user_id}"
 
 
 # ── Public API ───────────────────────────────────────────────────────

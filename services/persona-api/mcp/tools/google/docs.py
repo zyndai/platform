@@ -103,6 +103,41 @@ def append_to_document(user_id: str, document_id: str, text: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
+def replace_document_body(user_id: str, document_id: str, text: str) -> dict:
+    """Replace the entire body of a Google Doc with `text`.
+
+    Used by the Brief editor to persist user edits made in the dashboard.
+    A doc body always has endIndex >= 2 (one trailing newline that can't
+    be deleted), so we clear from index 1 to endIndex-1, then insert.
+    """
+    try:
+        docs_svc = _get_docs_service(user_id)
+        doc = docs_svc.documents().get(documentId=document_id).execute()
+        body_content = doc.get("body", {}).get("content", [])
+        end_index = body_content[-1].get("endIndex", 1) if body_content else 1
+
+        requests = []
+        if end_index > 2:
+            requests.append({
+                "deleteContentRange": {
+                    "range": {"startIndex": 1, "endIndex": end_index - 1}
+                }
+            })
+        if text:
+            requests.append({
+                "insertText": {"location": {"index": 1}, "text": text}
+            })
+
+        if requests:
+            docs_svc.documents().batchUpdate(
+                documentId=document_id, body={"requests": requests}
+            ).execute()
+        return {"success": True, "document_id": document_id}
+    except Exception as e:
+        print(f"[docs] EXCEPTION in replace_document_body: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+
 def read_document(user_id: str, document_id: str) -> dict:
     """
     Read the content of a Google Document.

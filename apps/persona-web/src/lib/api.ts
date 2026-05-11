@@ -52,3 +52,17 @@ export async function apiDelete<T = unknown>(path: string): Promise<T> {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
+
+export async function apiPatch<T = unknown>(
+  path: string,
+  body: unknown,
+): Promise<T> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

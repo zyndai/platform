@@ -711,6 +711,22 @@ def get_brief(user_id: str) -> dict:
     }
 
 
+def save_brief_content(user_id: str, content: str) -> dict:
+    """Replace the body of the persona's brief Google Doc with `content`."""
+    persona = get_persona_status(user_id)
+    if not persona.get("deployed"):
+        raise ValueError("No active persona.")
+    doc_id = persona.get("brief_doc_id")
+    if not doc_id:
+        raise ValueError("No brief doc to save into — initialize it first.")
+
+    from mcp.tools.google.docs import replace_document_body
+    result = replace_document_body(user_id=user_id, document_id=doc_id, text=content)
+    if not result.get("success"):
+        return {"success": False, "error": result.get("error")}
+    return {"success": True, "doc_id": doc_id, "content": content}
+
+
 async def startup():
     """
     Called on server boot. Rehydrates all active personas:

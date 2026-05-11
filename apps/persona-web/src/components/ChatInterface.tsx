@@ -374,6 +374,7 @@ export default function ChatInterface() {
         body: JSON.stringify({
           message: text,
           conversation_id: conversationId,
+          time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       });
 

@@ -23,6 +23,10 @@ router = APIRouter()
 class ChatRequest(BaseModel):
     message: str
     conversation_id: str | None = None
+    # IANA timezone of the user's browser (e.g. "America/Los_Angeles"). The
+    # orchestrator surfaces this to the LLM so calendar/meeting tools land at
+    # the wall-clock time the user means, not UTC.
+    time_zone: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -41,6 +45,7 @@ async def send_message(
         user_id=user["id"],
         message=body.message,
         conversation_id=body.conversation_id,
+        time_zone=body.time_zone,
     )
     return result
 
@@ -62,6 +67,7 @@ async def stream_message(
                 user_id=user["id"],
                 message=body.message,
                 conversation_id=body.conversation_id,
+                time_zone=body.time_zone,
             ):
                 # SSE frame: "data: <json>\n\n"
                 yield f"data: {json.dumps(event, default=str)}\n\n"

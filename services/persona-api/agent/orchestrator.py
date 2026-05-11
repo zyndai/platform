@@ -872,6 +872,7 @@ def _build_system_prompt(
     is_external: bool = False,
     sender_agent_id: str | None = None,
     external_permissions: dict | None = None,
+    time_zone: str | None = None,
 ) -> str:
     """Build a system prompt that tells the agent what it can do."""
     tools_prompt = mcp_server.get_tools_prompt()
@@ -889,6 +890,30 @@ def _build_system_prompt(
     # organization, location, interests and social links are gated.
     redact = is_external and not (external_permissions or {}).get("can_view_full_profile", False)
     user_brief = _format_user_brief(persona, redact_profile=redact)
+
+    # Time context — the LLM uses this to translate "let's meet at 2pm" into
+    # the right wall-clock time for `create_calendar_event` etc. Internal-mode
+    # callers (chat) supply the browser TZ; external/webhook callers don't,
+    # so we fall back to a note that says "no TZ known, assume UTC".
+    if time_zone:
+        from datetime import datetime as _dt
+        try:
+            from zoneinfo import ZoneInfo
+            now_local = _dt.now(ZoneInfo(time_zone)).strftime("%Y-%m-%d %H:%M %Z")
+        except Exception:
+            now_local = _dt.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        time_context = (
+            f"Your principal's current timezone is `{time_zone}` (local time now: {now_local}).\n"
+            f"When you call `create_calendar_event` (or any tool with a `time_zone` arg), pass "
+            f"`time_zone=\"{time_zone}\"` so the event lands at the wall-clock time they meant. "
+            f"When you read times back to your principal, present them in their local zone, "
+            f"not UTC."
+        )
+    else:
+        time_context = (
+            "No browser timezone supplied — treat times as UTC and tell the principal "
+            "explicitly when you do."
+        )
 
     # ── Identity preamble — shared by both modes ─────────────────────
     # The agent has its OWN name (`agent_handle`) which is distinct from the
@@ -998,6 +1023,9 @@ If the foreign agent asks for anything outside that list — calendar reads, pos
 ## Connected Accounts
 Your principal has the following accounts connected: {providers_str}.
 
+## Current Time Context
+{time_context}
+
 ## Available Tools
 {tools_prompt}
 
@@ -1045,6 +1073,9 @@ When your principal asks to connect, message, or interact with someone:
 ## Connected Accounts
 Your principal currently has these accounts connected: {providers_str}
 
+## Current Time Context
+{time_context}
+
 ## Available Tools
 {tools_prompt}
 
@@ -1085,6 +1116,7 @@ async def handle_user_message(
     is_external: bool = False,
     sender_agent_id: str | None = None,
     external_permissions: dict | None = None,
+    time_zone: str | None = None,
 ) -> dict:
     """
     Process a user chat message end-to-end:
@@ -1117,6 +1149,7 @@ async def handle_user_message(
             is_external,
             sender_agent_id,
             external_permissions=external_permissions,
+            time_zone=time_zone,
         ),
     }
     print("System Prompt: ", system_msg)
@@ -1357,6 +1390,7 @@ async def handle_user_message_stream(
     is_external: bool = False,
     sender_agent_id: str | None = None,
     external_permissions: dict | None = None,
+    time_zone: str | None = None,
 ):
     """
     Streaming version of handle_user_message. Yields event dicts as the
@@ -1385,6 +1419,7 @@ async def handle_user_message_stream(
             is_external,
             sender_agent_id,
             external_permissions=external_permissions,
+            time_zone=time_zone,
         ),
     }
     user_msg = {"role": "user", "content": message}

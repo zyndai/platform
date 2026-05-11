@@ -35,6 +35,7 @@ def create_event(
     end_time: str | None = None,
     description: str = "",
     location: str = "",
+    time_zone: str = "UTC",
 ) -> dict:
     """
     Create a Google Calendar event.
@@ -42,16 +43,20 @@ def create_event(
     Args:
         user_id (str): The platform user ID
         summary (str): Event title
-        start_time (str): ISO 8601 datetime string (e.g. 2026-04-01T10:00:00)
+        start_time (str): ISO 8601 datetime string (e.g. 2026-04-01T10:00:00).
+            If naive (no offset), it is interpreted in `time_zone`.
         end_time (str): ISO 8601 end time (defaults to start + 1 hour)
         description (str): Event description
         location (str): Event location
+        time_zone (str): IANA timezone name (e.g. "America/Los_Angeles").
+            Defaults to UTC. The orchestrator passes the user's browser
+            timezone so events land at the wall-clock time they meant.
 
     Returns:
         dict: Created event data or error
     """
     try:
-        print(f"[calendar] Creating event for {user_id}: {summary} at {start_time}")
+        print(f"[calendar] Creating event for {user_id}: {summary} at {start_time} ({time_zone})")
         service = _get_service(user_id)
 
         # Parse start time and default end to +1 hour
@@ -67,11 +72,11 @@ def create_event(
             "location": location,
             "start": {
                 "dateTime": start_dt.isoformat(),
-                "timeZone": "UTC",
+                "timeZone": time_zone,
             },
             "end": {
                 "dateTime": end_dt.isoformat(),
-                "timeZone": "UTC",
+                "timeZone": time_zone,
             },
         }
 

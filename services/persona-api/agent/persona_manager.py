@@ -337,8 +337,15 @@ async def create_persona(
         "webhook_url": webhook_url,
         "active": True,
     }
-    if agent_handle:
-        row["agent_handle"] = agent_handle
+    # Default the agent's display nickname to the principal's first name
+    # when the caller didn't supply one. Matches the product spec: the
+    # agent should be named after the user, not a generic mascot.
+    resolved_handle = (agent_handle or "").strip() or None
+    if not resolved_handle and name:
+        first = name.strip().split()[0] if name.strip() else ""
+        resolved_handle = first or None
+    if resolved_handle:
+        row["agent_handle"] = resolved_handle
     sb.table("persona_agents").insert(row).execute()
 
     # 6. Start heartbeat

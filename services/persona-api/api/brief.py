@@ -1,7 +1,7 @@
 """
-Brief API — creates and fetches the user's "My brief — for Aria" Google Doc.
+Brief API — creates and fetches the user's "My brief" Google Doc.
 
-The user's brief is a single Drive document Aria reads to stay current.
+The user's brief is a single Drive document the agent reads to stay current.
 Created from S4 in onboarding (or the Settings → Accounts → Brief card).
 Requires Google Drive + Docs scope (granted via the scoped OAuth flow with
 features=docs).
@@ -22,14 +22,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-BRIEF_DOC_TITLE = "My brief — for Aria"
+BRIEF_DOC_TITLE = "My brief"
 
 # Per SCREENS.md S4. Plain text — Google Docs strips structure on bulk
 # insert anyway, so we lean on em-dashes / blank lines for shape.
 BRIEF_TEMPLATE = (
-    "MY BRIEF — FOR ARIA\n"
+    "MY BRIEF\n"
     "\n"
-    "Aria reads this to stay current on what you're up to. Edit anytime — she'll re-read whenever it changes.\n"
+    "My agent reads this to stay current on what I'm up to. Edit anytime — it'll re-read whenever it changes.\n"
     "\n"
     "—\n"
     "\n"
@@ -42,7 +42,7 @@ BRIEF_TEMPLATE = (
     "What I'm avoiding right now\n"
     "recruiters, fundraising calls, etc.\n"
     "\n"
-    "Anything else Aria should know\n"
+    "Anything else my agent should know\n"
     "—\n"
 )
 

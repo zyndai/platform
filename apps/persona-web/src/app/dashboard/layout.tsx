@@ -15,6 +15,7 @@ import {
   Search,
   PanelLeftClose,
   PanelLeftOpen,
+  CheckSquare,
 } from "lucide-react";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
 import { ChatProvider } from "@/contexts/ChatContext";
@@ -51,6 +52,7 @@ const ARIA_NAV: NavItem[] = [
 
 const YOU_NAV: NavItem[] = [
   { href: "/dashboard/brief",    label: "Your brief", icon: FileText },
+  { href: "/dashboard/todos",    label: "Todos",      icon: CheckSquare },
   { href: "/dashboard/settings", label: "Settings",   icon: Settings },
 ];
 

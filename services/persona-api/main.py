@@ -24,6 +24,7 @@ from api.linkedin import router as linkedin_router
 from api.approvals import router as approvals_router
 from api.matches import router as matches_router
 from api.brief import router as brief_router
+from api.todos import router as todos_router
 
 # ─────────────────────────────────────────────────────────────────────
 
@@ -55,11 +56,19 @@ async def lifespan(app: FastAPI):
     # to sync SEND because the dispatcher has no place to persist them.
     import services.callbacks  # noqa: F401
 
+    # Watch each persona's Brief Google Doc for changes and extract
+    # any new todo items the user added. Single async task; safe to
+    # run alongside the heartbeat manager.
+    from agent.brief_watcher import brief_watcher
+    await brief_watcher.start()
+
     yield
 
     # ── Shutdown ──
     from agent.a2a_router import stop_a2a_lifecycle
     await stop_a2a_lifecycle()
+    from agent.brief_watcher import brief_watcher as bw
+    await bw.stop()
     from agent.persona_manager import shutdown as persona_shutdown
     await persona_shutdown()
     print("[Zynd AI] Graceful shutdown complete")
@@ -105,6 +114,7 @@ app.include_router(linkedin_router, prefix="/api/linkedin", tags=["LinkedIn"])
 app.include_router(approvals_router, prefix="/api/approvals", tags=["Approvals"])
 app.include_router(matches_router, prefix="/api/matches", tags=["Matches"])
 app.include_router(brief_router,   prefix="/api/brief",   tags=["Brief"])
+app.include_router(todos_router, prefix="/api/todos", tags=["Todos"])
 
 
 # Temporary diagnostic endpoint — remove after debugging

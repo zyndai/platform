@@ -561,6 +561,9 @@ def get_persona_status(user_id: str) -> dict:
         "profile": persona.get("profile", {}),
         "webhook_url": persona["webhook_url"],
         "public_key": persona["public_key"],
+        "brief_doc_id": persona.get("brief_doc_id"),
+        "brief_doc_url": persona.get("brief_doc_url"),
+        "brief_doc_revision_id": persona.get("brief_doc_revision_id"),
     }
 
 
@@ -599,6 +602,105 @@ def get_persona_by_agent_id(agent_id: str) -> dict | None:
     sb = _get_supabase()
     result = sb.table("persona_agents").select("*").eq("agent_id", agent_id).eq("active", True).execute()
     return result.data[0] if result.data else None
+
+
+# ── Brief Google Doc lifecycle ───────────────────────────────────────
+#
+# The Brief is the agent's long-form context about its principal. It lives
+# as a Google Doc the agent created (so we have access under drive.file
+# scope and the user retains ownership). The doc_id and url are stored on
+# the persona row so we can fetch the live content on every chat turn
+# instead of duplicating it in our DB.
+
+def init_brief_doc(user_id: str) -> dict:
+    """
+    Create the persona's Brief Google Doc if it doesn't exist yet.
+
+    Returns the brief info dict {doc_id, url, created (bool)}. Safe to call
+    repeatedly — second call just returns the existing doc.
+
+    Raises ValueError if the user has no active persona or hasn't connected
+    Google.
+    """
+    persona = get_persona_status(user_id)
+    if not persona.get("deployed"):
+        raise ValueError("No active persona — create a persona before initializing a brief.")
+
+    if persona.get("brief_doc_id"):
+        return {
+            "doc_id": persona["brief_doc_id"],
+            "url": persona.get("brief_doc_url") or "",
+            "created": False,
+        }
+
+    # Lazy import to keep persona_manager importable in environments
+    # that don't have google-api-client installed yet.
+    from mcp.tools.google.docs import create_document, append_to_document
+
+    principal_name = persona.get("name") or "Your"
+    title = f"Brief — {principal_name}"
+    result = create_document(user_id=user_id, title=title)
+    if not result.get("success"):
+        raise ValueError(f"Failed to create brief doc: {result.get('error')}")
+
+    doc_id = result["document_id"]
+    doc_url = result["link"]
+
+    # Seed the doc with the existing persona.description so the user starts
+    # with their current short-form brief instead of an empty page.
+    seed = (persona.get("description") or "").strip()
+    if seed:
+        append_to_document(user_id=user_id, document_id=doc_id, text=seed + "\n")
+
+    sb = _get_supabase()
+    sb.table("persona_agents").update({
+        "brief_doc_id": doc_id,
+        "brief_doc_url": doc_url,
+    }).eq("user_id", user_id).execute()
+
+    logger.info(f"[persona] Initialized brief doc for {user_id}: {doc_id}")
+    return {"doc_id": doc_id, "url": doc_url, "created": True}
+
+
+def get_brief(user_id: str) -> dict:
+    """
+    Return the persona's brief — both metadata (doc_id, url) and current
+    plain-text content fetched live from Google Docs.
+
+    Returns {doc_id, url, content, exists (bool)}. If no brief doc has
+    been initialized, returns {exists: False, fallback_description}.
+    """
+    persona = get_persona_status(user_id)
+    if not persona.get("deployed"):
+        raise ValueError("No active persona.")
+
+    doc_id = persona.get("brief_doc_id")
+    if not doc_id:
+        return {
+            "exists": False,
+            "fallback_description": persona.get("description") or "",
+        }
+
+    from mcp.tools.google.docs import read_document
+    fetched = read_document(user_id=user_id, document_id=doc_id)
+    if not fetched.get("success"):
+        # Doc was deleted out from under us, or Google returned an error.
+        # Surface that to the UI so the user can re-init.
+        return {
+            "exists": True,
+            "doc_id": doc_id,
+            "url": persona.get("brief_doc_url") or "",
+            "content": "",
+            "error": fetched.get("error"),
+        }
+
+    return {
+        "exists": True,
+        "doc_id": doc_id,
+        "url": persona.get("brief_doc_url") or "",
+        "content": fetched.get("content") or "",
+        "title": fetched.get("title"),
+    }
 
 
 async def startup():

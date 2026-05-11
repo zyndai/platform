@@ -21,7 +21,9 @@ from agent.orchestrator import handle_user_message
 from agent.persona_manager import (
     create_persona,
     delete_persona,
+    get_brief,
     get_persona_status,
+    init_brief_doc,
     purge_user_account,
     update_persona_profile,
 )
@@ -246,6 +248,37 @@ async def update_profile(user_id: str, req: PersonaProfileUpdate):
         updates = req.model_dump(exclude_none=True)
         result = update_persona_profile(user_id, updates)
         return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Brief Google Doc ────────────────────────────────────────────────
+#
+# The persona's Brief is a Google Doc the agent maintains as the canonical
+# long-form context about its principal. Two endpoints:
+#   POST /api/persona/{user_id}/brief/init  — create the doc on first use
+#   GET  /api/persona/{user_id}/brief       — read current state + content
+# Both run under the agent's existing drive.file scope, so the agent can
+# only see this single doc — never the user's wider Drive.
+
+@router.post("/{user_id}/brief/init")
+async def init_brief(user_id: str):
+    """Create the user's Brief Google Doc, or return the existing one."""
+    try:
+        return init_brief_doc(user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{user_id}/brief")
+async def read_brief(user_id: str):
+    """Return the user's Brief metadata + current content fetched live from Google Docs."""
+    try:
+        return get_brief(user_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

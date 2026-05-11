@@ -819,9 +819,47 @@ def _capabilities_to_generic_tools() -> list[dict]:
 # Main orchestration loop
 # =====================================================================
 
-def _format_user_brief(persona: dict, redact_profile: bool = False) -> str:
+_BRIEF_DOC_CACHE: dict[str, tuple[float, str]] = {}
+_BRIEF_DOC_CACHE_TTL_SECONDS = 60
+
+
+def _fetch_brief_doc_content(user_id: str, doc_id: str) -> str | None:
+    """
+    Fetch the brief Google Doc body, with a short in-process cache so the
+    Docs API isn't hit on every chat turn. Returns None on any failure
+    (caller falls back to persona.description).
+    """
+    import time
+    cached = _BRIEF_DOC_CACHE.get(doc_id)
+    now = time.time()
+    if cached and now - cached[0] < _BRIEF_DOC_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    try:
+        from mcp.tools.google.docs import read_document
+        result = read_document(user_id=user_id, document_id=doc_id)
+        if result.get("success"):
+            content = (result.get("content") or "").strip()
+            _BRIEF_DOC_CACHE[doc_id] = (now, content)
+            return content
+    except Exception as e:
+        print(f"[orchestrator] brief doc fetch failed for {doc_id}: {e}")
+    return None
+
+
+def _format_user_brief(
+    persona: dict,
+    redact_profile: bool = False,
+    user_id: str | None = None,
+) -> str:
     """
     Render the principal's profile/description as a 'who you serve' briefing.
+
+    Source priority:
+      1. The persona's brief Google Doc, if `brief_doc_id` is set and we
+         can fetch it. This is the long-form context the user maintains
+         in the dashboard's Brief tab.
+      2. Fall back to `persona.description` (the short pitch).
 
     When `redact_profile` is True (used in external mode when the calling
     connection does NOT have can_view_full_profile), only the description
@@ -829,7 +867,12 @@ def _format_user_brief(persona: dict, redact_profile: bool = False) -> str:
     stripped so the foreign agent learns nothing beyond what's already on
     the public registry card.
     """
-    desc = persona.get("description") or ""
+    brief_doc_id = persona.get("brief_doc_id")
+    doc_content = None
+    if brief_doc_id and user_id:
+        doc_content = _fetch_brief_doc_content(user_id, brief_doc_id)
+
+    desc = (doc_content or persona.get("description") or "").strip()
     profile = persona.get("profile") or {}
 
     lines = []
@@ -888,7 +931,7 @@ def _build_system_prompt(
     # always visible (those are already on the public card), but title,
     # organization, location, interests and social links are gated.
     redact = is_external and not (external_permissions or {}).get("can_view_full_profile", False)
-    user_brief = _format_user_brief(persona, redact_profile=redact)
+    user_brief = _format_user_brief(persona, redact_profile=redact, user_id=user_id)
 
     # ── Identity preamble — shared by both modes ─────────────────────
     # The agent has its OWN name (`agent_handle`) which is distinct from the

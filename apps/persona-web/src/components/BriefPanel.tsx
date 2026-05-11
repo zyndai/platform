@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDashboard } from "@/contexts/DashboardContext";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPatch, apiPost } from "@/lib/api";
+import { Button, EmptyState } from "@/components/ui";
 
 interface BriefState {
   exists: boolean;
@@ -54,7 +55,6 @@ export default function BriefPanel() {
   if (loading) {
     return (
       <Shell>
-        <Header />
         <EmptyContainer>Loading brief…</EmptyContainer>
       </Shell>
     );
@@ -63,8 +63,7 @@ export default function BriefPanel() {
   if (error) {
     return (
       <Shell>
-        <Header />
-        <EmptyContainer style={{ color: "#f87171" }}>{error}</EmptyContainer>
+        <EmptyContainer style={{ color: "var(--text-secondary)" }}>{error}</EmptyContainer>
       </Shell>
     );
   }
@@ -72,106 +71,372 @@ export default function BriefPanel() {
   if (!brief?.exists) {
     return (
       <Shell>
-        <Header />
-        <EmptyContainer>
-          <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: "20px", marginBottom: "8px" }}>
-            Create your Brief
-          </h2>
-          <p style={{ color: "var(--text-secondary)", marginBottom: "20px", maxWidth: "480px" }}>
-            Your Brief is the long-form context the AI agent uses to represent you. It lives as
-            a single Google Doc your agent created — the agent can only see this one doc, never
-            the rest of your Drive. Edit it here or in Google Docs, and your agent picks up
-            the changes automatically.
-          </p>
-          {brief?.fallback_description && (
-            <div
-              style={{
-                background: "var(--bg-void)",
-                border: "1px solid var(--border-subtle)",
-                borderRadius: "var(--r-sm)",
-                padding: "12px 14px",
-                maxWidth: "480px",
-                marginBottom: "20px",
-                fontSize: "13px",
-                color: "var(--text-secondary)",
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              <p
-                className="section-label"
-                style={{ marginBottom: "6px" }}
-              >
-                CURRENT SHORT BRIEF (will seed the doc)
-              </p>
-              {brief.fallback_description}
-            </div>
-          )}
-          <button
-            className="btn-primary"
-            onClick={handleCreate}
-            disabled={creating}
-            style={{ minWidth: "200px" }}
+        <EmptyState
+          title="Create your brief"
+          body="Your brief is the long-form context the AI agent uses to represent you. It lives as a single Google Doc — the agent can only see this one doc, never the rest of your Drive."
+          action={
+            <Button onClick={handleCreate} disabled={creating}>
+              {creating ? "Creating…" : "Create my brief"}
+            </Button>
+          }
+        />
+        {brief?.fallback_description && (
+          <div
+            style={{
+              maxWidth: "480px",
+              margin: "0 auto 32px",
+              padding: "12px 14px",
+              background: "var(--bg-surface)",
+              border: "1px solid var(--border-default)",
+              borderRadius: "var(--r-sm)",
+              fontSize: "13px",
+              color: "var(--text-secondary)",
+              whiteSpace: "pre-wrap",
+            }}
           >
-            {creating ? "Creating…" : "Create my Brief"}
-          </button>
-        </EmptyContainer>
+            <p className="section-label" style={{ marginBottom: "6px" }}>
+              CURRENT SHORT BRIEF (will seed the doc)
+            </p>
+            {brief.fallback_description}
+          </div>
+        )}
       </Shell>
     );
   }
 
-  // Brief exists — embed the Google Doc editor.
-  const embedUrl = `https://docs.google.com/document/d/${brief.doc_id}/edit?embedded=true&rm=minimal`;
+  return <BriefEditor brief={brief} onSaved={fetchBrief} />;
+}
+
+const DEFAULT_TEMPLATE = `What I'm working on
+—
+
+Who I'd like to meet
+—
+
+What I'm avoiding right now
+— recruiters, fundraising calls, etc.
+
+Anything else my agent should know
+— `;
+
+function BriefEditor({
+  brief,
+  onSaved,
+}: {
+  brief: BriefState;
+  onSaved: () => Promise<void>;
+}) {
+  const { user } = useDashboard();
+  const rawInitial = normalizeContent(
+    brief.content && brief.content.length > 0
+      ? brief.content
+      : brief.fallback_description || "",
+  );
+  // Empty brief? Pre-fill with the template as a starting scaffold. The user
+  // can overwrite it or delete what they don't want — it's not committed
+  // until they hit Save.
+  const initial = rawInitial.trim().length === 0 ? DEFAULT_TEMPLATE : rawInitial;
+  const startedFromTemplate = rawInitial.trim().length === 0;
+  const [draft, setDraft] = useState(initial);
+  // savedSnapshot reflects what's actually in Google Docs. When we pre-fill
+  // a template, draft != savedSnapshot, so the editor correctly shows
+  // "Unsaved changes" and prompts the user to commit it.
+  const [savedSnapshot, setSavedSnapshot] = useState(rawInitial);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    setDraft(initial);
+    setSavedSnapshot(rawInitial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial, rawInitial]);
+
+  const dirty = draft !== savedSnapshot;
+
+  const handleSave = async () => {
+    if (!user?.id || !dirty) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await apiPatch(`/api/persona/${user.id}/brief`, { content: draft });
+      setSavedSnapshot(draft);
+      setSavedAt(Date.now());
+      await onSaved();
+    } catch (err) {
+      setSaveError(friendlySaveError(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault();
+        void handleSave();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, savedSnapshot, user?.id, saving]);
 
   return (
     <div
       style={{
         display: "flex",
         flexDirection: "column",
-        height: "100vh",
+        flex: 1,
+        overflowY: "auto",
         background: "var(--bg-base)",
       }}
     >
-      <Header
-        rightSlot={
-          brief.url && (
-            <a
-              href={brief.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-secondary"
-              style={{ fontSize: "12px", textDecoration: "none" }}
-            >
-              Open in Google Docs ↗
-            </a>
-          )
-        }
-      />
-      {brief.error && (
-        <div
+      <div
+        style={{
+          maxWidth: "760px",
+          width: "100%",
+          margin: "0 auto",
+          padding: "40px 32px 48px",
+        }}
+      >
+        <h1
+          className="display-m"
+          style={{ margin: "0 0 8px", color: "var(--text-primary)" }}
+        >
+          Your brief
+        </h1>
+        <p
           style={{
-            background: "rgba(248, 113, 113, 0.1)",
-            border: "1px solid rgba(248, 113, 113, 0.3)",
-            color: "#f87171",
-            padding: "8px 16px",
-            fontSize: "12px",
+            margin: "0 0 28px",
+            color: "var(--text-secondary)",
+            fontSize: "15px",
+            lineHeight: 1.55,
+            maxWidth: "560px",
           }}
         >
-          Couldn’t fetch live content from Google: {brief.error}. The embed below may still work.
-        </div>
-      )}
-      <div style={{ flex: 1, padding: "0", background: "white" }}>
-        <iframe
-          src={embedUrl}
-          title="Brief"
+          The long-form context your agent uses to represent you. Lives as a single Google Doc
+          only your agent can see. Edit here or in Google Docs — your agent re-reads it whenever
+          it changes.
+        </p>
+
+        <div
           style={{
-            width: "100%",
-            height: "100%",
-            border: "none",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+            marginBottom: "10px",
           }}
-        />
+        >
+          <SaveStatus
+            saving={saving}
+            dirty={dirty}
+            savedAt={savedAt}
+            initialIsSynced={!!brief.content && brief.content.length > 1}
+          />
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            {brief.url && (
+              <a
+                href={brief.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-secondary"
+                style={{ textDecoration: "none" }}
+              >
+                Open in Google Docs ↗
+              </a>
+            )}
+            <Button onClick={handleSave} disabled={!dirty || saving}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </div>
+
+        {saveError && (
+          <div
+            style={{
+              padding: "10px 14px",
+              marginBottom: "12px",
+              background: "var(--bg-surface)",
+              border: "1px solid var(--border-default)",
+              borderRadius: "var(--r-sm)",
+              color: "var(--text-secondary)",
+              fontSize: "13px",
+              lineHeight: 1.45,
+            }}
+          >
+            {saveError}
+          </div>
+        )}
+
+        <div className="brief-paper">
+          <textarea
+            ref={textareaRef}
+            className="brief-textarea"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Start typing. A few honest lines is enough — what you're shipping, who you'd like in the room, what to skip."
+          />
+        </div>
+
+        {startedFromTemplate && draft === DEFAULT_TEMPLATE && (
+          <div
+            style={{
+              marginTop: "14px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "12px",
+              padding: "10px 14px",
+              background: "var(--bg-surface)",
+              border: "1px dashed var(--border-default)",
+              borderRadius: "var(--r-sm)",
+              fontSize: "13px",
+              color: "var(--text-secondary)",
+            }}
+          >
+            <span>This is a starter template. Edit the prompts, fill in your own — or clear it and write fresh.</span>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                setDraft("");
+                textareaRef.current?.focus();
+              }}
+              style={{ fontSize: "12px", whiteSpace: "nowrap" }}
+            >
+              Clear template
+            </button>
+          </div>
+        )}
+
+        <p
+          style={{
+            marginTop: "16px",
+            fontSize: "12px",
+            color: "var(--text-muted)",
+          }}
+        >
+          ⌘S to save · changes sync to Google Docs · todos auto-extracted from lines like “- [ ] follow up with X” or “TODO: ship demo”.
+        </p>
       </div>
     </div>
   );
+}
+
+function SaveStatus({
+  saving,
+  dirty,
+  savedAt,
+  initialIsSynced,
+}: {
+  saving: boolean;
+  dirty: boolean;
+  savedAt: number | null;
+  initialIsSynced: boolean;
+}) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    if (!savedAt) return;
+    const id = setInterval(() => force((n) => n + 1), 30_000);
+    return () => clearInterval(id);
+  }, [savedAt]);
+
+  let label: string;
+  let tone: "muted" | "active" | "warn" = "muted";
+  if (saving) {
+    label = "Saving…";
+    tone = "active";
+  } else if (dirty) {
+    label = "Unsaved changes";
+    tone = "warn";
+  } else if (savedAt) {
+    label = `Saved ${relativeTime(savedAt)}`;
+  } else if (initialIsSynced) {
+    label = "Synced from Google Docs";
+  } else {
+    label = "Draft — not yet saved";
+  }
+  return (
+    <span
+      style={{
+        fontSize: "12px",
+        color:
+          tone === "warn"
+            ? "var(--text-secondary)"
+            : tone === "active"
+              ? "var(--text-secondary)"
+              : "var(--text-muted)",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: "6px",
+          height: "6px",
+          borderRadius: "50%",
+          background:
+            tone === "warn"
+              ? "var(--accent, #f59e0b)"
+              : tone === "active"
+                ? "var(--accent, #6366f1)"
+                : "var(--border-default)",
+        }}
+      />
+      {label}
+    </span>
+  );
+}
+
+function normalizeContent(s: string): string {
+  // A freshly created Google Doc returns "\n" for body. Treat single-newline
+  // as effectively empty so the editor doesn't show "Unsaved changes" on load.
+  return s === "\n" ? "" : s;
+}
+
+function relativeTime(ts: number): string {
+  const diffSec = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (diffSec < 5) return "just now";
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const min = Math.round(diffSec / 60);
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.round(min / 60);
+  return `${hr}h ago`;
+}
+
+function friendlySaveError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? "");
+  try {
+    const parsed = JSON.parse(raw);
+    const detail = parsed?.detail;
+    if (detail && typeof detail === "object" && typeof detail.message === "string") {
+      return detail.message;
+    }
+    if (typeof detail === "string") {
+      return summarizeRawGoogleError(detail);
+    }
+  } catch {
+    /* not JSON, fall through */
+  }
+  return summarizeRawGoogleError(raw);
+}
+
+function summarizeRawGoogleError(raw: string): string {
+  if (/SERVICE_DISABLED|has not been used in project/.test(raw)) {
+    return "Couldn't sync to Google Docs right now. Your edit isn't lost — try again in a moment.";
+  }
+  if (/PERMISSION_DENIED|insufficient/i.test(raw)) {
+    return "Google rejected the request. Try disconnecting and reconnecting Google in Settings → Accounts.";
+  }
+  if (/rateLimit|quotaExceeded/i.test(raw)) {
+    return "Google is rate-limiting us right now. Try again in a moment.";
+  }
+  return "Couldn't save right now. Try again in a moment.";
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -180,7 +445,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       style={{
         display: "flex",
         flexDirection: "column",
-        height: "100vh",
+        flex: 1,
         background: "var(--bg-base)",
       }}
     >
@@ -215,34 +480,3 @@ function EmptyContainer({
   );
 }
 
-function Header({ rightSlot }: { rightSlot?: React.ReactNode }) {
-  return (
-    <div
-      className="topbar"
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        height: "auto",
-        padding: "20px 24px",
-        gap: "16px",
-      }}
-    >
-      <div>
-        <h1
-          style={{
-            fontFamily: "Syne, sans-serif",
-            fontSize: "18px",
-            fontWeight: 700,
-            color: "var(--text-primary)",
-            marginBottom: "4px",
-          }}
-        >
-          Brief
-        </h1>
-        <p className="section-label">YOUR AGENT'S SOURCE OF TRUTH ABOUT YOU</p>
-      </div>
-      {rightSlot}
-    </div>
-  );
-}

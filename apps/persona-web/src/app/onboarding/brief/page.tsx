@@ -59,11 +59,12 @@ export default function BriefStep() {
   const { user, refreshOnboarding } = useDashboard();
   const [working, setWorking] = useState<"create" | "skip" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ url: string } | null>(null);
   const ranAutoOnce = useRef(false);
 
-  // Resume case: we set `pending_brief_create=true` right before redirecting
-  // to Google OAuth. When the user lands back here after granting scope,
-  // auto-fire the create and advance — so the OAuth detour feels seamless.
+  // Resume case: pending_brief_create flag is set right before redirecting
+  // to Google OAuth. When the user lands back, auto-fire create and reveal
+  // the new doc in-line.
   useEffect(() => {
     if (!user || ranAutoOnce.current) return;
     const meta = readOnboardingMeta(user);
@@ -79,16 +80,14 @@ export default function BriefStep() {
           brief_created: true,
         });
         await refreshOnboarding();
-        router.replace("/onboarding/calendar");
+        setCreated({ url: result.doc_url });
       } else {
-        // Clear the flag so we don't loop. Surface the error to the user
-        // and let them retry or skip from the buttons below.
         await patchOnboardingMeta({ pending_brief_create: false });
         setError(result.message);
-        setWorking(null);
       }
+      setWorking(null);
     })();
-  }, [user, refreshOnboarding, router]);
+  }, [user, refreshOnboarding]);
 
   const handleCreate = async () => {
     setWorking("create");
@@ -97,13 +96,11 @@ export default function BriefStep() {
     if (result.ok) {
       await patchOnboardingMeta({ brief_created: true });
       await refreshOnboarding();
-      router.replace("/onboarding/calendar");
+      setCreated({ url: result.doc_url });
+      setWorking(null);
       return;
     }
     if (result.needsScope) {
-      // Hand off to Google OAuth. Always request both scopes so the
-      // calendar step doesn't have to also dance — Google's token rotation
-      // would otherwise wipe whichever scope wasn't requested second.
       const sb = getSupabase();
       const {
         data: { session },
@@ -129,15 +126,47 @@ export default function BriefStep() {
     router.replace("/onboarding/calendar");
   };
 
+  const handleContinue = () => {
+    router.replace("/onboarding/calendar");
+  };
+
+  if (created) {
+    return (
+      <section className="s-brief">
+        <h2 className="display-m title">Your brief is ready.</h2>
+        <p className="copy">
+          A doc called <strong>“My brief”</strong> is now living in your Drive. Open it any time
+          to add what you&apos;re working on, who you&apos;d like to meet, anything to avoid — I
+          re-read it whenever it changes. You can also edit it inline from your dashboard.
+        </p>
+        <div className="actions">
+          <a
+            href={created.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-secondary"
+            style={{ textDecoration: "none" }}
+          >
+            Open the brief in Google Docs ↗
+          </a>
+          <Button onClick={handleContinue}>Continue →</Button>
+        </div>
+        <p className="caption" style={{ marginTop: 24, color: "var(--ink-muted)" }}>
+          You&apos;ll find it again under <strong>Your brief</strong> in the sidebar.
+        </p>
+      </section>
+    );
+  }
+
   return (
     <section className="s-brief">
       <h2 className="display-m title">
         I&apos;ll keep a doc in your Drive that keeps me current.
       </h2>
       <p className="copy">
-        I&apos;ll create a doc called &ldquo;My brief — for my Persona&rdquo; in your Google Drive.
-        You jot down what you&apos;re up to, who you&apos;d like to meet, what you want to avoid.
-        I&apos;ll re-read it whenever it changes. You own the doc — open it any time.
+        I&apos;ll create a doc called &ldquo;My brief&rdquo; in your Google Drive. Jot down what
+        you&apos;re up to, who you&apos;d like to meet, what you want to avoid — I re-read it
+        whenever it changes. You own the doc; open it any time.
       </p>
       {error && (
         <p className="body-s" style={{ color: "var(--danger)", marginBottom: 16, maxWidth: 540 }}>

@@ -183,18 +183,23 @@ async def twitter_callback(code: str, state: str):
 async def google_authorize(token: str, features: str = "calendar,docs"):
     """
     Start Google OAuth flow with granular scope selection.
-    
+
     Args:
         token: Supabase JWT
-        features: comma-separated list of 'calendar', 'docs'
+        features: comma-separated list of 'calendar', 'docs', 'gmail', 'sheets'
+
+    Behaviour around `prompt=consent`:
+      - First connect (no stored token): force consent so we get a
+        refresh_token alongside the access_token.
+      - Update with the same scopes the user already granted: skip the
+        OAuth round-trip entirely and bounce back to the dashboard with
+        a success state. Without this, clicking "Update Permissions" with
+        no checkbox change still threw the user into Google's full
+        consent screen, which felt broken.
+      - Update with EXPANDING scopes: force consent so Google re-issues
+        a token covering the new scope set.
     """
     user = await _validate_token(token)
-
-    state = secrets.token_urlsafe(32)
-    _pending_oauth[state] = {
-        "user_id": user["id"],
-        "provider": "google",
-    }
 
     scopes = ["openid", "email", "profile"]
     # `drive.file` is intentionally the only Drive scope: it limits the agent
@@ -206,15 +211,37 @@ async def google_authorize(token: str, features: str = "calendar,docs"):
         "gmail": "https://www.googleapis.com/auth/gmail.modify",
         "sheets": "https://www.googleapis.com/auth/spreadsheets",
     }
-    
-    
+
     selected_features = [f.strip() for f in features.split(",") if f.strip() in feature_map]
     if not selected_features:
         # Default to all if none provided or invalid
         selected_features = ["calendar", "docs"]
-        
+
     for feat in selected_features:
         scopes.append(feature_map[feat])
+
+    # Each value in feature_map can itself be a space-separated list of
+    # scope URLs (docs has two), so flatten before comparing as sets.
+    requested_scope_set = {s for chunk in scopes for s in chunk.split() if s}
+
+    from services.token_store import get_tokens
+    existing = get_tokens(user_id=user["id"], provider="google")
+    existing_scope_set: set[str] = set()
+    if existing:
+        existing_scope_set = {s for s in (existing.get("scope") or "").split() if s}
+
+    # Same-or-narrower request when we already have a token → no Google
+    # round-trip needed. The existing refresh_token still works.
+    if existing and requested_scope_set.issubset(existing_scope_set):
+        return RedirectResponse(
+            f"{config.FRONTEND_URL}/dashboard?oauth=google&status=success&detail=already-granted"
+        )
+
+    state = secrets.token_urlsafe(32)
+    _pending_oauth[state] = {
+        "user_id": user["id"],
+        "provider": "google",
+    }
 
     params = {
         "response_type": "code",

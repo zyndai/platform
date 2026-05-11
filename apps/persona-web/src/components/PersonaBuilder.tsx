@@ -536,9 +536,20 @@ export default function PersonaBuilder({ userId }: { userId: string }) {
 
             {/* Agent handle (optional internal nickname) */}
             <FieldLabel label="Agent Nickname (optional)" />
-            <input type="text" className="input" value={formData.agent_handle} onChange={(e) => setFormData({ ...formData, agent_handle: e.target.value })} placeholder="e.g. Aria — leave blank if you don't want a separate name" style={{ marginBottom: "6px" }} />
+            <input
+              type="text"
+              className="input"
+              value={formData.agent_handle}
+              onChange={(e) => setFormData({ ...formData, agent_handle: e.target.value })}
+              placeholder={
+                formData.name
+                  ? `e.g. ${formData.name}'s assistant — leave blank to skip`
+                  : "leave blank to skip"
+              }
+              style={{ marginBottom: "6px" }}
+            />
             <p style={{ marginTop: 0, marginBottom: "20px", fontFamily: "IBM Plex Mono, monospace", fontSize: "10px", color: "var(--text-muted)", lineHeight: 1.5 }}>
-              * Optional name for the AI agent itself, so it can introduce itself as e.g. "I'm Aria, the AI agent representing Dillu". Never advertised on the network — stays in your account only.
+              * Optional name for the AI agent itself, so it can introduce itself as e.g. &quot;I&apos;m {formData.agent_handle || "<nickname>"}, the AI agent representing {formData.name || "<your name>"}&quot;. Never advertised on the network — stays in your account only.
             </p>
 
             {/* Description */}

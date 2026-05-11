@@ -221,7 +221,7 @@ export default function AccountsPage() {
         </div>
       )}
       <div className="settings-header">
-        <p className="body secondary">Four things Aria can see. Nothing else.</p>
+        <p className="body secondary">Four things your Persona can see. Nothing else.</p>
       </div>
 
       <div className="connectors-grid">
@@ -233,9 +233,9 @@ export default function AccountsPage() {
           loading={loading}
           working={working === "linkedin"}
           confirming={confirming === "linkedin"}
-          description="Aria reads your posts and profile every few hours to keep up with what you're into. She never posts anything."
+          description="Your Persona reads your posts and profile every few hours to keep up with what you're into. It never posts anything."
           meta={conn.linkedin.connected ? `Last read ${timeAgo(conn.linkedin.lastReadIso) || "recently"}` : undefined}
-          connectLabel="Let Aria read your LinkedIn"
+          connectLabel="Let my Persona read my LinkedIn"
           confirmNote=""
           onConnect={() => handleConnect("linkedin")}
           onAskDisconnect={() => setConfirming("linkedin")}
@@ -251,10 +251,10 @@ export default function AccountsPage() {
           loading={loading}
           working={working === "brief"}
           confirming={confirming === "brief"}
-          description="A doc in your Drive where you tell Aria what's current. She re-reads whenever it changes."
+          description="A doc in your Drive where you tell your Persona what's current. It re-reads whenever it changes."
           meta={conn.brief.connected ? "Connected to Google Drive" : undefined}
           connectLabel="Create my brief"
-          confirmNote={conn.calendar.connected ? "This will also stop Aria reading your calendar." : ""}
+          confirmNote={conn.calendar.connected ? "This will also stop your Persona reading your calendar." : ""}
           onConnect={() => handleConnect("brief")}
           onAskDisconnect={() => setConfirming("brief")}
           onCancelConfirm={() => setConfirming(null)}
@@ -269,10 +269,10 @@ export default function AccountsPage() {
           loading={loading}
           working={working === "calendar"}
           confirming={confirming === "calendar"}
-          description="Aria sees your busy and free blocks so she can offer real meeting times. She never sees what your meetings are about."
+          description="Your Persona sees your busy and free blocks so it can offer real meeting times. It never sees what your meetings are about."
           meta={conn.calendar.connected ? "Reading your primary calendar" : undefined}
-          connectLabel="Let Aria see when I'm free"
-          confirmNote={conn.brief.connected ? "This will also stop Aria reading your brief." : ""}
+          connectLabel="Let my Persona see when I'm free"
+          confirmNote={conn.brief.connected ? "This will also stop your Persona reading your brief." : ""}
           onConnect={() => handleConnect("calendar")}
           onAskDisconnect={() => setConfirming("calendar")}
           onCancelConfirm={() => setConfirming(null)}
@@ -287,7 +287,7 @@ export default function AccountsPage() {
           loading={loading}
           working={working === "telegram"}
           confirming={confirming === "telegram"}
-          description="Text Aria from your phone. She replies in Telegram; everything syncs back here."
+          description="Text your Persona from your phone. It replies in Telegram; everything syncs back here."
           meta={conn.telegram.connected ? "Connected" : undefined}
           connectLabel="Connect Telegram"
           confirmNote=""

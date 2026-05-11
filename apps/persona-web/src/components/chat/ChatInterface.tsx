@@ -1,13 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ChevronRight, ExternalLink } from "lucide-react";
 import {
+  ChevronRight,
+  ExternalLink,
+  Plus,
+} from "lucide-react";
+import { QUICK_PROMPTS } from "./quickPrompts";
+import {
+  Avatar,
   Monogram,
-  StatusPill,
   ThinkingDot,
   Button,
 } from "@/components/ui";
@@ -32,19 +37,6 @@ import ApprovalCard, { type PendingApproval } from "./ApprovalCard";
 import IncomingRequestCard from "./IncomingRequestCard";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-const WELCOME_MESSAGE: ChatMessage = {
-  role: "assistant",
-  content:
-    "Hi. Still reading the network for your first batch — I'll message you when someone good shows up. Anything on your mind in the meantime?",
-  synthetic: true,
-};
-
-const STARTER_PILLS = [
-  { label: "Show me who's worth meeting", send: "Show me who's worth meeting." },
-  { label: "What's on your radar?",       send: "What's on your radar today?" },
-  { label: "Help me think something through", send: "I want to think out loud about something." },
-];
 
 // ─────────────────────────────────────────────────────────────────────
 // Subcomponents
@@ -118,7 +110,9 @@ function ToolActivity({
 function StreamingPlaceholder() {
   return (
     <div className="streaming-placeholder">
-      <ThinkingDot />
+      <span className="aria-thinking" role="status" aria-label="Your Persona is thinking">
+        <span className="label">Thinking…</span>
+      </span>
     </div>
   );
 }
@@ -205,6 +199,8 @@ function MessageRow({
   onSayHi,
   onActOnHandoff,
   userId,
+  userName,
+  userAvatarUrl,
   onIncomingReplied,
 }: {
   message: ChatMessage;
@@ -214,6 +210,8 @@ function MessageRow({
   onSayHi: (h: PersonaHit) => void;
   onActOnHandoff: (h: ThreadHandoff) => void;
   userId: string;
+  userName: string;
+  userAvatarUrl: string | null;
   onIncomingReplied: () => void;
 }) {
   // Inbound A2A request — render the inline composer card instead of
@@ -274,6 +272,11 @@ function MessageRow({
             <p className="msg-error body-s">⚠ {message.error}</p>
           )}
         </div>
+        {!isAria && (
+          <span className="msg-user-avatar" aria-label={userName}>
+            <Avatar size="sm" src={userAvatarUrl} name={userName} />
+          </span>
+        )}
       </div>
       {personaHits.length > 0 && (
         <MatchCardRow
@@ -421,12 +424,7 @@ export default function ChatInterface() {
   // per signed-in user at dashboard mount, so navigating back to
   // /dashboard/chat doesn't trigger a refetch or flash a loader.
 
-  // Display the welcome message synthetically while the thread is empty.
-  // This isn't persisted and isn't sent to the orchestrator.
-  const displayMessages = useMemo(
-    () => (messages.length === 0 ? [WELCOME_MESSAGE] : messages),
-    [messages],
-  );
+  const displayMessages = messages;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -717,56 +715,92 @@ export default function ChatInterface() {
     }
   };
 
-  const showStarterPills = messages.length === 0;
+  const isEmpty = messages.length === 0;
 
   return (
     <>
-      <div className="topbar">
-        <h3>Home</h3>
-        <StatusPill>Aria is online</StatusPill>
-      </div>
       <div className="chat-area">
-        <div className="chat-thread">
-          {approvals.length > 0 && (
-            <div className="approvals-stack">
-              {approvals.map((a) => (
-                <ApprovalCard
-                  key={a.id}
-                  approval={a}
-                  onDecide={decideApproval}
-                />
-              ))}
-            </div>
-          )}
-          {displayMessages.map((m, i) => (
-            <MessageRow
-              key={i}
-              message={m}
-              expanded={expandedThinking.has(i)}
-              onToggleThinking={() => toggleThinking(i)}
-              busyId={busyId}
-              onSayHi={openIntroForPersona}
-              onActOnHandoff={actOnHandoff}
-              userId={user?.id || ""}
-              onIncomingReplied={() => {
-                setMessages((prev) =>
-                  prev.map((msg, idx) =>
-                    idx === i && msg.incoming
-                      ? { ...msg, incoming: { ...msg.incoming, replied: true } }
-                      : msg,
-                  ),
+        {isEmpty ? (
+          <div className="welcome-hero">
+            <h1>Welcome to <em>Zynd</em></h1>
+            <p className="welcome-sub">
+              Tell your Persona what&apos;s on your mind. It&apos;ll find people worth meeting,
+              reach out on your behalf, and book the times.
+            </p>
+            <div className="action-grid">
+              {QUICK_PROMPTS.map((card) => {
+                const Icon = card.icon;
+                return (
+                  <button
+                    key={card.label}
+                    type="button"
+                    className="action-card"
+                    onClick={() => sendMessage(card.send)}
+                    disabled={loading}
+                  >
+                    <span className={`action-icon ${card.tone}`}>
+                      <Icon />
+                    </span>
+                    <span className="action-label">{card.label}</span>
+                    <span className="action-plus"><Plus /></span>
+                  </button>
                 );
-              }}
-            />
-          ))}
-          <div ref={bottomRef} />
-        </div>
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="chat-thread">
+            {approvals.length > 0 && (
+              <div className="approvals-stack">
+                {approvals.map((a) => (
+                  <ApprovalCard
+                    key={a.id}
+                    approval={a}
+                    onDecide={decideApproval}
+                  />
+                ))}
+              </div>
+            )}
+            {displayMessages.map((m, i) => (
+              <MessageRow
+                key={i}
+                message={m}
+                expanded={expandedThinking.has(i)}
+                onToggleThinking={() => toggleThinking(i)}
+                busyId={busyId}
+                onSayHi={openIntroForPersona}
+                onActOnHandoff={actOnHandoff}
+                userId={user?.id || ""}
+                userName={
+                  user?.user_metadata?.full_name ||
+                  user?.user_metadata?.name ||
+                  user?.email?.split("@")[0] ||
+                  "You"
+                }
+                userAvatarUrl={
+                  user?.user_metadata?.avatar_url ||
+                  user?.user_metadata?.picture ||
+                  null
+                }
+                onIncomingReplied={() => {
+                  setMessages((prev) =>
+                    prev.map((msg, idx) =>
+                      idx === i && msg.incoming
+                        ? { ...msg, incoming: { ...msg.incoming, replied: true } }
+                        : msg,
+                    ),
+                  );
+                }}
+              />
+            ))}
+            <div ref={bottomRef} />
+          </div>
+        )}
         <ChatInput
           value={input}
           onChange={setInput}
           onSend={sendMessage}
           disabled={loading}
-          pills={showStarterPills ? STARTER_PILLS : undefined}
         />
       </div>
 

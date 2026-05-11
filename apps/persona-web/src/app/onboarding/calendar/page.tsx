@@ -51,7 +51,7 @@ export default function CalendarStep() {
           &ldquo;let me check and get back to you.&rdquo;
         </p>
         <Button fullWidth onClick={connect} disabled={working !== null}>
-          {working === "connect" ? "Opening Google…" : "Let Aria see when I'm free"}
+          {working === "connect" ? "Opening Google…" : "Let my Persona see when I'm free"}
         </Button>
         <div className="trust">
           <Shield />

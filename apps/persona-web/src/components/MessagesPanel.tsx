@@ -684,7 +684,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          height: "100vh",
+          height: "calc(100vh - 73px)",
           background: "var(--bg-base)",
         }}
       >
@@ -699,7 +699,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     <div
       style={{
         display: "flex",
-        height: "100vh",
+        height: "calc(100vh - 73px)",
         width: "100%",
         overflow: "hidden",
         background: "var(--bg-base)",
@@ -2144,8 +2144,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                 style={{
                   padding: "16px 24px 20px",
                   borderTop: "1px solid var(--border-subtle)",
-                  background: "rgba(13, 17, 23, 0.9)",
-                  backdropFilter: "blur(8px)",
+                  background: "var(--bg-surface)",
                 }}
               >
                 <div
@@ -2193,8 +2192,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                 style={{
                   padding: "16px 24px 20px",
                   borderTop: "1px solid var(--border-subtle)",
-                  background: "rgba(13, 17, 23, 0.9)",
-                  backdropFilter: "blur(8px)",
+                  background: "var(--bg-surface)",
                 }}
               >
                 <div style={{ maxWidth: "720px", margin: "0 auto" }}>
@@ -2243,8 +2241,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                 style={{
                   padding: "14px 24px 18px",
                   borderTop: "1px solid var(--border-subtle)",
-                  background: "rgba(13, 17, 23, 0.9)",
-                  backdropFilter: "blur(8px)",
+                  background: "var(--bg-surface)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",

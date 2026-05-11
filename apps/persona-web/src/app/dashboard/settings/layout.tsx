@@ -16,9 +16,6 @@ export default function SettingsLayout({
   const pathname = usePathname();
   return (
     <>
-      <div className="topbar">
-        <h3>Settings</h3>
-      </div>
       <nav className="tabs" aria-label="Settings sections">
         {TABS.map((t) => {
           const active = pathname === t.href || pathname.startsWith(t.href + "/");

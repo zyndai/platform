@@ -68,7 +68,7 @@ export default function ReadingPage() {
   return (
     <section className="s-reading">
       <Monogram size="md" className="mark" />
-      <div className="intro-line">I&apos;m Aria. Give me a minute.</div>
+      <div className="intro-line">Setting up your Persona. Give me a minute.</div>
       <ul className="ticks" aria-live="polite">
         {TICKS.map((text, i) => (
           <li

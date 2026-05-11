@@ -12,12 +12,29 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  Search,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
 import { ChatProvider } from "@/contexts/ChatContext";
 import TaskToasts from "@/components/TaskToasts";
-import { Monogram, Avatar, ThinkingDot } from "@/components/ui";
+import { Monogram, Avatar } from "@/components/ui";
 import { stepToPath } from "@/lib/onboarding";
+import AppTopBar from "@/components/AppTopBar";
+import RightRail from "@/components/RightRail";
+import ThemeToggle from "@/components/ThemeToggle";
+
+const BOOT_QUOTES: string[] = [
+  "Networking, but only the parts you actually like.",
+  "Reading the room so you don't have to.",
+  "Finding three humans who'd light up your week.",
+  "Skipping the small talk, keeping the warmth.",
+  "Drafting intros worth replying to.",
+  "Listening to your network — back in a sec.",
+  "Only the calendars worth filling get filled.",
+  "The right person, on a real Tuesday afternoon.",
+];
 
 type NavItem = {
   href: string;
@@ -48,8 +65,28 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  // If the user hasn't finished onboarding, kick them to the right screen.
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("zynd:sidebar-collapsed");
+      if (saved === "1") setSidebarCollapsed(true);
+    } catch {
+      /* localStorage unavailable */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "zynd:sidebar-collapsed",
+        sidebarCollapsed ? "1" : "0",
+      );
+    } catch {
+      /* localStorage unavailable */
+    }
+  }, [sidebarCollapsed]);
+
   useEffect(() => {
     if (!loading && !onboardingLoading && onboardingStep && onboardingStep !== "done") {
       router.replace(stepToPath(onboardingStep));
@@ -61,14 +98,19 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     onboardingLoading ||
     (onboardingStep !== null && onboardingStep !== "done");
 
+  const [bootQuote] = useState(
+    () => BOOT_QUOTES[Math.floor(Math.random() * BOOT_QUOTES.length)],
+  );
+
   if (stillBooting) {
     return (
-      <div className="boot-loader">
-        <Monogram size="md" />
-        <div className="line">
-          <ThinkingDot />
-          <span>Just a sec…</span>
-        </div>
+      <div className="boot-loader" role="status" aria-live="polite">
+        <span className="mark">
+          <img src="/zynd.png" alt="" />
+        </span>
+        <p className="quote">&ldquo;{bootQuote}&rdquo;</p>
+        <span className="quote-attrib">Zynd Persona</span>
+        <span className="pulse-bar" aria-hidden="true" />
       </div>
     );
   }
@@ -93,15 +135,20 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         onClick={() => setSidebarOpen(false)}
         className={`nav-item ${isActive ? "active" : ""}`}
       >
-        <Icon />
-        <span>{item.label}</span>
+        <span className="nav-icon"><Icon /></span>
+        <span className="nav-label">{item.label}</span>
       </Link>
     );
   };
 
+  const showRail = pathname === "/dashboard/chat" || pathname.startsWith("/dashboard/chat/");
+
   return (
-    <div className="app-shell no-rail">
-      {/* Mobile top header */}
+    <div
+      className={`app-shell-v2 ${showRail ? "" : "no-rail"} ${
+        sidebarCollapsed ? "sidebar-collapsed" : ""
+      }`}
+    >
       <div className="mobile-header">
         <button
           className="menu-btn"
@@ -125,14 +172,43 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         />
       )}
 
-      {/* Sidebar */}
       <aside className={`app-sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="brand">
-          <Monogram size="sm" />
-          <span className="brand-text">Zynd</span>
+          <span className="brand-left">
+            <Monogram size="sm" />
+            <span className="brand-text">Zynd</span>
+          </span>
+          <button
+            type="button"
+            className="collapse-btn"
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={() => {
+              setSidebarOpen(false);
+              setSidebarCollapsed((c) => !c);
+            }}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+          </button>
         </div>
 
-        <div className="nav-group-label">Aria</div>
+        <label
+          className="sidebar-search"
+          aria-label="Search"
+          title={sidebarCollapsed ? "Search" : undefined}
+          onClick={() => {
+            if (sidebarCollapsed) setSidebarCollapsed(false);
+          }}
+        >
+          <Search />
+          <input
+            type="text"
+            placeholder="Search"
+            aria-label="Search"
+          />
+          <span className="kbd">⌘K</span>
+        </label>
+
+        <div className="nav-group-label">Persona</div>
         <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {ARIA_NAV.map(renderItem)}
         </nav>
@@ -141,6 +217,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {YOU_NAV.map(renderItem)}
         </nav>
+
+        <div style={{ flex: 1 }} />
+
+        <ThemeToggle />
 
         <div className="user-card">
           <Avatar size="sm" src={avatarUrl} name={displayName} />
@@ -159,10 +239,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Main */}
-      <main className="app-main">{children}</main>
+      <main className="app-main">
+        <AppTopBar />
+        {children}
+      </main>
 
-      {/* Global task toasts */}
+      {showRail && <RightRail />}
+
       <TaskToasts />
     </div>
   );

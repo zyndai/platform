@@ -72,22 +72,15 @@ export default function BriefPage() {
   };
 
   if (brief === null) {
-    return (
-      <>
-        <div className="topbar"><h3>Your brief</h3></div>
-      </>
-    );
+    return null;
   }
 
   if (brief.present && brief.url) {
     return (
-      <>
-        <div className="topbar"><h3>Your brief</h3></div>
-        <div style={{ padding: "60px 48px", maxWidth: 540, margin: "0 auto", textAlign: "center" }}>
-          <h2 className="display-s" style={{ marginBottom: 12 }}>
-            {brief.title || "Your brief"}
-          </h2>
-          <p className="body secondary" style={{ marginBottom: 24 }}>
+      <div className="brief-page">
+        <div className="brief-card">
+          <h2 className="brief-card-title">{brief.title || "Your brief"}</h2>
+          <p className="brief-card-body">
             Living in your Drive. Edit anytime — I&apos;ll re-read whenever it changes.
           </p>
           <a href={brief.url} target="_blank" rel="noopener noreferrer">
@@ -96,13 +89,12 @@ export default function BriefPage() {
             </Button>
           </a>
         </div>
-      </>
+      </div>
     );
   }
 
   return (
     <>
-      <div className="topbar"><h3>Your brief</h3></div>
       <EmptyState
         title="Your brief is blank."
         body="Even one line helps me match better — tell me what you're working on."

@@ -11,7 +11,7 @@ interface ThinkingDotProps extends HTMLAttributes<HTMLSpanElement> {
  */
 export function ThinkingDot({
   size = "md",
-  label = "Aria is thinking",
+  label = "Persona is thinking",
   className = "",
   ...rest
 }: ThinkingDotProps) {

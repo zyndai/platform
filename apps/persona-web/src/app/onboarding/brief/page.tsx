@@ -135,7 +135,7 @@ export default function BriefStep() {
         I&apos;ll keep a doc in your Drive that keeps me current.
       </h2>
       <p className="copy">
-        I&apos;ll create a doc called &ldquo;My brief — for Aria&rdquo; in your Google Drive.
+        I&apos;ll create a doc called &ldquo;My brief — for my Persona&rdquo; in your Google Drive.
         You jot down what you&apos;re up to, who you&apos;d like to meet, what you want to avoid.
         I&apos;ll re-read it whenever it changes. You own the doc — open it any time.
       </p>

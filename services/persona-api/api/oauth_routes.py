@@ -197,9 +197,12 @@ async def google_authorize(token: str, features: str = "calendar,docs"):
     }
 
     scopes = ["openid", "email", "profile"]
+    # `drive.file` is intentionally the only Drive scope: it limits the agent
+    # to files it created (or files the user explicitly opens via a Picker),
+    # so connecting Docs does NOT expose the user's entire Drive.
     feature_map = {
         "calendar": "https://www.googleapis.com/auth/calendar",
-        "docs": "https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly",
+        "docs": "https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/drive.file",
         "gmail": "https://www.googleapis.com/auth/gmail.modify",
         "sheets": "https://www.googleapis.com/auth/spreadsheets",
     }

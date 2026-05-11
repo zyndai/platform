@@ -104,7 +104,7 @@ export default function ConnectionsPanel() {
         setGoogleFeatures({
           gmail: google.scopes.includes("gmail"),
           calendar: google.scopes.includes("calendar"),
-          docs: google.scopes.includes("documents") || google.scopes.includes("metadata"),
+          docs: google.scopes.includes("documents"),
           sheets: google.scopes.includes("spreadsheets"),
         });
       }

@@ -14,6 +14,7 @@ list.
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from postgrest.exceptions import APIError
 from pydantic import BaseModel
 from supabase import create_client
 
@@ -27,6 +28,10 @@ def _supabase():
     return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
 
 
+def _is_missing_table(err: APIError) -> bool:
+    return getattr(err, "code", None) == "PGRST205"
+
+
 class TodoUpdate(BaseModel):
     done: bool | None = None
     title: str | None = None
@@ -36,14 +41,19 @@ class TodoUpdate(BaseModel):
 async def list_todos(user: dict = Depends(get_current_user)):
     """Return this user's todos, undone first then done, both newest first."""
     sb = _supabase()
-    rows = (
-        sb.table("brief_todos")
-        .select("*")
-        .eq("user_id", user["id"])
-        .order("done")
-        .order("created_at", desc=True)
-        .execute()
-    )
+    try:
+        rows = (
+            sb.table("brief_todos")
+            .select("*")
+            .eq("user_id", user["id"])
+            .order("done")
+            .order("created_at", desc=True)
+            .execute()
+        )
+    except APIError as e:
+        if _is_missing_table(e):
+            return {"todos": []}
+        raise
     return {"todos": rows.data or []}
 
 

@@ -10,3 +10,4 @@ export { SystemNote } from "./SystemNote";
 export { ThinkingDot } from "./ThinkingDot";
 export { EmptyState } from "./EmptyState";
 export { Banner } from "./Banner";
+export { BootLoader, type BootStage } from "./BootLoader";

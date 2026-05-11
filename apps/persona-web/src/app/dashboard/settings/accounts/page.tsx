@@ -126,19 +126,16 @@ export default function AccountsPage() {
     }
   }, [refresh]);
 
-  const buildGoogleConnect = async (
-    add: "docs" | "calendar",
-  ): Promise<string | null> => {
+  const buildGoogleConnect = async (): Promise<string | null> => {
     const sb = getSupabase();
     const { data: { session } } = await sb.auth.getSession();
     if (!session?.access_token) return null;
-    // Merge in whatever's already connected so we don't accidentally drop it.
-    const features = new Set<string>();
-    if (conn.brief.connected || add === "docs") features.add("docs");
-    if (conn.calendar.connected || add === "calendar") features.add("calendar");
-    return `${API}/api/oauth/google/authorize?features=${[...features].join(
-      ",",
-    )}&token=${session.access_token}`;
+    // Always request both Docs + Calendar so the user goes through Google's
+    // consent screen exactly once. Whichever card was clicked, the other
+    // capability is granted alongside — and a follow-up click won't show
+    // a redundant consent (oauth_routes skips re-consent when the scope set
+    // is already covered).
+    return `${API}/api/oauth/google/authorize?features=docs,calendar&token=${session.access_token}`;
   };
 
   const connectLinkedIn = async () => {
@@ -204,7 +201,7 @@ export default function AccountsPage() {
       );
       return;
     }
-    const url = await buildGoogleConnect(id === "brief" ? "docs" : "calendar");
+    const url = await buildGoogleConnect();
     if (url) window.location.href = url;
   };
 

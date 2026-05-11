@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
-import { Monogram, ThinkingDot } from "@/components/ui";
+import { BootLoader, Monogram, type BootStage } from "@/components/ui";
 
 // Steps where "Edit later" in the topbar doesn't make sense (user would
 // just be bounced back here). On those, show nothing on the right side.
@@ -15,7 +15,7 @@ const STEPS_WITH_NO_SKIP = new Set([
 ]);
 
 function OnboardingShell({ children }: { children: React.ReactNode }) {
-  const { user, loading, onboardingStep, onboardingLoading } = useDashboard();
+  const { user, loading, onboardingStep, onboardingLoading, personaLoading } = useDashboard();
   const router = useRouter();
   const pathname = usePathname();
   const showSkip = !STEPS_WITH_NO_SKIP.has(pathname);
@@ -37,15 +37,13 @@ function OnboardingShell({ children }: { children: React.ReactNode }) {
     loading || onboardingLoading || !user || onboardingStep === "done";
 
   if (stillBooting) {
-    return (
-      <div className="boot-loader">
-        <Monogram size="md" />
-        <div className="line">
-          <ThinkingDot />
-          <span>Just a sec…</span>
-        </div>
-      </div>
-    );
+    let stage: BootStage = "signin";
+    if (!loading && user) {
+      if (personaLoading) stage = "persona";
+      else if (onboardingLoading) stage = "accounts";
+      else stage = "ready";
+    }
+    return <BootLoader stage={stage} />;
   }
 
   return (

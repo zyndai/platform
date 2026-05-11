@@ -83,37 +83,17 @@ export default function TodosPanel() {
       style={{
         display: "flex",
         flexDirection: "column",
-        height: "100vh",
+        flex: 1,
         background: "var(--bg-base)",
       }}
     >
-      <div
-        className="topbar"
-        style={{
-          flexDirection: "column",
-          alignItems: "flex-start",
-          justifyContent: "center",
-          height: "auto",
-          padding: "20px 24px",
-        }}
-      >
-        <h1
-          style={{
-            fontFamily: "Syne, sans-serif",
-            fontSize: "18px",
-            fontWeight: 700,
-            color: "var(--text-primary)",
-            marginBottom: "4px",
-          }}
-        >
-          Todos
-        </h1>
+      <div style={{ padding: "16px 24px 0" }}>
         <p className="section-label">EXTRACTED FROM YOUR BRIEF</p>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "24px" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px 24px" }}>
         {loading && <p style={{ color: "var(--text-secondary)" }}>Loading…</p>}
-        {error && <p style={{ color: "#f87171" }}>{error}</p>}
+        {error && <p style={{ color: "var(--text-secondary)" }}>{error}</p>}
         {!loading && !error && todos.length === 0 && (
           <div
             style={{

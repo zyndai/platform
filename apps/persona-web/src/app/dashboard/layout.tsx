@@ -4,56 +4,49 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  Home,
-  Calendar,
+  LayoutDashboard,
+  CalendarDays,
   Users,
   FileText,
   Settings,
   LogOut,
   Menu,
-  MessageSquare,
+  MessagesSquare,
   Search,
   PanelLeftClose,
   PanelLeftOpen,
-  CheckSquare,
+  ListChecks,
+  Home,
 } from "lucide-react";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
 import { ChatProvider } from "@/contexts/ChatContext";
 import TaskToasts from "@/components/TaskToasts";
-import { Monogram, Avatar } from "@/components/ui";
+import { Monogram, Avatar, BootLoader, type BootStage } from "@/components/ui";
 import { stepToPath } from "@/lib/onboarding";
 import AppTopBar from "@/components/AppTopBar";
 import RightRail from "@/components/RightRail";
 import ThemeToggle from "@/components/ThemeToggle";
 
-const BOOT_QUOTES: string[] = [
-  "Networking, but only the parts you actually like.",
-  "Reading the room so you don't have to.",
-  "Finding three humans who'd light up your week.",
-  "Skipping the small talk, keeping the warmth.",
-  "Drafting intros worth replying to.",
-  "Listening to your network — back in a sec.",
-  "Only the calendars worth filling get filled.",
-  "The right person, on a real Tuesday afternoon.",
-];
+type NavTone = "indigo" | "violet" | "sky" | "emerald" | "amber" | "rose" | "slate";
 
 type NavItem = {
   href: string;
   label: string;
   icon: typeof Home;
+  tone: NavTone;
 };
 
 const ARIA_NAV: NavItem[] = [
-  { href: "/dashboard/chat",     label: "Home",     icon: Home },
-  { href: "/dashboard/messages", label: "Threads",  icon: MessageSquare },
-  { href: "/dashboard/meetings", label: "Meetings", icon: Calendar },
-  { href: "/dashboard/people",   label: "People",   icon: Users },
+  { href: "/dashboard/chat",     label: "Home",     icon: LayoutDashboard, tone: "indigo"  },
+  { href: "/dashboard/messages", label: "Threads",  icon: MessagesSquare,  tone: "violet"  },
+  { href: "/dashboard/meetings", label: "Meetings", icon: CalendarDays,    tone: "sky"     },
+  { href: "/dashboard/people",   label: "People",   icon: Users,           tone: "emerald" },
 ];
 
 const YOU_NAV: NavItem[] = [
-  { href: "/dashboard/brief",    label: "Your brief", icon: FileText },
-  { href: "/dashboard/todos",    label: "Todos",      icon: CheckSquare },
-  { href: "/dashboard/settings", label: "Settings",   icon: Settings },
+  { href: "/dashboard/brief",    label: "Your brief", icon: FileText,   tone: "amber" },
+  { href: "/dashboard/todos",    label: "Todos",      icon: ListChecks, tone: "rose"  },
+  { href: "/dashboard/settings", label: "Settings",   icon: Settings,   tone: "slate" },
 ];
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
@@ -62,6 +55,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     loading,
     onboardingStep,
     onboardingLoading,
+    personaLoading,
     handleLogout,
   } = useDashboard();
   const pathname = usePathname();
@@ -100,21 +94,14 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     onboardingLoading ||
     (onboardingStep !== null && onboardingStep !== "done");
 
-  const [bootQuote] = useState(
-    () => BOOT_QUOTES[Math.floor(Math.random() * BOOT_QUOTES.length)],
-  );
-
   if (stillBooting) {
-    return (
-      <div className="boot-loader" role="status" aria-live="polite">
-        <span className="mark">
-          <img src="/zynd.png" alt="" />
-        </span>
-        <p className="quote">&ldquo;{bootQuote}&rdquo;</p>
-        <span className="quote-attrib">Zynd Persona</span>
-        <span className="pulse-bar" aria-hidden="true" />
-      </div>
-    );
+    let stage: BootStage = "signin";
+    if (!loading && user) {
+      if (personaLoading) stage = "persona";
+      else if (onboardingLoading) stage = "accounts";
+      else stage = "ready";
+    }
+    return <BootLoader stage={stage} />;
   }
 
   const displayName =
@@ -136,6 +123,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         href={item.href}
         onClick={() => setSidebarOpen(false)}
         className={`nav-item ${isActive ? "active" : ""}`}
+        data-tone={item.tone}
       >
         <span className="nav-icon"><Icon /></span>
         <span className="nav-label">{item.label}</span>

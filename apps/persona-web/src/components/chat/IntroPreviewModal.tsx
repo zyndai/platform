@@ -7,7 +7,7 @@ import type { PersonaHit } from "./types";
 
 interface IntroPreviewModalProps {
   target: PersonaHit;
-  /** The user's own persona name — used to sign the draft as Aria. */
+  /** The user's own persona name — used to sign the draft. */
   myName: string;
   onClose: () => void;
   /** Called after the message has been delivered. Receives the new thread id. */
@@ -135,14 +135,9 @@ export default function IntroPreviewModal({
         </div>
 
         <div className="intro-modal-footer">
-          <button
-            type="button"
-            className="text-link"
-            onClick={onClose}
-            disabled={sending}
-          >
+          <Button variant="tertiary" onClick={onClose} disabled={sending}>
             Cancel
-          </button>
+          </Button>
           <div style={{ display: "flex", gap: 8 }}>
             <Button variant="secondary" onClick={focusTextarea} disabled={sending}>
               Edit more

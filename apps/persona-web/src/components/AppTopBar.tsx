@@ -11,6 +11,7 @@ const TITLES: Record<string, string> = {
   "/dashboard/meetings": "Meetings",
   "/dashboard/people":   "People",
   "/dashboard/brief":    "Your brief",
+  "/dashboard/todos":    "Todos",
   "/dashboard/settings": "Settings",
 };
 
@@ -18,7 +19,7 @@ export default function AppTopBar() {
   const pathname = usePathname();
   const { user } = useDashboard();
 
-  let title = "Persona";
+  let title = "Zynd";
   for (const route of Object.keys(TITLES)) {
     if (pathname === route || pathname.startsWith(route + "/")) {
       title = TITLES[route];

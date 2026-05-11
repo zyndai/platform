@@ -45,10 +45,15 @@ DEFAULT_POLL_INTERVAL_SECONDS = 300
 
 # Lines we treat as todos. Order matters: bullet-with-checkbox first
 # so the bare-checkbox pattern doesn't double-match it.
+#
+# We use `[ \t]*` (not `\s*`) for in-line whitespace because `\s` also
+# matches `\n`, which lets a pattern silently span multiple lines and
+# capture the wrong content (e.g. a bullet with no body silently consumes
+# the next line). Anchors `^` and `$` rely on re.MULTILINE.
 _TODO_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"^\s*[-*]\s*\[\s*\]\s*(.+)$", re.MULTILINE),
-    re.compile(r"^\s*\[\s*\]\s*(.+)$", re.MULTILINE),
-    re.compile(r"^\s*TODO:?\s*(.+)$", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"^[ \t]*[-*][ \t]*\[[ \t]*\][ \t]*(.+?)[ \t]*$", re.MULTILINE),
+    re.compile(r"^[ \t]*\[[ \t]*\][ \t]*(.+?)[ \t]*$", re.MULTILINE),
+    re.compile(r"^[ \t]*TODO:?[ \t]*(.+?)[ \t]*$", re.MULTILINE | re.IGNORECASE),
 ]
 
 

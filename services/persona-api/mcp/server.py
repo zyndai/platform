@@ -84,8 +84,8 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(create_document, name="create_google_doc", description="Create a new Google Document")
     mcp.register(append_to_document, name="append_to_google_doc", description="Append text to a Google Document")
     mcp.register(read_document, name="read_google_doc", description="Read the entire content of a Google Document")
-    mcp.register(list_google_docs, name="list_google_docs", description="List the 15 most recently modified Google Documents")
-    mcp.register(search_google_docs, name="search_google_docs", description="Find Google Documents by name search")
+    mcp.register(list_google_docs, name="list_google_docs", description="List the most recently modified Google Documents the agent itself created (drive.file scope — the user's other docs are not visible)")
+    mcp.register(search_google_docs, name="search_google_docs", description="Find Google Documents by name, scoped to docs the agent itself created (drive.file scope)")
 
     # ── Google Gmail tools ──────────────────────────────────────────
     mcp.register(search_emails, name="search_gmail_emails", description="Search Gmail for messages matching a query (e.g. from:someone)")
@@ -101,7 +101,7 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
 
     # ── Google Drive tools ──────────────────────────────────────────
     mcp.register(create_drive_folder, name="create_google_drive_folder", description="Create a folder in Google Drive")
-    mcp.register(list_drive_files, name="list_google_drive_files", description="List or search any file types in Google Drive (PDFs, Images, etc)")
+    mcp.register(list_drive_files, name="list_google_drive_files", description="List files (PDFs, images, etc) the agent itself created in Google Drive — drive.file scope means the user's other files are not visible")
     mcp.register(move_file_to_folder, name="move_google_drive_file", description="Organize files by moving them to a target folder")
     mcp.register(list_files_in_folder, name="list_google_drive_folder_contents", description="View all files within a specific Drive folder")
 

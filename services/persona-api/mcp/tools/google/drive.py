@@ -1,6 +1,9 @@
 """
 Google Drive Management Tools
-Allows the agent to organize files, create folders, and manage permissions.
+
+Operates under the `drive.file` scope: the agent can only see, organize,
+and modify files it created itself (or that the user explicitly opened
+for it via a Picker). The user's other Drive files are invisible by design.
 """
 
 from googleapiclient.discovery import build
@@ -13,11 +16,14 @@ def _get_drive_service(user_id: str):
 
 def list_drive_files(user_id: str, query: str = "", pageSize: int = 15) -> dict:
     """
-    Search or list any files in Google Drive.
-    
+    List files the agent itself created in Google Drive.
+
+    The `drive.file` scope means the user's other files are not visible —
+    only what this app created or what the user explicitly opened with it.
+
     Args:
         user_id: Platform user ID
-        query: Optional Drive search query
+        query: Optional Drive search query (matched against name)
         pageSize: How many files to return
     """
     try:

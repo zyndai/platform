@@ -5,9 +5,15 @@ Registered via the ContextAware framework so the agent can:
   - create_document      — create a new Google Doc
   - append_to_document   — add text to an existing Google Doc
   - read_document        — get the content of a Google Doc
+  - list_google_docs     — list docs the agent itself created
+  - search_google_docs   — search docs the agent itself created
 
 All functions accept a `user_id` to look up stored Google OAuth tokens.
-Requires both Docs and Drive (drive.file) scopes.
+
+Privacy contract: this module operates under the `drive.file` scope only,
+which restricts access to documents the agent created (or the user
+explicitly opens for it via a Picker). It cannot see, list, or read the
+user's other Drive files.
 """
 
 from mcp.tools.google.common import get_google_creds
@@ -130,7 +136,11 @@ def read_document(user_id: str, document_id: str) -> dict:
 
 def list_google_docs(user_id: str, max_results: int = 15) -> dict:
     """
-    List the most recently modified Google Documents.
+    List the most recently modified Google Documents the agent itself created.
+
+    Under the `drive.file` scope, the Drive API only returns files this app
+    has created or that the user explicitly opened with it — the user's
+    other docs are intentionally invisible.
 
     Args:
         user_id (str): The platform user ID
@@ -170,7 +180,11 @@ def list_google_docs(user_id: str, max_results: int = 15) -> dict:
 
 def search_google_docs(user_id: str, query: str) -> dict:
     """
-    Search for Google Documents by name.
+    Search by name across Google Documents the agent itself created.
+
+    Under the `drive.file` scope, the search is scoped to files this app
+    created or the user explicitly opened with it — never the user's
+    full Drive.
 
     Args:
         user_id (str): The platform user ID

@@ -19,6 +19,7 @@ from api.connections import router as connections_router
 from api.persona import router as persona_router
 from api.meetings import router as meetings_router
 from api.telegram import router as telegram_router
+from api.todos import router as todos_router
 
 # ─────────────────────────────────────────────────────────────────────
 
@@ -38,9 +39,17 @@ async def lifespan(app: FastAPI):
     from agent.persona_manager import startup as persona_startup
     await persona_startup()
 
+    # Watch each persona's Brief Google Doc for changes and extract
+    # any new todo items the user added. Single async task; safe to
+    # run alongside the heartbeat manager.
+    from agent.brief_watcher import brief_watcher
+    await brief_watcher.start()
+
     yield
 
     # ── Shutdown ──
+    from agent.brief_watcher import brief_watcher as bw
+    await bw.stop()
     from agent.persona_manager import shutdown as persona_shutdown
     await persona_shutdown()
     print("[Zynd AI] Graceful shutdown complete")
@@ -77,6 +86,7 @@ app.include_router(connections_router, prefix="/api/connections", tags=["Connect
 app.include_router(persona_router, prefix="/api/persona", tags=["Persona"])
 app.include_router(meetings_router, prefix="/api/meetings", tags=["Meetings"])
 app.include_router(telegram_router, prefix="/api/telegram", tags=["Telegram"])
+app.include_router(todos_router, prefix="/api/todos", tags=["Todos"])
 
 
 # Temporary diagnostic endpoint — remove after debugging

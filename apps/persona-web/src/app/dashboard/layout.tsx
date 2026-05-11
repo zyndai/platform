@@ -9,6 +9,7 @@ import TaskToasts from "@/components/TaskToasts";
 const NAV_ITEMS = [
   { href: "/dashboard/chat", label: "AI Chat", icon: "⚡", requiresPersona: true },
   { href: "/dashboard/brief", label: "Brief", icon: "❒", requiresPersona: true },
+  { href: "/dashboard/todos", label: "Todos", icon: "✓", requiresPersona: true },
   { href: "/dashboard/messages", label: "Network DMs", icon: "◈", requiresPersona: true },
   { href: "/dashboard/tasks", label: "Tasks", icon: "▤", requiresPersona: true },
   { href: "/dashboard/identity", label: "Identity", icon: "◎", requiresPersona: false },

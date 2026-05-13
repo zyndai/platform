@@ -726,16 +726,21 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
         >
           <h2
             style={{
-              fontFamily: "Syne, sans-serif",
+              fontFamily: "var(--font-instrument-sans), system-ui, sans-serif",
               fontSize: "15px",
-              fontWeight: 700,
+              fontWeight: 600,
+              letterSpacing: "-0.2px",
+              color: "var(--ink)",
               marginBottom: "4px",
             }}
           >
             Network DMs
           </h2>
-          <p className="section-label" style={{ marginBottom: "14px" }}>
-            CROSS-AGENT MESSAGING
+          <p
+            className="section-label"
+            style={{ marginBottom: "14px", color: "var(--text-muted)" }}
+          >
+            Cross-agent messaging
           </p>
           <input
             type="text"
@@ -830,9 +835,9 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
             <div style={{ padding: "12px 16px" }}>
               <p
                 className="section-label"
-                style={{ color: "var(--accent-coral)", marginBottom: "8px" }}
+                style={{ color: "var(--accent, #6366f1)", marginBottom: "8px" }}
               >
-                REQUESTS ({requests.length})
+                Requests ({requests.length})
               </p>
               {requests.map((t) => (
                 <div
@@ -1084,19 +1089,19 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                     cursor: "pointer",
                     background:
                       myMode === "agent"
-                        ? "rgba(0, 212, 180, 0.10)"
+                        ? "var(--accent-soft-bg)"
                         : "var(--bg-surface)",
                     border:
                       myMode === "agent"
-                        ? "1px solid rgba(0, 212, 180, 0.30)"
+                        ? "1px solid color-mix(in srgb, var(--accent, #6366f1) 26%, transparent)"
                         : "1px solid var(--border-default)",
                     color:
                       myMode === "agent"
-                        ? "var(--accent-teal)"
+                        ? "var(--accent)"
                         : "var(--text-secondary)",
                   }}
                 >
-                  {myMode === "agent" ? "🤖 AI HANDLING" : "👤 TAKEN OVER"}
+                  {myMode === "agent" ? "AI handling" : "Taken over"}
                 </button>
               </div>
             </div>
@@ -1501,21 +1506,22 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                   activeThread.receiver_id === sessionAgentId) && (
                   <div
                     style={{
-                      background: "var(--bg-surface)",
-                      border: "1px solid var(--border-default)",
-                      padding: "20px",
-                      borderRadius: "var(--r-md)",
+                      background: "var(--surface)",
+                      border: "1px solid var(--border-subtle)",
+                      padding: "24px 28px",
+                      borderRadius: "16px",
                       textAlign: "center",
                       alignSelf: "center",
-                      maxWidth: "400px",
+                      maxWidth: "460px",
+                      boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
                     }}
                   >
                     <p
                       style={{
-                        marginBottom: "16px",
-                        fontSize: "13px",
+                        margin: "0 0 18px",
+                        fontSize: "13.5px",
                         color: "var(--text-secondary)",
-                        lineHeight: 1.6,
+                        lineHeight: 1.55,
                       }}
                     >
                       This network agent is requesting to connect with you.
@@ -1525,36 +1531,26 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                     <div
                       style={{
                         display: "flex",
-                        gap: "10px",
+                        gap: "8px",
                         justifyContent: "center",
+                        flexWrap: "wrap",
                       }}
                     >
                       <button
                         onClick={() => updateThreadStatus("accepted")}
-                        className="btn-primary"
-                        style={{ padding: "8px 20px", fontSize: "12px" }}
+                        className="btn btn-primary"
                       >
-                        Accept Request
+                        Accept request
                       </button>
                       <button
                         onClick={() => transitionConnection("decline")}
-                        style={{
-                          padding: "8px 20px",
-                          fontSize: "12px",
-                          fontFamily: "IBM Plex Mono, monospace",
-                          background: "transparent",
-                          border: "1px solid var(--border-default)",
-                          color: "var(--text-secondary)",
-                          borderRadius: "var(--r-sm)",
-                          cursor: "pointer",
-                        }}
+                        className="btn btn-secondary"
                       >
                         Decline
                       </button>
                       <button
                         onClick={() => updateThreadStatus("blocked")}
-                        className="btn-danger"
-                        style={{ padding: "8px 20px", fontSize: "12px" }}
+                        className="btn btn-secondary btn-danger-quiet"
                       >
                         Block
                       </button>

@@ -9,10 +9,12 @@ import {
   CheckSquare,
   ShieldCheck,
   ArrowRight,
+  UserPlus,
 } from "lucide-react";
 import { Button, EmptyState } from "@/components/ui";
 import { useDashboard } from "@/contexts/DashboardContext";
 import { apiGet, apiPost } from "@/lib/api";
+import { getSupabase } from "@/lib/supabase";
 
 interface MeetingTicket {
   id: string;
@@ -43,11 +45,22 @@ interface Todo {
   created_at: string;
 }
 
+interface ConnectionRequest {
+  id: string;
+  initiator_id: string;
+  initiator_name: string;
+  receiver_id: string;
+  receiver_name: string;
+  created_at: string;
+  status: string;
+}
+
 interface InboxState {
   meetingsAwaitingMe: MeetingTicket[];
   meetingsAwaitingThem: MeetingTicket[];
   approvals: PendingApproval[];
   todos: Todo[];
+  connectionRequests: ConnectionRequest[];
 }
 
 const EMPTY_STATE: InboxState = {
@@ -55,6 +68,7 @@ const EMPTY_STATE: InboxState = {
   meetingsAwaitingThem: [],
   approvals: [],
   todos: [],
+  connectionRequests: [],
 };
 
 function formatMeetingTime(start?: string, end?: string): string {
@@ -98,13 +112,41 @@ export default function InboxPage() {
     if (!user?.id) return;
     setError(null);
     try {
+      // Resolve our persona's agent_id first — pending connection
+      // requests can target either the bare Supabase user UUID or the
+      // agent_id (zns:...), so we need both to filter correctly.
+      let agentId: string | null = null;
+      try {
+        const status = await apiGet<{ agent_id?: string; deployed?: boolean }>(
+          `/api/persona/${user.id}/status`,
+        );
+        if (status.deployed && status.agent_id) agentId = status.agent_id;
+      } catch {
+        /* status fetch failure is non-fatal — we'll still match by user_id */
+      }
+
       // Parallel fetch — one failure shouldn't block the rest of the inbox.
-      const [meetings, approvals, todos] = await Promise.allSettled([
+      const requestsP = (async (): Promise<ConnectionRequest[]> => {
+        const sb = getSupabase();
+        const ids = [user.id, ...(agentId ? [agentId] : [])];
+        const orClause = ids.map((id) => `receiver_id.eq.${id}`).join(",");
+        const { data, error } = await sb
+          .from("dm_threads")
+          .select("id, initiator_id, initiator_name, receiver_id, receiver_name, created_at, status")
+          .eq("status", "pending")
+          .or(orClause)
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        return (data || []) as ConnectionRequest[];
+      })();
+
+      const [meetings, approvals, todos, requests] = await Promise.allSettled([
         apiGet<{ awaiting_me: MeetingTicket[]; awaiting_them: MeetingTicket[] }>(
           `/api/meetings/pending/${user.id}`,
         ),
         apiGet<{ approvals: PendingApproval[] }>(`/api/approvals/`),
         apiGet<{ todos: Todo[] }>(`/api/todos/`),
+        requestsP,
       ]);
 
       setState({
@@ -119,6 +161,8 @@ export default function InboxPage() {
           todos.status === "fulfilled"
             ? (todos.value.todos ?? []).filter((t) => !t.done)
             : [],
+        connectionRequests:
+          requests.status === "fulfilled" ? requests.value : [],
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't load your inbox.");
@@ -127,6 +171,45 @@ export default function InboxPage() {
       setLoading(false);
     }
   }, [user?.id]);
+
+  // Accept or decline a pending connection request. Accept flips the
+  // dm_threads row to 'accepted' directly (RLS allows participants
+  // to update). Decline goes through the v3 backend so any in-flight
+  // a2a_tasks are cancelled cleanly.
+  const handleConnectionAction = useCallback(
+    async (req: ConnectionRequest, action: "accept" | "decline") => {
+      try {
+        if (action === "accept") {
+          const sb = getSupabase();
+          const { error } = await sb
+            .from("dm_threads")
+            .update({ status: "accepted" })
+            .eq("id", req.id);
+          if (error) throw error;
+        } else {
+          const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+          const res = await fetch(`${API}/api/persona/threads/${req.id}/status`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "decline", user_id: user?.id }),
+          });
+          if (!res.ok) throw new Error(await res.text());
+        }
+        // Optimistically drop the row from local state.
+        setState((prev) =>
+          prev
+            ? {
+                ...prev,
+                connectionRequests: prev.connectionRequests.filter((r) => r.id !== req.id),
+              }
+            : prev,
+        );
+      } catch (e) {
+        setError(e instanceof Error ? e.message : `Couldn't ${action} the request.`);
+      }
+    },
+    [user?.id],
+  );
 
   useEffect(() => {
     void load();
@@ -150,7 +233,10 @@ export default function InboxPage() {
   }
 
   const actionCount =
-    state.approvals.length + state.meetingsAwaitingMe.length + state.todos.length;
+    state.connectionRequests.length +
+    state.approvals.length +
+    state.meetingsAwaitingMe.length +
+    state.todos.length;
   const waitingCount = state.meetingsAwaitingThem.length;
   const totalCount = actionCount + waitingCount;
 
@@ -190,6 +276,22 @@ export default function InboxPage() {
       />
 
       {error && <ErrorBanner message={error} onRetry={load} />}
+
+      {state.connectionRequests.length > 0 && (
+        <Section
+          icon={<UserPlus size={14} strokeWidth={1.7} />}
+          title="CONNECTION REQUESTS"
+          count={state.connectionRequests.length}
+        >
+          {state.connectionRequests.map((r) => (
+            <ConnectionRequestRow
+              key={r.id}
+              request={r}
+              onAction={(action) => handleConnectionAction(r, action)}
+            />
+          ))}
+        </Section>
+      )}
 
       {state.approvals.length > 0 && (
         <Section
@@ -351,6 +453,73 @@ function CardShell({ href, children }: { href?: string; children: React.ReactNod
     <Link href={href} style={style}>{children}</Link>
   ) : (
     <div style={style}>{children}</div>
+  );
+}
+
+function ConnectionRequestRow({
+  request,
+  onAction,
+}: {
+  request: ConnectionRequest;
+  onAction: (action: "accept" | "decline") => void;
+}) {
+  const fromName = request.initiator_name || "Someone on the network";
+  return (
+    <div
+      style={{
+        padding: "14px 16px",
+        background: "var(--bg-surface)",
+        border: "1px solid var(--border-default)",
+        borderRadius: "var(--r-md)",
+        boxShadow: "0 1px 0 rgba(15,23,42,0.02)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ minWidth: 0 }}>
+          <h3 style={{ margin: 0, fontSize: 14.5, fontWeight: 600, color: "var(--text-primary)" }}>
+            {fromName}
+          </h3>
+          <p style={{ margin: "4px 0 0", fontSize: 12.5, color: "var(--text-secondary)" }}>
+            Wants to start an agent-to-agent thread with you.
+          </p>
+        </div>
+        <div style={{ display: "inline-flex", gap: 6, flexShrink: 0 }}>
+          <Button size="sm" variant="secondary" onClick={() => onAction("decline")}>
+            Decline
+          </Button>
+          <Button size="sm" onClick={() => onAction("accept")}>
+            Accept
+          </Button>
+        </div>
+      </div>
+      <div
+        style={{
+          marginTop: 10,
+          fontSize: 11.5,
+          color: "var(--text-muted)",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <Clock size={11} strokeWidth={1.7} /> {timeAgo(request.created_at)}
+        </span>
+        <Link
+          href={`/dashboard/messages?thread=${request.id}`}
+          style={{
+            marginLeft: "auto",
+            color: "var(--text-muted)",
+            textDecoration: "none",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+          }}
+        >
+          Open in Threads <ArrowRight size={11} strokeWidth={1.8} />
+        </Link>
+      </div>
+    </div>
   );
 }
 

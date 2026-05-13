@@ -88,7 +88,7 @@ export default function IntroPreviewModal({
     >
       <div className="intro-modal" onClick={(e) => e.stopPropagation()}>
         <div className="intro-modal-header">
-          <Avatar size="sm" name={target.name || "?"} variant="accent" />
+          <Avatar size="sm" src={target.avatar_url || undefined} name={target.name || "?"} variant="accent" />
           <div className="recipient-info">
             <div className="name">{target.name || "Someone"}</div>
             <div className="title body-s">{headline}</div>

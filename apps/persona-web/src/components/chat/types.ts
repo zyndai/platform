@@ -59,6 +59,7 @@ export interface PersonaHit {
   agent_id: string;
   name?: string;
   description?: string;
+  avatar_url?: string | null;
 }
 
 export interface ThreadHandoff {

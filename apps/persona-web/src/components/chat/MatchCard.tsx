@@ -40,7 +40,7 @@ export default function MatchCard({
 
   return (
     <div className="match-card">
-      <Avatar size="md" name={hit.name || "?"} variant="accent" />
+      <Avatar size="md" src={hit.avatar_url || undefined} name={hit.name || "?"} variant="accent" />
       <div className="match-info">
         <div className="match-name">{hit.name || "Someone"}</div>
         {finalHeadline && <div className="match-headline">{finalHeadline}</div>}

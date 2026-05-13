@@ -1,4 +1,6 @@
-import type { HTMLAttributes } from "react";
+"use client";
+
+import { useEffect, useState, type HTMLAttributes } from "react";
 
 type Size = "xl" | "lg" | "md" | "sm" | "xs";
 
@@ -25,6 +27,12 @@ export function Avatar({
   className = "",
   ...rest
 }: AvatarProps) {
+  const [broken, setBroken] = useState(false);
+
+  useEffect(() => {
+    setBroken(false);
+  }, [src]);
+
   const classes = [
     "avatar",
     `avatar-${size}`,
@@ -35,9 +43,20 @@ export function Avatar({
     .filter(Boolean)
     .join(" ");
 
+  const showImage = !!src && !broken;
+
   return (
     <span className={classes} {...rest}>
-      {src ? <img src={src} alt={alt ?? name ?? ""} /> : initial(name)}
+      {showImage ? (
+        <img
+          src={src as string}
+          alt={alt ?? name ?? ""}
+          referrerPolicy="no-referrer"
+          onError={() => setBroken(true)}
+        />
+      ) : (
+        initial(name)
+      )}
     </span>
   );
 }

@@ -115,20 +115,58 @@ export default function ChatInput({
   }, [addOpen, toolsOpen]);
 
   // Voice-to-text via Web Speech API.
+  //
+  // Browser quirk: even with continuous=true, Chrome (and Safari to a lesser
+  // extent) auto-ends the recognizer on a few seconds of silence — onend
+  // fires and recording stops mid-thought from the user's perspective. The
+  // fix is to distinguish a USER-initiated stop (mic button click, unmount)
+  // from a BROWSER auto-end, and restart the recognizer in the latter case
+  // until the user actually wants to stop.
+  //
+  // Second quirk: each restarted session emits results from index 0, so we
+  // must commit any finalized transcripts into baseValueRef as they arrive.
+  // If we only read from e.results at result-time, the next session's
+  // interim text would replace everything the previous session captured.
   const [recording, setRecording] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  // Latest committed value when recording started — interim transcripts replace
-  // only the appended portion so we don't clobber what the user already typed.
+  // Cumulative committed text — built up across session restarts. Interim
+  // (in-progress) speech is appended on top of this for display, but only
+  // finalized text gets promoted into baseValueRef.
   const baseValueRef = useRef("");
+  // Flipped when the user explicitly clicks the mic to stop OR when the
+  // component unmounts. While false, onend → auto-restart.
+  const userStoppedRef = useRef(false);
+  const mountedRef = useRef(true);
+  // Pending restart timer + restart-storm detection. If the browser keeps
+  // ending sessions back-to-back without giving us any audio in between,
+  // restart attempts make things worse — we'd be in a tight loop of
+  // failing .start() calls while the user stares at a "recording" mic
+  // that captures nothing. We track recent restart timestamps and bail
+  // out after 4 consecutive restarts inside a 4-second window.
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recentRestartsRef = useRef<number[]>([]);
   // Keep `onChange` reference stable for handlers attached to `recognition`.
   const onChangeRef = useRef(onChange);
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
 
+  const clearPendingRestart = () => {
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+  };
+
   const stopRecording = useCallback(() => {
+    userStoppedRef.current = true;
+    clearPendingRestart();
     const r = recognitionRef.current;
     if (!r) return;
-    try { r.stop(); } catch { /* ignore */ }
+    // abort() is more decisive than stop() — releases the audio resource
+    // immediately so a follow-up start() doesn't race with cleanup.
+    try { r.abort(); } catch { /* ignore */ }
+    recognitionRef.current = null;
+    setRecording(false);
   }, []);
 
   const startRecording = useCallback(() => {
@@ -139,51 +177,129 @@ export default function ChatInput({
       );
       return;
     }
-    const r = new Ctor();
-    r.lang = "en-US";
-    // continuous=true keeps listening through pauses so the user controls
-    // when to stop. interimResults streams partial words live into the box.
-    r.continuous = true;
-    r.interimResults = true;
+    userStoppedRef.current = false;
+    recentRestartsRef.current = [];
     baseValueRef.current = value;
-    r.onstart = () => {
-      setRecording(true);
-      setVoiceError(null);
-    };
-    r.onend = () => {
-      setRecording(false);
-      recognitionRef.current = null;
-    };
-    r.onerror = (e) => {
-      // Only show user-visible errors for permission problems. Other errors
-      // (network blips, no-speech, aborted, audio-capture) are normal during
-      // a session — the recognizer often retries them itself.
-      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-        setRecording(false);
+
+    // Build a recognizer instance bound to the current handlers. Hoisted
+    // into a factory so the onend auto-restart path can rebuild a clean
+    // session without recursing through startRecording's closure.
+    const spawn = (): SpeechRecognitionLike => {
+      const r = new Ctor();
+      r.lang = "en-US";
+      r.continuous = true;
+      r.interimResults = true;
+
+      r.onstart = () => {
+        setRecording(true);
+        setVoiceError(null);
+      };
+
+      r.onend = () => {
         recognitionRef.current = null;
-        setVoiceError("Mic permission was denied. Allow it in your browser settings.");
-      }
-      // Otherwise: log and let onend handle state cleanup.
-      else if (process.env.NODE_ENV !== "production") {
-        // eslint-disable-next-line no-console
-        console.debug("[speech] non-fatal error:", e.error);
-      }
+        // If the user clicked the mic or we've unmounted, this is a real
+        // stop — drop out of recording state.
+        if (userStoppedRef.current || !mountedRef.current) {
+          setRecording(false);
+          return;
+        }
+
+        // Restart-storm guard: if we've had 4 onend events inside the
+        // last 4 seconds, something is wrong with the audio stack and
+        // restarting again will just keep failing silently. Surface a
+        // visible error and stop instead of churning forever.
+        const now = Date.now();
+        recentRestartsRef.current = [
+          ...recentRestartsRef.current.filter((t) => now - t < 4000),
+          now,
+        ];
+        if (recentRestartsRef.current.length > 4) {
+          userStoppedRef.current = true;
+          setRecording(false);
+          setVoiceError("Mic kept dropping — try again, or check your input device.");
+          return;
+        }
+
+        // Otherwise the browser auto-ended the session (silence timeout,
+        // no-speech, etc.). Restart after a short delay so the audio
+        // resource has time to be released — starting immediately can
+        // race with the platform's mic teardown and produce a session
+        // that's alive in JS but capturing nothing.
+        clearPendingRestart();
+        restartTimerRef.current = setTimeout(() => {
+          restartTimerRef.current = null;
+          if (userStoppedRef.current || !mountedRef.current) return;
+          try {
+            const next = spawn();
+            recognitionRef.current = next;
+            next.start();
+          } catch {
+            setRecording(false);
+          }
+        }, 250);
+      };
+
+      r.onerror = (e) => {
+        // Permission denied is a real stop — don't auto-retry, it would
+        // just spam the user's deny prompt.
+        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+          userStoppedRef.current = true;
+          clearPendingRestart();
+          setRecording(false);
+          recognitionRef.current = null;
+          setVoiceError("Mic permission was denied. Allow it in your browser settings.");
+          return;
+        }
+        // "aborted" specifically means we called .abort() — never auto-restart.
+        if (e.error === "aborted") {
+          userStoppedRef.current = true;
+          clearPendingRestart();
+          return;
+        }
+        // Other errors (network, no-speech, audio-capture) are typical
+        // during a session — let onend handle the restart.
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.debug("[speech] non-fatal error:", e.error);
+        }
+      };
+
+      r.onresult = (e) => {
+        // Real audio came through — reset the storm counter. We're not in
+        // a tight failure loop, just normal continuous speech.
+        recentRestartsRef.current = [];
+        // Walk the result set, separating finalized phrases from in-progress
+        // interim text. We commit finalized text to baseValueRef so a
+        // mid-recording session restart doesn't lose what was already said.
+        let interim = "";
+        let final = "";
+        for (let i = 0; i < e.results.length; i++) {
+          const res = e.results[i];
+          if (res.isFinal) final += res[0].transcript;
+          else interim += res[0].transcript;
+        }
+        if (final) {
+          const base = baseValueRef.current;
+          const sep = base && !/\s$/.test(base) ? " " : "";
+          baseValueRef.current = (base + sep + final).slice(0, MAX_CHARS);
+        }
+        // Compose what the textarea should show right now: committed text
+        // + the live interim portion.
+        const base = baseValueRef.current;
+        const sep = base && !/\s$/.test(base) && interim ? " " : "";
+        const displayed = (base + sep + interim).slice(0, MAX_CHARS);
+        onChangeRef.current(displayed);
+      };
+
+      return r;
     };
-    r.onresult = (e) => {
-      let transcript = "";
-      for (let i = 0; i < e.results.length; i++) {
-        transcript += e.results[i][0].transcript;
-      }
-      const base = baseValueRef.current;
-      const sep = base && !/\s$/.test(base) ? " " : "";
-      const next = (base + sep + transcript).slice(0, MAX_CHARS);
-      onChangeRef.current(next);
-    };
-    recognitionRef.current = r;
+
     try {
+      const r = spawn();
+      recognitionRef.current = r;
       r.start();
     } catch {
-      // Already started — ignore.
+      // Already started or invalid state — leave UI alone.
     }
   }, [value]);
 
@@ -193,9 +309,14 @@ export default function ChatInput({
     else startRecording();
   }, [disabled, recording, startRecording, stopRecording]);
 
-  // Cleanup: stop any active recognition when the component unmounts.
+  // Cleanup: hard-abort any active recognition on unmount, cancel any
+  // scheduled restart, and flip the user-stopped flag so an in-flight
+  // restart timer that fires after unmount becomes a no-op.
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
+      userStoppedRef.current = true;
+      clearPendingRestart();
       const r = recognitionRef.current;
       if (r) {
         try { r.abort(); } catch { /* ignore */ }

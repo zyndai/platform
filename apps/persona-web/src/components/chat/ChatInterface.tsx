@@ -8,6 +8,7 @@ import {
   ChevronRight,
   ExternalLink,
   Plus,
+  Sparkles,
 } from "lucide-react";
 import { QUICK_PROMPTS } from "./quickPrompts";
 import {
@@ -23,6 +24,7 @@ import type {
   ChatMessage,
   PersonaHit,
   ThreadHandoff,
+  ToolCallState,
 } from "./types";
 import {
   extractHandoffs,
@@ -42,31 +44,89 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 // Subcomponents
 // ─────────────────────────────────────────────────────────────────────
 
+function hasReasoning(thinking: string | undefined): boolean {
+  return !!thinking && thinking.trim().length > 0;
+}
+
+function ToolTimeline({ toolCalls }: { toolCalls: ToolCallState[] }) {
+  if (!toolCalls || toolCalls.length === 0) return null;
+  return (
+    <ol className="thinking-tools">
+      {toolCalls.map((tc) => {
+        const summary = summarizeToolArgs(tc);
+        return (
+          <li key={tc.id} className={`thinking-tool tool-${tc.status}`}>
+            <span className="dot" aria-hidden />
+            <span className="line">
+              <span className="verb">{toolVerb(tc.name, tc.status)}</span>
+              {summary && <span className="args">{summary}</span>}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function summarizeToolArgs(tc: ToolCallState): string {
+  // Show the most useful single field so users can see what the agent is
+  // actually doing without exposing the full JSON. Falls back to nothing.
+  const args = tc.arguments;
+  if (!args || typeof args !== "object") return "";
+  const candidate =
+    (args as Record<string, unknown>).query ??
+    (args as Record<string, unknown>).target_name ??
+    (args as Record<string, unknown>).message;
+  if (typeof candidate !== "string" || !candidate.trim()) return "";
+  const trimmed = candidate.trim();
+  return trimmed.length > 80 ? `“${trimmed.slice(0, 77)}…”` : `“${trimmed}”`;
+}
+
 function ThinkingPanel({
   thinking,
+  toolCalls,
   streaming,
   expanded,
   onToggle,
 }: {
   thinking: string;
+  toolCalls: ToolCallState[] | undefined;
   streaming: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const reasoning = (thinking || "").trim();
+  const hasReasoning = reasoning.length > 0;
+  const hasTools = !!toolCalls && toolCalls.length > 0;
+
   // While streaming, the last-line preview re-renders with every token —
   // it visually flickers through partial words and feels laggy. Show a
   // stable "Thinking…" indicator instead, and only switch to the
   // (now static) preview once the stream completes.
-  const preview = streaming ? "" : lastLine(thinking);
+  const preview = streaming ? "" : lastLine(reasoning);
+  const label = streaming
+    ? "Thinking"
+    : hasReasoning
+      ? "Thought process"
+      : hasTools
+        ? `Took ${toolCalls!.length} step${toolCalls!.length === 1 ? "" : "s"}`
+        : "Thought process";
+
   return (
     <div className="thinking-panel">
-      <button type="button" className="thinking-head" onClick={onToggle}>
+      <button
+        type="button"
+        className="thinking-head"
+        onClick={onToggle}
+        aria-expanded={expanded}
+      >
         <ChevronRight
           size={12}
-          strokeWidth={1.5}
+          strokeWidth={1.75}
           className={`chev ${expanded ? "open" : ""}`}
         />
-        <span className="label">{streaming ? "Thinking" : "Thought process"}</span>
+        <Sparkles size={11} strokeWidth={1.75} className="brain" aria-hidden />
+        <span className="label">{label}</span>
         {streaming && !expanded && (
           <span className="preview thinking-streaming">
             <ThinkingDot />
@@ -76,7 +136,19 @@ function ThinkingPanel({
           <span className="preview">{preview}</span>
         )}
       </button>
-      {expanded && <div className="thinking-body">{thinking}</div>}
+      {expanded && (
+        <div className="thinking-body">
+          {hasReasoning ? (
+            <div className="thinking-text">{reasoning}</div>
+          ) : null}
+          {hasTools && <ToolTimeline toolCalls={toolCalls!} />}
+          {!hasReasoning && !hasTools && (
+            <p className="thinking-empty">
+              No reasoning notes for this turn.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -251,15 +323,16 @@ function MessageRow({
       <div className={`msg ${isAria ? "aria" : "user"}`}>
         {isAria && <Monogram size="sm" />}
         <div className="bubble">
-          {isAria && message.thinking && (
+          {isAria && (hasReasoning(message.thinking) || (message.toolCalls && message.toolCalls.length > 0)) && (
             <ThinkingPanel
-              thinking={message.thinking}
+              thinking={message.thinking || ""}
+              toolCalls={message.toolCalls}
               streaming={!!message.streaming}
               expanded={expanded}
               onToggle={onToggleThinking}
             />
           )}
-          {isAria && <ToolActivity toolCalls={message.toolCalls} />}
+          {isAria && !expanded && <ToolActivity toolCalls={message.toolCalls} />}
           {showPlaceholder && <StreamingPlaceholder />}
           {message.content && (
             <div className="markdown-content">
@@ -723,7 +796,7 @@ export default function ChatInterface() {
       <div className="chat-area">
         {isEmpty ? (
           <div className="welcome-hero">
-            <h1>Welcome to <em>Zynd</em></h1>
+            <h1>Welcome to <em>ZyndAI</em></h1>
             <p className="welcome-sub">
               Tell your Persona what&apos;s on your mind. It&apos;ll find people worth meeting,
               reach out on your behalf, and book the times.

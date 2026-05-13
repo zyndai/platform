@@ -1461,8 +1461,8 @@ textarea.input { resize: vertical; min-height: 88px; }
  * accent fill, incoming on the left with a neutral surface. */
 .msg-bubble-user,
 .msg-bubble-ai {
-  padding: 10px 14px;
-  border-radius: 16px;
+  padding: 10px 16px;
+  border-radius: 20px;
   font-family: var(--font-geist), 'Inter', system-ui, sans-serif;
   font-size: 14.5px;
   line-height: 1.5;
@@ -1474,13 +1474,13 @@ textarea.input { resize: vertical; min-height: 88px; }
 .msg-bubble-user {
   background: var(--accent);
   color: #ffffff;
-  border-bottom-right-radius: 6px;
+  border-bottom-right-radius: 8px;
 }
 .msg-bubble-ai {
   background: var(--surface-raised);
   color: var(--ink);
   border: 1px solid var(--border-subtle);
-  border-bottom-left-radius: 6px;
+  border-bottom-left-radius: 8px;
 }
 [data-theme="dark"] .msg-bubble-user { color: #ffffff; }
 [data-theme="dark"] .msg-bubble-ai { background: var(--surface); }
@@ -5019,31 +5019,33 @@ textarea.input { resize: vertical; min-height: 88px; }
 .groups-row {
   background: var(--surface);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--r-md);
-  transition: border-color var(--t-micro), transform var(--t-micro), box-shadow var(--t-micro);
+  border-radius: 18px;
+  transition: border-color var(--t-micro), transform var(--t-micro), box-shadow var(--t-micro), background var(--t-micro);
 }
 .groups-row:hover {
-  border-color: var(--border-default);
+  border-color: color-mix(in srgb, var(--accent, #6366f1) 22%, var(--border-default));
+  background: color-mix(in srgb, var(--accent, #6366f1) 3%, var(--surface));
   transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.06);
 }
 .groups-row-link {
   display: flex; align-items: center; gap: 14px;
-  padding: 14px 18px;
+  padding: 16px 20px;
   text-decoration: none;
   color: inherit;
 }
 .groups-avatar {
-  width: 44px; height: 44px;
-  border-radius: 12px;
+  width: 46px; height: 46px;
+  border-radius: 14px;
   background: linear-gradient(135deg, #6366f1 0%, #ec4899 100%);
   color: #fff;
   font-family: var(--font-fraunces), ui-serif, serif;
-  font-size: 18px;
+  font-size: 19px;
   font-weight: 500;
   display: inline-flex; align-items: center; justify-content: center;
   overflow: hidden;
   flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.18);
 }
 .groups-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .groups-row-name {
@@ -5200,24 +5202,21 @@ textarea.input { resize: vertical; min-height: 88px; }
 
 /* ── Group chat view ────────────────────────────────────────────── */
 /* One outer card containing header, messages+composer, and the rail.
- * Internal panes are connected sections with subtle dividers — NOT
- * separate floating cards. This is what makes the layout feel
- * cohesive instead of "four boxes in a void". */
+ * Inner panes connect through soft dividers; everything sits on the
+ * same rounded surface so the page reads as one cohesive object. */
 .group-chat-shell {
   display: flex; flex-direction: column;
   width: 100%;
   max-width: 1480px;
-  /* Fill the available height of the dashboard main column minus a
-   * top/bottom gutter for breathing room. */
   height: calc(100vh - 96px);
   margin: 18px auto;
   background: var(--surface);
   border: 1px solid var(--border-subtle);
-  border-radius: 20px;
+  border-radius: 24px;
   overflow: hidden;
   box-shadow:
     0 1px 0 rgba(15, 23, 42, 0.02),
-    0 12px 32px rgba(15, 23, 42, 0.06);
+    0 10px 36px rgba(15, 23, 42, 0.05);
 }
 @media (min-width: 1600px) {
   .group-chat-shell { margin: 22px auto; }
@@ -5225,11 +5224,20 @@ textarea.input { resize: vertical; min-height: 88px; }
 .group-chat-header {
   display: flex; align-items: center; gap: 12px;
   padding: 14px 20px;
-  background: transparent;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--accent, #6366f1) 4%, var(--surface)),
+    var(--surface) 90%
+  );
   border: none;
   border-bottom: 1px solid var(--border-subtle);
   margin-bottom: 0;
   flex-shrink: 0;
+}
+.group-chat-header .group-back,
+.group-chat-header .group-settings-btn,
+.group-chat-header .group-header-menu-wrap > button {
+  border-radius: 10px;
 }
 .group-back {
   display: inline-flex; align-items: center; justify-content: center;
@@ -5242,8 +5250,8 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 .group-back:hover { background: var(--surface-raised); color: var(--ink); }
 .group-chat-avatar {
-  width: 40px; height: 40px;
-  border-radius: 11px;
+  width: 42px; height: 42px;
+  border-radius: 14px;
   background: linear-gradient(135deg, #6366f1 0%, #ec4899 100%);
   color: #fff;
   font-family: var(--font-fraunces), ui-serif, serif;
@@ -5251,6 +5259,7 @@ textarea.input { resize: vertical; min-height: 88px; }
   display: inline-flex; align-items: center; justify-content: center;
   overflow: hidden;
   flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.22);
 }
 .group-chat-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .group-chat-title {
@@ -5283,15 +5292,17 @@ textarea.input { resize: vertical; min-height: 88px; }
 .group-header-menu {
   list-style: none;
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 8px);
   right: 0;
-  min-width: 200px;
+  min-width: 220px;
   margin: 0;
   padding: 6px;
   background: var(--surface);
   border: 1px solid var(--border-default);
-  border-radius: 12px;
-  box-shadow: 0 10px 32px rgba(15, 23, 42, 0.12);
+  border-radius: 16px;
+  box-shadow:
+    0 1px 0 rgba(15, 23, 42, 0.02),
+    0 12px 36px rgba(15, 23, 42, 0.14);
   z-index: 50;
   display: flex;
   flex-direction: column;
@@ -5301,8 +5312,8 @@ textarea.input { resize: vertical; min-height: 88px; }
 .group-header-menu-item {
   display: flex; align-items: center; gap: 10px;
   width: 100%;
-  padding: 8px 10px;
-  border-radius: 8px;
+  padding: 9px 12px;
+  border-radius: 10px;
   border: none;
   background: transparent;
   text-align: left;
@@ -5430,7 +5441,7 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 
 .group-chat-roster {
-  background: var(--bg-surface, color-mix(in srgb, var(--surface) 96%, transparent));
+  background: var(--surface-raised);
   border: none;
   border-radius: 0;
   border-left: 1px solid var(--border-subtle);
@@ -5482,9 +5493,6 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 
 .group-composer {
-  /* Anchored to the bottom of .group-chat-main — no own card, just a
-   * top divider that connects it to the messages above. The textarea
-   * itself sits inside a pill-shaped field for a softer look. */
   margin: 0;
   padding: 14px 22px 18px;
   background: transparent;
@@ -5493,17 +5501,18 @@ textarea.input { resize: vertical; min-height: 88px; }
   flex-shrink: 0;
 }
 .group-composer-row {
-  background: var(--bg-surface, color-mix(in srgb, var(--surface) 96%, transparent));
+  background: var(--surface-raised);
   border: 1px solid var(--border-subtle);
-  border-radius: 14px;
-  padding: 6px 8px 6px 14px;
+  border-radius: 22px;
+  padding: 8px 8px 8px 18px;
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  transition: border-color var(--t-micro);
+  transition: border-color var(--t-micro), box-shadow var(--t-micro);
 }
 .group-composer-row:focus-within {
   border-color: color-mix(in srgb, var(--accent, #6366f1) 35%, var(--border-default));
+  box-shadow: 0 0 0 4px var(--accent-soft-bg);
 }
 .group-composer-locked,
 .group-composer-error {
@@ -5534,14 +5543,18 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 .group-composer-input::placeholder { color: var(--text-muted); }
 .group-composer-send {
-  width: 36px; height: 36px;
-  border-radius: 10px;
+  width: 38px; height: 38px;
+  border-radius: 50%;
   background: var(--accent, #6366f1);
   color: #fff;
   border: none;
   cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
-  transition: opacity var(--t-micro), transform var(--t-micro);
+  transition: opacity var(--t-micro), transform var(--t-micro), box-shadow var(--t-micro);
+  flex-shrink: 0;
+}
+.group-composer-send:not(:disabled) {
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent, #6366f1) 30%, transparent);
 }
 .group-composer-send:disabled {
   opacity: 0.4; cursor: not-allowed;
@@ -5755,10 +5768,14 @@ textarea.input { resize: vertical; min-height: 88px; }
 .group-rail-tabs {
   display: flex;
   gap: 2px;
-  margin-bottom: 12px;
-  padding: 3px;
-  background: var(--surface-raised);
-  border-radius: 10px;
+  margin-bottom: 14px;
+  padding: 4px;
+  /* On the surface-raised roster panel the pill is white so the tabs
+   * read clearly. Active tab picks up the accent tint that's used on
+   * the dashboard sidebar nav for consistency. */
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
   flex-shrink: 0;
 }
 .group-rail-tab {
@@ -5766,10 +5783,8 @@ textarea.input { resize: vertical; min-height: 88px; }
   min-width: 0;
   display: inline-flex; align-items: center; justify-content: center;
   gap: 4px;
-  /* Lower horizontal padding so 4 labels share the rail width without
-   * overflow at the 300px rail. */
-  padding: 6px 4px;
-  border-radius: 7px;
+  padding: 7px 6px;
+  border-radius: 10px;
   border: none;
   background: transparent;
   font-family: var(--font-geist), system-ui, sans-serif;
@@ -5781,12 +5796,12 @@ textarea.input { resize: vertical; min-height: 88px; }
   white-space: nowrap;
   letter-spacing: -0.1px;
 }
-.group-rail-tab:hover { color: var(--ink); }
+.group-rail-tab:hover { color: var(--ink); background: var(--surface-raised); }
 .group-rail-tab.is-active {
-  background: var(--surface);
-  color: var(--ink);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  background: var(--accent-soft-bg);
+  color: var(--accent);
 }
+.group-rail-tab.is-active:hover { background: var(--accent-soft-bg); }
 .group-rail-tab-count {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 10px;

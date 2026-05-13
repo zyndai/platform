@@ -370,6 +370,20 @@ class GroupMeetingCreate(BaseModel):
     member_user_ids: list[str] | None = None  # opt-in; defaults to all members
 
 
+CONSTRAINT_KINDS = ("fact", "rule", "voice")
+MAX_CONSTRAINTS_PER_GROUP = 20
+
+
+class GroupConstraintCreate(BaseModel):
+    kind: str = Field(pattern="^(fact|rule|voice)$")
+    text: str = Field(min_length=1, max_length=400)
+
+
+class GroupConstraintUpdate(BaseModel):
+    kind: str | None = Field(default=None, pattern="^(fact|rule|voice)$")
+    text: str | None = Field(default=None, min_length=1, max_length=400)
+
+
 @router.post("/{group_id}/transfer-owner")
 async def transfer_owner(
     group_id: str,
@@ -685,6 +699,24 @@ def _spawn_mention_dispatch(
             # means the personas dispatch without the shared brief.
             group_brief_content = None
 
+    # Group constraints (phase 4). Unlike the brief these aren't gated
+    # by asker permissions — they're the team's shared guardrails that
+    # apply to every persona's reply in the room regardless of who's
+    # asking. Missing table (pre-migration) is treated as no constraints.
+    group_constraints: list[dict] = []
+    try:
+        crows = (
+            sb.table("persona_group_constraints")
+            .select("kind, text")
+            .eq("group_id", group_id)
+            .is_("archived_at", "null")
+            .execute()
+        )
+        group_constraints = crows.data or []
+    except APIError as e:
+        if not _is_missing_table(e):
+            logger.warning(f"[group-dispatch] couldn't load constraints for {group_id}: {e}")
+
     roster = (
         sb.table("persona_group_members")
         .select("user_id, agent_id, role, permissions, joined_at")
@@ -728,6 +760,7 @@ def _spawn_mention_dispatch(
                 user_message=message_content,
                 asker_permissions=asker_permissions,
                 group_brief_content=group_brief_content,
+                group_constraints=group_constraints,
             )
         )
     return [t["user_id"] for t in targets]
@@ -1245,3 +1278,123 @@ def _create_event_with_attendees(
     except Exception as e:
         logger.exception(f"[group-meetings] create_event failed: {e}")
         return {"success": False, "error": str(e)}
+
+
+# ── Group memory — shared constraints (phase 4) ─────────────────────────
+# Three kinds:
+#   fact  — positive context ("Our launch is May 20")
+#   rule  — negative instruction ("Don't quote pricing externally")
+#   voice — style guidance ("Warm tone, no exclamation marks")
+#
+# Read: any member. Write: owner/admin. Member personas see the list
+# injected into their dispatch prefix so the constraints apply at
+# generation time, not as a post-hoc filter.
+
+@router.get("/{group_id}/constraints")
+async def list_constraints(group_id: str, user: dict = Depends(get_current_user)):
+    sb = _supabase()
+    _require_member(sb, group_id, user["id"])
+    try:
+        rows = (
+            sb.table("persona_group_constraints")
+            .select("id, kind, text, created_by_user_id, created_at")
+            .eq("group_id", group_id)
+            .is_("archived_at", "null")
+            .order("created_at")
+            .execute()
+        )
+    except APIError as e:
+        if _is_missing_table(e):
+            return {"constraints": []}
+        raise
+    return {"constraints": rows.data or []}
+
+
+@router.post("/{group_id}/constraints")
+async def add_constraint(
+    group_id: str,
+    body: GroupConstraintCreate,
+    user: dict = Depends(get_current_user),
+):
+    sb = _supabase()
+    m = _require_member(sb, group_id, user["id"])
+    _require_role(m, ("owner", "admin"))
+
+    counts = (
+        sb.table("persona_group_constraints")
+        .select("id", count="exact")
+        .eq("group_id", group_id)
+        .is_("archived_at", "null")
+        .execute()
+    )
+    current = getattr(counts, "count", None) or len(counts.data or [])
+    if current >= MAX_CONSTRAINTS_PER_GROUP:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This group already has {MAX_CONSTRAINTS_PER_GROUP} constraints. "
+                "Remove one before adding another — short, sharp rules outperform long lists."
+            ),
+        )
+
+    inserted = (
+        sb.table("persona_group_constraints")
+        .insert({
+            "group_id": group_id,
+            "kind": body.kind,
+            "text": body.text.strip(),
+            "created_by_user_id": user["id"],
+        })
+        .execute()
+    )
+    sb.table("persona_groups").update({
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }).eq("id", group_id).execute()
+    return {"constraint": inserted.data[0] if inserted.data else None}
+
+
+@router.patch("/{group_id}/constraints/{constraint_id}")
+async def update_constraint(
+    group_id: str,
+    constraint_id: str,
+    body: GroupConstraintUpdate,
+    user: dict = Depends(get_current_user),
+):
+    sb = _supabase()
+    m = _require_member(sb, group_id, user["id"])
+    _require_role(m, ("owner", "admin"))
+
+    patch: dict = {}
+    if body.kind is not None:
+        patch["kind"] = body.kind
+    if body.text is not None:
+        patch["text"] = body.text.strip()
+    if not patch:
+        raise HTTPException(status_code=400, detail="Nothing to update.")
+
+    r = (
+        sb.table("persona_group_constraints")
+        .update(patch)
+        .eq("id", constraint_id)
+        .eq("group_id", group_id)
+        .execute()
+    )
+    if not r.data:
+        raise HTTPException(status_code=404, detail="Constraint not found.")
+    return {"constraint": r.data[0]}
+
+
+@router.delete("/{group_id}/constraints/{constraint_id}")
+async def archive_constraint(
+    group_id: str,
+    constraint_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Soft-delete via archived_at so removed rules stay queryable for audit."""
+    sb = _supabase()
+    m = _require_member(sb, group_id, user["id"])
+    _require_role(m, ("owner", "admin"))
+    sb.table("persona_group_constraints").update({
+        "archived_at": datetime.now(timezone.utc).isoformat()
+    }).eq("id", constraint_id).eq("group_id", group_id).execute()
+    return {"status": "archived"}

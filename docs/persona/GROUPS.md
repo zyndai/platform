@@ -28,7 +28,30 @@ Persona Groups is production-ready, and the scope of each shipped phase.
 - "X's persona is thinking…" indicator above the composer, cleared
   when the agent row arrives or after 60 s.
 
-### Phase 3b — calendar overlay + meeting proposals
+### Phase 4 — group memory / shared constraints
+- New table `persona_group_constraints` with three kinds:
+  - `fact` — positive context the team has agreed on
+  - `rule` — guardrails to avoid (do NOT do X)
+  - `voice` — style/tone guidance
+- `backend/db/patch_add_persona_group_constraints.sql` — table, index,
+  RLS (members read, service-role full). Soft-archive via
+  `archived_at` so removed rules stay queryable for audit.
+- 4 new routes (`/{id}/constraints` GET / POST and
+  `/{id}/constraints/{cid}` PATCH / DELETE). Writes are owner/admin
+  only. `MAX_CONSTRAINTS_PER_GROUP = 20` enforced on POST — keeps
+  the LLM's working set focused.
+- Dispatcher: `dispatch_group_mention` accepts a `group_constraints`
+  list. `_format_constraints_block` groups by kind and emits a
+  "Group rules — must-follow guardrails" prompt section. Rules
+  listed first (model honors earlier-listed instructions more
+  reliably), then facts, then voice. Unlike the brief, constraints
+  are NOT gated by `can_see_brief` — they're team-wide guardrails
+  that apply regardless of asker permissions.
+- Right rail gains a Memory tab. Members read; owner/admin can add
+  one-liners (with inline help text per kind) and remove existing
+  rules. Optimistic remove with rollback on failure.
+
+### Phase 3b — calendar overlay + meeting proposals (commit `7742820`)
 - `backend/agent/group_calendar.py`:
   - Concurrent free/busy fan-out via Google Calendar's
     `freebusy.query` (no event titles/attendees cross member
@@ -108,6 +131,7 @@ per environment (local, staging, prod):
 # Local Supabase CLI
 supabase db push --file backend/db/patch_add_persona_groups.sql
 supabase db push --file backend/db/patch_add_persona_group_brief.sql
+supabase db push --file backend/db/patch_add_persona_group_constraints.sql
 
 # Or paste each into the Supabase Studio SQL editor and run.
 ```
@@ -118,6 +142,7 @@ What they create:
 - `persona_group_members` — join table with role + permissions JSONB
 - `persona_group_messages` — chat content, with
   `channel ∈ {human, agent, system, broadcast}`
+- `persona_group_constraints` (phase 4) — shared rules/facts/voice rows
 
 ### 2. Enable Realtime on `persona_group_messages`
 The chat view subscribes to `postgres_changes` on this table. Until

@@ -580,7 +580,7 @@ function GroupRightRail({
   isManager: boolean;
   isOwner: boolean;
 }) {
-  const [tab, setTab] = useState<"people" | "brief" | "schedule">("people");
+  const [tab, setTab] = useState<"people" | "brief" | "schedule" | "memory">("people");
   const [brief, setBrief] = useState<GroupBriefData | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
   const [briefError, setBriefError] = useState<string | null>(null);
@@ -685,6 +685,15 @@ function GroupRightRail({
         >
           Schedule
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "memory"}
+          className={`group-rail-tab ${tab === "memory" ? "is-active" : ""}`}
+          onClick={() => setTab("memory")}
+        >
+          Memory
+        </button>
       </div>
 
       {tab === "people" ? (
@@ -721,6 +730,8 @@ function GroupRightRail({
         </>
       ) : tab === "schedule" ? (
         <GroupSchedulePane groupId={groupId} />
+      ) : tab === "memory" ? (
+        <GroupMemoryPane groupId={groupId} canEdit={isManager} />
       ) : (
         <div className="group-brief-pane">
           {briefError && (
@@ -1130,6 +1141,188 @@ function ProposeMeetingModal({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Group Memory (phase 4) ────────────────────────────────────────
+// Group constraints — short guardrails every member's persona must
+// respect when answering in this room. Read by all members; managed by
+// owner/admin.
+interface GroupConstraint {
+  id: string;
+  kind: "fact" | "rule" | "voice";
+  text: string;
+  created_by_user_id: string | null;
+  created_at: string;
+}
+
+const KIND_LABEL: Record<GroupConstraint["kind"], string> = {
+  fact: "Fact",
+  rule: "Rule",
+  voice: "Voice",
+};
+
+const KIND_HELP: Record<GroupConstraint["kind"], string> = {
+  fact: "Something the team has agreed on — e.g. 'Our launch is May 20'.",
+  rule: "Something to avoid — e.g. 'Don't quote pricing externally'.",
+  voice: "Style or tone guidance — e.g. 'Warm but precise, no exclamation marks'.",
+};
+
+function GroupMemoryPane({
+  groupId,
+  canEdit,
+}: {
+  groupId: string;
+  canEdit: boolean;
+}) {
+  const [items, setItems] = useState<GroupConstraint[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [draftKind, setDraftKind] = useState<GroupConstraint["kind"]>("rule");
+  const [draftText, setDraftText] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  useEffect(() => {
+    if (!groupId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await apiGet<{ constraints: GroupConstraint[] }>(
+          `/api/groups/${groupId}/constraints`,
+        );
+        if (cancelled) return;
+        setItems(r.constraints);
+      } catch (e) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Couldn't load group memory.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [groupId]);
+
+  const handleAdd = useCallback(async () => {
+    const text = draftText.trim();
+    if (!text) return;
+    setAdding(true);
+    setError(null);
+    try {
+      const r = await apiPost<{ constraint: GroupConstraint }>(
+        `/api/groups/${groupId}/constraints`,
+        { kind: draftKind, text },
+      );
+      if (r.constraint) setItems((prev) => [...(prev || []), r.constraint]);
+      setDraftText("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't add the rule.");
+    } finally {
+      setAdding(false);
+    }
+  }, [groupId, draftKind, draftText]);
+
+  const handleRemove = useCallback(
+    async (id: string) => {
+      const prev = items;
+      setItems((cur) => (cur ? cur.filter((c) => c.id !== id) : cur));
+      try {
+        const { apiDelete } = await import("@/lib/api");
+        await apiDelete(`/api/groups/${groupId}/constraints/${id}`);
+      } catch (e) {
+        setItems(prev);
+        setError(e instanceof Error ? e.message : "Couldn't remove the rule.");
+      }
+    },
+    [groupId, items],
+  );
+
+  return (
+    <div className="group-memory-pane">
+      <p className="group-memory-intro">
+        Short guardrails every member&rsquo;s persona must follow when replying in
+        this room. Think 1-line constraints — not docs.
+      </p>
+
+      {error && (
+        <div className="group-composer-error" style={{ margin: "8px 0" }}>{error}</div>
+      )}
+
+      {loading ? (
+        <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</p>
+      ) : !items || items.length === 0 ? (
+        <p className="group-memory-empty">
+          No rules yet. {canEdit ? "Add one below — start with a single sharp constraint." : "Ask the owner to set the team's ground rules."}
+        </p>
+      ) : (
+        <ul className="group-memory-list">
+          {(["rule", "fact", "voice"] as const).map((k) => {
+            const inKind = items.filter((c) => c.kind === k);
+            if (inKind.length === 0) return null;
+            return (
+              <li key={k} className="group-memory-section">
+                <h4 className={`group-memory-kind kind-${k}`}>{KIND_LABEL[k]}s</h4>
+                <ul className="group-memory-sublist">
+                  {inKind.map((c) => (
+                    <li key={c.id} className="group-memory-row">
+                      <span className="group-memory-text">{c.text}</span>
+                      {canEdit && (
+                        <button
+                          type="button"
+                          className="group-memory-remove"
+                          onClick={() => void handleRemove(c.id)}
+                          aria-label="Remove this rule"
+                          title="Remove"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {canEdit && (
+        <div className="group-memory-add">
+          <label className="modal-label" htmlFor="gm-kind">Kind</label>
+          <select
+            id="gm-kind"
+            className="input group-schedule-select"
+            value={draftKind}
+            onChange={(e) => setDraftKind(e.target.value as GroupConstraint["kind"])}
+          >
+            {(["rule", "fact", "voice"] as const).map((k) => (
+              <option key={k} value={k}>
+                {KIND_LABEL[k]}
+              </option>
+            ))}
+          </select>
+          <p className="group-memory-help">{KIND_HELP[draftKind]}</p>
+          <textarea
+            className="input"
+            value={draftText}
+            onChange={(e) => setDraftText(e.target.value)}
+            placeholder="One sentence — the sharper, the better."
+            rows={2}
+            maxLength={400}
+            style={{ resize: "vertical", marginTop: 6 }}
+          />
+          <Button
+            size="sm"
+            onClick={() => void handleAdd()}
+            disabled={adding || !draftText.trim()}
+            style={{ marginTop: 8 }}
+          >
+            {adding ? "Adding…" : "Add rule"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -137,6 +137,52 @@ def _group_perms_to_external(group_perms: dict | None) -> dict:
     }
 
 
+# ── Constraints rendering ───────────────────────────────────────────────
+_CONSTRAINT_LABEL = {
+    "fact":  "Fact",
+    "rule":  "Rule",
+    "voice": "Voice",
+}
+
+
+def _format_constraints_block(constraints: list[dict] | None) -> str:
+    """
+    Render the group's constraint list as a prompt section the LLM can
+    follow. Empty list → empty string (no section header). Constraints
+    are grouped by kind so the model reads "Rules" / "Facts" / "Voice"
+    as cohesive blocks rather than a flat list.
+    """
+    if not constraints:
+        return ""
+    by_kind: dict[str, list[str]] = {"rule": [], "fact": [], "voice": []}
+    for c in constraints:
+        kind = c.get("kind")
+        text = (c.get("text") or "").strip()
+        if not text or kind not in by_kind:
+            continue
+        by_kind[kind].append(text)
+
+    if not any(by_kind.values()):
+        return ""
+
+    lines = ["\n\n## Group rules — must-follow guardrails for replies in this room"]
+    # Order matters: rules first (hardest), then facts (context), then voice
+    # (style). The model honors earlier-listed instructions more reliably.
+    if by_kind["rule"]:
+        lines.append("Rules (do NOT violate):")
+        for t in by_kind["rule"]:
+            lines.append(f"  - {t}")
+    if by_kind["fact"]:
+        lines.append("Shared facts the team has agreed on:")
+        for t in by_kind["fact"]:
+            lines.append(f"  - {t}")
+    if by_kind["voice"]:
+        lines.append("Voice / tone:")
+        for t in by_kind["voice"]:
+            lines.append(f"  - {t}")
+    return "\n".join(lines)
+
+
 # ── Dispatch ────────────────────────────────────────────────────────────
 _GROUP_CONVERSATION_PREFIX = "group:"
 
@@ -165,6 +211,7 @@ async def dispatch_group_mention(
     user_message: str,
     asker_permissions: dict,
     group_brief_content: str | None = None,
+    group_constraints: list[dict] | None = None,
 ) -> None:
     """
     Invoke the target member's persona for an @-mention in a group room
@@ -230,11 +277,22 @@ async def dispatch_group_mention(
                 "---"
             )
 
+    # Group constraints (phase 4) — hard guardrails every member's
+    # persona must respect when speaking in this room. Three kinds:
+    #   fact   → positive context the team has agreed on
+    #   rule   → things to avoid / forbid
+    #   voice  → style/tone guidance
+    # Unlike the brief, these are NOT gated by can_see_brief — they're
+    # the team's shared rules and apply to every member's persona in
+    # the room regardless of the asker's permission set.
+    constraints_block = _format_constraints_block(group_constraints)
+
     prefixed_message = (
         f"[Group room context — you were @-mentioned by {asker_display_name} "
         f"in a private group. Reply as your principal's persona would, in 1–3 "
         f"sentences. The other group members will see your reply.\n"
         f"{privacy_hint}]"
+        f"{constraints_block}"
         f"{brief_context}"
         f"\n\n{user_message}"
     )

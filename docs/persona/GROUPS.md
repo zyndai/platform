@@ -28,6 +28,24 @@ Persona Groups is production-ready, and the scope of each shipped phase.
 - "X's persona is thinking…" indicator above the composer, cleared
   when the agent row arrives or after 60 s.
 
+### Phase 3a — shared group brief (commit pending)
+- New columns on `persona_groups`: `brief_doc_id`, `brief_doc_url`
+  (`backend/db/patch_add_persona_group_brief.sql`).
+- 3 new routes:
+  - `POST /api/groups/{id}/brief/init` (owner-only) — creates a Google
+    Doc in the owner's Drive, seeded with the group description.
+  - `GET /api/groups/{id}/brief` (members) — live-fetched body.
+  - `PATCH /api/groups/{id}/brief` (owner/admin) — replaces the body.
+- Dispatcher injection: when `can_see_brief` is on for the asker and
+  the group has a brief, the doc body is pre-fetched once per turn
+  (in `_spawn_mention_dispatch`) and threaded into each target's
+  prompt via `dispatch_group_mention(group_brief_content=…)`. The
+  prefix labels it explicitly as "shared group brief" so the LLM
+  doesn't confuse it with the persona's own per-user brief.
+- UI: chat right rail is now a tabbed pane (`People` / `Brief`).
+  Brief tab shows the doc body, an "Open in Docs" link, a Reload
+  button, and an Edit-in-place flow for owner/admin.
+
 ### Phase 2 polish — follow-ups completed
 - **Brief gating is now hard, not just behavioral.** `_format_user_brief`
   takes a new `redact_brief` flag. When the asker doesn't have
@@ -66,12 +84,14 @@ per environment (local, staging, prod):
 ```bash
 # Local Supabase CLI
 supabase db push --file backend/db/patch_add_persona_groups.sql
+supabase db push --file backend/db/patch_add_persona_group_brief.sql
 
-# Or paste the contents into the Supabase Studio SQL editor and run.
+# Or paste each into the Supabase Studio SQL editor and run.
 ```
 
-What it creates:
-- `persona_groups` — group rows with slug, owner, visibility, invite_token
+What they create:
+- `persona_groups` — group rows with slug, owner, visibility, invite_token,
+  and (phase 3a) `brief_doc_id` / `brief_doc_url`
 - `persona_group_members` — join table with role + permissions JSONB
 - `persona_group_messages` — chat content, with
   `channel ∈ {human, agent, system, broadcast}`

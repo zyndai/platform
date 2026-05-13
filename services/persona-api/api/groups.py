@@ -353,6 +353,10 @@ class OwnerTransfer(BaseModel):
     new_owner_user_id: str
 
 
+class GroupBriefSave(BaseModel):
+    content: str = Field(min_length=0, max_length=50000)
+
+
 @router.post("/{group_id}/transfer-owner")
 async def transfer_owner(
     group_id: str,
@@ -587,6 +591,11 @@ async def post_message(
     # request path so the human's POST returns fast. The dispatcher posts
     # each reply back into persona_group_messages with channel='agent';
     # realtime delivers them to every subscriber, including the asker.
+    #
+    # Phase 3a: when the group has a brief doc, pre-fetch its content
+    # once here (rather than per-dispatch) and pass into each target's
+    # invocation. The fetch happens off the event loop because read_document
+    # is sync; on failure we fall through with no brief context.
     mentioned_uids = _spawn_mention_dispatch(
         sb=sb,
         group_id=group_id,
@@ -623,6 +632,10 @@ def _spawn_mention_dispatch(
     Self-mention is filtered out — a member @-mentioning themselves
     shouldn't trigger their own persona to reply to them in their own
     voice.
+
+    If the group has a brief doc, we read it once here and pass the
+    content to each dispatch task so every target persona sees the same
+    snapshot of the shared brief for this turn.
     """
     from agent.group_dispatch import (
         extract_mentions,
@@ -632,6 +645,32 @@ def _spawn_mention_dispatch(
     raw_mentions = extract_mentions(message_content)
     if not raw_mentions:
         return []
+
+    # Brief snapshot (phase 3a). Only fetched when the asker has
+    # can_see_brief — otherwise it would never reach the target's
+    # prompt anyway (the dispatcher gates on the same flag). Owner's
+    # Google connection is the read credential.
+    group_brief_content: str | None = None
+    if asker_permissions.get("can_see_brief"):
+        try:
+            grow = (
+                sb.table("persona_groups")
+                .select("owner_user_id, brief_doc_id")
+                .eq("id", group_id)
+                .limit(1)
+                .execute()
+            )
+            if grow.data and grow.data[0].get("brief_doc_id"):
+                owner_id = grow.data[0]["owner_user_id"]
+                doc_id = grow.data[0]["brief_doc_id"]
+                from mcp.tools.google.docs import read_document
+                fetched = read_document(user_id=owner_id, document_id=doc_id)
+                if fetched.get("success"):
+                    group_brief_content = (fetched.get("content") or "").strip() or None
+        except Exception:
+            # Best-effort — a broken Drive connection or stale doc just
+            # means the personas dispatch without the shared brief.
+            group_brief_content = None
 
     roster = (
         sb.table("persona_group_members")
@@ -675,6 +714,7 @@ def _spawn_mention_dispatch(
                 target_member=target,
                 user_message=message_content,
                 asker_permissions=asker_permissions,
+                group_brief_content=group_brief_content,
             )
         )
     return [t["user_id"] for t in targets]
@@ -772,3 +812,149 @@ async def join_via_invite(token: str, user: dict = Depends(get_current_user)):
         "updated_at": datetime.now(timezone.utc).isoformat()
     }).eq("id", group["id"]).execute()
     return {"status": "joined", "group_id": group["id"], "slug": group["slug"]}
+
+
+# ── Group brief (phase 3a) ──────────────────────────────────────────────
+# The shared Google Doc lives in the OWNER's Drive — that keeps the
+# storage cost on the owner who creates the group, and makes deletion
+# semantics obvious (revoke their Google access or archive the group →
+# nobody reads the brief any longer). Reads go to any member; writes to
+# owner/admin only.
+
+@router.post("/{group_id}/brief/init")
+async def init_group_brief(group_id: str, user: dict = Depends(get_current_user)):
+    """
+    Create a Google Doc that will hold the group's shared brief.
+    Owner-only — the doc is created in their Drive and we don't have a
+    transfer flow if ownership changes mid-life (the brief stays where
+    it was created).
+    """
+    sb = _supabase()
+    m = _require_member(sb, group_id, user["id"])
+    _require_role(m, ("owner",))
+
+    g = sb.table("persona_groups").select("*").eq("id", group_id).limit(1).execute()
+    if not g.data:
+        raise HTTPException(status_code=404, detail="Group not found.")
+    group = g.data[0]
+    if group.get("archived_at"):
+        raise HTTPException(status_code=404, detail="Group not found.")
+    if group.get("brief_doc_id"):
+        return {
+            "doc_id": group["brief_doc_id"],
+            "url": group.get("brief_doc_url") or "",
+            "created": False,
+        }
+
+    def _run() -> dict:
+        from mcp.tools.google.docs import create_document, append_to_document
+        title = f"Group brief — {group['name']}"
+        result = create_document(user_id=user["id"], title=title)
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=502,
+                detail=result.get("error") or "Couldn't create the group brief doc.",
+            )
+        doc_id = result["document_id"]
+        doc_url = result["link"]
+
+        # Seed with the description so the doc isn't a blank page.
+        seed = (group.get("description") or "").strip()
+        if seed:
+            append_to_document(user_id=user["id"], document_id=doc_id, text=seed + "\n")
+
+        sb.table("persona_groups").update({
+            "brief_doc_id": doc_id,
+            "brief_doc_url": doc_url,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", group_id).execute()
+        return {"doc_id": doc_id, "url": doc_url, "created": True}
+
+    return await asyncio.to_thread(_run)
+
+
+@router.get("/{group_id}/brief")
+async def get_group_brief(group_id: str, user: dict = Depends(get_current_user)):
+    """
+    Return the group's brief content. Any member can read.
+
+    Reads go directly to Google Docs (rather than serving a cached snapshot)
+    so co-editors see each other's writes within a refresh. The brief is
+    small enough (cap 50KB) that the latency hit is fine for the chat
+    rail's polling cadence.
+    """
+    sb = _supabase()
+    _require_member(sb, group_id, user["id"])
+
+    g = sb.table("persona_groups").select("*").eq("id", group_id).limit(1).execute()
+    if not g.data or g.data[0].get("archived_at"):
+        raise HTTPException(status_code=404, detail="Group not found.")
+    group = g.data[0]
+
+    if not group.get("brief_doc_id"):
+        return {"exists": False, "description": group.get("description") or ""}
+
+    def _run() -> dict:
+        from mcp.tools.google.docs import read_document
+        fetched = read_document(user_id=group["owner_user_id"], document_id=group["brief_doc_id"])
+        if not fetched.get("success"):
+            return {
+                "exists": True,
+                "doc_id": group["brief_doc_id"],
+                "url": group.get("brief_doc_url") or "",
+                "content": "",
+                "error": fetched.get("error"),
+            }
+        return {
+            "exists": True,
+            "doc_id": group["brief_doc_id"],
+            "url": group.get("brief_doc_url") or "",
+            "content": fetched.get("content") or "",
+            "title": fetched.get("title"),
+        }
+
+    return await asyncio.to_thread(_run)
+
+
+@router.patch("/{group_id}/brief")
+async def save_group_brief(
+    group_id: str,
+    body: GroupBriefSave,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Replace the brief body. Owner/admin only.
+
+    The doc itself is owned by the group's `owner_user_id` — even an admin
+    PATCHing here writes through that user's Google credentials, so a
+    revoked owner connection is the canonical kill-switch for editing.
+    """
+    sb = _supabase()
+    m = _require_member(sb, group_id, user["id"])
+    _require_role(m, ("owner", "admin"))
+
+    g = sb.table("persona_groups").select("*").eq("id", group_id).limit(1).execute()
+    if not g.data:
+        raise HTTPException(status_code=404, detail="Group not found.")
+    group = g.data[0]
+    if not group.get("brief_doc_id"):
+        raise HTTPException(status_code=400, detail="No brief doc yet — initialize it first.")
+
+    def _run() -> dict:
+        from mcp.tools.google.docs import replace_document_body
+        result = replace_document_body(
+            user_id=group["owner_user_id"],
+            document_id=group["brief_doc_id"],
+            text=body.content,
+        )
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=502,
+                detail=result.get("error") or "Couldn't save the brief.",
+            )
+        sb.table("persona_groups").update({
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }).eq("id", group_id).execute()
+        return {"success": True, "doc_id": group["brief_doc_id"]}
+
+    return await asyncio.to_thread(_run)

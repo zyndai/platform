@@ -164,6 +164,7 @@ async def dispatch_group_mention(
     target_member: dict,
     user_message: str,
     asker_permissions: dict,
+    group_brief_content: str | None = None,
 ) -> None:
     """
     Invoke the target member's persona for an @-mention in a group room
@@ -172,6 +173,12 @@ async def dispatch_group_mention(
     The asker's permissions in the group decide what tools the target
     persona may call; we translate them to the existing external_permissions
     shape (see `_group_perms_to_external`).
+
+    ``group_brief_content`` (phase 3a) is the trimmed body of the
+    persona_groups.brief_doc — when present and ``can_see_brief`` is on,
+    we inject it into the dispatch prefix so the persona has the SHARED
+    team context (vs. just the target's own per-user brief). Pass None
+    when no group brief exists or the asker doesn't have permission.
 
     All errors are logged but never raised — group dispatch is best-effort.
     A persona that fails to answer just goes silent for that turn; the
@@ -202,12 +209,34 @@ async def dispatch_group_mention(
             f"description — don't share what they're working on, internal goals, "
             f"or other brief specifics. Decline politely if the question requires it."
         )
+    # Group brief content (phase 3a) — when present, give the target
+    # persona the SHARED context the team has co-authored. Truncated
+    # to keep prompt size bounded; the cap is intentionally lower than
+    # _LLM_BRIEF_CHAR_CAP used by the per-user brief because we're
+    # appending on top of the existing prompt, not replacing it.
+    brief_context = ""
+    if group_brief_content and asker_permissions.get("can_see_brief"):
+        snippet = group_brief_content.strip()
+        if snippet:
+            if len(snippet) > 2000:
+                snippet = snippet[:2000].rstrip() + " …"
+            brief_context = (
+                "\n\n## Shared group brief — co-authored team context\n"
+                "Use this for what THIS GROUP is working on. Treat it as the team's "
+                "collective working memory (vs. your own per-user brief which is "
+                "personal to your principal).\n"
+                "---\n"
+                f"{snippet}\n"
+                "---"
+            )
+
     prefixed_message = (
         f"[Group room context — you were @-mentioned by {asker_display_name} "
         f"in a private group. Reply as your principal's persona would, in 1–3 "
         f"sentences. The other group members will see your reply.\n"
-        f"{privacy_hint}]\n\n"
-        f"{user_message}"
+        f"{privacy_hint}]"
+        f"{brief_context}"
+        f"\n\n{user_message}"
     )
 
     external_perms = _group_perms_to_external(asker_permissions)

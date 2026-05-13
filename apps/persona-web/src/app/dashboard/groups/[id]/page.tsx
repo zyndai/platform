@@ -400,37 +400,13 @@ export default function GroupChatPage() {
           )}
         </div>
 
-        <aside className="group-chat-roster">
-          <h3 className="group-roster-title">Members</h3>
-          <ul className="group-roster-list">
-            {members.map((m) => (
-              <li key={m.user_id} className="group-roster-row">
-                <Avatar
-                  size="sm"
-                  name={m.display_name}
-                  src={m.avatar_url || undefined}
-                  variant="accent"
-                />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="group-roster-name">
-                    {m.display_name}
-                    {m.user_id === user?.id && <span className="group-roster-you">you</span>}
-                  </div>
-                  <div className="group-roster-role">{m.role}</div>
-                </div>
-              </li>
-            ))}
-          </ul>
-          {isManager && (
-            <Link
-              href={`/dashboard/groups/${groupId}/settings`}
-              className="btn btn-secondary btn-sm"
-              style={{ marginTop: 12, textAlign: "center", display: "block", textDecoration: "none" }}
-            >
-              Invite or manage →
-            </Link>
-          )}
-        </aside>
+        <GroupRightRail
+          groupId={groupId || ""}
+          members={members}
+          currentUserId={user?.id}
+          isManager={isManager}
+          isOwner={myMembership?.role === "owner"}
+        />
       </div>
 
       <PendingRepliesBar pending={pendingReplies} members={members} />
@@ -576,6 +552,260 @@ function renderWithMentions(
     nodes.push(<span key={key++}>{content.slice(cursor)}</span>);
   }
   return nodes.length ? nodes : [<span key={0}>{content}</span>];
+}
+
+// Lazy-import-style brief loader. We only fetch when the user opens
+// the Brief tab so the chat view's first paint stays light. After init,
+// re-fetches are cheap (Google Docs READ; ~200ms) and we don't auto-poll
+// — the editor is what triggers a refresh.
+interface GroupBriefData {
+  exists: boolean;
+  doc_id?: string;
+  url?: string;
+  content?: string;
+  description?: string;
+  error?: string;
+}
+
+function GroupRightRail({
+  groupId,
+  members,
+  currentUserId,
+  isManager,
+  isOwner,
+}: {
+  groupId: string;
+  members: Member[];
+  currentUserId: string | undefined;
+  isManager: boolean;
+  isOwner: boolean;
+}) {
+  const [tab, setTab] = useState<"people" | "brief">("people");
+  const [brief, setBrief] = useState<GroupBriefData | null>(null);
+  const [briefLoading, setBriefLoading] = useState(false);
+  const [briefError, setBriefError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [initing, setIniting] = useState(false);
+
+  // Fetch on first tab-switch to Brief. The fetched payload is cached in
+  // local state for the lifetime of the page; users who want a refresh
+  // hit the explicit "Reload" button.
+  useEffect(() => {
+    if (tab !== "brief" || !groupId || brief !== null) return;
+    let cancelled = false;
+    (async () => {
+      setBriefLoading(true);
+      setBriefError(null);
+      try {
+        const data = await apiGet<GroupBriefData>(`/api/groups/${groupId}/brief`);
+        if (!cancelled) setBrief(data);
+      } catch (e) {
+        if (!cancelled) setBriefError(e instanceof Error ? e.message : "Couldn't load brief.");
+      } finally {
+        if (!cancelled) setBriefLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, groupId, brief]);
+
+  const reloadBrief = useCallback(async () => {
+    setBrief(null);
+    setBriefError(null);
+    setBriefLoading(true);
+    try {
+      const data = await apiGet<GroupBriefData>(`/api/groups/${groupId}/brief`);
+      setBrief(data);
+    } catch (e) {
+      setBriefError(e instanceof Error ? e.message : "Couldn't load brief.");
+    } finally {
+      setBriefLoading(false);
+    }
+  }, [groupId]);
+
+  const handleInit = useCallback(async () => {
+    setIniting(true);
+    setBriefError(null);
+    try {
+      await apiPost(`/api/groups/${groupId}/brief/init`, {});
+      await reloadBrief();
+    } catch (e) {
+      setBriefError(e instanceof Error ? e.message : "Couldn't initialize brief.");
+    } finally {
+      setIniting(false);
+    }
+  }, [groupId, reloadBrief]);
+
+  const handleSave = useCallback(async () => {
+    setSaving(true);
+    setBriefError(null);
+    try {
+      const { apiPatch } = await import("@/lib/api");
+      await apiPatch(`/api/groups/${groupId}/brief`, { content: editDraft });
+      setEditing(false);
+      await reloadBrief();
+    } catch (e) {
+      setBriefError(e instanceof Error ? e.message : "Couldn't save brief.");
+    } finally {
+      setSaving(false);
+    }
+  }, [editDraft, groupId, reloadBrief]);
+
+  return (
+    <aside className="group-chat-roster">
+      <div className="group-rail-tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "people"}
+          className={`group-rail-tab ${tab === "people" ? "is-active" : ""}`}
+          onClick={() => setTab("people")}
+        >
+          People
+          <span className="group-rail-tab-count">{members.length}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "brief"}
+          className={`group-rail-tab ${tab === "brief" ? "is-active" : ""}`}
+          onClick={() => setTab("brief")}
+        >
+          Brief
+        </button>
+      </div>
+
+      {tab === "people" ? (
+        <>
+          <ul className="group-roster-list">
+            {members.map((m) => (
+              <li key={m.user_id} className="group-roster-row">
+                <Avatar
+                  size="sm"
+                  name={m.display_name}
+                  src={m.avatar_url || undefined}
+                  variant="accent"
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="group-roster-name">
+                    {m.display_name}
+                    {m.user_id === currentUserId && (
+                      <span className="group-roster-you">you</span>
+                    )}
+                  </div>
+                  <div className="group-roster-role">{m.role}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {isManager && (
+            <Link
+              href={`/dashboard/groups/${groupId}/settings`}
+              className="btn btn-secondary btn-sm group-rail-cta"
+            >
+              Invite or manage →
+            </Link>
+          )}
+        </>
+      ) : (
+        <div className="group-brief-pane">
+          {briefError && (
+            <div className="group-composer-error" style={{ marginBottom: 8 }}>
+              {briefError}
+            </div>
+          )}
+          {briefLoading && !brief ? (
+            <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</p>
+          ) : !brief ? null : !brief.exists ? (
+            <div className="group-brief-empty">
+              <p>
+                No shared brief yet. The owner can start one — a Google Doc
+                visible only to members, used as the team&rsquo;s collective
+                context.
+              </p>
+              {isOwner ? (
+                <Button onClick={() => void handleInit()} disabled={initing} size="sm">
+                  {initing ? "Creating…" : "Start the group brief"}
+                </Button>
+              ) : (
+                <p style={{ color: "var(--text-muted)", fontSize: 12 }}>
+                  Ask the group owner to create one.
+                </p>
+              )}
+            </div>
+          ) : editing ? (
+            <>
+              <textarea
+                className="input group-brief-textarea"
+                value={editDraft}
+                onChange={(e) => setEditDraft(e.target.value)}
+                rows={14}
+                maxLength={50000}
+                autoFocus
+              />
+              <div className="group-brief-actions">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setEditing(false)}
+                  disabled={saving}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={() => void handleSave()} disabled={saving} size="sm">
+                  {saving ? "Saving…" : "Save"}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="group-brief-body">
+                {brief.content?.trim() || (
+                  <span className="group-brief-empty-hint">
+                    Brief doc exists but it&rsquo;s empty. {isManager && "Edit it to add team context."}
+                  </span>
+                )}
+              </div>
+              <div className="group-brief-actions">
+                {brief.url && (
+                  <a
+                    href={brief.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-secondary btn-sm"
+                  >
+                    Open in Docs ↗
+                  </a>
+                )}
+                {isManager && (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setEditDraft(brief.content || "");
+                      setEditing(true);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void reloadBrief()}
+                  title="Re-read from Google Docs"
+                >
+                  Reload
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </aside>
+  );
 }
 
 function PendingRepliesBar({

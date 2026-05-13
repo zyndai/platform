@@ -11,6 +11,8 @@ import {
   Trash2,
   Shield,
   User as UserIcon,
+  ChevronDown,
+  Crown,
 } from "lucide-react";
 import { Avatar, Button } from "@/components/ui";
 import { useDashboard } from "@/contexts/DashboardContext";
@@ -187,6 +189,56 @@ export default function GroupSettingsPage() {
       }
     },
     [groupId, fetchAll],
+  );
+
+  // Optimistic flip on the local roster, with a rollback if the PATCH
+  // fails. Avoids a full refetch on every toggle — that would feel laggy.
+  const handleTogglePermission = useCallback(
+    async (memberUid: string, key: string, next: boolean) => {
+      if (!groupId) return;
+      const prev = members;
+      setMembers((cur) =>
+        cur.map((m) =>
+          m.user_id === memberUid
+            ? { ...m, permissions: { ...m.permissions, [key]: next } }
+            : m,
+        ),
+      );
+      try {
+        await apiPatch(`/api/groups/${groupId}/members/${memberUid}`, {
+          permissions: { [key]: next },
+        });
+      } catch (e) {
+        setMembers(prev);
+        setError(e instanceof Error ? e.message : "Couldn't update permission.");
+      }
+    },
+    [groupId, members],
+  );
+
+  const [expandedUid, setExpandedUid] = useState<string | null>(null);
+
+  // Owner-transfer is a one-way action — confirm twice to make sure
+  // the current owner really wants to lose admin-level control. After
+  // success the page redirects to the chat view so the new owner sees
+  // their elevated UI on next load.
+  const handleTransferOwner = useCallback(
+    async (memberUid: string, memberName: string) => {
+      if (!groupId) return;
+      const ok = window.confirm(
+        `Transfer ownership to ${memberName}? You'll become an admin and lose owner-only powers (archive, transfer, danger-zone actions).`,
+      );
+      if (!ok) return;
+      try {
+        await apiPost(`/api/groups/${groupId}/transfer-owner`, {
+          new_owner_user_id: memberUid,
+        });
+        router.push(`/dashboard/groups/${groupId}`);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Couldn't transfer ownership.");
+      }
+    },
+    [groupId, router],
   );
 
   const handleRemoveMember = useCallback(
@@ -373,56 +425,99 @@ export default function GroupSettingsPage() {
         <ul className="group-roster-list">
           {members.map((m) => {
             const isSelf = m.user_id === user?.id;
+            const expanded = expandedUid === m.user_id;
+            const isOwnerRow = m.role === "owner";
             return (
-              <li key={m.user_id} className="group-member-row">
-                <Avatar
-                  size="sm"
-                  name={m.display_name}
-                  src={m.avatar_url || undefined}
-                  variant="accent"
-                />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="group-roster-name">
-                    {m.display_name}
-                    {isSelf && <span className="group-roster-you">you</span>}
+              <li key={m.user_id} className="group-member-li">
+                <div className="group-member-row">
+                  <Avatar
+                    size="sm"
+                    name={m.display_name}
+                    src={m.avatar_url || undefined}
+                    variant="accent"
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="group-roster-name">
+                      {m.display_name}
+                      {isSelf && <span className="group-roster-you">you</span>}
+                    </div>
+                    <div className="group-roster-role">{m.role}</div>
                   </div>
-                  <div className="group-roster-role">{m.role}</div>
-                </div>
-                <div className="group-member-actions">
-                  {m.role !== "owner" && (
-                    <>
-                      {m.role === "admin" ? (
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => void handleChangeRole(m.user_id, "member")}
-                          title="Demote to member"
-                        >
-                          <UserIcon size={12} strokeWidth={1.8} /> Demote
-                        </button>
-                      ) : (
-                        isOwner && (
+                  <div className="group-member-actions">
+                    {!isOwnerRow && (
+                      <button
+                        type="button"
+                        className={`btn btn-secondary btn-sm ${expanded ? "is-active" : ""}`}
+                        onClick={() =>
+                          setExpandedUid(expanded ? null : m.user_id)
+                        }
+                        aria-expanded={expanded}
+                        title="Per-member permissions"
+                      >
+                        Permissions
+                        <ChevronDown
+                          size={12}
+                          strokeWidth={1.8}
+                          style={{
+                            transform: expanded ? "rotate(180deg)" : "none",
+                            transition: "transform 160ms",
+                          }}
+                        />
+                      </button>
+                    )}
+                    {!isOwnerRow && (
+                      <>
+                        {isOwner && m.role === "admin" && (
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
-                            onClick={() => void handleChangeRole(m.user_id, "admin")}
-                            title="Promote to admin"
+                            onClick={() => void handleTransferOwner(m.user_id, m.display_name)}
+                            title="Transfer ownership of this group"
                           >
-                            <Shield size={12} strokeWidth={1.8} /> Make admin
+                            <Crown size={12} strokeWidth={1.8} /> Make owner
                           </button>
-                        )
-                      )}
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm btn-danger-quiet"
-                        onClick={() => void handleRemoveMember(m.user_id)}
-                        title="Remove from group"
-                      >
-                        <Trash2 size={12} strokeWidth={1.8} /> Remove
-                      </button>
-                    </>
-                  )}
+                        )}
+                        {m.role === "admin" ? (
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => void handleChangeRole(m.user_id, "member")}
+                            title="Demote to member"
+                          >
+                            <UserIcon size={12} strokeWidth={1.8} /> Demote
+                          </button>
+                        ) : (
+                          isOwner && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => void handleChangeRole(m.user_id, "admin")}
+                              title="Promote to admin"
+                            >
+                              <Shield size={12} strokeWidth={1.8} /> Make admin
+                            </button>
+                          )
+                        )}
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm btn-danger-quiet"
+                          onClick={() => void handleRemoveMember(m.user_id)}
+                          title="Remove from group"
+                        >
+                          <Trash2 size={12} strokeWidth={1.8} /> Remove
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
+                {expanded && !isOwnerRow && (
+                  <MemberPermissionsPanel
+                    member={m}
+                    onToggle={(key, val) =>
+                      void handleTogglePermission(m.user_id, key, val)
+                    }
+                  />
+                )}
               </li>
             );
           })}
@@ -441,6 +536,65 @@ export default function GroupSettingsPage() {
           </Button>
         </section>
       )}
+    </div>
+  );
+}
+
+// Wording note: every toggle here is the ASKER's permission — what THIS
+// member is allowed to learn about other members' principals when they
+// @-mention them in the room. Targets' privacy preferences are implicit
+// in the group owner's choice of who has which toggle on.
+const PERM_TOGGLES: Array<{
+  key: "can_see_brief" | "can_query_calendar" | "can_post";
+  label: string;
+  help: string;
+}> = [
+  {
+    key: "can_see_brief",
+    label: "See briefs of mentioned members",
+    help:
+      "When this member @mentions someone, that persona may share specifics from its principal's brief. Otherwise the reply is kept high-level.",
+  },
+  {
+    key: "can_query_calendar",
+    label: "Check calendars of mentioned members",
+    help:
+      "Allow this member's @mentions to query the target persona's free/busy availability.",
+  },
+  {
+    key: "can_post",
+    label: "Post messages",
+    help:
+      "Turn off to mute this member without removing them from the group.",
+  },
+];
+
+function MemberPermissionsPanel({
+  member,
+  onToggle,
+}: {
+  member: Member;
+  onToggle: (key: string, next: boolean) => void;
+}) {
+  const perms = member.permissions || {};
+  return (
+    <div className="group-member-perms">
+      {PERM_TOGGLES.map((t) => {
+        const checked = perms[t.key] === true;
+        return (
+          <label key={t.key} className="group-perm-row">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(e) => onToggle(t.key, e.target.checked)}
+            />
+            <span className="group-perm-text">
+              <strong>{t.label}</strong>
+              <small>{t.help}</small>
+            </span>
+          </label>
+        );
+      })}
     </div>
   );
 }

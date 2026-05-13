@@ -116,6 +116,30 @@ def derive_agent_keypair(developer_seed: bytes, index: int) -> Keypair:
     return keypair_from_seed(derive_agent_seed(developer_seed, index))
 
 
+def derive_group_seed(developer_seed: bytes, index: int) -> bytes:
+    """
+    HD-derive a 32-byte seed for a persona group, kept in a domain
+    disjoint from agents so collisions with agent derivation indices are
+    impossible by construction.
+
+    Algorithm: sha512(developer_seed || "agdns:group:" || index_be)[:32]
+
+    Used by group A2A `group_context` claims (phase 2 cross-instance
+    follow-up): each persona_group has a deterministic keypair that
+    signs envelopes carrying the group_id + asker agent_id, and the
+    receiver verifies membership before honoring brief/calendar queries.
+    """
+    index_bytes = index.to_bytes(4, byteorder="big")
+    return hashlib.sha512(
+        developer_seed + b"agdns:group:" + index_bytes
+    ).digest()[:32]
+
+
+def derive_group_keypair(developer_seed: bytes, index: int) -> Keypair:
+    """Convenience: derive the seed for group ``index`` and build a Keypair."""
+    return keypair_from_seed(derive_group_seed(developer_seed, index))
+
+
 def sign(seed: bytes, message: bytes) -> str:
     """
     Standalone sign helper for callers that only have raw seed bytes

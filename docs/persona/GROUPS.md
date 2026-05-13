@@ -13,33 +13,54 @@ Persona Groups is production-ready, and the scope of each shipped phase.
 - Supabase Realtime subscription for `persona_group_messages` filtered
   by `group_id`
 
-### Phase 2 — @-mention persona dispatch (in progress)
+### Phase 2 — @-mention persona dispatch (commit `8c77aaa`)
 - `backend/agent/group_dispatch.py` — `extract_mentions`,
-  `resolve_mentions_to_members`, and `dispatch_group_mention`. Routes
+  `resolve_mentions_to_members`, `dispatch_group_mention`. Routes
   through `handle_user_message(is_external=True, …)` with group
   permissions translated to the existing `external_permissions` shape.
-- `POST /api/groups/{id}/messages` now parses `@DisplayName` mentions
-  on the way in, fires a background `asyncio.create_task` for each
-  resolved member, and returns `mentioned_user_ids` in the response so
-  the client can render a thinking indicator.
-- Replies are written back as `channel='agent'` rows with
-  `metadata.reason='group_mention'` — realtime delivers them like any
-  other message.
-- Composer in `/dashboard/groups/[id]` has an `@`-typeahead picker
-  (Up/Down/Enter/Tab/Esc). Sent messages render `@Name` as a styled
-  chip with a distinct color when it's "@you".
-- Pending indicator: "X's persona is thinking…" chip above the
-  composer, cleared when the agent row arrives or after 60s.
+- `POST /api/groups/{id}/messages` parses `@DisplayName` mentions on the
+  way in, fires a background `asyncio.create_task` for each resolved
+  member, and returns `mentioned_user_ids` for the thinking indicator.
+- Replies written back as `channel='agent'` rows with
+  `metadata.reason='group_mention'`; realtime delivers them.
+- Composer: `@`-typeahead picker (↑↓/Enter/Tab/Esc). Sent messages
+  render `@Name` as styled chips; "@you" gets its own highlight.
+- "X's persona is thinking…" indicator above the composer, cleared
+  when the agent row arrives or after 60 s.
 
-Still in **Pending end-to-end** below: the cross-instance signed
-`group_context` claim (current code is same-instance only).
+### Phase 2 polish — follow-ups completed
+- **Brief gating is now hard, not just behavioral.** `_format_user_brief`
+  takes a new `redact_brief` flag. When the asker doesn't have
+  `can_see_brief`, the brief Google Doc body is stripped from the
+  system prompt entirely — it never enters the LLM's context window
+  for that turn. The dispatch prefix also threads an explicit hint so
+  the LLM doesn't leak equivalents from memory.
+- **Per-member permission toggles** in the group settings page. Each
+  non-owner row has an expandable Permissions panel with three
+  switches: see briefs of mentioned members, check their calendars,
+  and post in the group (mute toggle). Auto-saves optimistically with
+  rollback on PATCH failure.
+- **Member cap** (`MAX_GROUP_MEMBERS = 15`) enforced in `add_member`
+  and `join_via_invite` — keeps the @-mention dispatch fan-out and
+  future calendar overlay scope bounded.
+- **Owner transfer**: `POST /api/groups/{id}/transfer-owner` plus a
+  "Make owner" action on each admin's row in settings. The previous
+  owner is demoted to admin in the same call.
+- **Group keypair derivation foundation**: `derive_group_seed` and
+  `derive_group_keypair` in `zynd_identity.py` (domain-separated from
+  agent derivation), plus `build_group_context_claim` /
+  `verify_group_context_claim` in `group_dispatch.py`. The
+  cryptographic primitives are ready for cross-instance dispatch; the
+  routing layer that uses them is still pending (see below).
 
 ---
 
 ## Pending end-to-end (must do before users see groups)
 
+These are operational items that the code can't do for itself.
+
 ### 1. Apply the Supabase migration
-The SQL patch isn't auto-run — `/supabase/` is gitignored. Apply it once
+The SQL patch isn't auto-run — `/supabase/` is gitignored. Apply once
 per environment (local, staging, prod):
 
 ```bash
@@ -52,7 +73,8 @@ supabase db push --file backend/db/patch_add_persona_groups.sql
 What it creates:
 - `persona_groups` — group rows with slug, owner, visibility, invite_token
 - `persona_group_members` — join table with role + permissions JSONB
-- `persona_group_messages` — chat content, with `channel ∈ {human, agent, system, broadcast}`
+- `persona_group_messages` — chat content, with
+  `channel ∈ {human, agent, system, broadcast}`
 
 ### 2. Enable Realtime on `persona_group_messages`
 The chat view subscribes to `postgres_changes` on this table. Until
@@ -60,7 +82,7 @@ realtime is enabled, new messages only appear on page refresh.
 
 Supabase Studio → **Database** → **Replication** → toggle on for
 `persona_group_messages`. (`persona_group_members` and `persona_groups`
-don't need realtime for phase 1.)
+don't need realtime for phase 1 or 2.)
 
 ### 3. Confirm RLS works for your service-role key
 The API uses the service-role key, which bypasses RLS. The RLS policies
@@ -69,57 +91,36 @@ channel). Sanity-check that:
 - A signed-in member CAN read messages via the realtime channel
 - An anonymous client CANNOT subscribe to a group they're not a member of
 
-### 4. Set a max-members policy
-Phase 1 doesn't enforce a member cap. Small-team scope is 3–15, but the
-backend will let an admin add 200 members. Either:
-- Add a cap check in `add_member` / `join_via_invite` (recommended),
-- Or wait until a real customer is approaching the limit.
+---
 
-### 5. Decide owner-transfer flow before shipping publicly
-The current schema has a single `owner_user_id` on `persona_groups`.
-Owners can't currently transfer ownership through the UI — they have to
-archive the group and start over. Either:
-- Add a `PATCH /api/groups/{id}/transfer-owner` endpoint, or
-- Document the limitation and revisit if users hit it.
+## Still pending (code, lower priority)
+
+### Cross-instance `group_context` dispatch
+Phase 2 dispatch only routes through the in-process orchestrator. When
+persona members live on different Zynd backends, dispatch needs to:
+- Build a signed `group_context` claim via the helpers already shipped
+  (`build_group_context_claim`).
+- Send it as part of the A2A v3 envelope to the target's host.
+- The receiving host verifies via `verify_group_context_claim`,
+  resolves `asker_agent_id` against its own group roster
+  (defense-in-depth — the signature alone doesn't prove membership),
+  and then calls the same `dispatch_group_mention` logic.
+
+The orchestrator/A2A wrapping is the missing piece. Crypto + permission
+mapping are in place.
+
+### Asker- vs target-side permission model
+The current model is "asker permissions": the group owner decides which
+members are allowed to see briefs / calendars of anyone they @mention.
+A more conservative model is "target permissions": each member toggles
+whether their *own* brief/calendar is sharable inside the group. We can
+add a second permission key (e.g. `share_my_brief`) on top of the
+existing one and intersect at dispatch time. Worth revisiting if real
+users push back on the asker-only model.
 
 ---
 
-## Phase 2 prerequisites (not yet in code)
-
-### A2A `group_context` claim — cross-instance dispatch
-Current dispatch is **same-instance only**: all group members are
-expected to live on the same backend. Cross-instance deployment needs:
-- `group_seed` derivation in `agent/persona_manager.py` keyed off
-  `persona_groups.group_seed_index` (the column exists and is populated
-  at create time; the keypair derivation is not wired yet).
-- A2A v3 envelopes carrying a `group_context` claim signed by the
-  derived group keypair, with `group_id` + asker `agent_id`.
-- Receiver validates the signature + membership before honoring the
-  dispatch. The current code path (`group_dispatch.dispatch_group_mention`)
-  is where the cross-instance wrap would sit.
-
-### Per-member permission UI
-The schema carries `can_see_brief`, `can_query_calendar`, and
-`can_speak_for_group` on `persona_group_members.permissions`. The
-**dispatcher already honors them** via `_group_perms_to_external`, but
-the settings page has no UI to toggle them yet — members get the
-defaults from the migration until that lands.
-
-### Brief content injection (when `can_see_brief` is on)
-`can_see_brief` currently maps to `can_view_full_profile`, which
-controls the orchestrator's profile redaction but doesn't automatically
-expose brief content as additional context. To make `can_see_brief`
-actually answer "what is Sarah working on?", we need to either:
-- Inject the target's brief snippet into the orchestrator's system
-  prompt at group-dispatch time, **or**
-- Add a `read_my_own_brief` MCP tool the target persona can call (since
-  it's the target's own brief, not a cross-agent leak).
-
-The first option ships faster; the second is the more orthogonal fix.
-
----
-
-## Future phases (not scoped yet)
+## Future phases (scoped only as ideas)
 
 - **Phase 3** — group brief Google Doc (parallel to the per-user brief),
   group calendar overlay (free/busy across members), group meeting proposals.

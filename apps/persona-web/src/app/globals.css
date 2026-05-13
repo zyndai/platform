@@ -5597,3 +5597,47 @@ textarea.input { resize: vertical; min-height: 88px; }
   background: var(--accent, #6366f1);
   animation: bootloader-pulse 1.2s ease-in-out infinite;
 }
+
+/* ── Per-member permissions panel (settings page) ───────────────── */
+.group-member-li {
+  list-style: none;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.group-member-li:last-child { border-bottom: none; }
+.group-member-li .group-member-row {
+  border-bottom: none;
+}
+.group-member-perms {
+  display: flex; flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 14px 56px;
+  background: var(--surface-raised);
+  border-radius: 0 0 8px 8px;
+  animation: thinking-reveal 180ms var(--ease-out);
+}
+.group-perm-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  cursor: pointer;
+  font-family: var(--font-geist), system-ui, sans-serif;
+}
+.group-perm-row input[type="checkbox"] {
+  margin-top: 4px;
+  flex-shrink: 0;
+  accent-color: var(--accent, #6366f1);
+}
+.group-perm-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.group-perm-text strong {
+  font-size: 13px;
+  color: var(--ink);
+  font-weight: 600;
+}
+.group-perm-text small {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.btn.is-active {
+  background: var(--accent-soft-bg, var(--surface-raised));
+  border-color: color-mix(in srgb, var(--accent, #6366f1) 30%, transparent);
+  color: var(--accent, #6366f1);
+}

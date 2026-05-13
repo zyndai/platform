@@ -25,8 +25,11 @@ Phase-2 scope is in-process / same-instance dispatch:
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 
 from supabase import create_client
@@ -112,22 +115,25 @@ def _group_perms_to_external(group_perms: dict | None) -> dict:
     Translate the per-member group permissions into the external_permissions
     shape the orchestrator already understands.
 
-    Group key                → external key
+    Group key                → external key(s)
       can_query_calendar     → can_query_availability
-      can_speak_for_group    → can_post_on_my_behalf  (sparingly — only
-                               when explicitly granted in the group)
-      can_see_brief          → can_view_full_profile  (closest analog;
-                               profile + brief share the "private info"
-                               umbrella)
+      can_speak_for_group    → can_post_on_my_behalf
+      can_see_brief          → can_see_brief AND can_view_full_profile
 
-    Anything not in the map falls under default-allowed (read-only registry
-    lookups), which is the safe baseline.
+    `can_see_brief` is the umbrella "private info" toggle in group MVP —
+    granting it to a member lets the target persona share both the brief
+    Google Doc body AND the profile fields (title, org, location, etc.)
+    with that asker. The orchestrator now reads them as two independent
+    gates, but the group UI exposes one switch; we set them in lock-step
+    here so the simpler UI stays in lock-step with the deeper model.
     """
     g = group_perms or {}
+    see_brief = bool(g.get("can_see_brief"))
     return {
         "can_query_availability": bool(g.get("can_query_calendar")),
-        "can_view_full_profile": bool(g.get("can_see_brief")),
-        "can_post_on_my_behalf": bool(g.get("can_speak_for_group")),
+        "can_see_brief":          see_brief,
+        "can_view_full_profile":  see_brief,
+        "can_post_on_my_behalf":  bool(g.get("can_speak_for_group")),
     }
 
 
@@ -179,11 +185,28 @@ async def dispatch_group_mention(
     # The orchestrator's external-mode system prompt already explains
     # "you're an AI agent talking to another agent" — we just need to tell
     # this turn's flavor: "you were @-mentioned in a group room by Y; here
-    # is what they asked."
+    # is what they asked." The can_see_brief hint below is belt-and-
+    # suspenders: even though the brief body is already stripped from the
+    # system prompt when permission is off, telling the LLM not to leak
+    # equivalent details from memory keeps replies aligned.
+    if asker_permissions.get("can_see_brief"):
+        privacy_hint = (
+            f"{asker_display_name} has been granted access to your principal's "
+            f"private brief in this group. You may share specifics about what "
+            f"they're working on, plans, and goals."
+        )
+    else:
+        privacy_hint = (
+            f"{asker_display_name} has NOT been granted access to your principal's "
+            f"private brief. Keep your reply at the level of the public "
+            f"description — don't share what they're working on, internal goals, "
+            f"or other brief specifics. Decline politely if the question requires it."
+        )
     prefixed_message = (
         f"[Group room context — you were @-mentioned by {asker_display_name} "
         f"in a private group. Reply as your principal's persona would, in 1–3 "
-        f"sentences. The other group members will see your reply.]\n\n"
+        f"sentences. The other group members will see your reply.\n"
+        f"{privacy_hint}]\n\n"
         f"{user_message}"
     )
 
@@ -233,6 +256,147 @@ async def dispatch_group_mention(
         }).eq("id", group_id).execute()
     except Exception as e:
         logger.exception(f"[group-dispatch] couldn't persist reply for {target_uid}: {e}")
+
+
+# ── group_context claim (cross-instance foundation) ────────────────────
+# Each persona_group has a deterministic Ed25519 keypair derived from the
+# developer seed + persona_groups.group_seed_index. Phase 2 same-instance
+# dispatch doesn't need to sign anything (the API path is trusted), but
+# cross-instance personas living on a different Zynd backend will. The
+# build/verify helpers below are the boundary contract:
+#
+#   * sender:    `build_group_context_claim(group_id, asker_agent_id,
+#                  asker_permissions, group_seed_index)` returns a
+#                  base64 JSON blob the dispatching backend attaches to
+#                  the A2A v3 envelope.
+#   * receiver:  `verify_group_context_claim(claim, expected_group_id)`
+#                  returns the parsed claim dict on success, raises on
+#                  any failure (bad signature, expired ts, mismatched
+#                  group_id, etc.). The caller is then responsible for
+#                  membership-checking the asker_agent_id against the
+#                  group's roster.
+#
+# The signed payload deliberately includes a `ts` (issued-at) and `exp`
+# (expiry, default 5 minutes) so a captured claim can't be replayed
+# indefinitely. The signature covers the canonical JSON encoding of the
+# claim minus the signature field itself.
+
+CLAIM_TTL_SECONDS = 300
+
+
+def build_group_context_claim(
+    *,
+    group_id: str,
+    group_seed_index: int,
+    asker_agent_id: str,
+    asker_user_id: str,
+    asker_permissions: dict,
+    developer_seed: bytes | None = None,
+) -> str:
+    """
+    Build a base64-encoded, signed `group_context` claim.
+
+    The receiver of an A2A v3 envelope inside a group attaches this string
+    to the message; the target's backend verifies it before invoking its
+    persona with group permissions.
+
+    Phase 2 (same-instance) calls this only for tests / future-proofing —
+    the dispatch path doesn't yet route through A2A. Wiring it into the
+    real outbound A2A envelope is tracked in GROUPS.md.
+    """
+    from agent.zynd_identity import (
+        derive_group_keypair,
+        sign as _sign,
+    )
+    from agent.persona_manager import _load_developer_seed
+
+    if developer_seed is None:
+        developer_seed = _load_developer_seed()
+    kp = derive_group_keypair(developer_seed, group_seed_index)
+
+    now = int(time.time())
+    payload = {
+        "v": 1,
+        "group_id": group_id,
+        "asker_agent_id": asker_agent_id,
+        "asker_user_id": asker_user_id,
+        "asker_permissions": dict(asker_permissions or {}),
+        "ts": now,
+        "exp": now + CLAIM_TTL_SECONDS,
+        "group_public_key": base64.b64encode(kp.public_key_bytes).decode(),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    payload["sig"] = _sign(kp.private_seed, canonical)
+    return base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode()
+    ).decode()
+
+
+def verify_group_context_claim(
+    claim_b64: str,
+    expected_group_id: str,
+    *,
+    developer_seed: bytes | None = None,
+    group_seed_index: int | None = None,
+) -> dict:
+    """
+    Decode + verify a `group_context` claim. Returns the parsed claim
+    dict on success; raises ValueError with a specific reason on failure.
+
+    Callers MUST additionally check that asker_agent_id is in the group's
+    roster — verifying the signature only proves the claim was issued by
+    the holder of the group seed, not that the asker named in the claim
+    is actually a member.
+    """
+    from agent.zynd_identity import (
+        derive_group_keypair,
+        verify,
+    )
+    from agent.persona_manager import _load_developer_seed
+
+    try:
+        raw = base64.urlsafe_b64decode(claim_b64.encode())
+        payload = json.loads(raw)
+    except Exception as e:
+        raise ValueError(f"malformed claim envelope: {e}") from e
+
+    if not isinstance(payload, dict) or payload.get("v") != 1:
+        raise ValueError("unsupported claim version")
+    if payload.get("group_id") != expected_group_id:
+        raise ValueError("group_id mismatch")
+
+    now = int(time.time())
+    exp = payload.get("exp")
+    if not isinstance(exp, int) or exp < now:
+        raise ValueError("claim expired")
+    ts = payload.get("ts")
+    if not isinstance(ts, int) or ts > now + 60:
+        # Allow 60s of clock skew but reject claims minted in the future.
+        raise ValueError("claim issued in the future")
+
+    sig = payload.pop("sig", None)
+    if not sig:
+        raise ValueError("missing signature")
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+
+    # Derive the expected group keypair. If the caller knows the index,
+    # use it; otherwise the claim's `group_public_key` is the only hint —
+    # but trusting that to look up the index would defeat the verification.
+    # Cross-instance code paths MUST pass group_seed_index from the
+    # receiver's local persona_groups row.
+    if developer_seed is None:
+        developer_seed = _load_developer_seed()
+    if group_seed_index is None:
+        raise ValueError("group_seed_index required for verification")
+    kp = derive_group_keypair(developer_seed, group_seed_index)
+    public_key_b64 = base64.b64encode(kp.public_key_bytes).decode()
+    if not verify(public_key_b64, canonical, sig):
+        raise ValueError("bad signature")
+
+    # Re-attach for downstream consumers; the dict is otherwise the
+    # signed payload (no sig, since we stripped it for canonicalization).
+    payload["sig"] = sig
+    return payload
 
 
 def _post_system_note(group_id: str, note: str) -> None:

@@ -56,6 +56,31 @@ def _is_missing_table(err: APIError) -> bool:
     return getattr(err, "code", None) == "PGRST205"
 
 
+# Soft cap. Phase 1's design target was small teams of 3–15. We don't want
+# someone accidentally inviting their entire org and tipping the page into
+# unbounded fan-out — the @-mention dispatcher fires one orchestrator call
+# per mentioned member, and the calendar overlay scopes (phase 3) scale
+# with member count too. Owners hit this cap before they hit something
+# the system can't recover from gracefully.
+MAX_GROUP_MEMBERS = 15
+
+
+def _enforce_member_cap(sb, group_id: str) -> None:
+    """Raise 409 if the group is at the soft cap."""
+    counts = (
+        sb.table("persona_group_members")
+        .select("id", count="exact")
+        .eq("group_id", group_id)
+        .execute()
+    )
+    current = getattr(counts, "count", None) or len(counts.data or [])
+    if current >= MAX_GROUP_MEMBERS:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This group is at the {MAX_GROUP_MEMBERS}-member limit.",
+        )
+
+
 # ── Slug + invite token helpers ─────────────────────────────────────────
 _SLUG_BAD = re.compile(r"[^a-z0-9-]+")
 _SLUG_TRIM = re.compile(r"-{2,}")
@@ -324,6 +349,50 @@ async def archive_group(group_id: str, user: dict = Depends(get_current_user)):
     return {"status": "archived"}
 
 
+class OwnerTransfer(BaseModel):
+    new_owner_user_id: str
+
+
+@router.post("/{group_id}/transfer-owner")
+async def transfer_owner(
+    group_id: str,
+    body: OwnerTransfer,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Move ownership of a group from the current owner to another member.
+
+    Two writes wrapped together: demote the old owner to admin, promote
+    the named member to owner, and stamp owner_user_id on the group row
+    so listing queries stay consistent. There's no DB transaction here
+    (Supabase python client doesn't expose one cleanly), so the worst
+    case on a partial failure is that the group ends up with two admins
+    and the original owner — annoying but recoverable by re-running.
+    """
+    sb = _supabase()
+    me = _require_member(sb, group_id, user["id"])
+    _require_role(me, ("owner",))
+
+    if body.new_owner_user_id == user["id"]:
+        raise HTTPException(status_code=400, detail="You are already the owner.")
+
+    target = _membership(sb, group_id, body.new_owner_user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="That user isn't a member of this group.")
+
+    sb.table("persona_group_members").update({"role": "admin"}).eq(
+        "group_id", group_id
+    ).eq("user_id", user["id"]).execute()
+    sb.table("persona_group_members").update({"role": "owner"}).eq(
+        "group_id", group_id
+    ).eq("user_id", body.new_owner_user_id).execute()
+    sb.table("persona_groups").update({
+        "owner_user_id": body.new_owner_user_id,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", group_id).execute()
+    return {"status": "ok", "new_owner_user_id": body.new_owner_user_id}
+
+
 # ── Members ─────────────────────────────────────────────────────────────
 @router.get("/{group_id}/members")
 async def list_members(group_id: str, user: dict = Depends(get_current_user)):
@@ -373,6 +442,8 @@ async def add_member(
 
     if body.user_id == user["id"] or _membership(sb, group_id, body.user_id):
         raise HTTPException(status_code=409, detail="Already a member.")
+
+    _enforce_member_cap(sb, group_id)
 
     agent_id = _resolve_agent_id(sb, body.user_id)
     inserted = sb.table("persona_group_members").insert({
@@ -686,6 +757,8 @@ async def join_via_invite(token: str, user: dict = Depends(get_current_user)):
 
     if _membership(sb, group["id"], user["id"]):
         return {"status": "already_member", "group_id": group["id"], "slug": group["slug"]}
+
+    _enforce_member_cap(sb, group["id"])
 
     agent_id = _resolve_agent_id(sb, user["id"])
     sb.table("persona_group_members").insert({

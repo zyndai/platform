@@ -1043,26 +1043,34 @@ def _fetch_brief_doc_content(user_id: str, doc_id: str) -> str | None:
 def _format_user_brief(
     persona: dict,
     redact_profile: bool = False,
+    redact_brief: bool = False,
     user_id: str | None = None,
 ) -> str:
     """
     Render the principal's profile/description as a 'who you serve' briefing.
 
     Source priority:
-      1. The persona's brief Google Doc, if `brief_doc_id` is set and we
-         can fetch it. This is the long-form context the user maintains
-         in the dashboard's Brief tab.
-      2. Fall back to `persona.description` (the short pitch).
+      1. The persona's brief Google Doc, if `brief_doc_id` is set, we can
+         fetch it, AND ``redact_brief`` is False. This is the long-form
+         context the user maintains in the dashboard's Brief tab.
+      2. Fall back to ``persona.description`` (the short pitch — always
+         shareable because it's already on the public registry card).
 
-    When `redact_profile` is True (used in external mode when the calling
-    connection does NOT have can_view_full_profile), only the description
-    is included — title, org, location, interests, and social links are
-    stripped so the foreign agent learns nothing beyond what's already on
-    the public registry card.
+    Flags
+    -----
+    redact_profile
+        Strip profile fields (title, org, location, interests, links).
+        Used in external mode when ``can_view_full_profile`` isn't granted.
+    redact_brief
+        Skip the brief Google Doc body entirely; the prompt sees only the
+        short ``persona.description``. Used by group dispatch when the
+        asker doesn't have ``can_see_brief`` permission on the group, so
+        the brief body never lands in the LLM's context window for that
+        turn — defense-in-depth, not just a behavioral hint.
     """
     brief_doc_id = persona.get("brief_doc_id")
     doc_content = None
-    if brief_doc_id and user_id:
+    if brief_doc_id and user_id and not redact_brief:
         doc_content = _fetch_brief_doc_content(user_id, brief_doc_id)
 
     desc = (doc_content or persona.get("description") or "").strip()
@@ -1124,8 +1132,21 @@ def _build_system_prompt(
     # have can_view_full_profile. The principal's name and description are
     # always visible (those are already on the public card), but title,
     # organization, location, interests and social links are gated.
-    redact = is_external and not (external_permissions or {}).get("can_view_full_profile", False)
-    user_brief = _format_user_brief(persona, redact_profile=redact, user_id=user_id)
+    #
+    # `can_see_brief` is a separate gate, defaulting to True so existing
+    # connections (which don't carry the flag) keep current behavior. Group
+    # dispatch sets it explicitly to mirror the per-member toggle in the
+    # group's settings — when False, the brief Google Doc body is dropped
+    # entirely from the system prompt, not just behaviorally suppressed.
+    perms_view = (external_permissions or {})
+    redact = is_external and not perms_view.get("can_view_full_profile", False)
+    redact_brief = is_external and perms_view.get("can_see_brief", True) is False
+    user_brief = _format_user_brief(
+        persona,
+        redact_profile=redact,
+        redact_brief=redact_brief,
+        user_id=user_id,
+    )
 
     # Time context — the LLM uses this to translate "let's meet at 2pm" into
     # the right wall-clock time for `create_calendar_event` etc. Internal-mode

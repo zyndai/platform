@@ -497,22 +497,116 @@ async def post_message(
     if not content:
         raise HTTPException(status_code=400, detail="Message can't be empty.")
 
+    asker_display = _resolve_display_name(user)
     row = sb.table("persona_group_messages").insert({
         "group_id": group_id,
         "sender_user_id": user["id"],
         "sender_agent_id": m.get("agent_id"),
-        "sender_name": _resolve_display_name(user),
+        "sender_name": asker_display,
         "channel": "human",
         "content": content,
         "reply_to": body.reply_to,
     }).execute()
 
-    # Touch updated_at so list_my_groups orders by recent activity.
     sb.table("persona_groups").update({
         "updated_at": datetime.now(timezone.utc).isoformat()
     }).eq("id", group_id).execute()
 
-    return {"message": row.data[0] if row.data else None}
+    # Phase 2: detect @-mentions and fire the target personas off the
+    # request path so the human's POST returns fast. The dispatcher posts
+    # each reply back into persona_group_messages with channel='agent';
+    # realtime delivers them to every subscriber, including the asker.
+    mentioned_uids = _spawn_mention_dispatch(
+        sb=sb,
+        group_id=group_id,
+        asker_user=user,
+        asker_display=asker_display,
+        asker_agent_id=m.get("agent_id"),
+        asker_permissions=perms,
+        message_content=content,
+    )
+
+    inserted = row.data[0] if row.data else None
+    return {
+        "message": inserted,
+        "mentioned_user_ids": mentioned_uids,
+    }
+
+
+def _spawn_mention_dispatch(
+    *,
+    sb,
+    group_id: str,
+    asker_user: dict,
+    asker_display: str,
+    asker_agent_id: str | None,
+    asker_permissions: dict,
+    message_content: str,
+) -> list[str]:
+    """
+    Parse @-mentions, resolve them to roster rows, and schedule a
+    background dispatch for each. Returns the list of user_ids that will
+    be invoked so the frontend can render a "X's persona is replying…"
+    indicator until the realtime row arrives.
+
+    Self-mention is filtered out — a member @-mentioning themselves
+    shouldn't trigger their own persona to reply to them in their own
+    voice.
+    """
+    from agent.group_dispatch import (
+        extract_mentions,
+        resolve_mentions_to_members,
+        dispatch_group_mention,
+    )
+    raw_mentions = extract_mentions(message_content)
+    if not raw_mentions:
+        return []
+
+    roster = (
+        sb.table("persona_group_members")
+        .select("user_id, agent_id, role, permissions, joined_at")
+        .eq("group_id", group_id)
+        .execute()
+    )
+    members = roster.data or []
+    if not members:
+        return []
+
+    # Hydrate display_name from persona_agents so resolve_mentions can match
+    # against the same name the frontend renders.
+    user_ids = [m["user_id"] for m in members]
+    personas = (
+        sb.table("persona_agents")
+        .select("user_id, name")
+        .in_("user_id", user_ids)
+        .execute()
+    )
+    name_by_uid = {p["user_id"]: p.get("name") for p in (personas.data or [])}
+    for mem in members:
+        mem["display_name"] = name_by_uid.get(mem["user_id"]) or "Someone"
+
+    resolved = resolve_mentions_to_members(raw_mentions, members)
+    targets = [r for r in resolved if r["user_id"] != asker_user["id"]]
+    if not targets:
+        return []
+
+    for target in targets:
+        if not target.get("agent_id"):
+            # No deployed persona for that member — skip silently, nothing
+            # to invoke. The mention still renders in the human message.
+            continue
+        asyncio.create_task(
+            dispatch_group_mention(
+                group_id=group_id,
+                asker_user_id=asker_user["id"],
+                asker_display_name=asker_display,
+                asker_agent_id=asker_agent_id,
+                target_member=target,
+                user_message=message_content,
+                asker_permissions=asker_permissions,
+            )
+        )
+    return [t["user_id"] for t in targets]
 
 
 # ── Invites ─────────────────────────────────────────────────────────────

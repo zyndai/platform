@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Settings as SettingsIcon, Send, Users, Lock, Globe2 } from "lucide-react";
@@ -60,12 +60,108 @@ export default function GroupChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // ── @-mention autocomplete state ──────────────────────────────────
+  // mentionQuery is the text after the trigger `@`, or null when no
+  // mention is in flight. mentionStart is the index of the `@` in the
+  // textarea so we know what to replace when the user picks one.
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionStart, setMentionStart] = useState<number>(0);
+  const [mentionIndex, setMentionIndex] = useState(0);
+
+  // ── "X's persona is replying…" indicator ──────────────────────────
+  // After a successful POST, the backend returns mentioned_user_ids. We
+  // park each one here with an expiry so the realtime arrival of the
+  // persona's `channel='agent'` row (or a 60s timeout) clears it.
+  const [pendingReplies, setPendingReplies] = useState<
+    Array<{ userId: string; expiresAt: number }>
+  >([]);
+
   const myMembership = useMemo(
     () => members.find((m) => m.user_id === user?.id) ?? null,
     [members, user?.id],
   );
   const canPost = (myMembership?.permissions?.can_post ?? true) !== false;
   const isManager = myMembership?.role === "owner" || myMembership?.role === "admin";
+
+  // ── Mention helpers ─────────────────────────────────────────────
+  // Filtered roster suggestions for the current `@…` query, ranked by:
+  // exact-prefix match first, then case-insensitive substring match.
+  // Self is excluded so a user can't @ themselves into a reply loop.
+  const mentionSuggestions = useMemo(() => {
+    if (mentionQuery === null) return [];
+    const q = mentionQuery.trim().toLowerCase();
+    const pool = members.filter((m) => m.user_id !== user?.id && m.agent_id);
+    if (!q) return pool.slice(0, 6);
+    const prefix = pool.filter((m) => (m.display_name || "").toLowerCase().startsWith(q));
+    const rest = pool.filter(
+      (m) =>
+        !(m.display_name || "").toLowerCase().startsWith(q) &&
+        (m.display_name || "").toLowerCase().includes(q),
+    );
+    return [...prefix, ...rest].slice(0, 6);
+  }, [members, mentionQuery, user?.id]);
+
+  // Detect whether the cursor is currently sitting in an @-mention
+  // and surface the query slice for the autocomplete dropdown.
+  const handleDraftChange = useCallback((value: string) => {
+    setDraft(value);
+    const el = inputRef.current;
+    if (!el) {
+      setMentionQuery(null);
+      return;
+    }
+    const caret = el.selectionStart ?? value.length;
+    // Walk back from the caret looking for an `@` un-broken by whitespace.
+    // If we find a whitespace before an `@`, no mention is active.
+    let i = caret - 1;
+    while (i >= 0) {
+      const ch = value[i];
+      if (ch === "@") break;
+      if (ch === " " || ch === "\n" || ch === "\t") {
+        setMentionQuery(null);
+        return;
+      }
+      i -= 1;
+    }
+    if (i < 0) {
+      setMentionQuery(null);
+      return;
+    }
+    // `@` must be at start of string or preceded by whitespace — otherwise
+    // it's part of an email address.
+    if (i > 0) {
+      const before = value[i - 1];
+      if (before !== " " && before !== "\n" && before !== "\t") {
+        setMentionQuery(null);
+        return;
+      }
+    }
+    const query = value.slice(i + 1, caret);
+    setMentionStart(i);
+    setMentionQuery(query);
+    setMentionIndex(0);
+  }, []);
+
+  const insertMention = useCallback(
+    (member: Member) => {
+      const el = inputRef.current;
+      if (!el || mentionQuery === null) return;
+      const caret = el.selectionStart ?? draft.length;
+      const before = draft.slice(0, mentionStart);
+      const after = draft.slice(caret);
+      const name = member.display_name || "Persona";
+      const next = `${before}@${name} ${after}`;
+      setDraft(next);
+      setMentionQuery(null);
+      // Restore the caret right after the inserted mention.
+      requestAnimationFrame(() => {
+        const pos = before.length + name.length + 2;
+        el.focus();
+        el.setSelectionRange(pos, pos);
+      });
+    },
+    [draft, mentionQuery, mentionStart],
+  );
 
   useEffect(() => {
     if (!groupId) return;
@@ -119,11 +215,18 @@ export default function GroupChatPage() {
         },
         (payload) => {
           const msg = payload.new as Message;
-          // Dedup against an optimistic post that round-tripped to the DB
-          // while we were waiting on the realtime event.
           setMessages((prev) =>
             prev.find((m) => m.id === msg.id) ? prev : [...prev, msg],
           );
+          // An agent-channel arrival clears the pending indicator for
+          // that persona's principal. We match on sender_user_id because
+          // that's what the dispatch tracks; the orchestrator writes
+          // both ids on agent rows.
+          if (msg.channel === "agent" && msg.sender_user_id) {
+            setPendingReplies((prev) =>
+              prev.filter((p) => p.userId !== msg.sender_user_id),
+            );
+          }
         },
       )
       .subscribe();
@@ -131,6 +234,18 @@ export default function GroupChatPage() {
       sb.removeChannel(channel);
     };
   }, [groupId, notFound]);
+
+  // Sweep expired pending-reply markers once a second. A persona that
+  // never answers (LLM error, no deployed agent on that account, etc.)
+  // shouldn't leave a permanent "is replying…" ghost.
+  useEffect(() => {
+    if (!pendingReplies.length) return;
+    const id = window.setInterval(() => {
+      const now = Date.now();
+      setPendingReplies((prev) => prev.filter((p) => p.expiresAt > now));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [pendingReplies.length]);
 
   // Auto-scroll to bottom whenever the message list grows. Smooth scroll
   // for new content, instant on first paint so users don't see the
@@ -151,11 +266,21 @@ export default function GroupChatPage() {
     setSending(true);
     setError(null);
     try {
-      await apiPost(`/api/groups/${groupId}/messages`, { content });
+      const r = await apiPost<{ mentioned_user_ids?: string[] }>(
+        `/api/groups/${groupId}/messages`,
+        { content },
+      );
       setDraft("");
+      setMentionQuery(null);
       inputRef.current?.focus();
-      // Realtime will deliver our new row; we don't need an optimistic
-      // append here because the round-trip is sub-second.
+      const fired = r.mentioned_user_ids || [];
+      if (fired.length) {
+        const expiresAt = Date.now() + 60_000;
+        setPendingReplies((prev) => {
+          const next = prev.filter((p) => !fired.includes(p.userId));
+          return [...next, ...fired.map((uid) => ({ userId: uid, expiresAt }))];
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't send the message.");
     } finally {
@@ -265,7 +390,7 @@ export default function GroupChatPage() {
                       </div>
                     )}
                     <div className={`msg-bubble-${isMine ? "user" : "ai"} group-msg-bubble`}>
-                      {m.content}
+                      {renderWithMentions(m.content, members, user?.id)}
                     </div>
                   </li>
                 );
@@ -308,6 +433,8 @@ export default function GroupChatPage() {
         </aside>
       </div>
 
+      <PendingRepliesBar pending={pendingReplies} members={members} />
+
       <div className="group-composer">
         {!canPost && (
           <div className="group-composer-locked">
@@ -315,12 +442,57 @@ export default function GroupChatPage() {
           </div>
         )}
         {error && <div className="group-composer-error">{error}</div>}
+        {mentionQuery !== null && mentionSuggestions.length > 0 && (
+          <ul className="mention-picker" role="listbox" aria-label="Mention a member">
+            {mentionSuggestions.map((s, idx) => (
+              <li
+                key={s.user_id}
+                role="option"
+                aria-selected={idx === mentionIndex}
+                className={`mention-picker-row ${idx === mentionIndex ? "is-active" : ""}`}
+                onMouseEnter={() => setMentionIndex(idx)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  insertMention(s);
+                }}
+              >
+                <Avatar size="xs" name={s.display_name} src={s.avatar_url || undefined} variant="accent" />
+                <span className="mention-picker-name">{s.display_name}</span>
+                <span className="mention-picker-role">{s.role}</span>
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="group-composer-row">
           <textarea
             ref={inputRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => handleDraftChange(e.target.value)}
             onKeyDown={(e) => {
+              if (mentionQuery !== null && mentionSuggestions.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setMentionIndex((i) => (i + 1) % mentionSuggestions.length);
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setMentionIndex(
+                    (i) => (i - 1 + mentionSuggestions.length) % mentionSuggestions.length,
+                  );
+                  return;
+                }
+                if (e.key === "Enter" || e.key === "Tab") {
+                  e.preventDefault();
+                  insertMention(mentionSuggestions[mentionIndex]);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setMentionQuery(null);
+                  return;
+                }
+              }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 void handleSend();
@@ -328,7 +500,11 @@ export default function GroupChatPage() {
             }}
             disabled={!canPost || sending}
             rows={1}
-            placeholder={canPost ? "Message your group…  (Enter to send, Shift+Enter for newline)" : "Posting is disabled"}
+            placeholder={
+              canPost
+                ? "Message your group…  Type @ to mention a member's persona."
+                : "Posting is disabled"
+            }
             className="group-composer-input"
             maxLength={4000}
           />
@@ -361,4 +537,67 @@ function formatTime(iso: string): string {
   } catch {
     return "";
   }
+}
+
+// Server-side regex equivalent for highlighting. Same shape as
+// backend/agent/group_dispatch.py _MENTION_RE so what the user sees as a
+// highlighted mention is what the dispatcher will actually fire on.
+const MENTION_RE = /@([A-Z][A-Za-z0-9_]{0,30}(?:\s+[A-Z][A-Za-z0-9_]{0,30})?)/g;
+
+function renderWithMentions(
+  content: string,
+  members: Member[],
+  myUserId: string | undefined,
+): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const lower = (s: string | null | undefined) => (s || "").toLowerCase();
+  let cursor = 0;
+  let key = 0;
+  for (const match of content.matchAll(MENTION_RE)) {
+    const idx = match.index ?? 0;
+    if (idx > cursor) {
+      nodes.push(<span key={key++}>{content.slice(cursor, idx)}</span>);
+    }
+    const raw = match[1];
+    // Lookup the resolved member so we can flag "@you" vs others differently.
+    const target = members.find((m) => lower(m.display_name) === raw.toLowerCase());
+    const isMe = !!target && target.user_id === myUserId;
+    nodes.push(
+      <span
+        key={key++}
+        className={`group-mention ${isMe ? "is-me" : ""} ${target ? "" : "is-unresolved"}`}
+      >
+        @{raw}
+      </span>,
+    );
+    cursor = idx + match[0].length;
+  }
+  if (cursor < content.length) {
+    nodes.push(<span key={key++}>{content.slice(cursor)}</span>);
+  }
+  return nodes.length ? nodes : [<span key={0}>{content}</span>];
+}
+
+function PendingRepliesBar({
+  pending,
+  members,
+}: {
+  pending: Array<{ userId: string; expiresAt: number }>;
+  members: Member[];
+}) {
+  if (!pending.length) return null;
+  return (
+    <div className="group-pending" role="status" aria-live="polite">
+      {pending.map((p) => {
+        const m = members.find((mm) => mm.user_id === p.userId);
+        const name = m?.display_name || "A persona";
+        return (
+          <span key={p.userId} className="group-pending-chip">
+            <span className="group-pending-dot" aria-hidden />
+            {name}&rsquo;s persona is thinking…
+          </span>
+        );
+      })}
+    </div>
+  );
 }

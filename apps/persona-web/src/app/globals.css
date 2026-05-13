@@ -5513,3 +5513,87 @@ textarea.input { resize: vertical; min-height: 88px; }
     max-height: 220px;
   }
 }
+
+/* ── @-mention picker (composer dropdown) ───────────────────────── */
+.mention-picker {
+  list-style: none; margin: 0 0 8px; padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.mention-picker-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: var(--font-geist), system-ui, sans-serif;
+  font-size: 13.5px;
+  color: var(--ink);
+  transition: background var(--t-micro);
+}
+.mention-picker-row.is-active,
+.mention-picker-row:hover { background: var(--surface-raised); }
+.mention-picker-name {
+  font-weight: 600;
+  flex: 1; min-width: 0;
+}
+.mention-picker-role {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+
+/* ── In-bubble @mention chips ───────────────────────────────────── */
+.group-mention {
+  display: inline;
+  padding: 1px 4px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent, #6366f1) 14%, transparent);
+  color: var(--accent, #6366f1);
+  font-weight: 600;
+}
+.group-mention.is-me {
+  background: color-mix(in srgb, var(--status-action-fg, #b45309) 18%, transparent);
+  color: var(--status-action-fg, #b45309);
+}
+.group-mention.is-unresolved {
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.msg-bubble-user .group-mention {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+.msg-bubble-user .group-mention.is-me {
+  background: rgba(255, 255, 255, 0.32);
+  color: #ffffff;
+}
+
+/* ── "X's persona is thinking…" indicator above composer ────────── */
+.group-pending {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin: 0 0 8px;
+}
+.group-pending-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px 5px 8px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  font-family: var(--font-geist), system-ui, sans-serif;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.group-pending-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #6366f1);
+  animation: bootloader-pulse 1.2s ease-in-out infinite;
+}

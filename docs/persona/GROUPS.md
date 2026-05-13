@@ -13,9 +13,26 @@ Persona Groups is production-ready, and the scope of each shipped phase.
 - Supabase Realtime subscription for `persona_group_messages` filtered
   by `group_id`
 
-### Phase 2 — proactive personas (in progress)
-TBD as commits land. Tracked below in **Pending end-to-end** under
-"Phase 2 prerequisites" until shipped.
+### Phase 2 — @-mention persona dispatch (in progress)
+- `backend/agent/group_dispatch.py` — `extract_mentions`,
+  `resolve_mentions_to_members`, and `dispatch_group_mention`. Routes
+  through `handle_user_message(is_external=True, …)` with group
+  permissions translated to the existing `external_permissions` shape.
+- `POST /api/groups/{id}/messages` now parses `@DisplayName` mentions
+  on the way in, fires a background `asyncio.create_task` for each
+  resolved member, and returns `mentioned_user_ids` in the response so
+  the client can render a thinking indicator.
+- Replies are written back as `channel='agent'` rows with
+  `metadata.reason='group_mention'` — realtime delivers them like any
+  other message.
+- Composer in `/dashboard/groups/[id]` has an `@`-typeahead picker
+  (Up/Down/Enter/Tab/Esc). Sent messages render `@Name` as a styled
+  chip with a distinct color when it's "@you".
+- Pending indicator: "X's persona is thinking…" chip above the
+  composer, cleared when the agent row arrives or after 60s.
+
+Still in **Pending end-to-end** below: the cross-instance signed
+`group_context` claim (current code is same-instance only).
 
 ---
 
@@ -69,46 +86,36 @@ archive the group and start over. Either:
 
 ## Phase 2 prerequisites (not yet in code)
 
-### A2A `group_context` claim
-When a member's persona answers a question inside a group, the receiver
-needs proof the caller is actually a group member. Plan:
-- Add `group_seed` derivation in `agent/persona_manager.py` keyed off
-  `persona_groups.group_seed_index` (column already exists).
-- Sign outgoing A2A envelopes that originate inside a group with the
-  derived group keypair; include the group_id + asker's agent_id.
-- Receiver validates the signature + membership before honoring
-  brief/calendar queries.
+### A2A `group_context` claim — cross-instance dispatch
+Current dispatch is **same-instance only**: all group members are
+expected to live on the same backend. Cross-instance deployment needs:
+- `group_seed` derivation in `agent/persona_manager.py` keyed off
+  `persona_groups.group_seed_index` (the column exists and is populated
+  at create time; the keypair derivation is not wired yet).
+- A2A v3 envelopes carrying a `group_context` claim signed by the
+  derived group keypair, with `group_id` + asker `agent_id`.
+- Receiver validates the signature + membership before honoring the
+  dispatch. The current code path (`group_dispatch.dispatch_group_mention`)
+  is where the cross-instance wrap would sit.
 
-For **same-instance** deployments (phase 2 ships here first), we can
-skip the signed-envelope step and route through the orchestrator directly
-with an in-memory `group_context` object. The cross-instance case still
-needs the signed claim.
+### Per-member permission UI
+The schema carries `can_see_brief`, `can_query_calendar`, and
+`can_speak_for_group` on `persona_group_members.permissions`. The
+**dispatcher already honors them** via `_group_perms_to_external`, but
+the settings page has no UI to toggle them yet — members get the
+defaults from the migration until that lands.
 
-### @-mention parsing + orchestrator hook
-Phase 2 UI work:
-- Composer detects `@` and pops a member picker (members fetched from
-  `/api/groups/{id}/members` already).
-- On send, parse `@name` tokens → resolve to agent_ids.
-- POST a new endpoint that:
-  1. Persists the human message as `channel='human'`,
-  2. For each mentioned agent, calls the orchestrator with the
-     `group_context` and the user's question,
-  3. Persists each persona's reply as `channel='agent'` with
-     `sender_agent_id` set.
+### Brief content injection (when `can_see_brief` is on)
+`can_see_brief` currently maps to `can_view_full_profile`, which
+controls the orchestrator's profile redaction but doesn't automatically
+expose brief content as additional context. To make `can_see_brief`
+actually answer "what is Sarah working on?", we need to either:
+- Inject the target's brief snippet into the orchestrator's system
+  prompt at group-dispatch time, **or**
+- Add a `read_my_own_brief` MCP tool the target persona can call (since
+  it's the target's own brief, not a cross-agent leak).
 
-The chat view already renders `channel='agent'` rows (`via persona` tag,
-already implemented in phase 1) so no UI change needed for the response.
-
-### Permission gating at query time
-`persona_group_members.permissions` has flags the orchestrator must check
-before exposing each member's brief or calendar:
-- `can_see_brief` — does the asker permit OTHER members to ask their
-  persona about their brief inside this group?
-- `can_query_calendar` — same for calendar availability.
-
-These are per-member, not per-group, so each persona enforces them on
-its own answer pipeline. UI for toggling these lives in the settings
-page (TBD — phase 2 work).
+The first option ships faster; the second is the more orthogonal fix.
 
 ---
 

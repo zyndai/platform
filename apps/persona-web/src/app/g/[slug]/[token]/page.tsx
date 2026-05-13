@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Users, Lock, Globe2, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui";
 import { getSupabase } from "@/lib/supabase";
-import { apiPost } from "@/lib/api";
+import { apiPost, invalidate } from "@/lib/api";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -92,6 +92,7 @@ export default function GroupInvitePage() {
         `/api/groups/by-invite/${token}/join`,
         {},
       );
+      invalidate("/api/groups/");
       router.push(`/dashboard/groups/${data.group_id}`);
     } catch (e) {
       setJoinError(e instanceof Error ? e.message : "Couldn't join.");

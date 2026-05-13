@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { Avatar, Button } from "@/components/ui";
 import { useDashboard } from "@/contexts/DashboardContext";
-import { apiDelete, apiGet, apiPost } from "@/lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost, invalidate } from "@/lib/api";
 import { getSupabase } from "@/lib/supabase";
 
 interface Group {
@@ -229,9 +229,25 @@ export default function GroupChatPage() {
         },
         (payload) => {
           const msg = payload.new as Message;
-          setMessages((prev) =>
-            prev.find((m) => m.id === msg.id) ? prev : [...prev, msg],
-          );
+          setMessages((prev) => {
+            // Already have this real row (from the POST response).
+            if (prev.find((m) => m.id === msg.id)) return prev;
+            // Match an optimistic message we appended locally on send.
+            // Same sender, same content, within a 30s window — that's
+            // a strong enough signal without needing a server-issued
+            // dedup token.
+            const optimistic = prev.find(
+              (m) =>
+                m.id.startsWith("local-") &&
+                m.sender_user_id === msg.sender_user_id &&
+                m.content === msg.content &&
+                Math.abs(Date.parse(m.created_at) - Date.parse(msg.created_at)) < 30_000,
+            );
+            if (optimistic) {
+              return prev.map((m) => (m.id === optimistic.id ? msg : m));
+            }
+            return [...prev, msg];
+          });
           // An agent-channel arrival clears the pending indicator for
           // that persona's principal. We match on sender_user_id because
           // that's what the dispatch tracks; the orchestrator writes
@@ -274,19 +290,55 @@ export default function GroupChatPage() {
   }, [messages.length]);
 
   const handleSend = useCallback(async () => {
-    if (!groupId) return;
+    if (!groupId || !user) return;
     const content = draft.trim();
     if (!content) return;
-    setSending(true);
     setError(null);
+
+    // Optimistic append — render the message instantly so the chat
+    // feels snappy. We tag the id with `local-` so the realtime
+    // handler and the POST response both know how to swap it for the
+    // real DB row, and so we can roll it back on failure.
+    const tempId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const displayName =
+      (user.user_metadata?.full_name as string | undefined) ||
+      (user.user_metadata?.name as string | undefined) ||
+      (user.email?.split("@")[0] as string | undefined) ||
+      "You";
+    const optimistic: Message = {
+      id: tempId,
+      group_id: groupId,
+      sender_user_id: user.id,
+      sender_agent_id: myMembership?.agent_id ?? null,
+      sender_name: displayName,
+      channel: "human",
+      content,
+      reply_to: null,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    setDraft("");
+    setMentionQuery(null);
+    inputRef.current?.focus();
+    setSending(true);
+
     try {
-      const r = await apiPost<{ mentioned_user_ids?: string[] }>(
-        `/api/groups/${groupId}/messages`,
-        { content },
-      );
-      setDraft("");
-      setMentionQuery(null);
-      inputRef.current?.focus();
+      const r = await apiPost<{
+        message: Message | null;
+        mentioned_user_ids?: string[];
+      }>(`/api/groups/${groupId}/messages`, { content });
+      // Swap the optimistic row for the server-confirmed one. If
+      // realtime already delivered the real row first (unusual but
+      // possible), the realtime handler will have done the swap and
+      // this becomes a no-op.
+      setMessages((prev) => {
+        const real = r.message;
+        if (!real) return prev.filter((m) => m.id !== tempId);
+        if (prev.some((m) => m.id === real.id)) {
+          return prev.filter((m) => m.id !== tempId);
+        }
+        return prev.map((m) => (m.id === tempId ? real : m));
+      });
       const fired = r.mentioned_user_ids || [];
       if (fired.length) {
         const expiresAt = Date.now() + 60_000;
@@ -296,11 +348,15 @@ export default function GroupChatPage() {
         });
       }
     } catch (e) {
+      // Rollback — drop the optimistic message and restore the draft so
+      // the user can fix and retry without retyping.
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      setDraft(content);
       setError(e instanceof Error ? e.message : "Couldn't send the message.");
     } finally {
       setSending(false);
     }
-  }, [groupId, draft]);
+  }, [groupId, draft, user, myMembership]);
 
   if (notFound) {
     return (
@@ -645,6 +701,7 @@ function HeaderMenu({
     setArchiving(true);
     try {
       await apiDelete(`/api/groups/${groupId}`);
+      invalidate("/api/groups/");
       onArchived();
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Couldn't archive the group.");
@@ -798,6 +855,7 @@ function GroupRightRail({
     setBriefError(null);
     try {
       await apiPost(`/api/groups/${groupId}/brief/init`, {});
+      invalidate(`/api/groups/${groupId}/brief`);
       await reloadBrief();
     } catch (e) {
       setBriefError(e instanceof Error ? e.message : "Couldn't initialize brief.");
@@ -810,8 +868,8 @@ function GroupRightRail({
     setSaving(true);
     setBriefError(null);
     try {
-      const { apiPatch } = await import("@/lib/api");
       await apiPatch(`/api/groups/${groupId}/brief`, { content: editDraft });
+      invalidate(`/api/groups/${groupId}/brief`);
       setEditing(false);
       await reloadBrief();
     } catch (e) {
@@ -1238,6 +1296,11 @@ function ProposeMeetingModal({
         location: location.trim() || undefined,
         time_zone: tz,
       });
+      // Drop the cached availability and messages so the chat sees the
+      // new system-channel proposal and the Schedule pane removes the
+      // now-booked slot from the common-slots list.
+      invalidate(`/api/groups/${groupId}/availability`);
+      invalidate(`/api/groups/${groupId}/messages`);
       onProposed();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't propose the meeting.");
@@ -1383,6 +1446,7 @@ function GroupMemoryPane({
         { kind: draftKind, text },
       );
       if (r.constraint) setItems((prev) => [...(prev || []), r.constraint]);
+      invalidate(`/api/groups/${groupId}/constraints`);
       setDraftText("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't add the rule.");
@@ -1396,8 +1460,8 @@ function GroupMemoryPane({
       const prev = items;
       setItems((cur) => (cur ? cur.filter((c) => c.id !== id) : cur));
       try {
-        const { apiDelete } = await import("@/lib/api");
         await apiDelete(`/api/groups/${groupId}/constraints/${id}`);
+        invalidate(`/api/groups/${groupId}/constraints`);
       } catch (e) {
         setItems(prev);
         setError(e instanceof Error ? e.message : "Couldn't remove the rule.");

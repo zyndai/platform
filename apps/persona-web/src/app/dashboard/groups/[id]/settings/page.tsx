@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { Avatar, Button } from "@/components/ui";
 import { useDashboard } from "@/contexts/DashboardContext";
-import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api";
+import { apiDelete, apiGet, apiPatch, apiPost, invalidate } from "@/lib/api";
 
 interface Group {
   id: string;
@@ -142,6 +142,7 @@ export default function GroupSettingsPage() {
         join_domain: visibility === "open" ? joinDomain.trim() : "",
       });
       setGroup(r.group);
+      invalidate("/api/groups/");
       setSavedTick(Date.now());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save.");
@@ -176,6 +177,7 @@ export default function GroupSettingsPage() {
         {},
       );
       setGroup((prev) => (prev ? { ...prev, invite_token: r.invite_token } : prev));
+      invalidate(`/api/groups/${groupId}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't rotate the invite.");
     } finally {
@@ -188,6 +190,7 @@ export default function GroupSettingsPage() {
       if (!groupId) return;
       try {
         await apiPatch(`/api/groups/${groupId}/members/${memberUid}`, { role });
+        invalidate(`/api/groups/${groupId}/members`);
         await fetchAll();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Couldn't update role.");
@@ -213,6 +216,7 @@ export default function GroupSettingsPage() {
         await apiPatch(`/api/groups/${groupId}/members/${memberUid}`, {
           permissions: { [key]: next },
         });
+        invalidate(`/api/groups/${groupId}/members`);
       } catch (e) {
         setMembers(prev);
         setError(e instanceof Error ? e.message : "Couldn't update permission.");
@@ -238,6 +242,7 @@ export default function GroupSettingsPage() {
         await apiPost(`/api/groups/${groupId}/transfer-owner`, {
           new_owner_user_id: memberUid,
         });
+        invalidate(`/api/groups/${groupId}`);
         router.push(`/dashboard/groups/${groupId}`);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Couldn't transfer ownership.");
@@ -254,6 +259,7 @@ export default function GroupSettingsPage() {
       if (!window.confirm(`Remove ${label} from the group?`)) return;
       try {
         await apiDelete(`/api/groups/${groupId}/members/${memberUid}`);
+        invalidate(`/api/groups/${groupId}/members`);
         await fetchAll();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Couldn't remove member.");
@@ -267,6 +273,7 @@ export default function GroupSettingsPage() {
     if (!window.confirm("Archive this group? Members can no longer see it. Data is retained.")) return;
     try {
       await apiDelete(`/api/groups/${groupId}`);
+      invalidate("/api/groups/");
       router.push("/dashboard/groups");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't archive.");

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Users, Plus, ArrowRight, Lock, Globe2, Search, X } from "lucide-react";
 import { Button, EmptyState } from "@/components/ui";
 import { useDashboard } from "@/contexts/DashboardContext";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, invalidate } from "@/lib/api";
 
 interface GroupSummary {
   id: string;
@@ -68,6 +68,7 @@ export default function GroupsListPage() {
       setCreating(true);
       try {
         const data = await apiPost<{ group: GroupSummary }>("/api/groups/", payload);
+        invalidate("/api/groups/");
         setCreateOpen(false);
         router.push(`/dashboard/groups/${data.group.id}`);
       } catch (e) {
@@ -245,6 +246,7 @@ function DiscoverPanel() {
           `/api/groups/by-invite/${g.invite_token}/join`,
           {},
         );
+        invalidate("/api/groups/");
         router.push(`/dashboard/groups/${r.group_id}`);
       } catch (e) {
         console.error("[groups] join failed", e);

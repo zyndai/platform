@@ -430,6 +430,7 @@ export default function GroupChatPage() {
       </header>
 
       <div className="group-chat-body">
+        <main className="group-chat-main">
         <div className="group-chat-messages">
           {messages.length === 0 ? (
             <div className="group-chat-empty">
@@ -482,18 +483,9 @@ export default function GroupChatPage() {
           )}
         </div>
 
-        <GroupRightRail
-          groupId={groupId || ""}
-          members={members}
-          currentUserId={user?.id}
-          isManager={isManager}
-          isOwner={myMembership?.role === "owner"}
-        />
-      </div>
+        <PendingRepliesBar pending={pendingReplies} members={members} />
 
-      <PendingRepliesBar pending={pendingReplies} members={members} />
-
-      <div className="group-composer">
+        <div className="group-composer">
         {!canPost && (
           <div className="group-composer-locked">
             You don&rsquo;t have permission to post in this group.
@@ -576,6 +568,16 @@ export default function GroupChatPage() {
             <Send size={16} strokeWidth={1.8} />
           </button>
         </div>
+      </div>
+        </main>
+
+        <GroupRightRail
+          groupId={groupId || ""}
+          members={members}
+          currentUserId={user?.id}
+          isManager={isManager}
+          isOwner={myMembership?.role === "owner"}
+        />
       </div>
     </div>
   );

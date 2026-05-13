@@ -5199,29 +5199,37 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 
 /* ── Group chat view ────────────────────────────────────────────── */
+/* One outer card containing header, messages+composer, and the rail.
+ * Internal panes are connected sections with subtle dividers — NOT
+ * separate floating cards. This is what makes the layout feel
+ * cohesive instead of "four boxes in a void". */
 .group-chat-shell {
   display: flex; flex-direction: column;
-  height: 100%;
-  /* Fill the dashboard's main column instead of capping at a narrow
-   * 1100px and centering inside acres of dead space. The bubble width
-   * inside .group-msg-bubble is capped separately for readability. */
   width: 100%;
   max-width: 1480px;
-  margin: 0 auto;
-  padding: 18px 28px 0;
+  /* Fill the available height of the dashboard main column minus a
+   * top/bottom gutter for breathing room. */
+  height: calc(100vh - 96px);
+  margin: 18px auto;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow:
+    0 1px 0 rgba(15, 23, 42, 0.02),
+    0 12px 32px rgba(15, 23, 42, 0.06);
 }
 @media (min-width: 1600px) {
-  /* Bigger displays — bump the padding a bit so the chat doesn't hug
-   * the sidebar edge, but still let the layout breathe. */
-  .group-chat-shell { padding: 22px 40px 0; }
+  .group-chat-shell { margin: 22px auto; }
 }
 .group-chat-header {
   display: flex; align-items: center; gap: 12px;
-  padding: 10px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 14px;
-  margin-bottom: 14px;
+  padding: 14px 20px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 0;
+  flex-shrink: 0;
 }
 .group-back {
   display: inline-flex; align-items: center; justify-content: center;
@@ -5323,18 +5331,29 @@ textarea.input { resize: vertical; min-height: 88px; }
 .group-chat-body {
   flex: 1;
   display: grid;
-  /* 300px rail fits People · Brief · Schedule · Memory tabs without the
-   * Memory label getting clipped at the standard 12.5px font. */
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 16px;
+  /* No gap between the main column and the rail — they share an edge
+   * via a vertical divider (border-left on .group-chat-roster). */
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 0;
   min-height: 0;
   align-items: stretch;
 }
+/* Wraps the messages, pending-replies bar, and composer into a single
+ * vertical flex column so the composer is anchored at the bottom of
+ * the chat surface (like every modern messenger). */
+.group-chat-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
 .group-chat-messages {
-  background: var(--surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 14px;
-  padding: 16px;
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 22px 28px;
   overflow-y: auto;
   min-height: 0;
   display: flex;
@@ -5411,14 +5430,12 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 
 .group-chat-roster {
-  background: var(--surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 14px;
-  padding: 14px;
+  background: var(--bg-surface, color-mix(in srgb, var(--surface) 96%, transparent));
+  border: none;
+  border-radius: 0;
+  border-left: 1px solid var(--border-subtle);
+  padding: 16px 18px;
   overflow-y: auto;
-  /* Stretch with the chat surface beside it so the panes share a
-   * baseline — previously the roster was `height: fit-content` and
-   * floated as a short card next to a tall chat box. */
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -5465,11 +5482,28 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 
 .group-composer {
-  margin: 14px 0 18px;
-  background: var(--surface);
+  /* Anchored to the bottom of .group-chat-main — no own card, just a
+   * top divider that connects it to the messages above. The textarea
+   * itself sits inside a pill-shaped field for a softer look. */
+  margin: 0;
+  padding: 14px 22px 18px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.group-composer-row {
+  background: var(--bg-surface, color-mix(in srgb, var(--surface) 96%, transparent));
   border: 1px solid var(--border-subtle);
   border-radius: 14px;
-  padding: 10px 12px;
+  padding: 6px 8px 6px 14px;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  transition: border-color var(--t-micro);
+}
+.group-composer-row:focus-within {
+  border-color: color-mix(in srgb, var(--accent, #6366f1) 35%, var(--border-default));
 }
 .group-composer-locked,
 .group-composer-error {
@@ -5483,9 +5517,6 @@ textarea.input { resize: vertical; min-height: 88px; }
 .group-composer-error {
   color: var(--status-error-fg, #dc2626);
   background: var(--status-error-bg, rgba(220, 38, 38, 0.08));
-}
-.group-composer-row {
-  display: flex; align-items: flex-end; gap: 8px;
 }
 .group-composer-input {
   flex: 1;
@@ -5581,9 +5612,14 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 
 @media (max-width: 900px) {
+  /* On narrow viewports stack the rail below the main column. The
+   * border-left becomes a border-top so the visual divider still
+   * connects to the parent card. */
   .group-chat-body { grid-template-columns: 1fr; }
   .group-chat-roster {
-    max-height: 220px;
+    border-left: none;
+    border-top: 1px solid var(--border-subtle);
+    max-height: 240px;
   }
 }
 

@@ -1459,43 +1459,26 @@ textarea.input { resize: vertical; min-height: 88px; }
 /* Shared bubble base. The "user" / "ai" modifiers swap colors so the
  * conversation reads like a normal messenger: outgoing on the right with
  * accent fill, incoming on the left with a neutral surface. */
+/* Mirror the home chat's .msg .bubble: white surface with subtle
+ * border, no accent fill on the user side. The .is-mine alignment on
+ * the parent .group-msg is what differentiates left vs right. */
 .msg-bubble-user,
 .msg-bubble-ai {
-  padding: 10px 16px;
-  border-radius: 20px;
+  padding: 12px 16px;
+  border-radius: 16px;
   font-family: var(--font-geist), 'Inter', system-ui, sans-serif;
   font-size: 14.5px;
-  line-height: 1.5;
+  line-height: 1.55;
   word-wrap: break-word;
   overflow-wrap: anywhere;
-  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   max-width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--ink);
 }
 .msg-bubble-user {
-  background: var(--accent);
-  color: #ffffff;
-  border-bottom-right-radius: 8px;
-}
-.msg-bubble-ai {
-  background: var(--surface-raised);
-  color: var(--ink);
-  border: 1px solid var(--border-subtle);
-  border-bottom-left-radius: 8px;
-}
-[data-theme="dark"] .msg-bubble-user { color: #ffffff; }
-[data-theme="dark"] .msg-bubble-ai { background: var(--surface); }
-/* Markdown inside an outgoing bubble inherits white text; links underline. */
-.msg-bubble-user .markdown-content { color: #ffffff; }
-.msg-bubble-user .markdown-content a { color: #ffffff; text-decoration: underline; }
-.msg-bubble-user .markdown-content code,
-.msg-bubble-user .markdown-content pre {
-  background: rgba(255, 255, 255, 0.18);
-  color: #ffffff;
-  border-color: rgba(255, 255, 255, 0.25);
-}
-.msg-bubble-user .markdown-content blockquote {
-  border-left-color: rgba(255, 255, 255, 0.5);
-  color: rgba(255, 255, 255, 0.92);
+  border-color: var(--border-default);
 }
 .msg-timestamp {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
@@ -1503,9 +1486,6 @@ textarea.input { resize: vertical; min-height: 88px; }
   letter-spacing: 0.3px;
   color: var(--ink-muted);
   margin: 0;
-}
-.msg-bubble-user .msg-timestamp {
-  color: rgba(255, 255, 255, 0.75);
 }
 
 /* ── Toast (bottom-center per brief) ─────────────────────────────── */
@@ -5201,43 +5181,32 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 
 /* ── Group chat view ────────────────────────────────────────────── */
-/* One outer card containing header, messages+composer, and the rail.
- * Inner panes connect through soft dividers; everything sits on the
- * same rounded surface so the page reads as one cohesive object. */
+/* Flat layout matching the home chat (.chat-area + .chat-thread +
+ * .chat-input-bar). No outer card, no big shadows — just a header
+ * bar at the top, a scrollable thread in the middle, and a single
+ * rounded input at the bottom. The right rail sits to the side as a
+ * minimal pane separated by a single left divider. */
 .group-chat-shell {
   display: flex; flex-direction: column;
   width: 100%;
   max-width: 1480px;
-  height: calc(100vh - 96px);
-  margin: 18px auto;
-  background: var(--surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 24px;
+  height: 100%;
+  margin: 0 auto;
+  background: transparent;
+  border: none;
+  border-radius: 0;
   overflow: hidden;
-  box-shadow:
-    0 1px 0 rgba(15, 23, 42, 0.02),
-    0 10px 36px rgba(15, 23, 42, 0.05);
-}
-@media (min-width: 1600px) {
-  .group-chat-shell { margin: 22px auto; }
+  box-shadow: none;
+  padding: 0 24px;
 }
 .group-chat-header {
   display: flex; align-items: center; gap: 12px;
-  padding: 14px 20px;
-  background: linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--accent, #6366f1) 4%, var(--surface)),
-    var(--surface) 90%
-  );
+  padding: 14px 4px;
+  background: transparent;
   border: none;
   border-bottom: 1px solid var(--border-subtle);
   margin-bottom: 0;
   flex-shrink: 0;
-}
-.group-chat-header .group-back,
-.group-chat-header .group-settings-btn,
-.group-chat-header .group-header-menu-wrap > button {
-  border-radius: 10px;
 }
 .group-back {
   display: inline-flex; align-items: center; justify-content: center;
@@ -5250,16 +5219,15 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 .group-back:hover { background: var(--surface-raised); color: var(--ink); }
 .group-chat-avatar {
-  width: 42px; height: 42px;
-  border-radius: 14px;
+  width: 36px; height: 36px;
+  border-radius: 10px;
   background: linear-gradient(135deg, #6366f1 0%, #ec4899 100%);
   color: #fff;
   font-family: var(--font-fraunces), ui-serif, serif;
-  font-size: 17px; font-weight: 500;
+  font-size: 16px; font-weight: 500;
   display: inline-flex; align-items: center; justify-content: center;
   overflow: hidden;
   flex-shrink: 0;
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.22);
 }
 .group-chat-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .group-chat-title {
@@ -5342,16 +5310,11 @@ textarea.input { resize: vertical; min-height: 88px; }
 .group-chat-body {
   flex: 1;
   display: grid;
-  /* No gap between the main column and the rail — they share an edge
-   * via a vertical divider (border-left on .group-chat-roster). */
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 0;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 24px;
   min-height: 0;
   align-items: stretch;
 }
-/* Wraps the messages, pending-replies bar, and composer into a single
- * vertical flex column so the composer is anchored at the bottom of
- * the chat surface (like every modern messenger). */
 .group-chat-main {
   display: flex;
   flex-direction: column;
@@ -5364,7 +5327,7 @@ textarea.input { resize: vertical; min-height: 88px; }
   background: transparent;
   border: none;
   border-radius: 0;
-  padding: 22px 28px;
+  padding: 24px 4px 8px;
   overflow-y: auto;
   min-height: 0;
   display: flex;
@@ -5441,11 +5404,11 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 
 .group-chat-roster {
-  background: var(--surface-raised);
+  background: transparent;
   border: none;
-  border-radius: 0;
   border-left: 1px solid var(--border-subtle);
-  padding: 16px 18px;
+  border-radius: 0;
+  padding: 24px 4px 24px 24px;
   overflow-y: auto;
   min-height: 0;
   display: flex;
@@ -5494,25 +5457,26 @@ textarea.input { resize: vertical; min-height: 88px; }
 
 .group-composer {
   margin: 0;
-  padding: 14px 22px 18px;
+  padding: 12px 4px 20px;
   background: transparent;
   border: none;
-  border-top: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
+/* Mirror the home chat's .chat-input-bar so the two surfaces feel
+ * identical — same border, same focus glow, same radius token. */
 .group-composer-row {
-  background: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: 22px;
-  padding: 8px 8px 8px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
   transition: border-color var(--t-micro), box-shadow var(--t-micro);
 }
 .group-composer-row:focus-within {
-  border-color: color-mix(in srgb, var(--accent, #6366f1) 35%, var(--border-default));
-  box-shadow: 0 0 0 4px var(--accent-soft-bg);
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 .group-composer-locked,
 .group-composer-error {
@@ -5543,18 +5507,20 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 .group-composer-input::placeholder { color: var(--text-muted); }
 .group-composer-send {
-  width: 38px; height: 38px;
+  /* Match home chat's send button: 32px circle, ink-muted when empty,
+   * accent only when there's text. */
+  width: 32px; height: 32px;
   border-radius: 50%;
-  background: var(--accent, #6366f1);
-  color: #fff;
+  background: var(--ink-muted);
+  color: var(--paper);
   border: none;
   cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
-  transition: opacity var(--t-micro), transform var(--t-micro), box-shadow var(--t-micro);
+  transition: background var(--t-micro), transform var(--t-micro);
   flex-shrink: 0;
 }
-.group-composer-send:not(:disabled) {
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent, #6366f1) 30%, transparent);
+.group-composer-row:has(.group-composer-input:not(:placeholder-shown)) .group-composer-send:not(:disabled) {
+  background: var(--accent);
 }
 .group-composer-send:disabled {
   opacity: 0.4; cursor: not-allowed;
@@ -5688,14 +5654,6 @@ textarea.input { resize: vertical; min-height: 88px; }
   background: transparent;
   color: var(--text-muted);
   font-weight: 500;
-}
-.msg-bubble-user .group-mention {
-  background: rgba(255, 255, 255, 0.22);
-  color: #ffffff;
-}
-.msg-bubble-user .group-mention.is-me {
-  background: rgba(255, 255, 255, 0.32);
-  color: #ffffff;
 }
 
 /* ── "X's persona is thinking…" indicator above composer ────────── */

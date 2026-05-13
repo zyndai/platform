@@ -17,10 +17,11 @@ Usage (from the backend/ directory):
     python scripts/seed_personas.py --with-threads   # also create accepted
                                                      #   threads between pairs
 
-A2A v3 note: each seeded persona is registered with a v3 JSON-RPC URL
-(`/api/persona/{user_id}/a2a/v1`), so peers fetching the registry get the
-new transport directly. The seeded user_metadata.seeded=true flag also
-makes the orchestrator's external-mode bypass the approval gate for these
+A2A v3 note: each seeded persona is registered with its canonical base
+URL (`/api/persona/{user_id}`); peers fetch the signed card at
+`{base}/.well-known/agent-card.json` and dispatch JSON-RPC at
+`{base}/a2a/v1`. The seeded user_metadata.seeded=true flag also makes
+the orchestrator's external-mode bypass the approval gate for these
 personas (otherwise propose_meeting would dead-end on a card no human
 will resolve).
 

@@ -7,8 +7,9 @@ Tools:
   - list_my_connections: List the user's existing DM threads/connections
   - request_connection: Initiate a new DM thread with a persona
   - check_connection_status: Check if connected to a specific agent
-  - message_zynd_agent: Send a message to another persona (A2A v3 — JSON-RPC over the
-                       receiver's /a2a/v1 endpoint, signed with x-zynd-auth)
+  - message_zynd_agent: Send a message to another persona (A2A v3 — signed JSON-RPC
+                       over the receiver's `{base}/a2a/v1` endpoint, with the signed
+                       card discoverable at `{base}/.well-known/agent-card.json`)
 """
 
 import asyncio
@@ -368,6 +369,7 @@ def _send_via_a2a_v3(
         A2AError,
         extract_reply_text,
         resolve_a2a_url,
+        resolve_card_url,
     )
     from agent.persona_manager import (
         _derive_agent_keypair,
@@ -418,9 +420,9 @@ def _send_via_a2a_v3(
         developer_proof=developer_proof,
     )
 
-    # Card URL is sibling to the A2A URL — replacing the path segment
-    # is correct for both our scheme and SDK-built peers.
-    card_url = a2a_url.replace("/a2a/v1", "/.well-known/agent-card.json")
+    # Card sits at `{base}/.well-known/agent-card.json` — sibling of the
+    # A2A endpoint, derived from the same stored URL.
+    card_url = resolve_card_url(target_webhook_url)
 
     from agent.a2a.transport import dispatch, Intent, Transport, infer_intent
 

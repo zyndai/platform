@@ -14,6 +14,7 @@ so they can be reconstructed from just the derivation_index — no need to
 persist private keys in the database.
 """
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -280,12 +281,15 @@ async def create_persona(
     keypair = keypair_from_seed(private_seed)
     private_key_b64 = base64.b64encode(private_seed).decode()
 
-    # 3. Build the public A2A endpoint URL.
-    # Phase 4.1: this is the v3 JSON-RPC endpoint. The column is still
-    # named webhook_url for backward DB compat, but the value is the
-    # v3 endpoint a peer would POST signed JSON-RPC envelopes to.
+    # 3. Build the public persona base URL.
+    # Per A2A v0.3, registries store the agent's base URL — peers
+    # discover the signed card at `{base}/.well-known/agent-card.json`
+    # and read the JSON-RPC endpoint (`{base}/a2a/v1`) from the card's
+    # `url` field. The DB column is still named `webhook_url` for
+    # backward compat, but the stored value is the base, not the A2A
+    # endpoint.
     webhook_base = config.ZYND_WEBHOOK_BASE_URL.rstrip("/")
-    webhook_url = f"{webhook_base}/api/persona/{user_id}/a2a/v1"
+    webhook_url = f"{webhook_base}/api/persona/{user_id}"
 
     # 4. Register on the Zynd registry. The registry assigns the
     #    canonical agent_id (currently a "zns:" prefixed string) and
@@ -734,12 +738,72 @@ def save_brief_content(user_id: str, content: str) -> dict:
     return {"success": True, "doc_id": doc_id, "content": content}
 
 
+def _migrate_stale_webhook_url(persona: dict, developer_seed: bytes) -> None:
+    """Re-point a persona's entity_url at the canonical base URL.
+
+    Before this fix we registered `<base>/api/persona/{user_id}/a2a/v1`
+    as the entity_url. The A2A v0.3 spec expects the *base* URL there
+    (peers compute `{entity_url}/.well-known/agent-card.json` to fetch
+    the signed card). Personas registered with the old URL were
+    effectively unreachable in search because the well-known lookup
+    landed at `.../a2a/v1/.well-known/agent-card.json` — a 404. This
+    rewrites both the registry record and the local DB row to the
+    correct base URL.
+    """
+    stored = (persona.get("webhook_url") or "").rstrip("/")
+    if not stored.endswith("/a2a/v1"):
+        return
+    user_id = persona["user_id"]
+    agent_id = persona["agent_id"]
+    webhook_base = config.ZYND_WEBHOOK_BASE_URL.rstrip("/")
+    fixed_url = f"{webhook_base}/api/persona/{user_id}"
+
+    index = persona["derivation_index"]
+    private_seed, public_key_bytes = _derive_agent_keypair(developer_seed, index)
+    keypair = keypair_from_seed(private_seed)
+
+    dev_kp = keypair_from_seed(developer_seed)
+    developer_id = generate_developer_id(dev_kp.public_key_bytes)
+    developer_proof = build_derivation_proof(developer_seed, public_key_bytes, index)
+
+    capabilities = persona.get("capabilities") or []
+    if not isinstance(capabilities, list):
+        capabilities = []
+    capability_summary = {
+        "input_types": capabilities,
+        "protocols": ["http"],
+        "skills": ["persona"],
+    }
+
+    # _register_entity_v2's 409 branch PUTs an update — that's the path
+    # we want for an already-registered agent. We call it with the new
+    # entity_url; the registry returns the same agent_id either way.
+    _register_entity_v2(
+        keypair=keypair,
+        name=persona.get("name") or "Persona",
+        entity_url=fixed_url,
+        category="persona",
+        summary=(persona.get("description") or "")[:200],
+        tags=["persona"],
+        capability_summary=capability_summary,
+        version="1.0",
+        entity_type="agent",
+        developer_id=developer_id,
+        developer_proof=developer_proof,
+    )
+
+    sb = _get_supabase()
+    sb.table("persona_agents").update({"webhook_url": fixed_url}).eq("agent_id", agent_id).execute()
+    logger.info(f"[persona] Migrated {agent_id} entity_url → {fixed_url}")
+
+
 async def startup():
     """
     Called on server boot. Rehydrates all active personas:
       - Loads them from database
       - Reconstructs keypairs from developer key + derivation index
       - Registers them all with the heartbeat manager
+      - Migrates any stale `/a2a/v1` entity_url back to the base URL
 
     Since derivation is deterministic, no private keys are stored in the DB.
 
@@ -775,6 +839,25 @@ async def startup():
             count += 1
         except Exception as e:
             logger.error(f"[persona] Failed to rehydrate {persona['agent_id']}: {e}")
+
+    # One-shot URL migration runs off the event loop — each registry PUT
+    # is a synchronous HTTP call, so we hand the batch to a thread to
+    # avoid blocking server boot.
+    stale = [p for p in result.data if (p.get("webhook_url") or "").rstrip("/").endswith("/a2a/v1")]
+    if stale:
+        async def _run_migration():
+            loop = asyncio.get_event_loop()
+            for p in stale:
+                try:
+                    await loop.run_in_executor(None, _migrate_stale_webhook_url, p, developer_seed)
+                except Exception as e:
+                    logger.warning(
+                        f"[persona] entity_url migration failed for {p.get('agent_id')}: "
+                        f"{type(e).__name__}: {e}"
+                    )
+
+        asyncio.create_task(_run_migration())
+        logger.info(f"[persona] Scheduled entity_url migration for {len(stale)} persona(s) in background")
 
     logger.info(f"[persona] Rehydrated {count} active personas, heartbeat started")
 

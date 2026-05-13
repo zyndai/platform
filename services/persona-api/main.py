@@ -103,10 +103,11 @@ app.include_router(oauth_router, prefix="/api/oauth", tags=["OAuth"])
 app.include_router(chat_router, prefix="/api/chat", tags=["Chat"])
 app.include_router(connections_router, prefix="/api/connections", tags=["Connections"])
 app.include_router(persona_router, prefix="/api/persona", tags=["Persona"])
-# A2A v3 transport (phase 1: route shells, returns not_yet_implemented).
-# Mounted at the same prefix so the agent card lives at
-# /api/persona/{user_id}/.well-known/agent-card.json and the JSON-RPC
-# endpoint at /api/persona/{user_id}/a2a/v1.
+# A2A v3 transport. Mounted at the same prefix as the persona router
+# so the per-persona base URL `/api/persona/{user_id}` is the discoverable
+# entity_url: peers fetch the signed card from
+# /api/persona/{user_id}/.well-known/agent-card.json and dispatch
+# signed JSON-RPC envelopes at /api/persona/{user_id}/a2a/v1.
 app.include_router(a2a_router, prefix="/api/persona", tags=["A2A"])
 app.include_router(meetings_router, prefix="/api/meetings", tags=["Meetings"])
 app.include_router(telegram_router, prefix="/api/telegram", tags=["Telegram"])

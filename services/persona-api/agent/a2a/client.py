@@ -4,7 +4,9 @@ Minimal async A2A v0.3 JSON-RPC client.
 Used by mcp/tools/zynd_network.message_zynd_agent (and any future
 outbound flows) to talk to other personas. Signs every outbound
 Message with the caller's keypair, posts as JSON-RPC 2.0 to the
-target's `/a2a/v1` endpoint, and returns the resulting Task.
+target's A2A endpoint (`{base}/a2a/v1`), and returns the resulting
+Task. The base URL is what the registry stores; callers pass it
+through ``resolve_a2a_url`` first.
 
 Compared to the SDK's a2a.client.A2AClient: same wire format, but
 async (httpx.AsyncClient), no SSE for now (phase 3.3 wires that up
@@ -361,21 +363,46 @@ def derive_a2a_url_from_legacy_webhook(webhook_url: str) -> Optional[str]:
     return f"{host}/api/persona/{user_id}/a2a/v1"
 
 
-def resolve_a2a_url(stored_url: str) -> Optional[str]:
-    """Return a v3 JSON-RPC endpoint URL given either a v3 URL or a
-    legacy v2 webhook URL.
+def resolve_card_url(stored_url: str) -> Optional[str]:
+    """Return the `.well-known/agent-card.json` URL for whatever stored form.
 
-    Why both: persona_agents.webhook_url stores whichever URL the
-    persona was registered with at the time. Personas registered before
-    phase 4.1 hold a legacy URL; personas after hold a v3 URL. The
-    callers (message_zynd_agent, agent-send, etc.) shouldn't have to
-    care — this resolver hides the detail.
+    Sibling of ``resolve_a2a_url``. Both A2A endpoint and card sit under
+    the same base URL (`{base}/a2a/v1` and `{base}/.well-known/agent-card.json`),
+    so once we resolve the A2A URL it's a one-line transform to the card.
+    """
+    a2a = resolve_a2a_url(stored_url)
+    if not a2a:
+        return None
+    return a2a[: -len("/a2a/v1")] + "/.well-known/agent-card.json"
+
+
+def resolve_a2a_url(stored_url: str) -> Optional[str]:
+    """Return a v3 JSON-RPC endpoint URL from whatever URL form is stored.
+
+    Accepts three shapes — picks whichever the persona was registered with:
+      * Canonical v3 base URL: `<host>/api/persona/<user_id>`
+          → append `/a2a/v1`.
+      * Pre-fix v3 A2A URL:    `<host>/api/persona/<user_id>/a2a/v1`
+          → use as-is. Some personas in the DB / registry still carry
+          this older form; the resolver hides the detail from callers.
+      * Legacy v2 webhook:     `<host>/api/persona/webhooks/<user_id>` (± `/sync`)
+          → rewrite via ``derive_a2a_url_from_legacy_webhook``.
+
+    Returns None if none of those match — caller decides what to do.
     """
     if not stored_url:
         return None
     cleaned = stored_url.rstrip("/")
     if cleaned.endswith("/a2a/v1"):
         return cleaned
+    marker = "/api/persona/"
+    idx = cleaned.rfind(marker)
+    if idx >= 0:
+        tail = cleaned[idx + len(marker):]
+        # Bare `<user_id>` (no further path segments) is the canonical
+        # base URL form — the A2A endpoint is `{base}/a2a/v1`.
+        if tail and "/" not in tail and tail != "webhooks":
+            return f"{cleaned}/a2a/v1"
     return derive_a2a_url_from_legacy_webhook(stored_url)
 
 

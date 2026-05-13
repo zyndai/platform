@@ -397,7 +397,7 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend):
     # 2. Look up the partner's stored URL → resolve to the v3 endpoint.
     partner = sb.table("persona_agents").select("webhook_url").eq("agent_id", partner_agent_id).execute()
     partner_url = partner.data[0].get("webhook_url") if partner.data else None
-    from agent.a2a.client import A2AClient, A2AError, resolve_a2a_url
+    from agent.a2a.client import A2AClient, A2AError, resolve_a2a_url, resolve_card_url
     a2a_url = resolve_a2a_url(partner_url) if partner_url else None
     if not a2a_url:
         print(f"[agent-send] ⚠ No A2A endpoint resolvable for {partner_agent_id} — message saved locally only")
@@ -421,10 +421,11 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend):
     developer_proof = build_derivation_proof(dev_seed, public_key_bytes, index)
 
     client = A2AClient(keypair=keypair, entity_id=my_agent_id, developer_proof=developer_proof)
-    # Card URL is sibling to the a2a URL (same base + `/.well-known/agent-card.json`).
-    # The dispatcher fetches it (cached 5min), reads capabilities + the
-    # x-zynd.requiresPushNotification hint, and picks the transport.
-    card_url = a2a_url.replace("/a2a/v1", "/.well-known/agent-card.json")
+    # Card sits at `{base}/.well-known/agent-card.json` — sibling of the
+    # A2A endpoint. The dispatcher fetches it (cached 5min), reads
+    # capabilities + the x-zynd.requiresPushNotification hint, and picks
+    # the transport.
+    card_url = resolve_card_url(partner_url)
     from agent.a2a.transport import dispatch, Intent
     delivery_result: dict = {"delivered": False}
     try:

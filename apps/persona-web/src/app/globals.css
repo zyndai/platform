@@ -5202,8 +5202,18 @@ textarea.input { resize: vertical; min-height: 88px; }
 .group-chat-shell {
   display: flex; flex-direction: column;
   height: 100%;
-  max-width: 1100px; margin: 0 auto;
-  padding: 18px 24px 0;
+  /* Fill the dashboard's main column instead of capping at a narrow
+   * 1100px and centering inside acres of dead space. The bubble width
+   * inside .group-msg-bubble is capped separately for readability. */
+  width: 100%;
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 18px 28px 0;
+}
+@media (min-width: 1600px) {
+  /* Bigger displays — bump the padding a bit so the chat doesn't hug
+   * the sidebar edge, but still let the layout breathe. */
+  .group-chat-shell { padding: 22px 40px 0; }
 }
 .group-chat-header {
   display: flex; align-items: center; gap: 12px;
@@ -5386,7 +5396,10 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 .group-msg-time { color: var(--text-muted); font-size: 11px; }
 .group-msg-bubble {
-  max-width: 72%;
+  /* min keeps the bubble proportional to the chat column on narrow
+   * surfaces; max keeps prose readable on a wide chat panel — bubbles
+   * stop growing past ~640px even when the chat surface is 1200px. */
+  max-width: min(72%, 640px);
   padding: 9px 13px;
 }
 .group-msg.group-msg-system .group-msg-bubble {

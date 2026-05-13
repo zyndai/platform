@@ -81,7 +81,18 @@ export default function GroupsListPage() {
   );
 
   return (
-    <div style={{ maxWidth: 880, margin: "0 auto", padding: "40px 32px 56px", width: "100%" }}>
+    <div
+      style={{
+        // Fill the dashboard main column. 1100px is wide enough to feel
+        // generous for group rows without making them read like blog
+        // posts at 4K; the rows themselves visually peak at ~800px of
+        // content via the avatar+text layout.
+        maxWidth: 1100,
+        margin: "0 auto",
+        padding: "40px 32px 56px",
+        width: "100%",
+      }}
+    >
       <header
         style={{
           display: "flex",

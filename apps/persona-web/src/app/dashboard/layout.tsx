@@ -19,6 +19,7 @@ import {
   Home,
   Inbox,
   Share2,
+  UsersRound,
 } from "lucide-react";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
 import { ChatProvider } from "@/contexts/ChatContext";
@@ -44,6 +45,7 @@ const ARIA_NAV: NavItem[] = [
   { href: "/dashboard/messages", label: "Threads",  icon: MessagesSquare,  tone: "violet"  },
   { href: "/dashboard/meetings", label: "Meetings", icon: CalendarDays,    tone: "amber"   },
   { href: "/dashboard/people",   label: "People",   icon: Users,           tone: "emerald" },
+  { href: "/dashboard/groups",   label: "Groups",   icon: UsersRound,      tone: "rose"    },
 ];
 
 const YOU_NAV: NavItem[] = [

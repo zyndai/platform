@@ -13,6 +13,7 @@ const TITLES: Record<string, string> = {
   "/dashboard/messages": "Threads",
   "/dashboard/meetings": "Meetings",
   "/dashboard/people":   "People",
+  "/dashboard/groups":   "Groups",
   "/dashboard/brief":    "Your brief",
   "/dashboard/todos":    "Todos",
   "/dashboard/settings": "Settings",

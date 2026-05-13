@@ -25,6 +25,7 @@ from api.approvals import router as approvals_router
 from api.matches import router as matches_router
 from api.brief import router as brief_router
 from api.todos import router as todos_router
+from api.groups import router as groups_router
 
 # ─────────────────────────────────────────────────────────────────────
 
@@ -116,6 +117,7 @@ app.include_router(approvals_router, prefix="/api/approvals", tags=["Approvals"]
 app.include_router(matches_router, prefix="/api/matches", tags=["Matches"])
 app.include_router(brief_router,   prefix="/api/brief",   tags=["Brief"])
 app.include_router(todos_router, prefix="/api/todos", tags=["Todos"])
+app.include_router(groups_router, prefix="/api/groups", tags=["Groups"])
 
 
 # Temporary diagnostic endpoint — remove after debugging

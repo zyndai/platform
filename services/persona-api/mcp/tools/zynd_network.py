@@ -15,6 +15,9 @@ Tools:
 import asyncio
 import json
 import logging
+import re
+import threading
+import time
 from typing import Optional
 
 import requests
@@ -22,6 +25,242 @@ import requests
 import config
 
 logger = logging.getLogger(__name__)
+
+
+# ── In-process cache for the People discovery surface ────────────────
+# The dashboard's People page calls /api/persona/search on every
+# keystroke (debounced 300ms). The registry is sometimes slow or
+# unavailable, and rapid keystrokes were hammering it for nothing.
+# A small TTL cache here turns repeated identical queries into a
+# memory lookup, which is what users typing "founder" → "founders"
+# → "found" → "founder" do all the time.
+_DISCOVER_CACHE: dict[tuple[str, int], tuple[float, dict]] = {}
+_DISCOVER_CACHE_LOCK = threading.Lock()
+_DISCOVER_CACHE_TTL = 30.0  # seconds
+
+
+# Avatar lookup cache. Avatars rarely change, but we hit the Supabase
+# admin API to read auth.users.user_metadata which the python client
+# doesn't expose nicely. We cache the (agent_id → avatar_url) map for
+# 5 minutes so the People page never pays this cost per keystroke.
+_AVATAR_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
+_AVATAR_CACHE_LOCK = threading.Lock()
+_AVATAR_CACHE_TTL = 300.0  # 5 minutes
+
+
+def _build_avatar_map() -> dict[str, str]:
+    """
+    Return a fresh ``{agent_id → avatar_url}`` map.
+
+    We pull persona_agents to get the (user_id, agent_id, name) rows we
+    care about (one query), then fetch the auth.users admin page to
+    map user_id → avatar_url (one paginated HTTP call to the Supabase
+    Admin API). The result is intersected so we only carry mappings for
+    agents that exist locally — the registry returns agents from across
+    the network, but only locally-deployed personas have avatar metadata
+    we can resolve.
+    """
+    try:
+        sb = _get_supabase()
+        rows = (
+            sb.table("persona_agents")
+            .select("user_id,agent_id")
+            .eq("active", True)
+            .execute()
+        )
+        agent_to_user: dict[str, str] = {
+            r["agent_id"]: r["user_id"]
+            for r in (rows.data or [])
+            if r.get("agent_id") and r.get("user_id")
+        }
+        if not agent_to_user:
+            return {}
+
+        # Paginated admin API. Default page size is 50; we collect all
+        # pages until empty. Capped at 10 pages (500 users) which is
+        # plenty headroom for current install sizes.
+        user_avatars: dict[str, str] = {}
+        page = 1
+        admin_url = f"{config.SUPABASE_URL.rstrip('/')}/auth/v1/admin/users"
+        headers = {
+            "apikey": config.SUPABASE_SERVICE_KEY,
+            "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
+        }
+        while page <= 10:
+            r = requests.get(
+                admin_url,
+                headers=headers,
+                params={"page": page, "per_page": 100},
+                timeout=4,
+            )
+            if not r.ok:
+                break
+            users = (r.json() or {}).get("users") or []
+            if not users:
+                break
+            for u in users:
+                md = u.get("user_metadata") or {}
+                pic = md.get("avatar_url") or md.get("picture")
+                if isinstance(pic, str) and pic:
+                    user_avatars[u["id"]] = pic
+            if len(users) < 100:
+                break
+            page += 1
+
+        return {
+            aid: user_avatars[uid]
+            for aid, uid in agent_to_user.items()
+            if uid in user_avatars
+        }
+    except Exception as e:
+        logger.warning(f"[discover] avatar map build failed: {e}")
+        return {}
+
+
+def _get_avatar_map() -> dict[str, str]:
+    """Cached accessor for the avatar map. 5-minute TTL."""
+    now = time.time()
+    with _AVATAR_CACHE_LOCK:
+        cached = _AVATAR_CACHE.get("global")
+        if cached and cached[0] > now:
+            return cached[1]
+    # Build outside the lock so a slow admin-API call doesn't block other
+    # requests — they'll all see the stale value until the rebuild lands.
+    fresh = _build_avatar_map()
+    with _AVATAR_CACHE_LOCK:
+        _AVATAR_CACHE["global"] = (now + _AVATAR_CACHE_TTL, fresh)
+    return fresh
+
+
+def _discover_cache_get(key: tuple[str, int]) -> dict | None:
+    with _DISCOVER_CACHE_LOCK:
+        hit = _DISCOVER_CACHE.get(key)
+        if not hit:
+            return None
+        expires_at, value = hit
+        if expires_at < time.time():
+            _DISCOVER_CACHE.pop(key, None)
+            return None
+        return value
+
+
+def _discover_cache_put(key: tuple[str, int], value: dict) -> None:
+    with _DISCOVER_CACHE_LOCK:
+        _DISCOVER_CACHE[key] = (time.time() + _DISCOVER_CACHE_TTL, value)
+        # Bound the cache size — keep the 64 freshest entries.
+        if len(_DISCOVER_CACHE) > 64:
+            oldest = sorted(_DISCOVER_CACHE.items(), key=lambda kv: kv[1][0])[: len(_DISCOVER_CACHE) - 64]
+            for k, _ in oldest:
+                _DISCOVER_CACHE.pop(k, None)
+
+
+def discover_personas(query: str, top_k: int = 20) -> dict:
+    """
+    Lean discovery search for the dashboard People page.
+
+    Trades off vs. ``search_zynd_personas``:
+      * 4s registry timeout (not 10) — UI deserves to fail fast.
+      * No N+1 webhook resolution. The list view doesn't need webhook_url;
+        it gets resolved at thread-create time by the existing service.
+      * 30s in-process cache keyed by (query, top_k) — typing fast no
+        longer slams the registry.
+      * If the registry times out / errors, fall back to local
+        ``persona_agents`` rows so the page never goes blank.
+
+    Returns: ``{status, count, results: [{name, agent_id, description}], from_cache, source}``
+    """
+    q = (query or "").strip()
+    if q.lower() in ("all", "any", "everyone", "personas", "agents", "network", "list", ""):
+        q = "persona"
+    key = (q.lower(), int(top_k))
+
+    cached = _discover_cache_get(key)
+    if cached is not None:
+        return {**cached, "from_cache": True}
+
+    avatars = _get_avatar_map()
+
+    # 1) Try the registry. Short timeout — registry health is variable.
+    try:
+        resp = requests.post(
+            f"{config.ZYND_REGISTRY_URL}/v1/search",
+            json={
+                "query": q,
+                "tags": ["persona"],
+                "max_results": top_k,
+                # No enrich=True — we don't need full agent cards on a list view.
+                "status": "any",
+            },
+            timeout=4,
+        )
+        resp.raise_for_status()
+        raw = resp.json().get("results", [])
+        personas: list[dict] = []
+        for a in raw:
+            tags = a.get("tags") or []
+            if "persona" not in tags:
+                caps = a.get("capability_summary") or a.get("capabilities") or {}
+                if isinstance(caps, str):
+                    try:
+                        caps = json.loads(caps)
+                    except Exception:
+                        caps = {}
+                if isinstance(caps, dict):
+                    if "persona" not in caps.get("services", []) and "persona" not in caps.get("skills", []):
+                        continue
+                else:
+                    continue
+            aid = a.get("entity_id") or a.get("agent_id") or ""
+            if not aid:
+                continue
+            personas.append({
+                "name": a.get("name") or "",
+                "agent_id": aid,
+                "description": a.get("summary") or a.get("description") or "",
+                "avatar_url": avatars.get(aid),
+            })
+        out = {"status": "success", "count": len(personas), "results": personas, "source": "registry"}
+        _discover_cache_put(key, out)
+        return out
+    except requests.exceptions.Timeout:
+        logger.warning("[discover] registry timed out — serving local fallback")
+    except Exception as e:
+        logger.warning(f"[discover] registry call failed ({e!r}) — serving local fallback")
+
+    # 2) Local DB fallback. Better than a blank screen — at least the
+    #    user sees the personas we know about directly. Filtered by a
+    #    cheap ILIKE so the keyword search still narrows results.
+    try:
+        sb = _get_supabase()
+        builder = (
+            sb.table("persona_agents")
+            .select("agent_id,name,description")
+            .eq("active", True)
+            .limit(top_k)
+        )
+        if q and q != "persona":
+            # Supabase python client supports `or_` for combined ILIKE filters.
+            pattern = f"%{q}%"
+            builder = builder.or_(f"name.ilike.{pattern},description.ilike.{pattern}")
+        rows = builder.execute()
+        local = [
+            {
+                "name": r.get("name") or "",
+                "agent_id": r.get("agent_id") or "",
+                "description": r.get("description") or "",
+                "avatar_url": avatars.get(r.get("agent_id") or ""),
+            }
+            for r in (rows.data or [])
+            if r.get("agent_id")
+        ]
+        out = {"status": "degraded", "count": len(local), "results": local, "source": "local_db"}
+        # Cache the fallback too — but for a much shorter window so we
+        # try the registry again soon.
+        _discover_cache_put(key, out)
+        return out
+    except Exception as e:
+        logger.error(f"[discover] local fallback also failed: {e}")
+        return {"status": "error", "error": str(e), "results": [], "count": 0, "source": "none"}
 
 
 def _fetch_agent_card(agent_id: str) -> dict | None:
@@ -72,10 +311,28 @@ def search_zynd_personas(query: str, top_k: int = 5) -> dict:
         top_k: Max results to return.
     """
     try:
-        if query.lower().strip() in ["all", "any", "everyone", "personas", "agents", "network", "list"]:
+        catchall_phrases = {
+            "", "*", "all", "any", "anyone", "everybody", "everyone",
+            "people", "person", "persons", "personas", "agents", "agent",
+            "network", "list", "users", "user", "members", "member",
+            "available", "anyone available", "who is available", "who's available",
+        }
+        catchall_tokens = {
+            "people", "person", "persons", "personas", "everyone", "anyone",
+            "everybody", "agents", "users", "members", "network", "available",
+        }
+        original_query = query
+        q_norm = (query or "").lower().strip()
+        if q_norm in catchall_phrases:
             query = "persona"
+        else:
+            tokens = set(re.findall(r"[a-z]+", q_norm))
+            # If the user asked something like "find all people" or "show me
+            # users on the network", drop down to a broad persona search.
+            if tokens & catchall_tokens:
+                query = "persona"
 
-        print(f"[zynd_network] Searching registry with query: '{query}'")
+        print(f"[zynd_network] Searching registry with query: '{query}' (original: '{original_query}')")
 
         resp = requests.post(
             f"{config.ZYND_REGISTRY_URL}/v1/search",
@@ -91,6 +348,8 @@ def search_zynd_personas(query: str, top_k: int = 5) -> dict:
         resp.raise_for_status()
 
         results = resp.json().get("results", [])
+
+        avatars = _get_avatar_map()
 
         personas = []
         for a in results:
@@ -131,11 +390,66 @@ def search_zynd_personas(query: str, top_k: int = 5) -> dict:
                 "agent_id": aid,
                 "description": a.get("summary") or a.get("description", ""),
                 "webhook_url": webhook,
+                "avatar_url": avatars.get(aid),
             })
 
-        return {"status": "success", "count": len(personas), "results": personas}
+        if personas:
+            return {"status": "success", "count": len(personas), "results": personas, "source": "registry"}
+
+        # Registry returned zero hits. The orchestrator hits this any time it
+        # picks a query like "people" or "*" that the registry's FTS can't
+        # match against persona descriptions. Fall back to local DB so the
+        # user sees real personas instead of an empty-network reply.
+        local_personas = _local_persona_fallback(original_query, top_k, avatars)
+        if local_personas:
+            return {"status": "degraded", "count": len(local_personas), "results": local_personas, "source": "local_db"}
+        return {"status": "success", "count": 0, "results": [], "source": "registry"}
     except Exception as e:
+        # Last-ditch fallback so a transient registry failure still surfaces
+        # personas we know about locally.
+        try:
+            avatars = _get_avatar_map()
+            local_personas = _local_persona_fallback(query, top_k, avatars)
+            if local_personas:
+                return {"status": "degraded", "count": len(local_personas), "results": local_personas, "source": "local_db", "warning": str(e)}
+        except Exception:
+            pass
         return {"error": str(e)}
+
+
+def _local_persona_fallback(query: str, top_k: int, avatars: dict[str, str]) -> list[dict]:
+    """Read active personas from the local DB, narrowed by ILIKE when the
+    query is specific. Returned shape mirrors search_zynd_personas results
+    (minus webhook resolution — the orchestrator resolves it at thread time).
+    """
+    q = (query or "").strip()
+    try:
+        sb = _get_supabase()
+        builder = (
+            sb.table("persona_agents")
+            .select("agent_id,name,description,webhook_url")
+            .eq("active", True)
+            .limit(top_k)
+        )
+        catchall = {"", "*", "persona", "people", "person", "all", "any", "everyone", "anyone", "available"}
+        if q and q.lower() not in catchall:
+            pattern = f"%{q}%"
+            builder = builder.or_(f"name.ilike.{pattern},description.ilike.{pattern}")
+        rows = builder.execute()
+        return [
+            {
+                "name": r.get("name") or "",
+                "agent_id": r.get("agent_id") or "",
+                "description": r.get("description") or "",
+                "webhook_url": r.get("webhook_url") or "",
+                "avatar_url": avatars.get(r.get("agent_id") or ""),
+            }
+            for r in (rows.data or [])
+            if r.get("agent_id")
+        ]
+    except Exception as e:
+        logger.warning(f"[zynd_network] local fallback failed: {e}")
+        return []
 
 
 def get_persona_profile(agent_id: str) -> dict:
@@ -507,14 +821,16 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
     Send a structured message to another user's persona on the Zynd network
     via the A2A v0.3 JSON-RPC transport.
 
-    Use `search_zynd_personas` first to find the target's webhook URL.
-    The webhook URL stored on the registry is the legacy v2 endpoint —
-    we transform it into the v3 `/a2a/v1` URL automatically.
+    Use `search_zynd_personas` first to find the target's URL. The
+    registry stores the persona's base URL; we derive the A2A endpoint
+    (`{base}/a2a/v1`) and card URL automatically via ``resolve_a2a_url``
+    — it also still understands pre-fix `/a2a/v1` URLs and legacy v2
+    webhook URLs from older personas.
 
     Args:
         user_id: The ID of the user sending the message (injected automatically).
-        target_webhook_url: The legacy webhook URL of the agent you want to message
-                            (the v3 URL is derived from this).
+        target_webhook_url: The stored URL of the agent you want to message
+                            (base URL or a pre-fix `/a2a/v1` URL — both work).
         target_agent_id: The agent_id of the agent you are messaging.
         message: The natural language request you are sending to the other agent.
     """

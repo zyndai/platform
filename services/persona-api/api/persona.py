@@ -8,6 +8,7 @@ went away with them. The TaskFSM in a2a_router naturally produces deterministic
 terminal/interrupted states, so the band-aids aren't needed.
 """
 
+import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Any, List
@@ -670,8 +671,19 @@ async def update_thread_mode(thread_id: str, req: ThreadModeUpdate):
 
 @router.get("/search")
 async def search_personas(query: str = "persona", limit: int = 10):
-    """Proxy search to the Zynd registry, filtered to personas only."""
-    from mcp.tools.zynd_network import search_zynd_personas
-    return search_zynd_personas(query, top_k=limit)
+    """
+    Lean discovery search powering the dashboard People page.
+
+    Uses the registry-backed `discover_personas` which:
+      * caches identical queries for 30s in-process (debounced typing
+        no longer slams the registry on every keystroke),
+      * uses a 4s registry timeout (vs. 10s for the agent-side tool),
+      * skips per-result webhook resolution (browse view doesn't need
+        it — webhook is resolved later at thread-create time),
+      * falls back to local persona_agents rows when the registry is
+        slow or down, so the page never lies "no one is here".
+    """
+    from mcp.tools.zynd_network import discover_personas
+    return await asyncio.to_thread(discover_personas, query, limit)
 
 

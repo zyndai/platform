@@ -105,7 +105,7 @@ export default function LandingPage() {
         <div className="zlanding-nav-inner">
           <div className="zln-brand">
             <Monogram size="sm" />
-            <span className="zln-brand-text">Zynd Persona</span>
+            <span className="zln-brand-text">ZyndAI Persona</span>
             <span className="zln-version">v1.0</span>
           </div>
           <div className="zln-links">

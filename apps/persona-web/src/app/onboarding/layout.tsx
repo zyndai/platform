@@ -51,7 +51,7 @@ function OnboardingShell({ children }: { children: React.ReactNode }) {
       <div className="onboarding-topbar">
         <div className="brand">
           <Monogram size="sm" />
-          <span className="brand-text">Zynd Persona</span>
+          <span className="brand-text">ZyndAI Persona</span>
         </div>
         {showSkip ? (
           <Link href="/dashboard/chat" className="skip-link">

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Fraunces, Geist, Geist_Mono, Instrument_Sans, Playfair_Display, Space_Grotesk } from "next/font/google";
+import { Chakra_Petch, Fraunces, Geist, Geist_Mono, Instrument_Sans, Playfair_Display, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 
 const fraunces = Fraunces({
@@ -46,8 +46,15 @@ const spaceGrotesk = Space_Grotesk({
   display: "swap",
 });
 
+const chakraPetch = Chakra_Petch({
+  subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700"],
+  variable: "--font-chakra-petch",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "Zynd",
+  title: "ZyndAI",
   description:
     "Your Persona finds people worth meeting, reaches out on your behalf, and books the times. You just show up.",
 };
@@ -60,7 +67,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${fraunces.variable} ${geist.variable} ${geistMono.variable} ${instrumentSans.variable} ${playfairDisplay.variable} ${spaceGrotesk.variable}`}
+      className={`${fraunces.variable} ${geist.variable} ${geistMono.variable} ${instrumentSans.variable} ${playfairDisplay.variable} ${spaceGrotesk.variable} ${chakraPetch.variable}`}
     >
       <head>
         <link

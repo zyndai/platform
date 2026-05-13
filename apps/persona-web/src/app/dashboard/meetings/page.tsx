@@ -220,9 +220,9 @@ function MeetingPill({
 }) {
   const styles: Record<"action" | "accepted" | "neutral", React.CSSProperties> = {
     action: {
-      background: "rgba(245, 158, 11, 0.14)",
-      color: "#b45309",
-      border: "1px solid rgba(245, 158, 11, 0.24)",
+      background: "var(--status-action-bg)",
+      color: "var(--status-action-fg)",
+      border: "1px solid var(--status-action-bd)",
     },
     accepted: {
       background: "var(--success-soft)",

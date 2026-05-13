@@ -17,6 +17,8 @@ import {
   PanelLeftOpen,
   ListChecks,
   Home,
+  Inbox,
+  Share2,
 } from "lucide-react";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
 import { ChatProvider } from "@/contexts/ChatContext";
@@ -38,8 +40,9 @@ type NavItem = {
 
 const ARIA_NAV: NavItem[] = [
   { href: "/dashboard/chat",     label: "Home",     icon: LayoutDashboard, tone: "indigo"  },
+  { href: "/dashboard/inbox",    label: "Inbox",    icon: Inbox,           tone: "sky"     },
   { href: "/dashboard/messages", label: "Threads",  icon: MessagesSquare,  tone: "violet"  },
-  { href: "/dashboard/meetings", label: "Meetings", icon: CalendarDays,    tone: "sky"     },
+  { href: "/dashboard/meetings", label: "Meetings", icon: CalendarDays,    tone: "amber"   },
   { href: "/dashboard/people",   label: "People",   icon: Users,           tone: "emerald" },
 ];
 
@@ -149,8 +152,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         </button>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <Monogram size="sm" />
-          <span style={{ fontFamily: "var(--font-fraunces), serif", fontWeight: 500, fontSize: 15 }}>
-            Zynd
+          <span style={{ fontFamily: "var(--font-chakra-petch), sans-serif", fontWeight: 500, fontSize: 15 }}>
+            ZyndAI
           </span>
         </div>
       </div>
@@ -166,7 +169,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         <div className="brand">
           <span className="brand-left">
             <Monogram size="sm" />
-            <span className="brand-text">Zynd</span>
+            <span className="brand-text">ZyndAI</span>
           </span>
           <button
             type="button"
@@ -218,6 +221,18 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             <div className="name">{displayName}</div>
             <div className="email">{user?.email}</div>
           </div>
+          {user?.id && (
+            <Link
+              href={`/p/${user.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="logout"
+              title="Open my public agent card"
+              aria-label="Open my public agent card"
+            >
+              <Share2 size={14} strokeWidth={1.5} />
+            </Link>
+          )}
           <button
             onClick={handleLogout}
             className="logout"

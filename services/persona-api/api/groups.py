@@ -33,9 +33,12 @@ The schema already carries both — no migration needed when that lands.
 """
 
 import asyncio
+import logging
 import re
 import secrets
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from postgrest.exceptions import APIError
@@ -355,6 +358,16 @@ class OwnerTransfer(BaseModel):
 
 class GroupBriefSave(BaseModel):
     content: str = Field(min_length=0, max_length=50000)
+
+
+class GroupMeetingCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    start: str  # ISO 8601 UTC
+    end: str    # ISO 8601 UTC
+    description: str | None = Field(default=None, max_length=2000)
+    location: str | None = Field(default=None, max_length=200)
+    time_zone: str | None = None
+    member_user_ids: list[str] | None = None  # opt-in; defaults to all members
 
 
 @router.post("/{group_id}/transfer-owner")
@@ -958,3 +971,277 @@ async def save_group_brief(
         return {"success": True, "doc_id": group["brief_doc_id"]}
 
     return await asyncio.to_thread(_run)
+
+
+# ── Group calendar — availability + meetings (phase 3b) ─────────────────
+#
+# Gated by the asker's `can_query_calendar` permission. Members whose
+# Google isn't connected are flagged `has_calendar: false` and excluded
+# from the common-slot intersection (we never silently treat an unknown
+# calendar as "always free").
+
+@router.get("/{group_id}/availability")
+async def group_availability(
+    group_id: str,
+    start: str = Query(..., description="ISO 8601 window start (UTC)"),
+    end: str = Query(..., description="ISO 8601 window end (UTC)"),
+    duration_minutes: int = Query(default=30, ge=15, le=240),
+    tz_offset_minutes: int = Query(default=0, ge=-720, le=840),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Return per-member busy blocks + a list of slots where every member
+    (with a connected calendar) is free, within business hours of the
+    viewer's local timezone.
+    """
+    sb = _supabase()
+    m = _require_member(sb, group_id, user["id"])
+
+    perms = m.get("permissions") or {}
+    if not perms.get("can_query_calendar"):
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to query calendars in this group.",
+        )
+
+    try:
+        from agent.group_calendar import (
+            _parse_iso_utc,
+            aggregate_member_availability,
+            find_common_slots,
+        )
+        win_start = _parse_iso_utc(start)
+        win_end = _parse_iso_utc(end)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Bad start/end timestamps.")
+
+    if win_end <= win_start:
+        raise HTTPException(status_code=400, detail="end must be after start.")
+    # Cap the window so a single request can't fan out 30 days × N members
+    # of `freebusy` lookups. Two weeks is plenty for a "next available
+    # slot" UX.
+    max_window = (win_end - win_start).total_seconds()
+    if max_window > 14 * 86400:
+        raise HTTPException(status_code=400, detail="Window can't exceed 14 days.")
+
+    roster = (
+        sb.table("persona_group_members")
+        .select("user_id")
+        .eq("group_id", group_id)
+        .execute()
+    )
+    member_uids = [r["user_id"] for r in (roster.data or [])]
+    if not member_uids:
+        return {"members": [], "common_slots": []}
+
+    personas = (
+        sb.table("persona_agents")
+        .select("user_id, name")
+        .in_("user_id", member_uids)
+        .execute()
+    )
+    name_by_uid = {p["user_id"]: p.get("name") for p in (personas.data or [])}
+    member_rows = [
+        {"user_id": uid, "display_name": name_by_uid.get(uid) or "Someone"}
+        for uid in member_uids
+    ]
+
+    availabilities = await aggregate_member_availability(member_rows, win_start, win_end)
+    common = find_common_slots(
+        availabilities,
+        window_start=win_start,
+        window_end=win_end,
+        duration_minutes=duration_minutes,
+        viewer_tz_offset_minutes=tz_offset_minutes,
+    )
+
+    return {
+        "window": {"start": win_start.isoformat(), "end": win_end.isoformat()},
+        "members": [a.to_dict() for a in availabilities],
+        "common_slots": [s.to_dict() for s in common],
+        "duration_minutes": duration_minutes,
+    }
+
+
+@router.post("/{group_id}/meetings")
+async def create_group_meeting(
+    group_id: str,
+    body: GroupMeetingCreate,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Create a calendar event on the asker's calendar with other group
+    members as attendees, then post a `system` message to the chat so
+    everyone sees the proposal even if Google's invite email is slow.
+
+    Currently single-sided: only the asker's calendar is touched.
+    Google handles invitations to the other members via the standard
+    attendee flow — they receive an email + a calendar prompt, accept
+    or decline through Google's UI, and that state is mirrored back
+    into the asker's event.
+    """
+    sb = _supabase()
+    m = _require_member(sb, group_id, user["id"])
+
+    perms = m.get("permissions") or {}
+    if not perms.get("can_query_calendar"):
+        # Same gate as availability — booking implies viewing.
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to schedule meetings in this group.",
+        )
+
+    g = sb.table("persona_groups").select("name, owner_user_id, archived_at").eq("id", group_id).limit(1).execute()
+    if not g.data or g.data[0].get("archived_at"):
+        raise HTTPException(status_code=404, detail="Group not found.")
+    group_name = g.data[0]["name"]
+
+    # Roster lookup. The asker can optionally narrow attendees via
+    # member_user_ids; default is the whole roster minus the asker.
+    roster = (
+        sb.table("persona_group_members")
+        .select("user_id")
+        .eq("group_id", group_id)
+        .execute()
+    )
+    all_uids = [r["user_id"] for r in (roster.data or [])]
+    if body.member_user_ids:
+        target_uids = [u for u in body.member_user_ids if u in all_uids and u != user["id"]]
+    else:
+        target_uids = [u for u in all_uids if u != user["id"]]
+
+    # Resolve emails for invitees (Supabase admin API; same pattern used
+    # in mcp/tools/zynd_network.py:_build_avatar_map).
+    attendee_emails: list[str] = []
+    if target_uids:
+        attendee_emails = await asyncio.to_thread(_fetch_user_emails, target_uids)
+
+    def _run() -> dict:
+        from mcp.tools.google.calendar import create_event
+        attendees_payload = [{"email": e} for e in attendee_emails if e]
+        # The calendar tool's `create_event` doesn't accept attendees
+        # directly — patch through with a thin wrapper call.
+        result = _create_event_with_attendees(
+            user_id=user["id"],
+            summary=body.title,
+            start_time=body.start,
+            end_time=body.end,
+            description=body.description or f"Proposed in group: {group_name}",
+            location=body.location or "",
+            time_zone=body.time_zone or "UTC",
+            attendees=attendees_payload,
+        )
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=502,
+                detail=result.get("error") or "Couldn't create the calendar event.",
+            )
+
+        # Persist a system-channel message so the group sees the proposal.
+        ev = result.get("event") or {}
+        meta = {
+            "kind": "group_meeting_proposal",
+            "event_id": ev.get("id"),
+            "title": body.title,
+            "start": body.start,
+            "end": body.end,
+            "location": body.location or None,
+            "html_link": ev.get("htmlLink"),
+            "attendee_count": len(attendees_payload),
+            "proposed_by": user["id"],
+        }
+        line = (
+            f"{_resolve_display_name(user)} proposed a meeting: "
+            f"{body.title} — {body.start} → {body.end}."
+        )
+        if attendees_payload:
+            line += f" Invites sent to {len(attendees_payload)} member(s) — check your inbox to RSVP."
+        sb.table("persona_group_messages").insert({
+            "group_id": group_id,
+            "sender_user_id": user["id"],
+            "sender_agent_id": m.get("agent_id"),
+            "sender_name": _resolve_display_name(user),
+            "channel": "system",
+            "content": line,
+            "metadata": meta,
+        }).execute()
+        sb.table("persona_groups").update({
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }).eq("id", group_id).execute()
+        return {"status": "ok", "event": ev, "attendee_count": len(attendees_payload)}
+
+    return await asyncio.to_thread(_run)
+
+
+def _fetch_user_emails(user_ids: list[str]) -> list[str]:
+    """Resolve auth.users.email for a list of user_ids via Supabase admin."""
+    import requests
+    out: list[str] = []
+    headers = {
+        "apikey": config.SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
+    }
+    for uid in user_ids:
+        try:
+            r = requests.get(
+                f"{config.SUPABASE_URL.rstrip('/')}/auth/v1/admin/users/{uid}",
+                headers=headers,
+                timeout=4,
+            )
+            if not r.ok:
+                continue
+            user_row = (r.json() or {}).get("user") if isinstance(r.json(), dict) else None
+            payload = user_row or (r.json() or {})
+            email = (
+                payload.get("email")
+                or (payload.get("user_metadata") or {}).get("email")
+            )
+            if isinstance(email, str) and email:
+                out.append(email)
+        except Exception:
+            continue
+    return out
+
+
+def _create_event_with_attendees(
+    *,
+    user_id: str,
+    summary: str,
+    start_time: str,
+    end_time: str,
+    description: str,
+    location: str,
+    time_zone: str,
+    attendees: list[dict],
+) -> dict:
+    """
+    Build a Calendar event with attendees. The existing create_event in
+    mcp/tools/google/calendar.py doesn't expose the attendees field, so
+    we use the same _get_service() and emit a slightly richer body.
+
+    Returns {success, event} or {success: False, error}.
+    """
+    try:
+        from mcp.tools.google.calendar import _get_service, _parse_iso
+        from datetime import timedelta as _td
+        service = _get_service(user_id)
+        start_dt = _parse_iso(start_time)
+        end_dt = _parse_iso(end_time) if end_time else (start_dt + _td(hours=1))
+        body = {
+            "summary": summary,
+            "description": description,
+            "location": location,
+            "start": {"dateTime": start_dt.isoformat(), "timeZone": time_zone or "UTC"},
+            "end":   {"dateTime": end_dt.isoformat(),   "timeZone": time_zone or "UTC"},
+            "attendees": attendees,
+            "guestsCanSeeOtherGuests": True,
+        }
+        event = service.events().insert(
+            calendarId="primary",
+            body=body,
+            sendUpdates="all",
+        ).execute()
+        return {"success": True, "event": event}
+    except Exception as e:
+        logger.exception(f"[group-meetings] create_event failed: {e}")
+        return {"success": False, "error": str(e)}

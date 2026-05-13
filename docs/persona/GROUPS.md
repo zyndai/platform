@@ -28,7 +28,30 @@ Persona Groups is production-ready, and the scope of each shipped phase.
 - "X's persona is thinking…" indicator above the composer, cleared
   when the agent row arrives or after 60 s.
 
-### Phase 3a — shared group brief (commit pending)
+### Phase 3b — calendar overlay + meeting proposals
+- `backend/agent/group_calendar.py`:
+  - Concurrent free/busy fan-out via Google Calendar's
+    `freebusy.query` (no event titles/attendees cross member
+    boundaries — only "busy from X to Y").
+  - `find_common_slots` walks the window in N-minute steps with
+    business-hours + weekday gating, projected into the viewer's local
+    TZ via a passed offset.
+- 2 new routes:
+  - `GET /api/groups/{id}/availability?start&end&duration_minutes&tz_offset_minutes`
+    — gated by the asker's `can_query_calendar`. Returns per-member
+    busy blocks and a list of `common_slots` (capped at 12).
+  - `POST /api/groups/{id}/meetings` — creates an event on the
+    asker's calendar with other members as attendees (Google handles
+    invite emails), then posts a `channel='system'` message to the
+    group with the meeting metadata.
+- Right rail gains a `Schedule` tab: range + duration picker → "Find
+  slots" → list of "everyone is free" slots → click to propose →
+  modal asks for title/description/location, then sends invites.
+- Members without a connected calendar are flagged in the UI and
+  excluded from the common-slot intersection so we never claim
+  "everyone is free" based on missing data.
+
+### Phase 3a — shared group brief (commit `45bbb88`)
 - New columns on `persona_groups`: `brief_doc_id`, `brief_doc_url`
   (`backend/db/patch_add_persona_group_brief.sql`).
 - 3 new routes:

@@ -580,7 +580,7 @@ function GroupRightRail({
   isManager: boolean;
   isOwner: boolean;
 }) {
-  const [tab, setTab] = useState<"people" | "brief">("people");
+  const [tab, setTab] = useState<"people" | "brief" | "schedule">("people");
   const [brief, setBrief] = useState<GroupBriefData | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
   const [briefError, setBriefError] = useState<string | null>(null);
@@ -676,6 +676,15 @@ function GroupRightRail({
         >
           Brief
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "schedule"}
+          className={`group-rail-tab ${tab === "schedule" ? "is-active" : ""}`}
+          onClick={() => setTab("schedule")}
+        >
+          Schedule
+        </button>
       </div>
 
       {tab === "people" ? (
@@ -710,6 +719,8 @@ function GroupRightRail({
             </Link>
           )}
         </>
+      ) : tab === "schedule" ? (
+        <GroupSchedulePane groupId={groupId} />
       ) : (
         <div className="group-brief-pane">
           {briefError && (
@@ -805,6 +816,321 @@ function GroupRightRail({
         </div>
       )}
     </aside>
+  );
+}
+
+interface AvailMember {
+  user_id: string;
+  display_name: string;
+  has_calendar: boolean;
+  busy: Array<{ start: string; end: string }>;
+  error: string | null;
+}
+
+interface CommonSlot {
+  start: string;
+  end: string;
+  participants: string[];
+}
+
+interface AvailabilityResponse {
+  window: { start: string; end: string };
+  members: AvailMember[];
+  common_slots: CommonSlot[];
+  duration_minutes: number;
+}
+
+const DURATION_OPTIONS: Array<{ label: string; value: number }> = [
+  { label: "30 min", value: 30 },
+  { label: "45 min", value: 45 },
+  { label: "1 hour", value: 60 },
+];
+const RANGE_OPTIONS: Array<{ label: string; days: number }> = [
+  { label: "Next 3 days", days: 3 },
+  { label: "Next 7 days", days: 7 },
+  { label: "Next 14 days", days: 14 },
+];
+
+function GroupSchedulePane({ groupId }: { groupId: string }) {
+  const [days, setDays] = useState(7);
+  const [duration, setDuration] = useState(30);
+  const [data, setData] = useState<AvailabilityResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [proposingSlot, setProposingSlot] = useState<CommonSlot | null>(null);
+
+  const tzOffsetMinutes = useMemo(() => {
+    // getTimezoneOffset returns minutes WEST of UTC (positive for west).
+    // We pass the inverse so the backend's local-time projection adds the
+    // right number of minutes to a UTC cursor.
+    if (typeof window === "undefined") return 0;
+    return -new Date().getTimezoneOffset();
+  }, []);
+
+  const fetchAvailability = useCallback(async () => {
+    if (!groupId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const start = new Date();
+      // Start tomorrow morning local — looking at today's availability is
+      // rarely useful and clutters the slot list with already-past times.
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() + 1);
+      const end = new Date(start);
+      end.setDate(end.getDate() + days);
+      const qs = new URLSearchParams({
+        start: start.toISOString(),
+        end: end.toISOString(),
+        duration_minutes: String(duration),
+        tz_offset_minutes: String(tzOffsetMinutes),
+      });
+      const r = await apiGet<AvailabilityResponse>(
+        `/api/groups/${groupId}/availability?${qs.toString()}`,
+      );
+      setData(r);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't load availability.");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [groupId, days, duration, tzOffsetMinutes]);
+
+  const noCalMembers = useMemo(() => {
+    return (data?.members || []).filter((m) => !m.has_calendar);
+  }, [data]);
+
+  return (
+    <div className="group-schedule-pane">
+      <div className="group-schedule-controls">
+        <select
+          className="input group-schedule-select"
+          value={days}
+          onChange={(e) => setDays(Number(e.target.value))}
+          aria-label="Date range"
+        >
+          {RANGE_OPTIONS.map((r) => (
+            <option key={r.days} value={r.days}>
+              {r.label}
+            </option>
+          ))}
+        </select>
+        <select
+          className="input group-schedule-select"
+          value={duration}
+          onChange={(e) => setDuration(Number(e.target.value))}
+          aria-label="Meeting duration"
+        >
+          {DURATION_OPTIONS.map((d) => (
+            <option key={d.value} value={d.value}>
+              {d.label}
+            </option>
+          ))}
+        </select>
+        <Button size="sm" onClick={() => void fetchAvailability()} disabled={loading}>
+          {loading ? "Looking…" : data ? "Refresh" : "Find slots"}
+        </Button>
+      </div>
+
+      {error && (
+        <div className="group-composer-error" style={{ marginTop: 10 }}>
+          {error}
+        </div>
+      )}
+
+      {data && (
+        <>
+          {noCalMembers.length > 0 && (
+            <div className="group-schedule-note">
+              No calendar data for{" "}
+              {noCalMembers.map((m) => m.display_name).join(", ")}
+              {" "}— they&rsquo;re excluded from the common-slot intersection.
+            </div>
+          )}
+          {data.common_slots.length === 0 ? (
+            <p className="group-schedule-empty">
+              No slot in the next {days} day{days === 1 ? "" : "s"} works for
+              everyone with a connected calendar. Try a longer range or a
+              shorter duration.
+            </p>
+          ) : (
+            <ul className="group-schedule-list">
+              {data.common_slots.map((s) => (
+                <li key={s.start} className="group-schedule-slot">
+                  <div>
+                    <div className="group-schedule-slot-when">
+                      {formatSlotWhen(s.start, s.end)}
+                    </div>
+                    <div className="group-schedule-slot-participants">
+                      {s.participants.length} member{s.participants.length === 1 ? "" : "s"} free
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => setProposingSlot(s)}
+                  >
+                    Propose →
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+
+      {!data && !loading && (
+        <p className="group-schedule-hint">
+          Click <strong>Find slots</strong> to see times that work for every
+          member with a connected calendar. Members without calendars are
+          excluded — they&rsquo;ll need to RSVP manually after the proposal.
+        </p>
+      )}
+
+      {proposingSlot && (
+        <ProposeMeetingModal
+          groupId={groupId}
+          slot={proposingSlot}
+          onClose={() => setProposingSlot(null)}
+          onProposed={() => {
+            setProposingSlot(null);
+            // Refresh availability so the slot doesn't reappear.
+            void fetchAvailability();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function formatSlotWhen(start: string, end: string): string {
+  const s = new Date(start);
+  const e = new Date(end);
+  const sameDay =
+    s.getFullYear() === e.getFullYear() &&
+    s.getMonth() === e.getMonth() &&
+    s.getDate() === e.getDate();
+  const day = s.toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+  const sTime = s.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const eTime = e.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (sameDay) return `${day} · ${sTime} – ${eTime}`;
+  const dayEnd = e.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  return `${day} ${sTime} → ${dayEnd} ${eTime}`;
+}
+
+function ProposeMeetingModal({
+  groupId,
+  slot,
+  onClose,
+  onProposed,
+}: {
+  groupId: string;
+  slot: CommonSlot;
+  onClose: () => void;
+  onProposed: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [location, setLocation] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const tz = useMemo(
+    () =>
+      typeof Intl !== "undefined"
+        ? Intl.DateTimeFormat().resolvedOptions().timeZone
+        : undefined,
+    [],
+  );
+
+  const handleSubmit = useCallback(async () => {
+    if (!title.trim()) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await apiPost(`/api/groups/${groupId}/meetings`, {
+        title: title.trim(),
+        start: slot.start,
+        end: slot.end,
+        description: description.trim() || undefined,
+        location: location.trim() || undefined,
+        time_zone: tz,
+      });
+      onProposed();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't propose the meeting.");
+    } finally {
+      setSubmitting(false);
+    }
+  }, [title, description, location, tz, slot, groupId, onProposed]);
+
+  return (
+    <div className="modal-overlay" onClick={onClose} role="presentation">
+      <div
+        className="modal-shell"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="propose-meeting-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="propose-meeting-title" className="modal-title">Propose a meeting</h2>
+        <p className="modal-sub">
+          {formatSlotWhen(slot.start, slot.end)} · invites go to{" "}
+          {slot.participants.length} member{slot.participants.length === 1 ? "" : "s"}.
+        </p>
+
+        <label className="modal-label" htmlFor="pm-title">Title</label>
+        <input
+          id="pm-title"
+          autoFocus
+          className="input"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="e.g. Sprint demo, kickoff, founder sync"
+          maxLength={200}
+        />
+
+        <label className="modal-label" htmlFor="pm-desc" style={{ marginTop: 12 }}>
+          Description <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>· optional</span>
+        </label>
+        <textarea
+          id="pm-desc"
+          className="input"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={2}
+          maxLength={2000}
+          style={{ resize: "vertical" }}
+        />
+
+        <label className="modal-label" htmlFor="pm-loc" style={{ marginTop: 12 }}>
+          Location / link <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>· optional</span>
+        </label>
+        <input
+          id="pm-loc"
+          className="input"
+          value={location}
+          onChange={(e) => setLocation(e.target.value)}
+          placeholder="Zoom link, room, etc."
+          maxLength={200}
+        />
+
+        {error && <div className="group-composer-error" style={{ marginTop: 12 }}>{error}</div>}
+
+        <div className="modal-actions">
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button onClick={() => void handleSubmit()} disabled={!title.trim() || submitting}>
+            {submitting ? "Proposing…" : "Send invites"}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 

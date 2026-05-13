@@ -5733,3 +5733,68 @@ textarea.input { resize: vertical; min-height: 88px; }
   align-items: center;
 }
 .group-brief-actions a.btn { text-decoration: none; }
+
+/* ── Group Schedule pane ────────────────────────────────────────── */
+.group-schedule-pane {
+  display: flex; flex-direction: column; gap: 12px;
+  min-height: 0;
+}
+.group-schedule-controls {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  align-items: center;
+}
+.group-schedule-select {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  font-family: var(--font-geist), system-ui, sans-serif;
+}
+.group-schedule-note {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+.group-schedule-empty,
+.group-schedule-hint {
+  margin: 8px 0 0;
+  padding: 12px;
+  background: var(--surface-raised);
+  border: 1px dashed var(--border-default);
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.group-schedule-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.group-schedule-slot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  transition: border-color var(--t-micro);
+}
+.group-schedule-slot:hover { border-color: var(--border-default); }
+.group-schedule-slot-when {
+  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink);
+}
+.group-schedule-slot-participants {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}

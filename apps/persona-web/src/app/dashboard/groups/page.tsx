@@ -216,10 +216,18 @@ function DiscoverPanel() {
     let cancelled = false;
     (async () => {
       try {
+        // Bypass the SWR cache for discovery — the whole point of this
+        // panel is "new groups appeared", so serving a stale empty list
+        // for up to 60s defeats the feature. The in-flight dedup still
+        // saves us from duplicate concurrent calls.
         const [d, a] = await Promise.all([
-          apiGet<{ groups: DiscoverableGroup[] }>("/api/groups/discover"),
+          apiGet<{ groups: DiscoverableGroup[] }>(
+            "/api/groups/discover",
+            { noCache: true },
+          ),
           apiGet<{ groups: DiscoverableGroup[]; domain?: string }>(
             "/api/groups/auto-join-candidates",
+            { noCache: true },
           ),
         ]);
         if (cancelled) return;
@@ -227,7 +235,7 @@ function DiscoverPanel() {
         setAutoJoin(a.groups);
         setDomain(a.domain || null);
       } catch {
-        /* discovery is best-effort; failure just hides the panel */
+        /* discovery is best-effort; failure leaves the panel empty */
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -263,7 +271,9 @@ function DiscoverPanel() {
       const path = q
         ? `/api/groups/discover?query=${encodeURIComponent(q)}`
         : "/api/groups/discover";
-      const r = await apiGet<{ groups: DiscoverableGroup[] }>(path);
+      const r = await apiGet<{ groups: DiscoverableGroup[] }>(path, {
+        noCache: true,
+      });
       setDiscover(r.groups);
     } catch {
       /* same — non-fatal */
@@ -272,12 +282,10 @@ function DiscoverPanel() {
     }
   }, [query]);
 
-  if (loading && discover.length === 0 && autoJoin.length === 0) {
-    return null;
-  }
-  if (!loading && discover.length === 0 && autoJoin.length === 0) {
-    return null;
-  }
+  // We always render the section — even empty — because the search box
+  // is part of the feature. Previously this returned null on empty,
+  // which made the discover surface invisible whenever no open groups
+  // matched. Bad UX: users couldn't search at all from the cold state.
 
   return (
     <section className="groups-discover">
@@ -353,16 +361,30 @@ function DiscoverPanel() {
           )}
         </div>
 
-        {discover.length === 0 ? (
+        {loading ? (
           <p
             style={{
               marginTop: 10,
               color: "var(--text-muted)",
               fontSize: 13,
-              fontStyle: "italic",
             }}
           >
-            No open groups match {query.trim() ? <code>{query.trim()}</code> : "yet"}.
+            Looking…
+          </p>
+        ) : discover.length === 0 ? (
+          <p
+            style={{
+              marginTop: 10,
+              color: "var(--text-muted)",
+              fontSize: 13,
+              lineHeight: 1.55,
+            }}
+          >
+            {query.trim() ? (
+              <>No open groups match <code>{query.trim()}</code> yet.</>
+            ) : (
+              <>No open groups on the network yet — be the first to make one.</>
+            )}
           </p>
         ) : (
           <ul className="groups-list" style={{ marginTop: 10 }}>

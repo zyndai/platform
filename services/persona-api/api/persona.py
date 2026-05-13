@@ -193,6 +193,81 @@ async def persona_status(user_id: str):
     return get_persona_status(user_id)
 
 
+@router.get("/{user_id}/public")
+async def persona_public_card(user_id: str):
+    """
+    Public, unauthenticated view of a persona — drives the shareable
+    /p/{user_id} card.
+
+    Returns ONLY fields that are safe to display to anyone with the URL:
+    the user-chosen name, description, capabilities, and the agent_id
+    visitors need to start an agent-to-agent thread. We deliberately
+    omit webhook_url, public_key, brief_doc_id, brief_doc_url and the
+    profile blob — those are infrastructure or gated by per-thread
+    permissions in the in-app context.
+
+    Any lookup failure (missing persona, malformed UUID) returns 404 —
+    we don't distinguish so attackers can't fingerprint the user_id
+    space, and the frontend renders the same "this persona isn't live"
+    state for both cases.
+    """
+    try:
+        persona = get_persona_status(user_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    if not persona.get("deployed"):
+        raise HTTPException(status_code=404, detail="Persona not found")
+
+    profile = persona.get("profile") or {}
+    # Avatar lives on persona.profile.{avatar_url,picture} after onboarding
+    # captures it from the user's Google/LinkedIn identity. Fall back to the
+    # auth.users.user_metadata read (Supabase Admin API) when the profile
+    # didn't carry it — this rescues older personas seeded before we started
+    # mirroring it locally.
+    avatar_url = profile.get("avatar_url") or profile.get("picture")
+    if not avatar_url:
+        try:
+            avatar_url = _fetch_auth_user_avatar(user_id)
+        except Exception:
+            avatar_url = None
+
+    return {
+        "name": persona.get("name"),
+        "agent_id": persona.get("agent_id"),
+        "agent_handle": persona.get("agent_handle"),
+        "description": persona.get("description") or "",
+        "capabilities": persona.get("capabilities") or [],
+        "avatar_url": avatar_url,
+        "title": profile.get("title") or None,
+        "organization": profile.get("organization") or None,
+        "location": profile.get("location") or None,
+    }
+
+
+def _fetch_auth_user_avatar(user_id: str) -> Optional[str]:
+    """Pull avatar_url from Supabase auth.users.user_metadata.
+
+    The python-supabase client doesn't surface the admin user lookup
+    nicely, so we hit the Admin REST endpoint directly. Cheap (~50ms)
+    and only happens when the persona row didn't carry the avatar.
+    """
+    import requests as _req
+    admin_url = f"{config.SUPABASE_URL.rstrip('/')}/auth/v1/admin/users/{user_id}"
+    resp = _req.get(
+        admin_url,
+        headers={
+            "apikey": config.SUPABASE_SERVICE_KEY,
+            "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
+        },
+        timeout=3,
+    )
+    if not resp.ok:
+        return None
+    md = (resp.json() or {}).get("user_metadata") or {}
+    pic = md.get("avatar_url") or md.get("picture")
+    return pic if isinstance(pic, str) and pic else None
+
+
 @router.post("/register")
 async def register_persona(req: PersonaRegisterRequest):
     """

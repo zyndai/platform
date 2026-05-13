@@ -28,6 +28,7 @@ interface Group {
   owner_user_id: string;
   invite_token: string | null;
   archived_at: string | null;
+  join_domain: string | null;
 }
 
 interface Member {
@@ -55,6 +56,7 @@ export default function GroupSettingsPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState<"private" | "open">("private");
+  const [joinDomain, setJoinDomain] = useState("");
   const [savingDetails, setSavingDetails] = useState(false);
   const [savedTick, setSavedTick] = useState(0);
 
@@ -79,6 +81,7 @@ export default function GroupSettingsPage() {
       setName(g.group.name);
       setDescription(g.group.description || "");
       setVisibility(g.group.visibility);
+      setJoinDomain(g.group.join_domain || "");
       setMembers(ms.members);
       setNotFound(false);
     } catch (e) {
@@ -107,6 +110,7 @@ export default function GroupSettingsPage() {
         setName(g.group.name);
         setDescription(g.group.description || "");
         setVisibility(g.group.visibility);
+        setJoinDomain(g.group.join_domain || "");
         setMembers(ms.members);
         setNotFound(false);
       } catch (e) {
@@ -135,6 +139,7 @@ export default function GroupSettingsPage() {
         name: name.trim(),
         description: description.trim(),
         visibility,
+        join_domain: visibility === "open" ? joinDomain.trim() : "",
       });
       setGroup(r.group);
       setSavedTick(Date.now());
@@ -143,7 +148,7 @@ export default function GroupSettingsPage() {
     } finally {
       setSavingDetails(false);
     }
-  }, [groupId, name, description, visibility]);
+  }, [groupId, name, description, visibility, joinDomain]);
 
   const inviteUrl = useMemo(() => {
     if (!group?.invite_token || !group?.slug) return null;
@@ -379,6 +384,26 @@ export default function GroupSettingsPage() {
           </label>
         </fieldset>
 
+        {visibility === "open" && (
+          <div style={{ marginTop: 14 }}>
+            <label className="modal-label" htmlFor="gs-domain">
+              Auto-join domain <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>· optional</span>
+            </label>
+            <input
+              id="gs-domain"
+              className="input"
+              value={joinDomain}
+              onChange={(e) => setJoinDomain(e.target.value)}
+              placeholder="acme.com"
+              maxLength={120}
+            />
+            <p style={{ margin: "6px 0 0", fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+              Users with a matching email get a one-click join prompt on /dashboard/groups.
+              Leave blank to disable.
+            </p>
+          </div>
+        )}
+
         <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12 }}>
           <Button onClick={() => void handleSaveDetails()} disabled={savingDetails}>
             {savingDetails ? "Saving…" : "Save details"}
@@ -524,6 +549,8 @@ export default function GroupSettingsPage() {
         </ul>
       </section>
 
+      <ActivityPanel groupId={groupId || ""} canSeeAll={canManage} />
+
       {isOwner && (
         <section className="group-settings-card group-danger-zone">
           <h2 className="group-settings-h2">Danger zone</h2>
@@ -597,4 +624,145 @@ function MemberPermissionsPanel({
       })}
     </div>
   );
+}
+
+// ── Activity / audit log (phase 5) ────────────────────────────────
+interface AuditEvent {
+  id: string;
+  kind: "brief_shared" | "calendar_queried";
+  affected_user_id: string;
+  actor_user_id: string | null;
+  actor_name: string;
+  affected_name: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+const AUDIT_LABEL: Record<AuditEvent["kind"], string> = {
+  brief_shared: "Your brief was shared",
+  calendar_queried: "Your calendar was checked",
+};
+
+function ActivityPanel({
+  groupId,
+  canSeeAll,
+}: {
+  groupId: string;
+  canSeeAll: boolean;
+}) {
+  const [scope, setScope] = useState<"me" | "all">("me");
+  const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!groupId) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const r = await apiGet<{ events: AuditEvent[] }>(
+          `/api/groups/${groupId}/activity?scope=${scope}&limit=50`,
+        );
+        if (cancelled) return;
+        setEvents(r.events);
+      } catch (e) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Couldn't load activity.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [groupId, scope]);
+
+  return (
+    <section className="group-settings-card">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <h2 className="group-settings-h2" style={{ margin: 0 }}>Activity</h2>
+        {canSeeAll && (
+          <div className="group-rail-tabs" style={{ marginBottom: 0 }}>
+            <button
+              type="button"
+              className={`group-rail-tab ${scope === "me" ? "is-active" : ""}`}
+              onClick={() => setScope("me")}
+            >
+              My data
+            </button>
+            <button
+              type="button"
+              className={`group-rail-tab ${scope === "all" ? "is-active" : ""}`}
+              onClick={() => setScope("all")}
+            >
+              Whole group
+            </button>
+          </div>
+        )}
+      </div>
+      <p style={{ margin: "8px 0 12px", fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+        {scope === "me"
+          ? "When other members' actions touched your brief or calendar in this group."
+          : "Recent privacy-sensitive reads across all members."}
+      </p>
+      {loading ? (
+        <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</p>
+      ) : error ? (
+        <div className="group-composer-error">{error}</div>
+      ) : events.length === 0 ? (
+        <p style={{ color: "var(--text-muted)", fontSize: 13, fontStyle: "italic" }}>
+          Nothing yet. Receipts appear here when someone @mentions a member with brief access, or runs a calendar check.
+        </p>
+      ) : (
+        <ul className="group-activity-list">
+          {events.map((e) => (
+            <li key={e.id} className="group-activity-row">
+              <span
+                className={`group-activity-dot kind-${e.kind === "brief_shared" ? "fact" : "voice"}`}
+                aria-hidden
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="group-activity-line">
+                  {scope === "me" ? (
+                    <>
+                      <strong>{AUDIT_LABEL[e.kind]}</strong> with{" "}
+                      <span className="group-activity-actor">{e.actor_name}</span>
+                    </>
+                  ) : (
+                    <>
+                      <strong>{e.actor_name}</strong>{" "}
+                      {e.kind === "brief_shared" ? "saw" : "checked"}{" "}
+                      <strong>{e.affected_name}</strong>&rsquo;s{" "}
+                      {e.kind === "brief_shared" ? "brief" : "calendar"}
+                    </>
+                  )}
+                </div>
+                <div className="group-activity-time">{formatActivityTime(e.created_at)}</div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function formatActivityTime(iso: string): string {
+  try {
+    const then = new Date(iso).getTime();
+    const now = Date.now();
+    const diff = Math.max(0, now - then);
+    const mins = Math.floor(diff / 60_000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins} min ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours} h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days} d ago`;
+    return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
 }

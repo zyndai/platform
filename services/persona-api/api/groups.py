@@ -179,6 +179,7 @@ class GroupUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=500)
     avatar_url: str | None = None
     visibility: str | None = Field(default=None, pattern="^(private|open)$")
+    join_domain: str | None = Field(default=None, max_length=120)
 
 
 class MemberAdd(BaseModel):
@@ -330,6 +331,13 @@ async def update_group(
         patch["avatar_url"] = body.avatar_url or None
     if body.visibility is not None:
         patch["visibility"] = body.visibility
+    if body.join_domain is not None:
+        # Normalize: lowercase, strip an optional leading "@", reject
+        # obviously malformed values. Empty string clears the rule.
+        raw = (body.join_domain or "").strip().lstrip("@").lower()
+        if raw and "." not in raw:
+            raise HTTPException(status_code=400, detail="join_domain must look like 'acme.com'.")
+        patch["join_domain"] = raw or None
     if not patch:
         raise HTTPException(status_code=400, detail="Nothing to update.")
     patch["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -750,6 +758,18 @@ def _spawn_mention_dispatch(
             # No deployed persona for that member — skip silently, nothing
             # to invoke. The mention still renders in the human message.
             continue
+        # Audit (phase 5): brief actually crosses to this target's prompt.
+        # Only when group_brief_content is non-empty — null content means
+        # nothing was read, so nothing to log.
+        if group_brief_content:
+            _log_audit_event(
+                sb,
+                group_id=group_id,
+                affected_user_id=target["user_id"],
+                actor_user_id=asker_user["id"],
+                kind="brief_shared",
+                metadata={"channel": "group_mention"},
+            )
         asyncio.create_task(
             dispatch_group_mention(
                 group_id=group_id,
@@ -1088,6 +1108,26 @@ async def group_availability(
         viewer_tz_offset_minutes=tz_offset_minutes,
     )
 
+    # Audit (phase 5): record one event per member whose calendar was
+    # actually read (has_calendar=True). Members without a connected
+    # calendar aren't recorded — nothing was read, nothing to receipt.
+    for av in availabilities:
+        if not av.has_calendar:
+            continue
+        if av.user_id == user["id"]:
+            continue  # don't log "I checked my own calendar"
+        _log_audit_event(
+            sb,
+            group_id=group_id,
+            affected_user_id=av.user_id,
+            actor_user_id=user["id"],
+            kind="calendar_queried",
+            metadata={
+                "window_start": win_start.isoformat(),
+                "window_end": win_end.isoformat(),
+            },
+        )
+
     return {
         "window": {"start": win_start.isoformat(), "end": win_end.isoformat()},
         "members": [a.to_dict() for a in availabilities],
@@ -1398,3 +1438,197 @@ async def archive_constraint(
         "archived_at": datetime.now(timezone.utc).isoformat()
     }).eq("id", constraint_id).eq("group_id", group_id).execute()
     return {"status": "archived"}
+
+
+# ── Audit logger (phase 5) ──────────────────────────────────────────────
+# Records access events so members can see who looked at what. Best-effort:
+# failures are swallowed so a missing audit table never breaks the actual
+# dispatch path.
+
+def _log_audit_event(
+    sb,
+    *,
+    group_id: str,
+    affected_user_id: str,
+    actor_user_id: str | None,
+    kind: str,
+    metadata: dict | None = None,
+) -> None:
+    try:
+        sb.table("persona_group_audit_events").insert({
+            "group_id": group_id,
+            "affected_user_id": affected_user_id,
+            "actor_user_id": actor_user_id,
+            "kind": kind,
+            "metadata": metadata,
+        }).execute()
+    except APIError as e:
+        if not _is_missing_table(e):
+            logger.warning(f"[group-audit] couldn't log {kind} for {affected_user_id}: {e}")
+    except Exception as e:
+        logger.warning(f"[group-audit] couldn't log {kind} for {affected_user_id}: {e}")
+
+
+# ── Discoverable groups (phase 5) ──────────────────────────────────────
+@router.get("/discover")
+async def discover_groups(
+    query: str | None = Query(default=None, max_length=80),
+    limit: int = Query(default=20, ge=1, le=50),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Return open, non-archived groups the caller isn't already a member of.
+
+    Lightweight — doesn't expose member counts or roster. The /by-invite
+    flow handles the actual join.
+    """
+    sb = _supabase()
+
+    try:
+        # Mine, to exclude.
+        mine = (
+            sb.table("persona_group_members")
+            .select("group_id")
+            .eq("user_id", user["id"])
+            .execute()
+        )
+        my_group_ids = {r["group_id"] for r in (mine.data or [])}
+
+        builder = (
+            sb.table("persona_groups")
+            .select("id, slug, name, description, avatar_url, visibility, join_domain, invite_token, created_at")
+            .eq("visibility", "open")
+            .is_("archived_at", "null")
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
+        if query:
+            pattern = f"%{query.strip()}%"
+            builder = builder.or_(f"name.ilike.{pattern},description.ilike.{pattern}")
+        rows = builder.execute()
+    except APIError as e:
+        if _is_missing_table(e):
+            return {"groups": []}
+        raise
+
+    out = []
+    for g in rows.data or []:
+        if g["id"] in my_group_ids:
+            continue
+        # invite_token is what /g/[slug]/[token] needs; safe to expose for
+        # an open group (anyone can join anyway). We strip it for private
+        # groups by virtue of the visibility filter above.
+        out.append({
+            "id": g["id"],
+            "slug": g["slug"],
+            "name": g["name"],
+            "description": g.get("description"),
+            "avatar_url": g.get("avatar_url"),
+            "join_domain": g.get("join_domain"),
+            "invite_token": g.get("invite_token"),
+            "created_at": g["created_at"],
+        })
+    return {"groups": out}
+
+
+@router.get("/auto-join-candidates")
+async def auto_join_candidates(user: dict = Depends(get_current_user)):
+    """
+    Open groups whose ``join_domain`` matches the caller's email domain.
+
+    Returned as a short list with the invite token so the frontend can
+    one-click join — same code path as following a regular invite link.
+    """
+    email = (user.get("email") or "").lower().strip()
+    if "@" not in email:
+        return {"groups": []}
+    domain = email.rsplit("@", 1)[-1]
+    if not domain:
+        return {"groups": []}
+
+    sb = _supabase()
+    try:
+        mine = (
+            sb.table("persona_group_members")
+            .select("group_id")
+            .eq("user_id", user["id"])
+            .execute()
+        )
+        my_group_ids = {r["group_id"] for r in (mine.data or [])}
+
+        rows = (
+            sb.table("persona_groups")
+            .select("id, slug, name, description, avatar_url, invite_token, join_domain")
+            .eq("visibility", "open")
+            .eq("join_domain", domain)
+            .is_("archived_at", "null")
+            .execute()
+        )
+    except APIError as e:
+        if _is_missing_table(e):
+            return {"groups": []}
+        raise
+
+    out = [g for g in (rows.data or []) if g["id"] not in my_group_ids]
+    return {"groups": out, "domain": domain}
+
+
+# ── Audit (phase 5) ────────────────────────────────────────────────────
+@router.get("/{group_id}/activity")
+async def group_activity(
+    group_id: str,
+    scope: str = Query(default="me", pattern="^(me|all)$"),
+    limit: int = Query(default=50, ge=1, le=200),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Return audit events for the caller's data in this group ("me", the
+    default — every member can read their own receipts), or for the whole
+    group ("all", owner/admin only).
+    """
+    sb = _supabase()
+    m = _require_member(sb, group_id, user["id"])
+
+    if scope == "all":
+        _require_role(m, ("owner", "admin"))
+
+    try:
+        q = (
+            sb.table("persona_group_audit_events")
+            .select("id, kind, affected_user_id, actor_user_id, metadata, created_at")
+            .eq("group_id", group_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
+        if scope == "me":
+            q = q.eq("affected_user_id", user["id"])
+        rows = q.execute()
+    except APIError as e:
+        if _is_missing_table(e):
+            return {"events": []}
+        raise
+
+    events = rows.data or []
+    if not events:
+        return {"events": []}
+
+    # Hydrate actor and affected display names so the UI doesn't need a
+    # second per-row lookup. Persona name when available; falls back to
+    # something readable rather than a UUID.
+    uids = {e["actor_user_id"] for e in events if e.get("actor_user_id")}
+    uids |= {e["affected_user_id"] for e in events if e.get("affected_user_id")}
+    if uids:
+        personas = (
+            sb.table("persona_agents")
+            .select("user_id, name")
+            .in_("user_id", list(uids))
+            .execute()
+        )
+        name_by_uid = {p["user_id"]: p.get("name") for p in (personas.data or [])}
+    else:
+        name_by_uid = {}
+
+    for ev in events:
+        ev["actor_name"] = name_by_uid.get(ev.get("actor_user_id")) or "Someone"
+        ev["affected_name"] = name_by_uid.get(ev.get("affected_user_id")) or "Someone"
+    return {"events": events}

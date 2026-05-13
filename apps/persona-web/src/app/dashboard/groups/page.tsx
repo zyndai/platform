@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Users, Plus, ArrowRight, Lock, Globe2 } from "lucide-react";
+import { Users, Plus, ArrowRight, Lock, Globe2, Search, X } from "lucide-react";
 import { Button, EmptyState } from "@/components/ui";
 import { useDashboard } from "@/contexts/DashboardContext";
 import { apiGet, apiPost } from "@/lib/api";
@@ -178,6 +178,8 @@ export default function GroupsListPage() {
         </ul>
       )}
 
+      <DiscoverPanel />
+
       {createOpen && (
         <CreateGroupModal
           onClose={() => setCreateOpen(false)}
@@ -186,6 +188,217 @@ export default function GroupsListPage() {
         />
       )}
     </div>
+  );
+}
+
+// ── Discovery + auto-join (phase 5) ──────────────────────────────
+interface DiscoverableGroup {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  avatar_url: string | null;
+  join_domain: string | null;
+  invite_token: string | null;
+}
+
+function DiscoverPanel() {
+  const router = useRouter();
+  const [discover, setDiscover] = useState<DiscoverableGroup[]>([]);
+  const [autoJoin, setAutoJoin] = useState<DiscoverableGroup[]>([]);
+  const [domain, setDomain] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [joiningId, setJoiningId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [d, a] = await Promise.all([
+          apiGet<{ groups: DiscoverableGroup[] }>("/api/groups/discover"),
+          apiGet<{ groups: DiscoverableGroup[]; domain?: string }>(
+            "/api/groups/auto-join-candidates",
+          ),
+        ]);
+        if (cancelled) return;
+        setDiscover(d.groups);
+        setAutoJoin(a.groups);
+        setDomain(a.domain || null);
+      } catch {
+        /* discovery is best-effort; failure just hides the panel */
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleJoin = useCallback(
+    async (g: DiscoverableGroup) => {
+      if (!g.invite_token) return;
+      setJoiningId(g.id);
+      try {
+        const r = await apiPost<{ status: string; group_id: string }>(
+          `/api/groups/by-invite/${g.invite_token}/join`,
+          {},
+        );
+        router.push(`/dashboard/groups/${r.group_id}`);
+      } catch (e) {
+        console.error("[groups] join failed", e);
+        setJoiningId(null);
+      }
+    },
+    [router],
+  );
+
+  const handleSearch = useCallback(async () => {
+    setLoading(true);
+    try {
+      const q = query.trim();
+      const path = q
+        ? `/api/groups/discover?query=${encodeURIComponent(q)}`
+        : "/api/groups/discover";
+      const r = await apiGet<{ groups: DiscoverableGroup[] }>(path);
+      setDiscover(r.groups);
+    } catch {
+      /* same — non-fatal */
+    } finally {
+      setLoading(false);
+    }
+  }, [query]);
+
+  if (loading && discover.length === 0 && autoJoin.length === 0) {
+    return null;
+  }
+  if (!loading && discover.length === 0 && autoJoin.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="groups-discover">
+      {autoJoin.length > 0 && (
+        <div className="groups-autojoin">
+          <h2 className="groups-discover-h2">
+            Open to you via <code>@{domain}</code>
+          </h2>
+          <ul className="groups-list" style={{ marginTop: 8 }}>
+            {autoJoin.map((g) => (
+              <li key={g.id} className="groups-row groups-discover-row">
+                <span className="groups-avatar" aria-hidden>
+                  {g.avatar_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={g.avatar_url} alt="" />
+                  ) : (
+                    <span>{(g.name || "?").charAt(0).toUpperCase()}</span>
+                  )}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="groups-row-name">
+                    {g.name}
+                    <span className="groups-vis groups-vis-open">
+                      <Globe2 size={10} strokeWidth={2} /> Open
+                    </span>
+                  </div>
+                  {g.description && (
+                    <p className="groups-row-desc">{g.description}</p>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => void handleJoin(g)}
+                  disabled={joiningId === g.id}
+                >
+                  {joiningId === g.id ? "Joining…" : "Join"}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div style={{ marginTop: autoJoin.length > 0 ? 28 : 12 }}>
+        <h2 className="groups-discover-h2">Discover open groups</h2>
+        <div className="people-search" style={{ marginTop: 8 }}>
+          <Search size={16} strokeWidth={1.7} />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void handleSearch();
+              }
+            }}
+            placeholder="Search by name or keyword"
+            aria-label="Search open groups"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => {
+                setQuery("");
+                void handleSearch();
+              }}
+              aria-label="Clear search"
+              className="people-search-clear"
+            >
+              <X size={14} strokeWidth={1.8} />
+            </button>
+          )}
+        </div>
+
+        {discover.length === 0 ? (
+          <p
+            style={{
+              marginTop: 10,
+              color: "var(--text-muted)",
+              fontSize: 13,
+              fontStyle: "italic",
+            }}
+          >
+            No open groups match {query.trim() ? <code>{query.trim()}</code> : "yet"}.
+          </p>
+        ) : (
+          <ul className="groups-list" style={{ marginTop: 10 }}>
+            {discover.map((g) => (
+              <li key={g.id} className="groups-row groups-discover-row">
+                <span className="groups-avatar" aria-hidden>
+                  {g.avatar_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={g.avatar_url} alt="" />
+                  ) : (
+                    <span>{(g.name || "?").charAt(0).toUpperCase()}</span>
+                  )}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="groups-row-name">
+                    {g.name}
+                    <span className="groups-vis groups-vis-open">
+                      <Globe2 size={10} strokeWidth={2} /> Open
+                    </span>
+                  </div>
+                  {g.description && (
+                    <p className="groups-row-desc">{g.description}</p>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void handleJoin(g)}
+                  disabled={joiningId === g.id}
+                >
+                  {joiningId === g.id ? "Joining…" : "Join"}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
   );
 }
 

@@ -28,7 +28,37 @@ Persona Groups is production-ready, and the scope of each shipped phase.
 - "X's persona is thinking…" indicator above the composer, cleared
   when the agent row arrives or after 60 s.
 
-### Phase 4 — group memory / shared constraints
+### Phase 5 — discovery, domain auto-join, audit receipts
+- `backend/db/patch_add_persona_group_discovery_audit.sql`:
+  - `persona_groups.join_domain` column (open groups only).
+  - `persona_group_audit_events` table for privacy-sensitive reads.
+  - RLS: affected users see their own receipts; owner/admin sees the
+    whole-group feed.
+- 3 new routes:
+  - `GET /api/groups/discover` — open, non-archived groups the caller
+    isn't already in. Optional `query` for keyword filtering.
+  - `GET /api/groups/auto-join-candidates` — open groups whose
+    `join_domain` matches the caller's email domain. Returns the
+    invite token so the existing `/by-invite/{token}/join` path
+    handles the actual join.
+  - `GET /api/groups/{id}/activity?scope=me|all` — audit feed.
+    "me" returns the caller's own receipts (any member); "all"
+    requires owner/admin.
+- Audit logger fires `brief_shared` events from the @-mention
+  dispatch path (only when brief content actually crossed the
+  boundary) and `calendar_queried` events from
+  `GET /availability` for each member whose calendar was read.
+  Self-checks are filtered out.
+- Frontend:
+  - `/dashboard/groups` gains a Discover panel below the user's
+    groups, with an "Open to you via @yourdomain" auto-join section
+    when applicable. Search + one-click join.
+  - Group settings: `Auto-join domain` field appears when visibility
+    is open.
+  - Group settings: new `Activity` section showing the caller's
+    receipts. Owner/admin gets a toggle to view the whole-group feed.
+
+### Phase 4 — group memory / shared constraints (commit `4aa7f83`)
 - New table `persona_group_constraints` with three kinds:
   - `fact` — positive context the team has agreed on
   - `rule` — guardrails to avoid (do NOT do X)
@@ -132,6 +162,7 @@ per environment (local, staging, prod):
 supabase db push --file backend/db/patch_add_persona_groups.sql
 supabase db push --file backend/db/patch_add_persona_group_brief.sql
 supabase db push --file backend/db/patch_add_persona_group_constraints.sql
+supabase db push --file backend/db/patch_add_persona_group_discovery_audit.sql
 
 # Or paste each into the Supabase Studio SQL editor and run.
 ```
@@ -143,6 +174,11 @@ What they create:
 - `persona_group_messages` — chat content, with
   `channel ∈ {human, agent, system, broadcast}`
 - `persona_group_constraints` (phase 4) — shared rules/facts/voice rows
+- `persona_groups.join_domain` (phase 5) — optional email-domain rule
+  for one-click joining (open groups only)
+- `persona_group_audit_events` (phase 5) — `brief_shared` /
+  `calendar_queried` receipts; affected users see their own,
+  owner/admin sees the group-wide feed
 
 ### 2. Enable Realtime on `persona_group_messages`
 The chat view subscribes to `postgres_changes` on this table. Until
@@ -188,14 +224,27 @@ users push back on the asker-only model.
 
 ---
 
-## Future phases (scoped only as ideas)
+## Beyond phase 5 — possible next-up
 
-- **Phase 3** — group brief Google Doc (parallel to the per-user brief),
-  group calendar overlay (free/busy across members), group meeting proposals.
-- **Phase 4** — shared constraints / "group memory" applied as guards on
-  outgoing messages from any member's persona.
-- **Phase 5** — discoverable groups, domain auto-join, audit dashboards
-  ("who saw my brief, when").
+Phases 1–5 are in main. Things worth doing next if the feature gets
+traction:
 
-See the design discussion in chat for context on why we chose this order
-(small teams + per-group visibility + proactive personas).
+- **Cross-instance dispatch** — wire the existing
+  `build_group_context_claim` / `verify_group_context_claim` helpers
+  into the outbound A2A v3 envelope so personas hosted on different
+  Zynd backends can answer @-mentions in shared groups.
+- **Target-side privacy preferences** — today permissions live on the
+  ASKER ("X is trusted to see briefs"). Adding `share_my_brief` /
+  `share_my_calendar` on each member would let users opt out of being
+  read regardless of the asker's permissions.
+- **Brief redaction layers** — same brief, different views per group.
+  Useful when one person is in multiple groups and wants engineering
+  to see different details than HR.
+- **Domain auto-join: automatic** — currently surfaces as a CTA on
+  the discover page. A signup-time hook could auto-add new users
+  matching `join_domain` rules to their team's group.
+- **Activity export** — let users download their audit log as JSON or
+  CSV for a self-managed privacy record.
+- **Group-level approvals** — meetings booked through `POST /meetings`
+  could optionally require N member acknowledgments before the calendar
+  event is actually created (reuses the existing approvals indicator).

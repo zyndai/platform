@@ -5360,24 +5360,64 @@ textarea.input { resize: vertical; min-height: 88px; }
   list-style: none; margin: 0; padding: 0;
   display: flex; flex-direction: column; gap: 4px;
 }
+/* Mirrors .msg in home chat exactly — flex row, avatar sits beside
+ * the bubble, .is-mine justify-content: flex-end so the user's own
+ * messages right-align. */
 .group-msg {
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 2px 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 18px;
+  max-width: 100%;
 }
-.group-msg.is-mine { align-items: flex-end; }
-.group-msg-head {
-  display: inline-flex; align-items: center; gap: 8px;
-  margin-top: 10px;
-  font-size: 12px;
+.group-msg.is-mine { justify-content: flex-end; }
+.group-msg-avatar {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: flex-start;
+  align-self: flex-start;
+  margin-top: 4px;
 }
-.group-msg.is-mine .group-msg-head { flex-direction: row-reverse; }
-.group-msg-sender {
-  font-family: var(--font-instrument-sans), system-ui, sans-serif;
-  font-weight: 600;
+.group-msg-avatar .avatar {
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.group-msg-bubble {
+  /* Same metrics as home chat's .msg .bubble — padding, radius,
+   * font-size, border, shadow. min/max keeps prose readable on
+   * wider chat surfaces. */
+  padding: 12px 18px;
+  border-radius: 16px;
+  font-family: var(--font-geist), 'Inter', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  max-width: min(72%, 640px);
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
   color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.group-msg.is-mine .group-msg-bubble {
+  border-color: var(--border-default);
+}
+.group-msg-name {
+  font-family: var(--font-fraunces), ui-serif, serif;
+  font-style: italic;
+  font-size: 12.5px;
+  color: var(--accent);
+  margin: 0 0 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 .group-msg-tag {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-style: normal;
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -5387,13 +5427,11 @@ textarea.input { resize: vertical; min-height: 88px; }
   padding: 1px 6px;
   border-radius: 999px;
 }
-.group-msg-time { color: var(--text-muted); font-size: 11px; }
-.group-msg-bubble {
-  /* min keeps the bubble proportional to the chat column on narrow
-   * surfaces; max keeps prose readable on a wide chat panel — bubbles
-   * stop growing past ~640px even when the chat surface is 1200px. */
-  max-width: min(72%, 640px);
-  padding: 9px 13px;
+.group-msg-content {
+  white-space: pre-wrap;
+}
+.group-msg.group-msg-system {
+  justify-content: center;
 }
 .group-msg.group-msg-system .group-msg-bubble {
   background: transparent;
@@ -5401,6 +5439,7 @@ textarea.input { resize: vertical; min-height: 88px; }
   color: var(--text-muted);
   font-style: italic;
   font-size: 12.5px;
+  box-shadow: none;
 }
 
 .group-chat-roster {

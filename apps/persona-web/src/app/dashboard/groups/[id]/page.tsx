@@ -444,37 +444,61 @@ export default function GroupChatPage() {
               {messages.map((m, i) => {
                 const isMine = m.sender_user_id === user?.id;
                 const prev = i > 0 ? messages[i - 1] : null;
-                const showHeader =
-                  !prev ||
-                  prev.sender_user_id !== m.sender_user_id ||
-                  prev.sender_agent_id !== m.sender_agent_id ||
-                  prev.channel !== m.channel ||
-                  Date.parse(m.created_at) - Date.parse(prev.created_at) > 5 * 60 * 1000;
+                // Only show the sender label on the first message of a
+                // new run by that sender (or after a 5-min gap). Mirrors
+                // the home chat where the avatar+name only appear once
+                // at the top of a turn.
+                const showSender =
+                  !isMine && (
+                    !prev ||
+                    prev.sender_user_id !== m.sender_user_id ||
+                    prev.sender_agent_id !== m.sender_agent_id ||
+                    prev.channel !== m.channel ||
+                    Date.parse(m.created_at) - Date.parse(prev.created_at) > 5 * 60 * 1000
+                  );
                 const sender = members.find((mm) => mm.user_id === m.sender_user_id);
                 const senderName = m.sender_name || sender?.display_name || (m.channel === "agent" ? "Persona" : "Someone");
+                const myAvatar =
+                  (user?.user_metadata?.avatar_url as string | undefined) ||
+                  (user?.user_metadata?.picture as string | undefined);
+                const myName =
+                  (user?.user_metadata?.full_name as string | undefined) ||
+                  (user?.user_metadata?.name as string | undefined) ||
+                  (user?.email?.split("@")[0] as string | undefined) ||
+                  "You";
                 return (
                   <li
                     key={m.id}
                     className={`group-msg group-msg-${m.channel} ${isMine ? "is-mine" : ""}`}
                   >
-                    {showHeader && (
-                      <div className="group-msg-head">
+                    {!isMine && (
+                      <span className="group-msg-avatar" aria-hidden>
                         <Avatar
-                          size="xs"
+                          size="sm"
                           name={senderName}
                           src={sender?.avatar_url || undefined}
                           variant="accent"
                         />
-                        <span className="group-msg-sender">{senderName}</span>
-                        {m.channel === "agent" && (
-                          <span className="group-msg-tag">via persona</span>
-                        )}
-                        <span className="group-msg-time">{formatTime(m.created_at)}</span>
-                      </div>
+                      </span>
                     )}
-                    <div className={`msg-bubble-${isMine ? "user" : "ai"} group-msg-bubble`}>
-                      {renderWithMentions(m.content, members, user?.id)}
+                    <div className="group-msg-bubble">
+                      {showSender && (
+                        <div className="group-msg-name">
+                          {senderName}
+                          {m.channel === "agent" && (
+                            <span className="group-msg-tag">via persona</span>
+                          )}
+                        </div>
+                      )}
+                      <div className="group-msg-content">
+                        {renderWithMentions(m.content, members, user?.id)}
+                      </div>
                     </div>
+                    {isMine && (
+                      <span className="group-msg-avatar" aria-hidden>
+                        <Avatar size="sm" name={myName} src={myAvatar} />
+                      </span>
+                    )}
                   </li>
                 );
               })}
@@ -581,22 +605,6 @@ export default function GroupChatPage() {
       </div>
     </div>
   );
-}
-
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    const now = new Date();
-    const sameDay =
-      d.getFullYear() === now.getFullYear() &&
-      d.getMonth() === now.getMonth() &&
-      d.getDate() === now.getDate();
-    const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    if (sameDay) return time;
-    return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} · ${time}`;
-  } catch {
-    return "";
-  }
 }
 
 // Server-side regex equivalent for highlighting. Same shape as

@@ -3,6 +3,7 @@ Brief Todos API — surface the items extracted by brief_watcher to the
 dashboard's Todos tab.
 
   GET    /api/todos/         — list this user's todos (open first, then done)
+  POST   /api/todos/extract  — force a brief re-read + LLM extraction now
   PATCH  /api/todos/{id}     — toggle done / update title
   DELETE /api/todos/{id}     — remove permanently
 
@@ -11,6 +12,7 @@ user_id explicitly so a token mix-up couldn't ever leak another user's
 list.
 """
 
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -55,6 +57,81 @@ async def list_todos(user: dict = Depends(get_current_user)):
             return {"todos": []}
         raise
     return {"todos": rows.data or []}
+
+
+@router.post("/extract")
+async def extract_todos_now(user: dict = Depends(get_current_user)):
+    """
+    Force an LLM extraction of todos from the user's current brief.
+
+    The background brief_watcher only acts when the doc's revision id
+    changes — useful for normal edit-driven flow, but it means a user
+    whose doc is unchanged never sees the extractor kick in on the
+    current LLM-based code path. This endpoint runs the extractor
+    inline so the Todos page's Refresh button always produces a
+    meaningful result.
+    """
+    user_id = user["id"]
+
+    def _run() -> dict:
+        # Lazy imports — keep request-path imports cheap when the user
+        # never hits this endpoint.
+        from agent.persona_manager import get_persona_status
+        from mcp.tools.google.docs import read_document
+        from agent.brief_watcher import (
+            extract_todo_titles,
+            extract_todo_titles_llm,
+        )
+
+        persona = get_persona_status(user_id)
+        if not persona.get("deployed"):
+            raise HTTPException(status_code=404, detail="No active persona.")
+        doc_id = persona.get("brief_doc_id")
+        if not doc_id:
+            raise HTTPException(
+                status_code=400,
+                detail="No brief doc yet — create one first.",
+            )
+
+        fetched = read_document(user_id=user_id, document_id=doc_id)
+        if not fetched.get("success"):
+            raise HTTPException(
+                status_code=502,
+                detail=fetched.get("error") or "Couldn't read the brief.",
+            )
+
+        content = fetched.get("content") or ""
+        titles = extract_todo_titles_llm(content)
+        extractor = "llm"
+        if titles is None:
+            titles = extract_todo_titles(content)
+            extractor = "regex_fallback"
+
+        # Dedupe against existing OPEN rows the same way the watcher does
+        # so this is idempotent — repeat clicks don't multiply todos.
+        sb = _supabase()
+        existing = (
+            sb.table("brief_todos")
+            .select("title")
+            .eq("user_id", user_id)
+            .eq("done", False)
+            .execute()
+        )
+        have = {(r.get("title") or "").strip() for r in (existing.data or [])}
+        new_titles = [t for t in titles if t and t not in have]
+        if new_titles:
+            sb.table("brief_todos").insert(
+                [{"user_id": user_id, "title": t} for t in new_titles]
+            ).execute()
+
+        return {
+            "status": "ok",
+            "extractor": extractor,
+            "extracted_total": len(titles),
+            "inserted_new": len(new_titles),
+        }
+
+    return await asyncio.to_thread(_run)
 
 
 @router.patch("/{todo_id}")

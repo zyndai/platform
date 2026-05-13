@@ -28,6 +28,7 @@ The Todos tab UI lets the user toggle / delete manually.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from typing import Iterable
@@ -58,7 +59,12 @@ _TODO_PATTERNS: list[re.Pattern[str]] = [
 
 
 def extract_todo_titles(content: str) -> list[str]:
-    """Return ordered, de-duplicated todo titles found in `content`."""
+    """Return ordered, de-duplicated todo titles found in `content`.
+
+    Regex-only extractor — catches explicit `- [ ] X` / `[ ] X` / `TODO: X`
+    lines. Used as the fallback when the LLM extractor fails. The
+    primary extractor is `extract_todo_titles_llm` below.
+    """
     out: list[str] = []
     seen: set[str] = set()
     for pat in _TODO_PATTERNS:
@@ -71,6 +77,101 @@ def extract_todo_titles(content: str) -> list[str]:
             seen.add(title)
             out.append(title)
     return out
+
+
+# Cap how much of the brief we send to the LLM. 6000 chars ≈ ~1500 tokens of
+# content, plenty for almost any hand-written brief and bounded enough that
+# a runaway doc can't blow up the prompt cost.
+_LLM_BRIEF_CHAR_CAP = 6000
+
+_LLM_TODO_SYSTEM = (
+    "You extract actionable todo items from a user's personal 'brief' document. "
+    "The brief is what THE USER wrote about themselves — what they're working "
+    "on, who they want to meet, what they want to avoid. You return ONLY items "
+    "that are clearly things they intend to do, follow up on, or want help "
+    "with. Skip declarative statements about who they are, what they like, "
+    "and background context. Skip opinions and meta-commentary. Skip section "
+    "headings. Be conservative — it's better to return fewer high-quality "
+    "todos than many low-quality ones. NEVER invent items the brief doesn't "
+    "actually imply."
+)
+
+
+def _llm_todo_prompt(content: str) -> str:
+    """User-message prompt for the extractor LLM call."""
+    return (
+        "Extract concrete todo items from this brief. Respond ONLY with a JSON "
+        "object of the shape {\"todos\": [\"title 1\", \"title 2\", ...]}. Each "
+        "title is a short imperative phrase, 3–12 words, like \"Email Sarah "
+        "about the demo\" or \"Follow up with investor X\". If the brief contains "
+        "no actionable items, respond with {\"todos\": []}. No prose, no "
+        "explanation, no code fences — just the JSON.\n\nBrief:\n---\n"
+        + content
+        + "\n---"
+    )
+
+
+def extract_todo_titles_llm(content: str) -> list[str] | None:
+    """Run the configured LLM to extract todos from the brief.
+
+    Returns the title list on success, or None on any failure (network,
+    timeout, malformed JSON, empty/garbage response). Callers should fall
+    back to ``extract_todo_titles`` (regex) on None — that way the watcher
+    keeps working when the LLM is unavailable.
+    """
+    snippet = (content or "").strip()
+    if not snippet:
+        return []
+    if len(snippet) > _LLM_BRIEF_CHAR_CAP:
+        snippet = snippet[:_LLM_BRIEF_CHAR_CAP]
+
+    try:
+        # Lazy import — orchestrator pulls in the LLM SDKs which are slow to
+        # initialize, and the watcher's import path runs at app startup.
+        from agent.orchestrator import _get_provider, strip_think_tags
+        provider = _get_provider()
+        messages = [
+            {"role": "system", "content": _LLM_TODO_SYSTEM},
+            {"role": "user", "content": _llm_todo_prompt(snippet)},
+        ]
+        # No tools — pure text reply. Returns (text, tool_calls) where the
+        # second is None when tools is empty.
+        text, _ = provider.chat_with_tools(messages, tools=[])
+        text = strip_think_tags(text or "").strip()
+        if not text:
+            return None
+
+        # Models sometimes still wrap in ``` code fences or prepend chatter
+        # despite the instruction. Pull out the first JSON object we see.
+        import re as _re
+        match = _re.search(r"\{.*\}", text, _re.DOTALL)
+        if not match:
+            return None
+        parsed = json.loads(match.group(0))
+        raw_titles = parsed.get("todos")
+        if not isinstance(raw_titles, list):
+            return None
+
+        out: list[str] = []
+        seen: set[str] = set()
+        for t in raw_titles:
+            if not isinstance(t, str):
+                continue
+            title = t.strip()
+            if not title or title in seen:
+                continue
+            # Sanity cap to keep DB rows reasonable in length.
+            if len(title) > 200:
+                title = title[:200].rstrip()
+            seen.add(title)
+            out.append(title)
+        return out
+    except json.JSONDecodeError as e:
+        logger.warning(f"[brief_watcher] LLM returned non-JSON: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"[brief_watcher] LLM extraction failed: {e}")
+        return None
 
 
 class BriefWatcher:
@@ -167,7 +268,19 @@ class BriefWatcher:
             )
             return
 
-        titles = extract_todo_titles(fetched.get("content") or "")
+        # LLM-first extraction. The LLM catches implicit todos the regex
+        # would miss ("I need to follow up with Sarah" → "Follow up with
+        # Sarah"). If the LLM call fails or returns malformed output we
+        # fall back to the regex extractor so a transient LLM error
+        # doesn't silently drop a polling cycle.
+        content = fetched.get("content") or ""
+        llm_titles = extract_todo_titles_llm(content)
+        if llm_titles is None:
+            titles = extract_todo_titles(content)
+            extractor = "regex_fallback"
+        else:
+            titles = llm_titles
+            extractor = "llm"
         if titles:
             self._upsert_todos(sb, user_id, titles)
 
@@ -176,7 +289,7 @@ class BriefWatcher:
         }).eq("user_id", user_id).execute()
         logger.info(
             f"[brief_watcher] {user_id}: revision {last_revision} → {current_revision}, "
-            f"{len(titles)} todo titles extracted"
+            f"{len(titles)} todos via {extractor}"
         )
 
     def _upsert_todos(self, sb, user_id: str, titles: Iterable[str]):

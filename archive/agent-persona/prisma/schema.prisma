@@ -1,0 +1,642 @@
+// Zynd AI — canonical database schema.
+//
+// Prisma is the source-of-truth for tables, columns, indexes, and enums.
+// RLS policies + the supabase_realtime publication live in
+// `prisma/sql/policies.sql` and are applied as a follow-up step after
+// each migration (Prisma doesn't model either).
+//
+// Runtime code does NOT use Prisma Client — the Python backend uses
+// supabase-py and the Next.js frontend uses @supabase/supabase-js. The
+// schema here exists so a new contributor can see every table the
+// codebase touches in one place, and so future migrations are generated
+// with `prisma migrate diff` rather than hand-written SQL patches.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Pooled URL for queries. Migrations use directUrl so PgBouncer
+  // doesn't interfere with prepared-statement-heavy operations.
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+  schemas   = ["public", "auth"]
+}
+
+// ── auth.users (Supabase Auth) ───────────────────────────────────────
+// We only model the columns we reference from FKs. Supabase manages this
+// table; we never write to it. The `@@ignore` directive would block any
+// generated client from touching it, but we also reference it from FKs
+// so we keep it as a real model and trust the convention.
+model AuthUser {
+  id    String  @id @db.Uuid
+  email String?
+
+  apiTokens             ApiToken[]
+  chatMessages          ChatMessage[]
+  personaAgent          PersonaAgent?
+  agentTasksInitiated   AgentTask[]            @relation("AgentTaskInitiator")
+  agentTasksReceived    AgentTask[]            @relation("AgentTaskRecipient")
+  pendingApprovals      PendingApproval[]
+  telegramLink          TelegramLink?
+  telegramChatHistory   TelegramChatHistory[]
+  linkedinProfile       LinkedinProfile?
+  briefTodos            BriefTodo[]
+  outboundCallbacks     OutboundCallback[]
+  callbackResults       CallbackResult[]
+  ownedGroups           PersonaGroup[]         @relation("GroupOwner")
+  groupMemberships      PersonaGroupMember[]
+  invitedMemberships    PersonaGroupMember[]   @relation("GroupInviter")
+  sentGroupMessages     PersonaGroupMessage[]  @relation("GroupMessageSender")
+  authoredConstraints   PersonaGroupConstraint[]
+  affectedAuditEvents   PersonaGroupAuditEvent[] @relation("AuditAffected")
+  actorAuditEvents      PersonaGroupAuditEvent[] @relation("AuditActor")
+
+  @@map("users")
+  @@schema("auth")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ENUMS
+// Bounded text columns are modeled as Postgres enums so the DB rejects
+// bad values at write time and the schema documents the legal set.
+// ─────────────────────────────────────────────────────────────────────
+
+enum ApiProvider {
+  linkedin
+  twitter
+  google
+  notion
+
+  @@schema("public")
+}
+
+enum ChatRole {
+  user
+  assistant
+
+  @@schema("public")
+}
+
+enum DmThreadStatus {
+  pending
+  accepted
+  declined
+  blocked
+  revoked
+
+  @@schema("public")
+}
+
+enum DmMode {
+  human
+  agent
+
+  @@schema("public")
+}
+
+enum DmSenderType {
+  human
+  agent
+  system
+
+  @@schema("public")
+}
+
+enum DmChannel {
+  human
+  agent
+
+  @@schema("public")
+}
+
+enum AgentTaskType {
+  meeting
+
+  @@schema("public")
+}
+
+enum AgentTaskStatus {
+  proposed
+  countered
+  accepted
+  scheduled
+  declined
+  cancelled
+  book_failed
+
+  @@schema("public")
+}
+
+enum A2ATaskState {
+  submitted
+  working
+  input_required          @map("input-required")
+  auth_required           @map("auth-required")
+  completed
+  canceled
+  failed
+  rejected
+
+  @@schema("public")
+}
+
+enum ApprovalStatus {
+  pending
+  approved
+  declined
+  expired
+
+  @@schema("public")
+}
+
+enum CallbackStatus {
+  pending
+  received
+  expired
+  failed
+
+  @@schema("public")
+}
+
+enum GroupVisibility {
+  private
+  open
+
+  @@schema("public")
+}
+
+enum GroupMemberRole {
+  owner
+  admin
+  member
+
+  @@schema("public")
+}
+
+enum GroupMessageChannel {
+  human
+  agent
+  system
+  broadcast
+
+  @@schema("public")
+}
+
+enum GroupConstraintKind {
+  fact
+  rule
+  voice
+
+  @@schema("public")
+}
+
+enum GroupAuditKind {
+  brief_shared
+  calendar_queried
+
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 1. API TOKENS — OAuth tokens per provider per user
+// ─────────────────────────────────────────────────────────────────────
+model ApiToken {
+  id           String      @id @default(uuid()) @db.Uuid
+  userId       String      @map("user_id") @db.Uuid
+  provider     ApiProvider
+  accessToken  String      @map("access_token")
+  refreshToken String?     @map("refresh_token")
+  expiresAt    DateTime?   @map("expires_at") @db.Timestamptz
+  scopes       String?
+  rawData      Json        @default("{}") @map("raw_data") @db.JsonB
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime    @default(now()) @map("updated_at") @db.Timestamptz
+
+  user AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@map("api_tokens")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 2. CHAT MESSAGES — orchestrator conversation persistence
+// ─────────────────────────────────────────────────────────────────────
+model ChatMessage {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  conversationId String   @map("conversation_id")
+  role           ChatRole
+  content        String
+  actions        Json     @default("[]") @db.JsonB
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, conversationId, createdAt])
+  @@map("chat_messages")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 3. PERSONA AGENTS — maps Supabase users to Zynd Network agent ids
+// HD-derived identity at `derivationIndex` off the developer keypair;
+// agent_id is what the registry returns (zns:... prefix).
+// ─────────────────────────────────────────────────────────────────────
+model PersonaAgent {
+  userId              String   @id @map("user_id") @db.Uuid
+  agentId             String   @unique @map("agent_id")
+  derivationIndex     Int      @unique @map("derivation_index")
+  publicKey           String   @map("public_key")
+  name                String
+  agentHandle         String?  @map("agent_handle")
+  description         String   @default("")
+  capabilities        Json     @default("[]") @db.JsonB
+  profile             Json     @default("{}") @db.JsonB
+  webhookUrl          String?  @map("webhook_url")
+  active              Boolean  @default(true)
+  // Phase 3 (per-user) — Google Doc the agent reads each turn.
+  briefDocId          String?  @map("brief_doc_id")
+  briefDocUrl         String?  @map("brief_doc_url")
+  briefDocRevisionId  String?  @map("brief_doc_revision_id")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  user AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("persona_agents")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 4. DM THREADS — directed connections between two agents
+// Participant ids are TEXT (not UUID FKs) because they're either Supabase
+// user UUIDs or `zns:`-prefixed agent ids.
+// ─────────────────────────────────────────────────────────────────────
+model DmThread {
+  id             String         @id @default(uuid()) @db.Uuid
+  initiatorId    String         @map("initiator_id")
+  receiverId     String         @map("receiver_id")
+  initiatorName  String         @default("") @map("initiator_name")
+  receiverName   String         @default("") @map("receiver_name")
+  status         DmThreadStatus @default(pending)
+  // Conversation phase, independent of `status`. Read by the frontend
+  // to render the "Agents talking" / "Needs you" pill.
+  lifecycle      String         @default("pending")
+  initiatorMode  DmMode         @default(agent) @map("initiator_mode")
+  receiverMode   DmMode         @default(agent) @map("receiver_mode")
+  // Per-connection capability gates. Defaults are conservative —
+  // only meeting requests are on; the user opts into the rest.
+  permissions    Json           @default("{\"can_request_meetings\": true, \"can_query_availability\": false, \"can_view_full_profile\": false, \"can_post_on_my_behalf\": false}") @db.JsonB
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime       @default(now()) @map("updated_at") @db.Timestamptz
+
+  messages    DmMessage[]
+  agentTasks  AgentTask[]
+  a2aTasks    A2aTask[]
+  approvals   PendingApproval[]
+
+  @@unique([initiatorId, receiverId])
+  @@index([lifecycle])
+  @@map("dm_threads")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 5. DM MESSAGES — chat + agent-channel messages
+// ─────────────────────────────────────────────────────────────────────
+model DmMessage {
+  id         String       @id @default(uuid()) @db.Uuid
+  threadId   String       @map("thread_id") @db.Uuid
+  senderId   String       @map("sender_id")
+  senderType DmSenderType @default(human) @map("sender_type")
+  channel    DmChannel    @default(human)
+  content    String
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  thread DmThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
+  @@map("dm_messages")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 6. AGENT TASKS — structured meeting tickets
+// ─────────────────────────────────────────────────────────────────────
+model AgentTask {
+  id                  String          @id @default(uuid()) @db.Uuid
+  threadId            String          @map("thread_id") @db.Uuid
+  type                AgentTaskType   @default(meeting)
+  status              AgentTaskStatus @default(proposed)
+  initiatorUserId     String          @map("initiator_user_id") @db.Uuid
+  recipientUserId     String          @map("recipient_user_id") @db.Uuid
+  initiatorAgentId    String          @map("initiator_agent_id")
+  recipientAgentId    String          @map("recipient_agent_id")
+  payload             Json            @default("{}") @db.JsonB
+  history             Json            @default("[]") @db.JsonB
+  calendarEventIds    Json            @default("{}") @map("calendar_event_ids") @db.JsonB
+  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime        @default(now()) @map("updated_at") @db.Timestamptz
+
+  thread       DmThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  initiator    AuthUser @relation("AgentTaskInitiator", fields: [initiatorUserId], references: [id], onDelete: Cascade)
+  recipient    AuthUser @relation("AgentTaskRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+
+  @@index([threadId])
+  @@index([initiatorUserId])
+  @@index([recipientUserId])
+  @@index([status])
+  @@map("agent_tasks")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 7. A2A TASKS — A2A v0.3 Task FSM persistence. contextId == dm_threads.id
+// ─────────────────────────────────────────────────────────────────────
+model A2aTask {
+  taskId              String       @id @map("task_id") @db.Uuid
+  contextId           String       @map("context_id") @db.Uuid
+  state               A2ATaskState @default(submitted)
+  permissionSnapshot  Json         @default("{}") @map("permission_snapshot") @db.JsonB
+  history             Json         @default("[]") @db.JsonB
+  artifacts           Json         @default("[]") @db.JsonB
+  pushUrl             String?      @map("push_url")
+  pushToken           String?      @map("push_token")
+  lastMessageId       String?      @map("last_message_id")
+  idleTtlMs           BigInt       @default(3600000) @map("idle_ttl_ms")
+  idleUntil           DateTime?    @map("idle_until") @db.Timestamptz
+  terminalAt          DateTime?    @map("terminal_at") @db.Timestamptz
+  failureReason       String?      @map("failure_reason")
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime     @default(now()) @map("updated_at") @db.Timestamptz
+
+  context DmThread @relation(fields: [contextId], references: [id], onDelete: Cascade)
+
+  @@index([contextId, updatedAt])
+  // The original schema declares a partial index on (state, idleUntil)
+  // restricted to input-required / auth-required. Prisma can't express
+  // the WHERE clause; it lives in policies.sql alongside RLS.
+  @@map("a2a_tasks")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 8. PENDING APPROVALS — external-mode tool-call gate
+// ─────────────────────────────────────────────────────────────────────
+model PendingApproval {
+  id         String         @id @default(uuid()) @db.Uuid
+  userId     String         @map("user_id") @db.Uuid
+  threadId   String?        @map("thread_id") @db.Uuid
+  toolName   String         @map("tool_name")
+  toolArgs   Json           @default("{}") @map("tool_args") @db.JsonB
+  summary    String?
+  status     ApprovalStatus @default(pending)
+  result     Json?
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  decidedAt  DateTime?      @map("decided_at") @db.Timestamptz
+  // Default: now() + interval '24 hours'. The lazy expiry sweep in the
+  // list endpoint flips overdue rows to 'expired' on read.
+  expiresAt  DateTime       @default(dbgenerated("(now() + interval '24 hours')")) @map("expires_at") @db.Timestamptz
+
+  user   AuthUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  thread DmThread? @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([threadId])
+  @@map("pending_approvals")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 9. TELEGRAM — link map + chat history
+// ─────────────────────────────────────────────────────────────────────
+model TelegramLink {
+  userId   String   @id @map("user_id") @db.Uuid
+  chatId   String   @unique @map("chat_id")
+  linkedAt DateTime @default(now()) @map("linked_at") @db.Timestamptz
+
+  user AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([chatId])
+  @@map("telegram_links")
+  @@schema("public")
+}
+
+model TelegramChatHistory {
+  conversationId String   @id @map("conversation_id")
+  userId         String   @map("user_id") @db.Uuid
+  messages       Json     @default("[]") @db.JsonB
+  updatedAt      DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  user AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("telegram_chat_history")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 10. LINKEDIN PROFILES — cached scrape
+// ─────────────────────────────────────────────────────────────────────
+model LinkedinProfile {
+  userId     String    @id @map("user_id") @db.Uuid
+  profileUrl String?   @map("profile_url")
+  scrapedAt  DateTime? @map("scraped_at") @db.Timestamptz
+  rawProfile Json      @default("{}") @map("raw_profile") @db.JsonB
+  rawPosts   Json      @default("[]") @map("raw_posts") @db.JsonB
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamptz
+
+  user AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([scrapedAt(sort: Desc)])
+  @@map("linkedin_profiles")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 11. BRIEF TODOS — items extracted from each persona's Brief Google Doc
+// ─────────────────────────────────────────────────────────────────────
+model BriefTodo {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  title      String
+  sourceText String?   @map("source_text")
+  done       Boolean   @default(false)
+  doneAt     DateTime? @map("done_at") @db.Timestamptz
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, done, createdAt(sort: Desc)])
+  @@map("brief_todos")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 12. OUTBOUND CALLBACKS — push-mode reply correlation
+// ─────────────────────────────────────────────────────────────────────
+model OutboundCallback {
+  id            String         @id @default(uuid()) @db.Uuid
+  userId        String         @map("user_id") @db.Uuid
+  // contextId on the wire = dm_threads.id. Soft-FK because the thread
+  // row may legitimately be missing during early bootstrap.
+  threadId      String         @map("thread_id") @db.Uuid
+  peerAgentId   String         @map("peer_agent_id")
+  peerTaskId    String?        @map("peer_task_id")
+  ourMessageId  String         @map("our_message_id")
+  originKind    String         @map("origin_kind")
+  originRef     Json           @default("{}") @map("origin_ref") @db.JsonB
+  pushToken     String         @unique @map("push_token")
+  status        CallbackStatus @default(pending)
+  expiresAt     DateTime       @default(dbgenerated("(now() + interval '24 hours')")) @map("expires_at") @db.Timestamptz
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime       @default(now()) @map("updated_at") @db.Timestamptz
+
+  user    AuthUser         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  results CallbackResult[]
+
+  @@index([userId, status, createdAt(sort: Desc)])
+  // (peerAgentId, peerTaskId) partial index lives in policies.sql.
+  @@map("outbound_callbacks")
+  @@schema("public")
+}
+
+model CallbackResult {
+  id              String   @id @default(uuid()) @db.Uuid
+  callbackId      String   @map("callback_id") @db.Uuid
+  userId          String   @map("user_id") @db.Uuid
+  threadId        String   @map("thread_id") @db.Uuid
+  peerAgentId     String   @map("peer_agent_id")
+  taskState       String   @map("task_state")
+  replyText       String?  @map("reply_text")
+  rawEvent        Json     @map("raw_event") @db.JsonB
+  deliveredToUi   Boolean  @default(false) @map("delivered_to_ui")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  callback OutboundCallback @relation(fields: [callbackId], references: [id], onDelete: Cascade)
+  user     AuthUser         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, deliveredToUi, createdAt(sort: Desc)])
+  @@index([threadId, createdAt(sort: Desc)])
+  @@map("callback_results")
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 13–17. PERSONA GROUPS (phases 1–5)
+// ─────────────────────────────────────────────────────────────────────
+model PersonaGroup {
+  id              String          @id @default(uuid()) @db.Uuid
+  slug            String          @unique
+  name            String
+  description     String?
+  avatarUrl       String?         @map("avatar_url")
+  ownerUserId     String          @map("owner_user_id") @db.Uuid
+  visibility      GroupVisibility @default(private)
+  inviteToken     String?         @unique @map("invite_token")
+  groupSeedIndex  Int             @default(0) @map("group_seed_index")
+  // Phase 3a — shared Google Doc in the OWNER's Drive.
+  briefDocId      String?         @map("brief_doc_id")
+  briefDocUrl     String?         @map("brief_doc_url")
+  // Phase 5 — optional email-domain rule (open groups only).
+  joinDomain      String?         @map("join_domain")
+  archivedAt      DateTime?       @map("archived_at") @db.Timestamptz
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime        @default(now()) @map("updated_at") @db.Timestamptz
+
+  owner        AuthUser                 @relation("GroupOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  members      PersonaGroupMember[]
+  messages     PersonaGroupMessage[]
+  constraints  PersonaGroupConstraint[]
+  auditEvents  PersonaGroupAuditEvent[]
+
+  @@index([ownerUserId])
+  // Partial index on join_domain (open + non-archived) lives in policies.sql.
+  @@map("persona_groups")
+  @@schema("public")
+}
+
+model PersonaGroupMember {
+  id           String          @id @default(uuid()) @db.Uuid
+  groupId      String          @map("group_id") @db.Uuid
+  userId       String          @map("user_id") @db.Uuid
+  agentId      String?         @map("agent_id")
+  role         GroupMemberRole @default(member)
+  // {can_see_brief, can_query_calendar, can_post, can_invite, can_speak_for_group}
+  permissions  Json            @default("{\"can_see_brief\": false, \"can_query_calendar\": false, \"can_post\": true, \"can_invite\": false, \"can_speak_for_group\": false}") @db.JsonB
+  invitedBy    String?         @map("invited_by") @db.Uuid
+  joinedAt     DateTime        @default(now()) @map("joined_at") @db.Timestamptz
+
+  group   PersonaGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user    AuthUser     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  inviter AuthUser?    @relation("GroupInviter", fields: [invitedBy], references: [id], onDelete: SetNull)
+
+  @@unique([groupId, userId])
+  @@index([userId])
+  @@index([agentId])
+  @@map("persona_group_members")
+  @@schema("public")
+}
+
+model PersonaGroupMessage {
+  id              String              @id @default(uuid()) @db.Uuid
+  groupId         String              @map("group_id") @db.Uuid
+  senderUserId    String?             @map("sender_user_id") @db.Uuid
+  senderAgentId   String?             @map("sender_agent_id")
+  senderName      String?             @map("sender_name")
+  channel         GroupMessageChannel @default(human)
+  content         String
+  replyTo         String?             @map("reply_to") @db.Uuid
+  metadata        Json?               @db.JsonB
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz
+
+  group         PersonaGroup          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  sender        AuthUser?             @relation("GroupMessageSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+  inReplyTo     PersonaGroupMessage?  @relation("GroupMessageThread", fields: [replyTo], references: [id], onDelete: SetNull)
+  replies       PersonaGroupMessage[] @relation("GroupMessageThread")
+
+  @@index([groupId, createdAt(sort: Desc)])
+  @@map("persona_group_messages")
+  @@schema("public")
+}
+
+model PersonaGroupConstraint {
+  id              String              @id @default(uuid()) @db.Uuid
+  groupId         String              @map("group_id") @db.Uuid
+  kind            GroupConstraintKind
+  text            String
+  createdByUserId String?             @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  archivedAt      DateTime?           @map("archived_at") @db.Timestamptz
+
+  group     PersonaGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdBy AuthUser?    @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  // Composite index lives in policies.sql (NULLS FIRST ordering on archived_at).
+  @@map("persona_group_constraints")
+  @@schema("public")
+}
+
+model PersonaGroupAuditEvent {
+  id              String         @id @default(uuid()) @db.Uuid
+  groupId         String         @map("group_id") @db.Uuid
+  affectedUserId  String         @map("affected_user_id") @db.Uuid
+  actorUserId     String?        @map("actor_user_id") @db.Uuid
+  kind            GroupAuditKind
+  metadata        Json?          @db.JsonB
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  group    PersonaGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  affected AuthUser     @relation("AuditAffected", fields: [affectedUserId], references: [id], onDelete: Cascade)
+  actor    AuthUser?    @relation("AuditActor",    fields: [actorUserId],    references: [id], onDelete: SetNull)
+
+  @@index([affectedUserId, createdAt(sort: Desc)])
+  @@index([groupId, createdAt(sort: Desc)])
+  @@map("persona_group_audit_events")
+  @@schema("public")
+}

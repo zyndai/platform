@@ -153,32 +153,34 @@ Persona Groups is production-ready, and the scope of each shipped phase.
 
 These are operational items that the code can't do for itself.
 
-### 1. Apply the Supabase migration
-The SQL patch isn't auto-run — `/supabase/` is gitignored. Apply once
-per environment (local, staging, prod):
+### 1. Apply the schema via Prisma
+The canonical schema is now `prisma/schema.prisma` — the `backend/db/*.sql`
+patches are historical and shouldn't be applied directly on a Prisma-managed
+project (they'd duplicate what Prisma generates). See `prisma/README.md`
+for the full flow.
 
 ```bash
-# Local Supabase CLI
-supabase db push --file backend/db/patch_add_persona_groups.sql
-supabase db push --file backend/db/patch_add_persona_group_brief.sql
-supabase db push --file backend/db/patch_add_persona_group_constraints.sql
-supabase db push --file backend/db/patch_add_persona_group_discovery_audit.sql
+cd webapp
+npm install                                      # picks up prisma devDep
+# Edit webapp/.env with DATABASE_URL + DIRECT_URL (see prisma/.env.example)
 
-# Or paste each into the Supabase Studio SQL editor and run.
+npm run prisma:validate                          # sanity-check the schema
+npm run prisma:migrate:deploy                    # tables + indexes + enums
+npm run prisma:policies                          # RLS + realtime publication
 ```
 
-What they create:
-- `persona_groups` — group rows with slug, owner, visibility, invite_token,
-  and (phase 3a) `brief_doc_id` / `brief_doc_url`
-- `persona_group_members` — join table with role + permissions JSONB
-- `persona_group_messages` — chat content, with
-  `channel ∈ {human, agent, system, broadcast}`
-- `persona_group_constraints` (phase 4) — shared rules/facts/voice rows
-- `persona_groups.join_domain` (phase 5) — optional email-domain rule
-  for one-click joining (open groups only)
-- `persona_group_audit_events` (phase 5) — `brief_shared` /
-  `calendar_queried` receipts; affected users see their own,
-  owner/admin sees the group-wide feed
+If the existing DB already has these tables (from the legacy .sql patches),
+adopt under Prisma without re-creating — see `prisma/README.md` →
+"Adopting on an existing database".
+
+What it creates (all 19 public tables):
+- Core: `api_tokens`, `chat_messages`, `persona_agents`, `dm_threads`,
+  `dm_messages`, `agent_tasks`, `a2a_tasks`, `pending_approvals`,
+  `telegram_links`, `telegram_chat_history`, `linkedin_profiles`,
+  `brief_todos`, `outbound_callbacks`, `callback_results`
+- Groups (phases 1–5): `persona_groups`, `persona_group_members`,
+  `persona_group_messages`, `persona_group_constraints`,
+  `persona_group_audit_events`
 
 ### 2. Enable Realtime on `persona_group_messages`
 The chat view subscribes to `postgres_changes` on this table. Until

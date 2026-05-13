@@ -5260,12 +5260,65 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 .group-settings-btn:hover { background: var(--surface-raised); color: var(--ink); }
 
+/* Header kebab menu (Settings · Copy invite · Archive) */
+.group-header-menu-wrap { position: relative; display: inline-flex; }
+.group-header-menu {
+  list-style: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+  margin: 0;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  box-shadow: 0 10px 32px rgba(15, 23, 42, 0.12);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  animation: thinking-reveal 140ms var(--ease-out);
+}
+.group-header-menu-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  text-decoration: none;
+  font-family: var(--font-geist), system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background var(--t-micro), color var(--t-micro);
+}
+.group-header-menu-item:hover { background: var(--surface-raised); }
+.group-header-menu-item:disabled { opacity: 0.6; cursor: not-allowed; }
+.group-header-menu-item svg { color: var(--text-secondary); flex-shrink: 0; }
+.group-header-menu-item.is-danger { color: var(--status-error-fg, #dc2626); }
+.group-header-menu-item.is-danger svg { color: var(--status-error-fg, #dc2626); }
+.group-header-menu-item.is-danger:hover {
+  background: var(--status-error-bg, rgba(220, 38, 38, 0.08));
+}
+.group-header-menu-divider {
+  list-style: none;
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 4px 6px;
+}
+
 .group-chat-body {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 240px;
+  /* 300px rail fits People · Brief · Schedule · Memory tabs without the
+   * Memory label getting clipped at the standard 12.5px font. */
+  grid-template-columns: minmax(0, 1fr) 300px;
   gap: 16px;
   min-height: 0;
+  align-items: stretch;
 }
 .group-chat-messages {
   background: var(--surface);
@@ -5273,28 +5326,31 @@ textarea.input { resize: vertical; min-height: 88px; }
   border-radius: 14px;
   padding: 16px;
   overflow-y: auto;
-  min-height: 360px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .group-chat-empty {
   display: flex; flex-direction: column; align-items: center;
   justify-content: center;
-  height: 100%;
+  flex: 1;
   text-align: center;
-  padding: 32px;
+  padding: 24px;
   color: var(--text-secondary);
 }
 .group-chat-empty-title {
   font-family: var(--font-fraunces), ui-serif, serif;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 500;
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   color: var(--ink);
 }
 .group-chat-empty-sub {
   margin: 0;
-  font-size: 13px;
-  max-width: 360px;
+  font-size: 12.5px;
+  max-width: 320px;
   line-height: 1.55;
+  color: var(--text-muted);
 }
 
 .group-msgs {
@@ -5347,8 +5403,12 @@ textarea.input { resize: vertical; min-height: 88px; }
   border-radius: 14px;
   padding: 14px;
   overflow-y: auto;
-  height: fit-content;
-  max-height: calc(100vh - 220px);
+  /* Stretch with the chat surface beside it so the panes share a
+   * baseline — previously the roster was `height: fit-content` and
+   * floated as a short card next to a tall chat box. */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .group-roster-title {
   margin: 0 0 10px;
@@ -5642,29 +5702,35 @@ textarea.input { resize: vertical; min-height: 88px; }
   color: var(--accent, #6366f1);
 }
 
-/* ── Group chat right rail tabs (People | Brief) ────────────────── */
+/* ── Group chat right rail tabs (People · Brief · Schedule · Memory) */
 .group-rail-tabs {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   margin-bottom: 12px;
   padding: 3px;
   background: var(--surface-raised);
   border-radius: 10px;
+  flex-shrink: 0;
 }
 .group-rail-tab {
   flex: 1;
+  min-width: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 4px;
+  /* Lower horizontal padding so 4 labels share the rail width without
+   * overflow at the 300px rail. */
+  padding: 6px 4px;
   border-radius: 7px;
   border: none;
   background: transparent;
   font-family: var(--font-geist), system-ui, sans-serif;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;
   transition: background var(--t-micro), color var(--t-micro);
+  white-space: nowrap;
+  letter-spacing: -0.1px;
 }
 .group-rail-tab:hover { color: var(--ink); }
 .group-rail-tab.is-active {
@@ -5674,9 +5740,17 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 .group-rail-tab-count {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--text-muted);
   font-weight: 500;
+}
+.group-rail-tab.is-active .group-rail-tab-count { color: var(--accent, #6366f1); }
+/* When the rail collapses below ~280px (mobile / narrow), drop labels
+ * to icons-only would be ideal — but for MVP just allow flex to shrink
+ * and let text truncate gracefully. */
+@media (max-width: 1100px) {
+  .group-chat-body { grid-template-columns: minmax(0, 1fr) 260px; }
+  .group-rail-tab { font-size: 11.5px; padding: 6px 2px; }
 }
 .group-rail-cta {
   margin-top: 12px;

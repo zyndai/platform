@@ -2,11 +2,22 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { ArrowLeft, Settings as SettingsIcon, Send, Users, Lock, Globe2 } from "lucide-react";
+import { useParams, useRouter } from "next/navigation";
+import {
+  ArrowLeft,
+  Settings as SettingsIcon,
+  Send,
+  Users,
+  Lock,
+  Globe2,
+  MoreHorizontal,
+  Copy,
+  Check,
+  Trash2,
+} from "lucide-react";
 import { Avatar, Button } from "@/components/ui";
 import { useDashboard } from "@/contexts/DashboardContext";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiDelete, apiGet, apiPost } from "@/lib/api";
 import { getSupabase } from "@/lib/supabase";
 
 interface Group {
@@ -18,6 +29,7 @@ interface Group {
   visibility: "private" | "open";
   owner_user_id: string;
   archived_at: string | null;
+  invite_token: string | null;
 }
 
 interface Member {
@@ -46,6 +58,7 @@ export default function GroupChatPage() {
   const params = useParams<{ id: string }>();
   const groupId = params?.id;
   const { user } = useDashboard();
+  const router = useRouter();
 
   const [group, setGroup] = useState<Group | null>(null);
   const [memberCount, setMemberCount] = useState(0);
@@ -82,6 +95,7 @@ export default function GroupChatPage() {
   );
   const canPost = (myMembership?.permissions?.can_post ?? true) !== false;
   const isManager = myMembership?.role === "owner" || myMembership?.role === "admin";
+  const isOwner = myMembership?.role === "owner";
 
   // ── Mention helpers ─────────────────────────────────────────────
   // Filtered roster suggestions for the current `@…` query, ranked by:
@@ -341,10 +355,22 @@ export default function GroupChatPage() {
           </div>
         </div>
         {isManager && (
-          <Link href={`/dashboard/groups/${groupId}/settings`} className="group-settings-btn" aria-label="Group settings">
+          <Link
+            href={`/dashboard/groups/${groupId}/settings`}
+            className="group-settings-btn"
+            aria-label="Group settings"
+            title="Settings"
+          >
             <SettingsIcon size={16} strokeWidth={1.7} />
           </Link>
         )}
+        <HeaderMenu
+          group={group}
+          groupId={groupId || ""}
+          isOwner={isOwner}
+          isManager={isManager}
+          onArchived={() => router.push("/dashboard/groups")}
+        />
       </header>
 
       <div className="group-chat-body">
@@ -552,6 +578,147 @@ function renderWithMentions(
     nodes.push(<span key={key++}>{content.slice(cursor)}</span>);
   }
   return nodes.length ? nodes : [<span key={0}>{content}</span>];
+}
+
+// Header kebab menu — Settings, Copy invite link, Archive (owner only).
+// Surfaces destructive actions where users actually look for them
+// instead of two clicks deep in the settings page Danger zone.
+function HeaderMenu({
+  group,
+  groupId,
+  isOwner,
+  isManager,
+  onArchived,
+}: {
+  group: Group;
+  groupId: string;
+  isOwner: boolean;
+  isManager: boolean;
+  onArchived: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const inviteUrl =
+    group.invite_token && typeof window !== "undefined"
+      ? `${window.location.origin}/g/${group.slug}/${group.invite_token}`
+      : null;
+
+  const handleCopyInvite = useCallback(async () => {
+    if (!inviteUrl) return;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* clipboard blocked; menu shows the unsuccessful state silently */
+    }
+  }, [inviteUrl]);
+
+  const handleArchive = useCallback(async () => {
+    if (!groupId) return;
+    if (
+      !window.confirm(
+        `Archive “${group.name}”? Members can no longer see it. Messages are kept but no one can post. There's no undo from the UI.`,
+      )
+    ) {
+      return;
+    }
+    setArchiving(true);
+    try {
+      await apiDelete(`/api/groups/${groupId}`);
+      onArchived();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Couldn't archive the group.");
+    } finally {
+      setArchiving(false);
+    }
+  }, [groupId, group.name, onArchived]);
+
+  return (
+    <div className="group-header-menu-wrap" ref={wrapRef}>
+      <button
+        type="button"
+        className="group-settings-btn"
+        aria-label="More group actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="More actions"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <MoreHorizontal size={16} strokeWidth={1.7} />
+      </button>
+      {open && (
+        <ul className="group-header-menu" role="menu">
+          {isManager && (
+            <li role="none">
+              <Link
+                href={`/dashboard/groups/${groupId}/settings`}
+                className="group-header-menu-item"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+              >
+                <SettingsIcon size={14} strokeWidth={1.7} />
+                Group settings
+              </Link>
+            </li>
+          )}
+          {inviteUrl && (
+            <li role="none">
+              <button
+                type="button"
+                className="group-header-menu-item"
+                role="menuitem"
+                onClick={() => void handleCopyInvite()}
+              >
+                {copied ? (
+                  <Check size={14} strokeWidth={1.9} />
+                ) : (
+                  <Copy size={14} strokeWidth={1.7} />
+                )}
+                {copied ? "Link copied" : "Copy invite link"}
+              </button>
+            </li>
+          )}
+          {isOwner && (
+            <>
+              <li className="group-header-menu-divider" role="separator" />
+              <li role="none">
+                <button
+                  type="button"
+                  className="group-header-menu-item is-danger"
+                  role="menuitem"
+                  onClick={() => void handleArchive()}
+                  disabled={archiving}
+                >
+                  <Trash2 size={14} strokeWidth={1.7} />
+                  {archiving ? "Archiving…" : "Archive group"}
+                </button>
+              </li>
+            </>
+          )}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 // Lazy-import-style brief loader. We only fetch when the user opens

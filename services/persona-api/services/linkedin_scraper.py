@@ -16,7 +16,6 @@ import logging
 from datetime import datetime, timezone
 
 import httpx
-from supabase import create_client
 
 import config
 
@@ -33,7 +32,7 @@ _ACTOR_TIMEOUT = 120.0
 
 
 def _get_supabase():
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
 
 
 async def _run_actor(actor_id: str, payload: dict) -> list:

@@ -16,6 +16,7 @@ from api.auth import router as auth_router
 from api.oauth_routes import router as oauth_router
 from api.chat import router as chat_router
 from api.connections import router as connections_router
+from api.people import router as people_router
 from api.persona import router as persona_router
 from agent.a2a_router import router as a2a_router
 from api.meetings import router as meetings_router
@@ -103,6 +104,7 @@ app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
 app.include_router(oauth_router, prefix="/api/oauth", tags=["OAuth"])
 app.include_router(chat_router, prefix="/api/chat", tags=["Chat"])
 app.include_router(connections_router, prefix="/api/connections", tags=["Connections"])
+app.include_router(people_router, prefix="/api/people", tags=["People"])
 app.include_router(persona_router, prefix="/api/persona", tags=["Persona"])
 # A2A v3 transport. Mounted at the same prefix as the persona router
 # so the per-persona base URL `/api/persona/{user_id}` is the discoverable

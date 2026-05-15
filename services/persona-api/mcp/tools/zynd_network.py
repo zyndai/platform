@@ -294,8 +294,7 @@ def _agent_url_from_card(card: dict | None) -> str:
 
 
 def _get_supabase():
-    from supabase import create_client
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
 
 
 # ── Discovery Tools ──────────────────────────────────────────────────
@@ -603,7 +602,7 @@ def request_connection(user_id: str, target_agent_id: str, target_name: str = "N
 
     if result.data:
         # Broadcast notification
-        sb_anon = __import__("supabase").create_client(config.SUPABASE_URL, config.SUPABASE_ANON_KEY)
+        sb_anon = config.get_supabase_anon()
         try:
             sb_anon.channel("system_pings").send({
                 "type": "broadcast",

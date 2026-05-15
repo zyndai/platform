@@ -36,8 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 def _sb():
-    from supabase import create_client
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
 
 
 # ── Handshake link map ────────────────────────────────────────────────

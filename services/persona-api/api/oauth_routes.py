@@ -366,8 +366,7 @@ async def notion_callback(code: str, state: str):
 
 async def _validate_token(token: str) -> dict:
     """Validate a Supabase JWT and return user info."""
-    from supabase import create_client
-    sb = create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    sb = config.get_supabase()
     try:
         result = sb.auth.get_user(token)
         if not result or not result.user:

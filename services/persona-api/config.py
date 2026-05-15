@@ -109,3 +109,25 @@ APIFY_API_TOKEN: str = os.getenv("APIFY_API_TOKEN", "")
 # ── App ──────────────────────────────────────────────────────────────
 APP_SECRET_KEY: str = os.getenv("APP_SECRET_KEY", "change-me-in-production")
 FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+# ── Supabase singleton ────────────────────────────────────────────────
+# One client per process — avoids rebuilding the HTTP connection pool
+# on every request (was the main source of slow API responses).
+_sb_service = None
+_sb_anon = None
+
+
+def get_supabase():
+    global _sb_service
+    if _sb_service is None:
+        from supabase import create_client
+        _sb_service = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    return _sb_service
+
+
+def get_supabase_anon():
+    global _sb_anon
+    if _sb_anon is None:
+        from supabase import create_client
+        _sb_anon = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    return _sb_anon

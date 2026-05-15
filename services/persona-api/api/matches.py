@@ -14,7 +14,6 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter
-from supabase import create_client
 
 import config
 
@@ -23,7 +22,7 @@ router = APIRouter()
 
 
 def _sb():
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
 
 
 def _interests(persona: dict) -> set[str]:

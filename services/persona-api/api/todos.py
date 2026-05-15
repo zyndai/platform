@@ -18,7 +18,6 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from postgrest.exceptions import APIError
 from pydantic import BaseModel
-from supabase import create_client
 
 import config
 from api.auth import get_current_user
@@ -27,7 +26,7 @@ router = APIRouter()
 
 
 def _supabase():
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
 
 
 def _is_missing_table(err: APIError) -> bool:

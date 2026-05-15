@@ -7,13 +7,13 @@ Requires Google Drive + Docs scope (granted via the scoped OAuth flow with
 features=docs).
 """
 
+import asyncio
 import logging
 from typing import Optional
 
 import requests as _req
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from supabase import create_client
 
 import config
 from api.auth import get_current_user
@@ -52,7 +52,7 @@ class CreateBriefRequest(BaseModel):
 
 
 def _sb():
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
 
 
 def _read_user_metadata(user_id: str) -> dict:
@@ -165,3 +165,88 @@ async def my_brief(user: dict = Depends(get_current_user)):
     if isinstance(brief, dict):
         return {"present": True, **brief}
     return {"present": False}
+
+
+@router.get("/content")
+async def get_brief_content(user: dict = Depends(get_current_user)):
+    """Read the full content of the user's brief Google Doc.
+
+    Returns the text inline so the frontend can display and edit it without
+    requiring the user to open Google Docs. Falls back to an empty content
+    field (with an error hint) if Drive is unavailable — the frontend should
+    still show the Google Docs link in that case.
+    """
+    meta = _read_user_metadata(user["id"])
+    brief = meta.get("brief_doc")
+    if not isinstance(brief, dict) or not brief.get("doc_id"):
+        raise HTTPException(status_code=404, detail="No brief doc yet.")
+
+    doc_id = brief["doc_id"]
+    doc_url = brief.get("url", "")
+
+    def _run() -> dict:
+        try:
+            from mcp.tools.google.docs import read_document
+            fetched = read_document(user_id=user["id"], document_id=doc_id)
+            if not fetched.get("success"):
+                return {
+                    "doc_id": doc_id,
+                    "url": doc_url,
+                    "content": "",
+                    "error": fetched.get("error") or "Couldn't read the brief doc.",
+                }
+            return {
+                "doc_id": doc_id,
+                "url": doc_url,
+                "content": fetched.get("content") or "",
+                "title": fetched.get("title"),
+            }
+        except Exception as e:
+            logger.error(f"[brief] get_brief_content failed for {user['id']}: {e}")
+            return {"doc_id": doc_id, "url": doc_url, "content": "", "error": str(e)}
+
+    return await asyncio.to_thread(_run)
+
+
+class SaveBriefContentRequest(BaseModel):
+    content: str = ""
+
+
+@router.patch("/content")
+async def save_brief_content(req: SaveBriefContentRequest, user: dict = Depends(get_current_user)):
+    """Replace the full text body of the user's brief Google Doc in-app.
+
+    Requires the user's Google credentials to have Drive/Docs write scope.
+    """
+    meta = _read_user_metadata(user["id"])
+    brief = meta.get("brief_doc")
+    if not isinstance(brief, dict) or not brief.get("doc_id"):
+        raise HTTPException(status_code=404, detail="No brief doc yet.")
+
+    doc_id = brief["doc_id"]
+
+    def _run() -> dict:
+        try:
+            from mcp.tools.google.docs import replace_document_body
+            result = replace_document_body(
+                user_id=user["id"],
+                document_id=doc_id,
+                text=req.content,
+            )
+            if not result.get("success"):
+                raise HTTPException(
+                    status_code=502,
+                    detail=result.get("error") or "Couldn't save the brief.",
+                )
+            return {"success": True, "doc_id": doc_id}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"[brief] save_brief_content failed for {user['id']}: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    return await asyncio.to_thread(_run)
+
+
+class SaveBriefContentRequest(BaseModel):
+    content: str = ""

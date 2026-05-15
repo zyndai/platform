@@ -21,16 +21,9 @@ import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from supabase import create_client, Client
-
 import config
 
 router = APIRouter()
-
-
-def _get_supabase() -> Client:
-    """Return a Supabase admin client (service-role key)."""
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
 
 
 # ── JWT validation cache ────────────────────────────────────────────────
@@ -88,7 +81,7 @@ async def get_current_user(request: Request) -> dict:
     if cached is not None:
         return cached
 
-    sb = _get_supabase()
+    sb = config.get_supabase()
     try:
         # Offload the synchronous SDK call so the event loop stays free
         # for other requests while this one waits on Supabase Auth.

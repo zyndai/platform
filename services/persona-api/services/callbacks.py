@@ -42,10 +42,7 @@ _TABLE_RESULTS = "callback_results"
 
 
 def _supabase():
-    """Lazy supabase client. Service-role for RLS bypass."""
-    from supabase import create_client
-
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
 
 
 def _mint_token() -> str:

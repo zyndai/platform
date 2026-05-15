@@ -216,8 +216,7 @@ class BriefWatcher:
     # ── Sync helpers (run in a thread to keep the event loop free) ──
 
     def _supabase(self):
-        from supabase import create_client
-        return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+        return config.get_supabase()
 
     def _poll_all(self):
         """One full sweep across every persona that has a brief doc."""

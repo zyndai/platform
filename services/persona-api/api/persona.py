@@ -92,8 +92,7 @@ DEFAULT_CONNECTION_PERMISSIONS: dict[str, bool] = {
 # agent_id) so the match is unambiguous.
 
 def _supabase():
-    from supabase import create_client
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
 
 
 def _find_thread_for(sb, user_id: str, partner_id: str) -> dict | None:

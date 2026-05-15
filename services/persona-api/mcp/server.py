@@ -50,6 +50,7 @@ from mcp.tools.zynd_network import (
 # ── Import Scheduling Tools ──
 from mcp.tools.scheduling import (
     propose_meeting,
+    propose_group_meeting,
     respond_to_meeting,
     list_pending_meetings,
 )
@@ -126,6 +127,7 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
 
     # ── Scheduling / meeting tools ─────────────────────────────────
     mcp.register(propose_meeting, name="propose_meeting", description="Formalise a negotiated meeting as a ticket on a DM thread. Only call AFTER negotiating a time and getting your principal's explicit confirmation.")
+    mcp.register(propose_group_meeting, name="propose_group_meeting", description="Propose a meeting in a group room. The principal sees an approval card; on accept, the calendar event is created with every other group member as an attendee and a system message is posted to the group chat.")
     mcp.register(respond_to_meeting, name="respond_to_meeting", description="Accept, counter, decline, or cancel an existing meeting ticket.")
     mcp.register(list_pending_meetings, name="list_pending_meetings", description="List the principal's open meeting tickets, split by who needs to act next.")
 

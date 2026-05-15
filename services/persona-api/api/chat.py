@@ -14,7 +14,6 @@ import logging
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from supabase import create_client
 
 import config
 from api.auth import get_current_user
@@ -25,7 +24,7 @@ router = APIRouter()
 
 
 def _sb():
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
 
 
 class ChatRequest(BaseModel):

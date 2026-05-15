@@ -10,15 +10,13 @@ The table schema is in db/schema.sql.
 
 import json
 from datetime import datetime, timezone
-from supabase import create_client, Client
 import config
 
 TABLE = "api_tokens"
 
 
-def _sb() -> Client:
-    """Service-role client — bypasses RLS for backend operations."""
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+def _sb():
+    return config.get_supabase()
 
 
 def save_tokens(

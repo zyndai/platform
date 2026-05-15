@@ -20,7 +20,6 @@ import hashlib
 import json
 import logging
 
-from supabase import create_client
 
 import config
 from agent.heartbeat_manager import get_heartbeat_manager
@@ -224,8 +223,7 @@ def _derive_agent_keypair(developer_seed: bytes, index: int) -> tuple[bytes, byt
 
 
 def _get_supabase():
-    """Get a Supabase client with service role (bypasses RLS)."""
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
 
 
 def _next_derivation_index() -> int:

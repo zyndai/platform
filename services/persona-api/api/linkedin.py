@@ -6,7 +6,6 @@ stored result for the frontend.
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from supabase import create_client
 
 import config
 from api.auth import get_current_user
@@ -17,7 +16,7 @@ router = APIRouter()
 
 
 def _get_supabase():
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
 
 
 async def _safe_scrape(user_id: str, full_name: str) -> None:

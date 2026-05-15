@@ -78,13 +78,11 @@ class MeetingError(ValueError):
 # ── Supabase + realtime helpers ──────────────────────────────────────
 
 def _supabase():
-    from supabase import create_client
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
 
 
 def _supabase_anon():
-    from supabase import create_client
-    return create_client(config.SUPABASE_URL, config.SUPABASE_ANON_KEY)
+    return config.get_supabase_anon()
 
 
 def _broadcast(event: str, payload: dict[str, Any]) -> None:

@@ -5,16 +5,13 @@ import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  ChevronRight,
   ExternalLink,
   Plus,
-  Sparkles,
 } from "lucide-react";
 import { QUICK_PROMPTS } from "./quickPrompts";
 import {
   Avatar,
   Monogram,
-  ThinkingDot,
   Button,
 } from "@/components/ui";
 import { getSupabase } from "@/lib/supabase";
@@ -24,13 +21,10 @@ import type {
   ChatMessage,
   PersonaHit,
   ThreadHandoff,
-  ToolCallState,
 } from "./types";
 import {
   extractHandoffs,
   extractPersonaHits,
-  lastLine,
-  toolVerb,
 } from "./helpers";
 import ChatInput from "./ChatInput";
 import MatchCard from "./MatchCard";
@@ -44,147 +38,12 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 // Subcomponents
 // ─────────────────────────────────────────────────────────────────────
 
-function hasReasoning(thinking: string | undefined): boolean {
-  return !!thinking && thinking.trim().length > 0;
-}
-
-function ToolTimeline({ toolCalls }: { toolCalls: ToolCallState[] }) {
-  if (!toolCalls || toolCalls.length === 0) return null;
+function TypingIndicator() {
   return (
-    <ol className="thinking-tools">
-      {toolCalls.map((tc) => {
-        const summary = summarizeToolArgs(tc);
-        return (
-          <li key={tc.id} className={`thinking-tool tool-${tc.status}`}>
-            <span className="dot" aria-hidden />
-            <span className="line">
-              <span className="verb">{toolVerb(tc.name, tc.status)}</span>
-              {summary && <span className="args">{summary}</span>}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-function summarizeToolArgs(tc: ToolCallState): string {
-  // Show the most useful single field so users can see what the agent is
-  // actually doing without exposing the full JSON. Falls back to nothing.
-  const args = tc.arguments;
-  if (!args || typeof args !== "object") return "";
-  const candidate =
-    (args as Record<string, unknown>).query ??
-    (args as Record<string, unknown>).target_name ??
-    (args as Record<string, unknown>).message;
-  if (typeof candidate !== "string" || !candidate.trim()) return "";
-  const trimmed = candidate.trim();
-  return trimmed.length > 80 ? `“${trimmed.slice(0, 77)}…”` : `“${trimmed}”`;
-}
-
-function ThinkingPanel({
-  thinking,
-  toolCalls,
-  streaming,
-  expanded,
-  onToggle,
-}: {
-  thinking: string;
-  toolCalls: ToolCallState[] | undefined;
-  streaming: boolean;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const reasoning = (thinking || "").trim();
-  const hasReasoning = reasoning.length > 0;
-  const hasTools = !!toolCalls && toolCalls.length > 0;
-
-  // While streaming, the last-line preview re-renders with every token —
-  // it visually flickers through partial words and feels laggy. Show a
-  // stable "Thinking…" indicator instead, and only switch to the
-  // (now static) preview once the stream completes.
-  const preview = streaming ? "" : lastLine(reasoning);
-  const label = streaming
-    ? "Thinking"
-    : hasReasoning
-      ? "Thought process"
-      : hasTools
-        ? `Took ${toolCalls!.length} step${toolCalls!.length === 1 ? "" : "s"}`
-        : "Thought process";
-
-  return (
-    <div className="thinking-panel">
-      <button
-        type="button"
-        className="thinking-head"
-        onClick={onToggle}
-        aria-expanded={expanded}
-      >
-        <ChevronRight
-          size={12}
-          strokeWidth={1.75}
-          className={`chev ${expanded ? "open" : ""}`}
-        />
-        <Sparkles size={11} strokeWidth={1.75} className="brain" aria-hidden />
-        <span className="label">{label}</span>
-        {streaming && !expanded && (
-          <span className="preview thinking-streaming">
-            <ThinkingDot />
-          </span>
-        )}
-        {!streaming && !expanded && preview && (
-          <span className="preview">{preview}</span>
-        )}
-      </button>
-      {expanded && (
-        <div className="thinking-body">
-          {hasReasoning ? (
-            <div className="thinking-text">{reasoning}</div>
-          ) : null}
-          {hasTools && <ToolTimeline toolCalls={toolCalls!} />}
-          {!hasReasoning && !hasTools && (
-            <p className="thinking-empty">
-              No reasoning notes for this turn.
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ToolActivity({
-  toolCalls,
-}: {
-  toolCalls: ChatMessage["toolCalls"];
-}) {
-  if (!toolCalls || toolCalls.length === 0) return null;
-  const running = toolCalls.filter(
-    (t) => t.status === "running" || t.status === "error",
-  );
-  // When nothing is currently running, keep the most recent finished tool
-  // visible as the "last status" — otherwise the bubble flashes blank
-  // between tool steps until the next event arrives.
-  const visible =
-    running.length > 0 ? running : [toolCalls[toolCalls.length - 1]];
-  return (
-    <div className="tool-activity">
-      {visible.map((tc) => (
-        <div key={tc.id} className={`tool-line tool-${tc.status}`}>
-          {tc.status === "running" ? <ThinkingDot /> : <span className="x">·</span>}
-          <span className="italic-pull">{toolVerb(tc.name, tc.status)}…</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function StreamingPlaceholder() {
-  return (
-    <div className="streaming-placeholder">
-      <span className="aria-thinking" role="status" aria-label="Your Persona is thinking">
-        <span className="label">Thinking…</span>
-      </span>
+    <div className="typing-indicator" role="status" aria-label="Persona is typing">
+      <span className="typing-dot" />
+      <span className="typing-dot" />
+      <span className="typing-dot" />
     </div>
   );
 }
@@ -265,8 +124,6 @@ function HandoffCards({
 
 function MessageRow({
   message,
-  expanded,
-  onToggleThinking,
   busyId,
   onSayHi,
   onActOnHandoff,
@@ -276,8 +133,6 @@ function MessageRow({
   onIncomingReplied,
 }: {
   message: ChatMessage;
-  expanded: boolean;
-  onToggleThinking: () => void;
   busyId: string | null;
   onSayHi: (h: PersonaHit) => void;
   onActOnHandoff: (h: ThreadHandoff) => void;
@@ -286,9 +141,6 @@ function MessageRow({
   userAvatarUrl: string | null;
   onIncomingReplied: () => void;
 }) {
-  // Inbound A2A request — render the inline composer card instead of
-  // a normal chat bubble. Skips the rest of the bubble plumbing
-  // (thinking panel, tool activity, etc.) which doesn't apply.
   if (message.incoming) {
     return (
       <IncomingRequestCard
@@ -302,38 +154,14 @@ function MessageRow({
   const isAria = message.role === "assistant";
   const personaHits = isAria ? extractPersonaHits(message.actions) : [];
   const handoffs = isAria ? extractHandoffs(message.actions) : [];
-  // Show the placeholder whenever we're streaming but have nothing else
-  // to render right now — the prior version hid it as soon as ANY tool
-  // existed (even a finished one), leaving the bubble blank during the
-  // gap between tool steps.
-  const hasRunningTool =
-    !!message.toolCalls?.some(
-      (t) => t.status === "running" || t.status === "error",
-    );
-  const showPlaceholder =
-    isAria &&
-    !!message.streaming &&
-    !message.content &&
-    !message.thinking &&
-    !hasRunningTool &&
-    !message.toolCalls?.length;
+  const showTyping = isAria && !!message.streaming && !message.content;
 
   return (
     <>
       <div className={`msg ${isAria ? "aria" : "user"}`}>
         {isAria && <Monogram size="sm" />}
         <div className="bubble">
-          {isAria && (hasReasoning(message.thinking) || (message.toolCalls && message.toolCalls.length > 0)) && (
-            <ThinkingPanel
-              thinking={message.thinking || ""}
-              toolCalls={message.toolCalls}
-              streaming={!!message.streaming}
-              expanded={expanded}
-              onToggle={onToggleThinking}
-            />
-          )}
-          {isAria && !expanded && <ToolActivity toolCalls={message.toolCalls} />}
-          {showPlaceholder && <StreamingPlaceholder />}
+          {showTyping && <TypingIndicator />}
           {message.content && (
             <div className="markdown-content">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -388,7 +216,6 @@ export default function ChatInterface() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [expandedThinking, setExpandedThinking] = useState<Set<number>>(new Set());
 
   // S10 intro modal state. Holds the persona we're drafting an intro to.
   const [introTarget, setIntroTarget] = useState<PersonaHit | null>(null);
@@ -502,14 +329,6 @@ export default function ChatInterface() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [displayMessages]);
-
-  const toggleThinking = (idx: number) => {
-    setExpandedThinking((prev) => {
-      const next = new Set(prev);
-      next.has(idx) ? next.delete(idx) : next.add(idx);
-      return next;
-    });
-  };
 
   const updateStreaming = useCallback(
     (patch: (m: ChatMessage) => ChatMessage) => {
@@ -839,8 +658,6 @@ export default function ChatInterface() {
               <MessageRow
                 key={i}
                 message={m}
-                expanded={expandedThinking.has(i)}
-                onToggleThinking={() => toggleThinking(i)}
                 busyId={busyId}
                 onSayHi={openIntroForPersona}
                 onActOnHandoff={actOnHandoff}

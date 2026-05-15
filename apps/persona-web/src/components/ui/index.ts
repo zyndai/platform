@@ -11,3 +11,5 @@ export { ThinkingDot } from "./ThinkingDot";
 export { EmptyState } from "./EmptyState";
 export { Banner } from "./Banner";
 export { BootLoader, type BootStage } from "./BootLoader";
+export { default as AvatarPicker } from "./AvatarPicker";
+export type { AvatarPickerMode } from "./AvatarPicker";

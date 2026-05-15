@@ -3,29 +3,72 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Users, Search as SearchIcon, X, ArrowUpRight } from "lucide-react";
+import {
+  ArrowUpRight,
+  BriefcaseBusiness,
+  Compass,
+  FlaskConical,
+  Globe2,
+  Handshake,
+  Lightbulb,
+  MessageCircle,
+  Palette,
+  RefreshCw,
+  Search as SearchIcon,
+  Users,
+  X,
+} from "lucide-react";
 import { Avatar, Button, EmptyState } from "@/components/ui";
 import IntroPreviewModal from "@/components/chat/IntroPreviewModal";
 import { useDashboard } from "@/contexts/DashboardContext";
-import { getSupabase } from "@/lib/supabase";
+import {
+  discoverPeople,
+  getPeopleMe,
+  sendPeopleIntroduction,
+  type PeopleDiscoverResponse,
+} from "@/lib/people-api";
 import type { PersonaHit } from "@/components/chat/types";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const PRESET_FILTERS = [
+  { label: "Founders",    query: "founder",  icon: BriefcaseBusiness },
+  { label: "Engineers",   query: "engineer", icon: Lightbulb },
+  { label: "Designers",   query: "designer", icon: Palette },
+  { label: "Investors",   query: "investor", icon: Handshake },
+  { label: "Researchers", query: "research", icon: FlaskConical },
+];
 
-interface SearchResponse {
-  status?: string;
-  count?: number;
-  results?: PersonaHit[];
-  error?: string;
+const QUICK_STARTS = [
+  { label: "Find a cofounder", detail: "builders and operators", query: "founder", icon: BriefcaseBusiness },
+  { label: "Talk to investors", detail: "fundraising context", query: "investor", icon: Handshake },
+  { label: "Review an idea", detail: "product feedback", query: "product", icon: Lightbulb },
+  { label: "Meet designers", detail: "brand and UX people", query: "designer", icon: Palette },
+  { label: "Explore research", detail: "papers and labs", query: "research", icon: FlaskConical },
+  { label: "Practice outreach", detail: "sales and partnerships", query: "sales", icon: MessageCircle },
+];
+
+type PeopleSectionModel = {
+  key: string;
+  title: string;
+  items: PersonaHit[];
+  variant?: "compact" | "featured";
+};
+
+function buildPeopleSections(results: PersonaHit[]): PeopleSectionModel[] {
+  const sections: PeopleSectionModel[] = [
+    { key: "for-you", title: "For you", items: results.slice(0, 4), variant: "featured" },
+    { key: "featured", title: "Featured", items: results.slice(4, 8) },
+    { key: "popular", title: "Popular", items: results.slice(8, 12) },
+    { key: "more", title: "More to meet", items: results.slice(12, 24) },
+  ];
+  return sections.filter((section) => section.items.length > 0);
 }
 
-const PRESET_FILTERS: { label: string; query: string }[] = [
-  { label: "Founders",    query: "founder" },
-  { label: "Engineers",   query: "engineer" },
-  { label: "Designers",   query: "designer" },
-  { label: "Investors",   query: "investor" },
-  { label: "Researchers", query: "research" },
-];
+function sourceLabel(meta: PeopleDiscoverResponse | null): string {
+  if (!meta?.source) return "Network";
+  if (meta.source === "registry") return "Live registry";
+  if (meta.source === "local_db") return "Local fallback";
+  return "Network";
+}
 
 export default function PeoplePage() {
   const { user } = useDashboard();
@@ -35,6 +78,7 @@ export default function PeoplePage() {
   const [results, setResults] = useState<PersonaHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [searchMeta, setSearchMeta] = useState<PeopleDiscoverResponse | null>(null);
   const [introTarget, setIntroTarget] = useState<PersonaHit | null>(null);
   const [myAgentId, setMyAgentId] = useState<string | null>(null);
 
@@ -48,9 +92,7 @@ export default function PeoplePage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${API}/api/persona/${user.id}/status`);
-        if (!res.ok || cancelled) return;
-        const data = await res.json();
+        const data = await getPeopleMe();
         if (data?.agent_id && !cancelled) setMyAgentId(data.agent_id);
       } catch {
         /* ignore — at worst the user's own row just won't be flagged */
@@ -62,6 +104,7 @@ export default function PeoplePage() {
   }, [user?.id]);
 
   const runSearch = useCallback(async (q: string) => {
+    if (!user?.id) return;
     setLoading(true);
     setError(null);
     setActiveQuery(q);
@@ -72,10 +115,8 @@ export default function PeoplePage() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     try {
-      const url = `${API}/api/persona/search?query=${encodeURIComponent(q || "persona")}&limit=20`;
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) throw new Error(await res.text());
-      const data: SearchResponse = await res.json();
+      const data = await discoverPeople(q || "persona", 24, controller.signal);
+      setSearchMeta(data);
       if (data.error) {
         setError(data.error);
         setResults([]);
@@ -83,6 +124,7 @@ export default function PeoplePage() {
         setResults((data.results || []).filter((p) => !!p.agent_id));
       }
     } catch (e) {
+      setSearchMeta(null);
       if (e instanceof DOMException && e.name === "AbortError") {
         setError(
           "The network registry didn't respond in time. Try again in a moment.",
@@ -95,7 +137,7 @@ export default function PeoplePage() {
       clearTimeout(timeout);
       setLoading(false);
     }
-  }, []);
+  }, [user?.id]);
 
   // Debounced keystroke handler — empty input falls back to a default
   // "persona" query so the page never renders a blank surface.
@@ -117,37 +159,19 @@ export default function PeoplePage() {
       "I",
     [user],
   );
+  const firstName = useMemo(() => String(myName).split(/\s+/)[0] || "there", [myName]);
+  const sections = useMemo(() => buildPeopleSections(results), [results]);
 
   const sendIntro = useCallback(
     async (message: string): Promise<string> => {
       if (!user || !introTarget) throw new Error("Not signed in.");
-      const sb = getSupabase();
-      const {
-        data: { session },
-      } = await sb.auth.getSession();
-      const jwt = session?.access_token;
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (jwt) headers["Authorization"] = `Bearer ${jwt}`;
-
-      const tRes = await fetch(`${API}/api/persona/${user.id}/threads`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          target_agent_id: introTarget.agent_id,
-          target_name: introTarget.name || "Network Agent",
-          mode: "agent",
-        }),
+      const intro = await sendPeopleIntroduction({
+        targetAgentId: introTarget.agent_id,
+        targetName: introTarget.name || "Network Agent",
+        message,
       });
-      if (!tRes.ok) throw new Error(await tRes.text());
-      const tid = (await tRes.json())?.thread?.id as string | undefined;
+      const tid = intro.thread_id || intro.thread?.id;
       if (!tid) throw new Error("Couldn't open the thread.");
-
-      const sRes = await fetch(`${API}/api/persona/${user.id}/agent-send`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ thread_id: tid, content: message }),
-      });
-      if (!sRes.ok) throw new Error(await sRes.text());
       return tid;
     },
     [user, introTarget],
@@ -162,37 +186,74 @@ export default function PeoplePage() {
   );
 
   return (
-    <div style={{ maxWidth: 880, margin: "0 auto", padding: "40px 32px 56px", width: "100%" }}>
-      <h1 className="display-m" style={{ margin: "0 0 8px" }}>People on the network</h1>
-      <p style={{ margin: "0 0 24px", color: "var(--text-secondary)", fontSize: 15, lineHeight: 1.55 }}>
-        Search Zynd&apos;s open registry for agents you might want to meet. Your agent talks to
-        theirs first — no cold DMs.
-      </p>
+    <div className="people-discover-shell">
+      <header className="people-discover-header">
+        <div className="people-welcome">
+          <span>Welcome,</span>
+          <strong>{firstName}</strong>
+          <div className="people-header-meta">
+            <span>
+              <Compass size={13} strokeWidth={1.8} />
+              People
+            </span>
+            <span>
+              <Globe2 size={13} strokeWidth={1.8} />
+              {sourceLabel(searchMeta)}
+            </span>
+          </div>
+        </div>
 
-      <div className="people-search">
-        <SearchIcon size={16} strokeWidth={1.7} />
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by name, keyword, role, or topic"
-          aria-label="Search the Zynd network"
-        />
-        {query && (
-          <button
-            type="button"
-            onClick={() => setQuery("")}
-            aria-label="Clear search"
-            className="people-search-clear"
-          >
-            <X size={14} strokeWidth={1.8} />
-          </button>
-        )}
-      </div>
+        <div className="people-toolbar">
+          <div className="people-search people-search-hero">
+            <SearchIcon size={18} strokeWidth={1.8} />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search roles, topics, companies, or names"
+              aria-label="Search the Zynd network"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                aria-label="Clear search"
+                className="people-search-clear"
+              >
+                <X size={15} strokeWidth={1.8} />
+              </button>
+            )}
+          </div>
+          <div className="people-toolbar-actions">
+            <button
+              type="button"
+              onClick={() => void runSearch(query.trim())}
+              className="people-toolbar-icon"
+              disabled={loading}
+              aria-label="Refresh people"
+              title="Refresh people"
+            >
+              <RefreshCw className={loading ? "is-spinning" : ""} size={16} strokeWidth={1.8} />
+            </button>
+            {user?.id && (
+              <Link
+                href={`/p/${user.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="people-toolbar-link"
+              >
+                <ArrowUpRight size={14} strokeWidth={1.8} />
+                My card
+              </Link>
+            )}
+          </div>
+        </div>
+      </header>
 
-      <div className="people-presets">
+      <div className="people-presets" aria-label="Suggested searches">
         {PRESET_FILTERS.map((f) => {
           const active = query.trim().toLowerCase() === f.query.toLowerCase();
+          const Icon = f.icon;
           return (
             <button
               key={f.label}
@@ -200,6 +261,7 @@ export default function PeoplePage() {
               onClick={() => setQuery(f.query)}
               className={`people-preset ${active ? "active" : ""}`}
             >
+              <Icon size={14} strokeWidth={1.8} />
               {f.label}
             </button>
           );
@@ -207,27 +269,12 @@ export default function PeoplePage() {
       </div>
 
       {error && (
-        <div
-          style={{
-            padding: "10px 14px",
-            marginBottom: 16,
-            background: "var(--bg-surface)",
-            border: "1px solid var(--border-default)",
-            borderRadius: "var(--r-sm)",
-            color: "var(--text-secondary)",
-            fontSize: 13,
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 12,
-          }}
-        >
+        <div className="people-error">
           <span>{error}</span>
           <button
             type="button"
             className="btn btn-secondary"
             onClick={() => void runSearch(query.trim())}
-            style={{ fontSize: 12, padding: "4px 12px", whiteSpace: "nowrap" }}
           >
             Retry
           </button>
@@ -235,17 +282,20 @@ export default function PeoplePage() {
       )}
 
       {loading && results.length === 0 ? (
-        <ul className="people-list" aria-busy="true">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <li key={i} className="people-card people-card-skeleton">
-              <span className="people-card-avatar-skel" />
-              <div className="people-card-body">
-                <span className="people-card-skel-line people-card-skel-name" />
-                <span className="people-card-skel-line people-card-skel-desc" />
-              </div>
-            </li>
-          ))}
-        </ul>
+        <section className="people-section" aria-busy="true">
+          <h2>For you</h2>
+          <ul className="people-row people-row-compact">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <li key={i} className="people-card people-card-skeleton">
+                <span className="people-card-avatar-skel" />
+                <div className="people-card-body">
+                  <span className="people-card-skel-line people-card-skel-name" />
+                  <span className="people-card-skel-line people-card-skel-desc" />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : results.length === 0 ? (
         <EmptyState
           illustration={<Users />}
@@ -265,70 +315,38 @@ export default function PeoplePage() {
         />
       ) : (
         <>
-          <p className="people-count">
-            {results.length} {results.length === 1 ? "agent" : "agents"}
+          <div className="people-count">
+            <span>{results.length} {results.length === 1 ? "agent" : "agents"}</span>
             {activeQuery && activeQuery !== "persona" && (
-              <span style={{ color: "var(--text-muted)" }}>
-                {" "}· matching <em>{activeQuery}</em>
-              </span>
+              <em>matching {activeQuery}</em>
             )}
-          </p>
-          <ul className="people-list" aria-busy={loading}>
-            {results.map((p) => {
-              const isMe = p.agent_id === myAgentId;
-              return (
-                <li key={p.agent_id} className="people-card">
-                  <Avatar
-                    size="md"
-                    name={p.name || "?"}
-                    src={p.avatar_url || undefined}
-                    variant="accent"
-                  />
-                  <div className="people-card-body">
-                    <div className="people-card-name">
-                      {p.name || "Someone on the network"}
-                      {isMe && <span className="people-card-you">you</span>}
-                    </div>
-                    {p.description ? (
-                      <p className="people-card-desc">{p.description}</p>
-                    ) : (
-                      <p className="people-card-desc people-card-desc-empty">
-                        No bio yet.
-                      </p>
-                    )}
-                  </div>
-                  <div className="people-card-actions">
-                    {isMe ? (
-                      <Link
-                        href={`/p/${user?.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn btn-secondary btn-sm"
-                        style={{
-                          textDecoration: "none",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                      >
-                        View card
-                        <ArrowUpRight size={13} strokeWidth={1.8} />
-                      </Link>
-                    ) : (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => setIntroTarget(p)}
-                        disabled={!user?.id}
-                      >
-                        Say hi →
-                      </Button>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+            {searchMeta?.from_cache && <small>cached</small>}
+          </div>
+
+          {sections[0] && (
+            <PeopleSection
+              title={sections[0].title}
+              items={sections[0].items}
+              variant={sections[0].variant}
+              myAgentId={myAgentId}
+              userId={user?.id}
+              onIntro={setIntroTarget}
+            />
+          )}
+
+          <QuickStarts onPick={setQuery} />
+
+          {sections.slice(1).map((section) => (
+            <PeopleSection
+              key={section.key}
+              title={section.title}
+              items={section.items}
+              variant={section.variant}
+              myAgentId={myAgentId}
+              userId={user?.id}
+              onIntro={setIntroTarget}
+            />
+          ))}
         </>
       )}
 
@@ -343,4 +361,133 @@ export default function PeoplePage() {
       )}
     </div>
   );
+}
+
+function PeopleSection({
+  title,
+  items,
+  variant = "compact",
+  myAgentId,
+  userId,
+  onIntro,
+}: {
+  title: string;
+  items: PersonaHit[];
+  variant?: "compact" | "featured";
+  myAgentId: string | null;
+  userId: string | undefined;
+  onIntro: (hit: PersonaHit) => void;
+}) {
+  if (!items.length) return null;
+  return (
+    <section className="people-section">
+      <div className="people-section-head">
+        <h2>{title}</h2>
+        <span>{items.length}</span>
+      </div>
+      <ul className={`people-row ${variant === "featured" ? "people-row-featured" : ""}`}>
+        {items.map((p) => (
+          <PeopleCard
+            key={`${title}-${p.agent_id}`}
+            hit={p}
+            featured={variant === "featured"}
+            isMe={p.agent_id === myAgentId}
+            userId={userId}
+            onIntro={onIntro}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function PeopleCard({
+  hit,
+  featured,
+  isMe,
+  userId,
+  onIntro,
+}: {
+  hit: PersonaHit;
+  featured: boolean;
+  isMe: boolean;
+  userId: string | undefined;
+  onIntro: (hit: PersonaHit) => void;
+}) {
+  const name = hit.name || "Someone on the network";
+  return (
+    <li className={`people-card ${featured ? "people-card-featured" : ""}`}>
+      <Avatar
+        size="xl"
+        name={name}
+        src={hit.avatar_url || undefined}
+        variant="accent"
+      />
+      <div className="people-card-body">
+        <div className="people-card-name-row">
+          <span className="people-card-name">{name}</span>
+          {isMe && <span className="people-card-you">you</span>}
+        </div>
+        {hit.description ? (
+          <p className="people-card-desc">{hit.description}</p>
+        ) : (
+          <p className="people-card-desc people-card-desc-empty">No bio yet.</p>
+        )}
+      </div>
+      <div className="people-card-cta-wrap">
+        {isMe && userId ? (
+          <Link
+            href={`/p/${userId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="people-card-cta"
+          >
+            <ArrowUpRight size={14} strokeWidth={1.8} />
+            View card
+          </Link>
+        ) : !isMe ? (
+          <button
+            type="button"
+            className="people-card-cta"
+            onClick={() => onIntro(hit)}
+            disabled={!userId}
+          >
+            <MessageCircle size={14} strokeWidth={1.8} />
+            Say hi
+          </button>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function QuickStarts({ onPick }: { onPick: (query: string) => void }) {
+  return (
+    <section className="people-section">
+      <h2>Try these</h2>
+      <ul className="people-quick-grid">
+        {QUICK_STARTS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <li key={item.label}>
+              <button type="button" onClick={() => onPick(item.query)} className="people-quick-card">
+                <span className="people-quick-icon">
+                  <Icon size={18} strokeWidth={1.8} />
+                </span>
+                <span>
+                  <strong>{item.label}</strong>
+                  <small>{item.detail}</small>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function compactAgentId(agentId: string): string {
+  if (agentId.length <= 18) return agentId;
+  return `${agentId.slice(0, 9)}...${agentId.slice(-5)}`;
 }

@@ -138,34 +138,14 @@ function BriefEditor({
   const initial = rawInitial.trim().length === 0 ? DEFAULT_TEMPLATE : rawInitial;
   const startedFromTemplate = rawInitial.trim().length === 0;
   const [draft, setDraft] = useState(initial);
-  // savedSnapshot reflects what's actually in Google Docs. When we pre-fill
-  // a template, draft != savedSnapshot, so the editor correctly shows
-  // "Unsaved changes" and prompts the user to commit it.
   const [savedSnapshot, setSavedSnapshot] = useState(rawInitial);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  // Tracks whether the user has interacted with the textarea since mount.
-  // Suppresses autosave on the initial template prefill (we don't want to
-  // silently commit a template the user hasn't seen yet) AND is used by
-  // the status indicator to choose between "Saving in a moment…" (user
-  // typed) vs "Template ready — Save when you're happy" (just the prefill).
-  const [userTouched, setUserTouched] = useState(false);
-
-  useEffect(() => {
-    setDraft(initial);
-    setSavedSnapshot(rawInitial);
-    setUserTouched(false); // server re-sync is not user input
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initial, rawInitial]);
 
   const dirty = draft !== savedSnapshot;
 
-  // Save is wrapped in useCallback so the debouncing effect below has a
-  // stable identity. It snapshots the content via a ref so a save kicked
-  // off by the debouncer always writes the latest text — never a stale
-  // value captured at the moment the timer was scheduled.
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const savedSnapshotRef = useRef(savedSnapshot);
@@ -174,14 +154,14 @@ function BriefEditor({
   const handleSave = useCallback(async () => {
     if (!user?.id) return;
     const content = draftRef.current;
-    if (content === savedSnapshotRef.current) return; // already in sync
+    if (content === savedSnapshotRef.current) return;
     setSaving(true);
     setSaveError(null);
     try {
       await apiPatch(`/api/persona/${user.id}/brief`, { content });
       setSavedSnapshot(content);
       setSavedAt(Date.now());
-      await onSaved();
+      void onSaved();
     } catch (err) {
       setSaveError(friendlySaveError(err));
     } finally {
@@ -189,29 +169,6 @@ function BriefEditor({
     }
   }, [user?.id, onSaved]);
 
-  // Debounced autosave — fires 1.5s after the user stops typing.
-  // Skipped while: a save is already in flight (the in-flight save will
-  // pick up any newer content on its post-completion re-eval), or a save
-  // just failed (don't retry on a loop — user must click Save explicitly
-  // to clear the error and try again), or the user hasn't actually
-  // edited yet (the template prefill is not their intent).
-  useEffect(() => {
-    if (!userTouched) return;
-    if (!dirty) return;
-    if (saving) return;
-    if (saveError) return;
-    const timer = setTimeout(() => {
-      void handleSave();
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [draft, dirty, saving, saveError, userTouched, handleSave]);
-
-  // After an in-flight save finishes, the user may have typed more during
-  // the round-trip. The autosave effect picks it up automatically because
-  // `dirty` flips back to true on the next render — no extra wiring here.
-
-  // ⌘S / Ctrl-S: explicit save. Also clears any save error and re-tries
-  // immediately. Helpful as a manual retry path when autosave is paused.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
@@ -224,10 +181,6 @@ function BriefEditor({
     return () => window.removeEventListener("keydown", onKey);
   }, [handleSave]);
 
-  // Warn before navigating away with unsaved changes. The autosave should
-  // catch most cases, but if the user closes the tab during the 1.5s
-  // debounce window or in the middle of an error state, we don't want
-  // them to lose the edit silently.
   useEffect(() => {
     if (!dirty) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -291,7 +244,6 @@ function BriefEditor({
             savedAt={savedAt}
             initialIsSynced={!!brief.content && brief.content.length > 1}
             hasError={!!saveError}
-            autosaveActive={userTouched}
           />
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             {brief.url && (
@@ -340,10 +292,7 @@ function BriefEditor({
             ref={textareaRef}
             className="brief-textarea"
             value={draft}
-            onChange={(e) => {
-              if (!userTouched) setUserTouched(true);
-              setDraft(e.target.value);
-            }}
+            onChange={(e) => setDraft(e.target.value)}
             placeholder="Start typing. A few honest lines is enough — what you're shipping, who you'd like in the room, what to skip."
           />
         </div>
@@ -369,7 +318,6 @@ function BriefEditor({
               type="button"
               className="btn btn-secondary"
               onClick={() => {
-                setUserTouched(true);
                 setDraft("");
                 textareaRef.current?.focus();
               }}
@@ -387,7 +335,7 @@ function BriefEditor({
             color: "var(--text-muted)",
           }}
         >
-          Autosaves to Google Docs as you type · ⌘S forces an immediate save · todos auto-extracted from lines like “- [ ] follow up with X” or “TODO: ship demo”.
+          Click <strong>Save now</strong> or press ⌘S to save · todos auto-extracted from lines like &ldquo;- [ ] follow up with X&rdquo; or &ldquo;TODO: ship demo&rdquo;.
         </p>
       </div>
     </div>
@@ -400,16 +348,13 @@ function SaveStatus({
   savedAt,
   initialIsSynced,
   hasError,
-  autosaveActive,
 }: {
   saving: boolean;
   dirty: boolean;
   savedAt: number | null;
   initialIsSynced: boolean;
   hasError: boolean;
-  autosaveActive: boolean;
 }) {
-  // Tick once a minute so "Saved 12s ago" → "Saved 1 min ago" reflows.
   const [, force] = useState(0);
   useEffect(() => {
     if (!savedAt) return;
@@ -420,22 +365,20 @@ function SaveStatus({
   let label: string;
   let tone: "muted" | "active" | "error" = "muted";
   if (hasError) {
-    label = "Save paused — fix the error above to resume";
+    label = "Save failed — try again";
     tone = "error";
   } else if (saving) {
     label = "Saving…";
     tone = "active";
   } else if (dirty) {
-    label = autosaveActive
-      ? "Saving in a moment…"
-      : "Draft ready — Save when you're happy with it";
-    tone = autosaveActive ? "active" : "muted";
+    label = "Unsaved changes";
+    tone = "muted";
   } else if (savedAt) {
     label = `Saved ${relativeTime(savedAt)}`;
   } else if (initialIsSynced) {
     label = "Synced from Google Docs";
   } else {
-    label = "Autosaves as you type";
+    label = "Not saved yet";
   }
 
   const dotColor =

@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui";
+import { AvatarPicker, Button } from "@/components/ui";
 import PersonaCardForm from "@/components/settings/PersonaCardForm";
 import DeleteAccountModal from "@/components/settings/DeleteAccountModal";
 import { getSupabase } from "@/lib/supabase";
 import { useDashboard } from "@/contexts/DashboardContext";
+import { defaultPersonaStyle, generateAvatarDataUri } from "@/lib/dicebear";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -14,7 +15,7 @@ interface Persona {
   name: string;
   description: string;
   capabilities?: string[];
-  profile?: { interests?: string[] | string };
+  profile?: { avatar_url?: string | null; interests?: string[] | string };
 }
 
 interface LinkedInData {
@@ -44,8 +45,21 @@ export default function YouPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const avatarUrl = (user?.user_metadata as Record<string, string> | null)
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
+
+  // OAuth avatar from Google/LinkedIn — we don't overwrite this by default,
+  // but the user can override it by picking a DiceBear avatar.
+  const oauthAvatarUrl = (user?.user_metadata as Record<string, string> | null)
     ?.avatar_url as string | undefined;
+
+  // Persona's saved avatar takes priority; falls back to OAuth, then to a
+  // deterministic DiceBear based on the user's name.
+  const personaAvatarUrl =
+    (persona?.profile?.avatar_url) ||
+    oauthAvatarUrl ||
+    (persona?.name ? generateAvatarDataUri(defaultPersonaStyle(), persona.name) : undefined);
+
+  const avatarUrl = personaAvatarUrl;
 
   const fetchAll = useCallback(async () => {
     if (!user) return;
@@ -82,6 +96,27 @@ export default function YouPage() {
     [persona],
   );
 
+  const handleSaveAvatar = useCallback(
+    async (dataUri: string) => {
+      if (!user) throw new Error("Not signed in");
+      const sb = getSupabase();
+      const { data: { session } } = await sb.auth.getSession();
+      const res = await fetch(`${API}/api/persona/${user.id}/profile`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({
+          profile: { ...(persona?.profile || {}), avatar_url: dataUri },
+        }),
+      });
+      if (!res.ok) throw new Error((await res.text()) || "Couldn't save avatar.");
+      setPersona(await res.json());
+    },
+    [user, persona],
+  );
+
   const handleSave = async ({
     name,
     bio,
@@ -98,7 +133,7 @@ export default function YouPage() {
       body: JSON.stringify({
         name,
         description: bio,
-        profile: { interests: tags },
+        profile: { ...(persona?.profile || {}), interests: tags },
       }),
     });
     if (!res.ok) throw new Error((await res.text()) || "Couldn't save that.");
@@ -156,6 +191,41 @@ export default function YouPage() {
           How I&apos;ll describe you to people I think you should meet.
         </p>
       </div>
+
+      {/* ── Avatar ──────────────────────────────────────────────── */}
+      <section className="you-section" style={{ display: "flex", alignItems: "center", gap: 18 }}>
+        <div
+          className="avatar-edit-wrap"
+          style={{ borderRadius: "50%" }}
+          onClick={() => setAvatarPickerOpen(true)}
+          title="Change avatar"
+        >
+          <img
+            src={avatarUrl}
+            alt={persona?.name ?? "You"}
+            style={{ width: 72, height: 72, borderRadius: "50%", border: "1px solid var(--v2-border-subtle)", display: "block", objectFit: "cover" }}
+          />
+          <span className="avatar-edit-overlay" style={{ borderRadius: "50%" }}>Edit</span>
+        </div>
+        <div>
+          <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "var(--v2-ink)" }}>
+            {persona?.name ?? "Your persona"}
+          </p>
+          <button
+            type="button"
+            className="text-link"
+            style={{ fontSize: 12.5, marginTop: 4 }}
+            onClick={() => setAvatarPickerOpen(true)}
+          >
+            Change avatar
+          </button>
+          {oauthAvatarUrl && !persona?.profile?.avatar_url && (
+            <p style={{ margin: "4px 0 0", fontSize: 11.5, color: "var(--v2-ink-muted)" }}>
+              Using your Google photo — change to override
+            </p>
+          )}
+        </div>
+      </section>
 
       {/* ── Profile card ─────────────────────────────────────────── */}
       <section className="you-section">
@@ -226,6 +296,16 @@ export default function YouPage() {
             }
           }}
           onConfirm={handleDeleteAccount}
+        />
+      )}
+
+      {avatarPickerOpen && (
+        <AvatarPicker
+          mode="persona"
+          seed={persona?.name ?? user?.email?.split("@")[0] ?? "persona"}
+          currentUrl={persona?.profile?.avatar_url}
+          onSave={handleSaveAvatar}
+          onClose={() => setAvatarPickerOpen(false)}
         />
       )}
     </div>

@@ -22,6 +22,10 @@ import {
   UsersRound,
 } from "lucide-react";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
+import {
+  DashboardActivityProvider,
+  useDashboardActivity,
+} from "@/contexts/DashboardActivityContext";
 import { ChatProvider } from "@/contexts/ChatContext";
 import TaskToasts from "@/components/TaskToasts";
 import { Monogram, Avatar, BootLoader, type BootStage } from "@/components/ui";
@@ -37,13 +41,14 @@ type NavItem = {
   label: string;
   icon: typeof Home;
   tone: NavTone;
+  badge?: "inbox" | "meetings";
 };
 
 const ARIA_NAV: NavItem[] = [
   { href: "/dashboard/chat",     label: "Home",     icon: LayoutDashboard, tone: "indigo"  },
-  { href: "/dashboard/inbox",    label: "Inbox",    icon: Inbox,           tone: "sky"     },
+  { href: "/dashboard/inbox",    label: "Inbox",    icon: Inbox,           tone: "sky",     badge: "inbox"    },
   { href: "/dashboard/messages", label: "Threads",  icon: MessagesSquare,  tone: "violet"  },
-  { href: "/dashboard/meetings", label: "Meetings", icon: CalendarDays,    tone: "amber"   },
+  { href: "/dashboard/meetings", label: "Meetings", icon: CalendarDays,    tone: "amber",   badge: "meetings" },
   { href: "/dashboard/people",   label: "People",   icon: Users,           tone: "emerald" },
   { href: "/dashboard/groups",   label: "Groups",   icon: UsersRound,      tone: "rose"    },
 ];
@@ -65,17 +70,17 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   } = useDashboard();
   const pathname = usePathname();
   const router = useRouter();
+  const { counts } = useDashboardActivity();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-
-  useEffect(() => {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
     try {
       const saved = window.localStorage.getItem("zynd:sidebar-collapsed");
-      if (saved === "1") setSidebarCollapsed(true);
+      return saved === "1";
     } catch {
-      /* localStorage unavailable */
+      return false;
     }
-  }, []);
+  });
 
   useEffect(() => {
     try {
@@ -122,6 +127,12 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     const Icon = item.icon;
     const isActive =
       pathname === item.href || pathname.startsWith(item.href + "/");
+    const badgeCount =
+      item.badge === "inbox"
+        ? counts.inboxAction
+        : item.badge === "meetings"
+          ? counts.meetingsAction
+          : 0;
     return (
       <Link
         key={item.href}
@@ -132,6 +143,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       >
         <span className="nav-icon"><Icon /></span>
         <span className="nav-label">{item.label}</span>
+        {badgeCount > 0 && (
+          <span className="nav-count" aria-label={`${badgeCount} pending`}>
+            {badgeCount > 99 ? "99+" : badgeCount}
+          </span>
+        )}
       </Link>
     );
   };
@@ -265,9 +281,11 @@ export default function DashboardLayout({
 }) {
   return (
     <DashboardProvider>
-      <ChatProvider>
-        <DashboardShell>{children}</DashboardShell>
-      </ChatProvider>
+      <DashboardActivityProvider>
+        <ChatProvider>
+          <DashboardShell>{children}</DashboardShell>
+        </ChatProvider>
+      </DashboardActivityProvider>
     </DashboardProvider>
   );
 }

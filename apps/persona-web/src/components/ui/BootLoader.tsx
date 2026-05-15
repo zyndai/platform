@@ -28,32 +28,37 @@ interface BootLoaderProps {
 export function BootLoader({ stage }: BootLoaderProps) {
   const activeIdx = STAGES.findIndex((s) => s.key === stage);
   return (
-    <div className="boot-loader-v2" role="status" aria-live="polite">
-      <Monogram size="md" />
-      <ul className="stages">
-        {STAGES.map((s, i) => {
-          const state =
-            i < activeIdx ? "done" : i === activeIdx ? "active" : "pending";
-          return (
-            <li key={s.key} className={`stage stage-${state}`}>
-              <span className="indicator" aria-hidden="true">
-                {state === "done" && <CheckIcon />}
-                {state === "active" && <span className="pulse" />}
-                {state === "pending" && <span className="dot" />}
+    <div className="boot-loader-v2" role="status" aria-live="polite" aria-label={STAGES[activeIdx]?.label || "Loading"}>
+      <div className="boot-app-frame">
+        <aside className="boot-sidebar-skel">
+          <div className="boot-brand-skel">
+            <Monogram size="sm" />
+            <span className="boot-skel-line boot-skel-brand" />
+          </div>
+          <span className="boot-skel-input" />
+          <div className="boot-nav-skel">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <span key={i} className="boot-skel-nav-row">
+                <span />
+                <i />
               </span>
-              <span className="label">{s.label}</span>
-            </li>
-          );
-        })}
-      </ul>
+            ))}
+          </div>
+        </aside>
+        <main className="boot-main-skel">
+          <div className="boot-top-skel">
+            <span className="boot-skel-line boot-skel-title" />
+            <span className="boot-skel-pill" />
+          </div>
+          <div className="boot-card-skel boot-card-wide" />
+          <div className="boot-grid-skel">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <span key={i} className="boot-card-skel" />
+            ))}
+          </div>
+        </main>
+      </div>
+      <span className="sr-only">{STAGES[activeIdx]?.label || "Loading"}</span>
     </div>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 8.5l3.5 3.5L13 5" />
-    </svg>
   );
 }

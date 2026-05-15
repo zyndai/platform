@@ -23,6 +23,11 @@ export default function AppTopBar() {
   const pathname = usePathname();
   const { user } = useDashboard();
 
+  // Hide entirely on group detail pages — the group header absorbs these controls.
+  const isGroupDetail = /^\/dashboard\/groups\/[^/]+/.test(pathname) &&
+    pathname !== "/dashboard/groups";
+  if (isGroupDetail) return null;
+
   let title = "ZyndAI";
   for (const route of Object.keys(TITLES)) {
     if (pathname === route || pathname.startsWith(route + "/")) {

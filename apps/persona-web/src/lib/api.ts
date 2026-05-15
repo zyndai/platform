@@ -45,9 +45,9 @@ const INFLIGHT = new Map<string, Promise<unknown>>();
 const DEFAULT_FRESH_MS = 5_000;   // 5 s — instant nav-back without a flicker
 const DEFAULT_HARD_MS  = 60_000;  // 60 s — serve stale if the network is slow
 
-async function rawGet<T>(path: string): Promise<T> {
+async function rawGet<T>(path: string, signal?: AbortSignal): Promise<T> {
   const headers = await getAuthHeaders();
-  const res = await fetch(`${API_BASE}${path}`, { headers });
+  const res = await fetch(`${API_BASE}${path}`, { headers, signal });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<T>;
 }
@@ -57,13 +57,15 @@ export interface ApiGetOptions {
   noCache?: boolean;
   /** Override the fresh window (ms). Default 5 s. */
   freshMs?: number;
+  /** Optional abort signal for uncached reads. */
+  signal?: AbortSignal;
 }
 
 export async function apiGet<T = unknown>(
   path: string,
   opts: ApiGetOptions = {},
 ): Promise<T> {
-  if (opts.noCache) return rawGet<T>(path);
+  if (opts.noCache) return rawGet<T>(path, opts.signal);
 
   const now = Date.now();
   const cached = CACHE.get(path) as CacheEntry<T> | undefined;

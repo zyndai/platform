@@ -13,10 +13,16 @@ import {
   User as UserIcon,
   ChevronDown,
   Crown,
+  Calendar,
+  FileText,
+  MessageCircle,
 } from "lucide-react";
-import { Avatar, Button } from "@/components/ui";
+import type { LucideIcon } from "lucide-react";
+import { Avatar, AvatarPicker, Button } from "@/components/ui";
 import { useDashboard } from "@/contexts/DashboardContext";
 import { apiDelete, apiGet, apiPatch, apiPost, invalidate } from "@/lib/api";
+import { defaultGroupStyle, generateAvatarDataUri } from "@/lib/dicebear";
+import { InvitePeoplePanel } from "@/components/groups/InvitePeoplePanel";
 
 interface Group {
   id: string;
@@ -226,6 +232,23 @@ export default function GroupSettingsPage() {
   );
 
   const [expandedUid, setExpandedUid] = useState<string | null>(null);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
+
+  const handleSaveAvatar = useCallback(
+    async (dataUri: string) => {
+      if (!groupId) return;
+      const r = await apiPatch<{ group: Group }>(`/api/groups/${groupId}`, {
+        avatar_url: dataUri,
+      });
+      setGroup(r.group);
+      invalidate("/api/groups/");
+    },
+    [groupId],
+  );
+
+  const groupAvatarSrc =
+    group?.avatar_url ||
+    (group ? generateAvatarDataUri(defaultGroupStyle(), group.slug) : undefined);
 
   // Owner-transfer is a one-way action — confirm twice to make sure
   // the current owner really wants to lose admin-level control. After
@@ -341,6 +364,38 @@ export default function GroupSettingsPage() {
       )}
 
       <section className="group-settings-card">
+        <h2 className="group-settings-h2">Group icon</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
+          <div
+            className="avatar-edit-wrap"
+            style={{ borderRadius: 14 }}
+            onClick={() => setAvatarPickerOpen(true)}
+            title="Change group icon"
+          >
+            <img
+              src={groupAvatarSrc}
+              alt={group.name}
+              style={{ width: 72, height: 72, borderRadius: 14, border: "1px solid var(--v2-border-subtle)", display: "block", objectFit: "cover" }}
+            />
+            <span className="avatar-edit-overlay" style={{ borderRadius: 14 }}>Edit</span>
+          </div>
+          <div>
+            <p style={{ margin: 0, fontSize: 13.5, fontWeight: 700, color: "var(--v2-ink)" }}>
+              {group.name}
+            </p>
+            <button
+              type="button"
+              className="text-link"
+              style={{ fontSize: 12.5, marginTop: 4 }}
+              onClick={() => setAvatarPickerOpen(true)}
+            >
+              Change icon
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="group-settings-card">
         <h2 className="group-settings-h2">Details</h2>
 
         <label className="modal-label" htmlFor="gs-name">Name</label>
@@ -422,6 +477,13 @@ export default function GroupSettingsPage() {
           )}
         </div>
       </section>
+
+      {canManage && (
+        <section className="group-settings-card">
+          <h2 className="group-settings-h2">Invite people</h2>
+          <InvitePeoplePanel groupId={groupId || ""} canInvite={canManage} />
+        </section>
+      )}
 
       <section className="group-settings-card">
         <h2 className="group-settings-h2">Invite link</h2>
@@ -570,6 +632,16 @@ export default function GroupSettingsPage() {
           </Button>
         </section>
       )}
+
+      {avatarPickerOpen && (
+        <AvatarPicker
+          mode="group"
+          seed={group.slug}
+          currentUrl={group.avatar_url}
+          onSave={handleSaveAvatar}
+          onClose={() => setAvatarPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -579,29 +651,46 @@ export default function GroupSettingsPage() {
 // @-mention them in the room. Targets' privacy preferences are implicit
 // in the group owner's choice of who has which toggle on.
 const PERM_TOGGLES: Array<{
-  key: "can_see_brief" | "can_query_calendar" | "can_post";
+  key: "can_see_member_briefs" | "can_see_group_brief" | "can_query_calendar" | "can_post";
   label: string;
   help: string;
+  icon: LucideIcon;
+  tone: "blue" | "violet" | "green" | "ink";
 }> = [
   {
-    key: "can_see_brief",
-    label: "See briefs of mentioned members",
+    key: "can_see_member_briefs",
+    label: "Use members' private briefs",
+    icon: UserIcon,
+    tone: "violet",
     help:
-      "When this member @mentions someone, that persona may share specifics from its principal's brief. Otherwise the reply is kept high-level.",
+      "When this member @mentions someone, that persona may share specifics from its principal's private brief. Otherwise replies stay high-level.",
+  },
+  {
+    key: "can_see_group_brief",
+    label: "Use shared group brief",
+    icon: FileText,
+    tone: "blue",
+    help:
+      "Allow this member to read the shared team brief and let mentioned personas use it as group context.",
   },
   {
     key: "can_query_calendar",
     label: "Check calendars of mentioned members",
+    icon: Calendar,
+    tone: "green",
     help:
       "Allow this member's @mentions to query the target persona's free/busy availability.",
   },
   {
     key: "can_post",
     label: "Post messages",
+    icon: MessageCircle,
+    tone: "ink",
     help:
       "Turn off to mute this member without removing them from the group.",
   },
 ];
+
 
 function MemberPermissionsPanel({
   member,
@@ -615,17 +704,22 @@ function MemberPermissionsPanel({
     <div className="group-member-perms">
       {PERM_TOGGLES.map((t) => {
         const checked = perms[t.key] === true;
+        const Icon = t.icon;
         return (
-          <label key={t.key} className="group-perm-row">
+          <label key={t.key} className={`group-perm-row ${checked ? "is-on" : ""}`}>
             <input
               type="checkbox"
               checked={checked}
               onChange={(e) => onToggle(t.key, e.target.checked)}
             />
+            <span className={`group-perm-icon tone-${t.tone}`} aria-hidden>
+              <Icon size={15} strokeWidth={1.9} />
+            </span>
             <span className="group-perm-text">
               <strong>{t.label}</strong>
               <small>{t.help}</small>
             </span>
+            <span className="group-perm-switch" aria-hidden />
           </label>
         );
       })}
@@ -671,6 +765,7 @@ function ActivityPanel({
       try {
         const r = await apiGet<{ events: AuditEvent[] }>(
           `/api/groups/${groupId}/activity?scope=${scope}&limit=50`,
+          { noCache: true },
         );
         if (cancelled) return;
         setEvents(r.events);
@@ -732,7 +827,11 @@ function ActivityPanel({
               />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="group-activity-line">
-                  {scope === "me" ? (
+                  {e.kind === "brief_shared" && e.metadata?.source === "group_brief" ? (
+                    <>
+                      <strong>{e.actor_name}</strong> used the shared group brief
+                    </>
+                  ) : scope === "me" ? (
                     <>
                       <strong>{AUDIT_LABEL[e.kind]}</strong> with{" "}
                       <span className="group-activity-actor">{e.actor_name}</span>

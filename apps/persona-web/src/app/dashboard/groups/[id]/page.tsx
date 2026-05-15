@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Settings as SettingsIcon,
-  Send,
+  ArrowUp,
   Users,
   Lock,
   Globe2,
@@ -14,9 +14,19 @@ import {
   Copy,
   Check,
   Trash2,
+  NotebookText,
+  Calendar,
+  CalendarDays,
+  Sparkle,
+  X,
+  Sparkles,
+  Share2,
 } from "lucide-react";
 import { Avatar, Button } from "@/components/ui";
+import { defaultGroupStyle, generateAvatarDataUri } from "@/lib/dicebear";
 import { useDashboard } from "@/contexts/DashboardContext";
+import ApprovalsIndicator from "@/components/ApprovalsIndicator";
+import { InvitePeoplePanel } from "@/components/groups/InvitePeoplePanel";
 import { apiDelete, apiGet, apiPatch, apiPost, invalidate } from "@/lib/api";
 import { getSupabase } from "@/lib/supabase";
 
@@ -69,6 +79,11 @@ export default function GroupChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [openPanel, setOpenPanel] = useState<"people" | "brief" | "schedule" | "memory" | null>(null);
+
+  const togglePanel = (tab: "people" | "brief" | "schedule" | "memory") => {
+    setOpenPanel((prev) => (prev === tab ? null : tab));
+  };
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -326,7 +341,10 @@ export default function GroupChatPage() {
       const r = await apiPost<{
         message: Message | null;
         mentioned_user_ids?: string[];
-      }>(`/api/groups/${groupId}/messages`, { content });
+      }>(`/api/groups/${groupId}/messages`, {
+        content,
+        time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
       // Swap the optimistic row for the server-confirmed one. If
       // realtime already delivered the real row first (unusual but
       // possible), the realtime handler will have done the swap and
@@ -389,12 +407,11 @@ export default function GroupChatPage() {
           <ArrowLeft size={16} strokeWidth={1.8} />
         </Link>
         <span className="group-chat-avatar" aria-hidden>
-          {group.avatar_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={group.avatar_url} alt="" />
-          ) : (
-            <span>{(group.name || "?").charAt(0).toUpperCase()}</span>
-          )}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={group.avatar_url || generateAvatarDataUri(defaultGroupStyle(), group.slug)}
+            alt=""
+          />
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h2 className="group-chat-title">{group.name}</h2>
@@ -410,6 +427,48 @@ export default function GroupChatPage() {
             <span>{memberCount} member{memberCount === 1 ? "" : "s"}</span>
           </div>
         </div>
+        <div className="group-header-panel-icons" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            className={`group-panel-tab ${openPanel === "people" ? "is-active" : ""}`}
+            aria-selected={openPanel === "people"}
+            onClick={() => togglePanel("people")}
+          >
+            <Users size={15} strokeWidth={1.75} />
+            <span className="group-panel-tab-label">Members</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            className={`group-panel-tab ${openPanel === "brief" ? "is-active" : ""}`}
+            aria-selected={openPanel === "brief"}
+            onClick={() => togglePanel("brief")}
+          >
+            <NotebookText size={15} strokeWidth={1.75} />
+            <span className="group-panel-tab-label">Brief</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            className={`group-panel-tab ${openPanel === "schedule" ? "is-active" : ""}`}
+            aria-selected={openPanel === "schedule"}
+            onClick={() => togglePanel("schedule")}
+          >
+            <CalendarDays size={15} strokeWidth={1.75} />
+            <span className="group-panel-tab-label">Schedule</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            className={`group-panel-tab ${openPanel === "memory" ? "is-active" : ""}`}
+            aria-selected={openPanel === "memory"}
+            onClick={() => togglePanel("memory")}
+          >
+            <Sparkle size={15} strokeWidth={1.75} />
+            <span className="group-panel-tab-label">Memory</span>
+          </button>
+        </div>
         {isManager && (
           <Link
             href={`/dashboard/groups/${groupId}/settings`}
@@ -420,6 +479,17 @@ export default function GroupChatPage() {
             <SettingsIcon size={16} strokeWidth={1.7} />
           </Link>
         )}
+        <div className="group-header-user-cluster">
+          <ApprovalsIndicator />
+          <GroupShareButton userId={user?.id} />
+          <span className="topbar-avatar" aria-label={user?.user_metadata?.full_name || "You"}>
+            <Avatar
+              size="sm"
+              src={user?.user_metadata?.avatar_url || user?.user_metadata?.picture || null}
+              name={user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email?.split("@")[0] || "You"}
+            />
+          </span>
+        </div>
         <HeaderMenu
           group={group}
           groupId={groupId || ""}
@@ -482,11 +552,17 @@ export default function GroupChatPage() {
                       </span>
                     )}
                     <div className="group-msg-bubble">
-                      {showSender && (
+                      {(showSender || m.channel === "agent") && (
                         <div className="group-msg-name">
                           {senderName}
                           {m.channel === "agent" && (
-                            <span className="group-msg-tag">via persona</span>
+                            <span
+                              className="group-msg-tag"
+                              data-tooltip={`AI agent representing ${senderName}`}
+                            >
+                              <Sparkles size={9} strokeWidth={2} />
+                              AI persona
+                            </span>
                           )}
                         </div>
                       )}
@@ -537,63 +613,75 @@ export default function GroupChatPage() {
             ))}
           </ul>
         )}
-        <div className="group-composer-row">
-          <textarea
-            ref={inputRef}
-            value={draft}
-            onChange={(e) => handleDraftChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (mentionQuery !== null && mentionSuggestions.length > 0) {
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  setMentionIndex((i) => (i + 1) % mentionSuggestions.length);
-                  return;
+        <div className={`chat-input-v2 group-chat-input-v2 ${draft.trim() ? "has-text" : ""}`}>
+          <div className="chat-input-v2-inner">
+            <div className="row-1">
+              <textarea
+                ref={inputRef}
+                value={draft}
+                onChange={(e) => handleDraftChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (mentionQuery !== null && mentionSuggestions.length > 0) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setMentionIndex((i) => (i + 1) % mentionSuggestions.length);
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setMentionIndex(
+                        (i) => (i - 1 + mentionSuggestions.length) % mentionSuggestions.length,
+                      );
+                      return;
+                    }
+                    if (e.key === "Enter" || e.key === "Tab") {
+                      e.preventDefault();
+                      insertMention(mentionSuggestions[mentionIndex]);
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setMentionQuery(null);
+                      return;
+                    }
+                  }
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void handleSend();
+                  }
+                }}
+                disabled={!canPost || sending}
+                rows={1}
+                placeholder={
+                  canPost
+                    ? "Message the group…  Type @ to mention someone's persona."
+                    : "Posting is disabled"
                 }
-                if (e.key === "ArrowUp") {
-                  e.preventDefault();
-                  setMentionIndex(
-                    (i) => (i - 1 + mentionSuggestions.length) % mentionSuggestions.length,
-                  );
-                  return;
-                }
-                if (e.key === "Enter" || e.key === "Tab") {
-                  e.preventDefault();
-                  insertMention(mentionSuggestions[mentionIndex]);
-                  return;
-                }
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  setMentionQuery(null);
-                  return;
-                }
-              }
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void handleSend();
-              }
-            }}
-            disabled={!canPost || sending}
-            rows={1}
-            placeholder={
-              canPost
-                ? "Message your group…  Type @ to mention a member's persona."
-                : "Posting is disabled"
-            }
-            className="group-composer-input"
-            maxLength={4000}
-          />
-          <button
-            type="button"
-            className="group-composer-send"
-            onClick={() => void handleSend()}
-            disabled={!canPost || sending || !draft.trim()}
-            aria-label="Send message"
-          >
-            <Send size={16} strokeWidth={1.8} />
-          </button>
+                maxLength={4000}
+              />
+              <button
+                type="button"
+                className="send-btn"
+                onClick={() => void handleSend()}
+                disabled={!canPost || sending || !draft.trim()}
+                aria-label="Send message"
+              >
+                <ArrowUp size={14} strokeWidth={2} />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
         </main>
+
+        {openPanel !== null && (
+          <button
+            type="button"
+            className="group-rail-backdrop"
+            aria-label="Close panel"
+            onClick={() => setOpenPanel(null)}
+          />
+        )}
 
         <GroupRightRail
           groupId={groupId || ""}
@@ -601,6 +689,9 @@ export default function GroupChatPage() {
           currentUserId={user?.id}
           isManager={isManager}
           isOwner={myMembership?.role === "owner"}
+          open={openPanel !== null}
+          tab={openPanel ?? "people"}
+          onClose={() => setOpenPanel(null)}
         />
       </div>
     </div>
@@ -807,14 +898,19 @@ function GroupRightRail({
   currentUserId,
   isManager,
   isOwner,
+  open,
+  tab,
+  onClose,
 }: {
   groupId: string;
   members: Member[];
   currentUserId: string | undefined;
   isManager: boolean;
   isOwner: boolean;
+  open: boolean;
+  tab: "people" | "brief" | "schedule" | "memory";
+  onClose: () => void;
 }) {
-  const [tab, setTab] = useState<"people" | "brief" | "schedule" | "memory">("people");
   const [brief, setBrief] = useState<GroupBriefData | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
   const [briefError, setBriefError] = useState<string | null>(null);
@@ -822,12 +918,15 @@ function GroupRightRail({
   const [editDraft, setEditDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [initing, setIniting] = useState(false);
+  const currentMember = members.find((m) => m.user_id === currentUserId);
+  const canReadGroupBrief = currentMember?.role === "owner" || currentMember?.permissions?.can_see_group_brief !== false;
+  const canUseSchedule = currentMember?.role === "owner" || currentMember?.permissions?.can_query_calendar === true;
 
   // Fetch on first tab-switch to Brief. The fetched payload is cached in
   // local state for the lifetime of the page; users who want a refresh
   // hit the explicit "Reload" button.
   useEffect(() => {
-    if (tab !== "brief" || !groupId || brief !== null) return;
+    if (tab !== "brief" || !groupId || brief !== null || !canReadGroupBrief) return;
     let cancelled = false;
     (async () => {
       setBriefLoading(true);
@@ -844,14 +943,16 @@ function GroupRightRail({
     return () => {
       cancelled = true;
     };
-  }, [tab, groupId, brief]);
+  }, [tab, groupId, brief, canReadGroupBrief]);
 
   const reloadBrief = useCallback(async () => {
     setBrief(null);
     setBriefError(null);
     setBriefLoading(true);
     try {
-      const data = await apiGet<GroupBriefData>(`/api/groups/${groupId}/brief`);
+      const data = await apiGet<GroupBriefData>(`/api/groups/${groupId}/brief`, {
+        noCache: true,
+      });
       setBrief(data);
     } catch (e) {
       setBriefError(e instanceof Error ? e.message : "Couldn't load brief.");
@@ -889,48 +990,28 @@ function GroupRightRail({
     }
   }, [editDraft, groupId, reloadBrief]);
 
+  const PANEL_TITLE: Record<typeof tab, string> = {
+    people: `Members · ${members.length}`,
+    brief: "Brief",
+    schedule: "Schedule",
+    memory: "Memory",
+  };
+
   return (
-    <aside className="group-chat-roster">
-      <div className="group-rail-tabs" role="tablist">
+    <aside className={`group-chat-roster ${open ? "is-open" : ""}`}>
+      <div className="group-rail-header">
+        <span className="group-rail-title">{PANEL_TITLE[tab]}</span>
         <button
           type="button"
-          role="tab"
-          aria-selected={tab === "people"}
-          className={`group-rail-tab ${tab === "people" ? "is-active" : ""}`}
-          onClick={() => setTab("people")}
+          className="group-rail-close"
+          onClick={onClose}
+          aria-label="Close panel"
         >
-          People
-          <span className="group-rail-tab-count">{members.length}</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "brief"}
-          className={`group-rail-tab ${tab === "brief" ? "is-active" : ""}`}
-          onClick={() => setTab("brief")}
-        >
-          Brief
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "schedule"}
-          className={`group-rail-tab ${tab === "schedule" ? "is-active" : ""}`}
-          onClick={() => setTab("schedule")}
-        >
-          Schedule
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "memory"}
-          className={`group-rail-tab ${tab === "memory" ? "is-active" : ""}`}
-          onClick={() => setTab("memory")}
-        >
-          Memory
+          <X size={14} strokeWidth={2} />
         </button>
       </div>
 
+      <div className="group-rail-content">
       {tab === "people" ? (
         <>
           <ul className="group-roster-list">
@@ -955,18 +1036,38 @@ function GroupRightRail({
             ))}
           </ul>
           {isManager && (
-            <Link
-              href={`/dashboard/groups/${groupId}/settings`}
-              className="btn btn-secondary btn-sm group-rail-cta"
-            >
-              Invite or manage →
-            </Link>
+            <>
+              <div className="group-rail-divider" role="presentation" />
+              <div className="group-rail-section-head">Invite by name</div>
+              <InvitePeoplePanel
+                groupId={groupId}
+                canInvite={isManager}
+                showHint={false}
+                compact
+              />
+              <Link
+                href={`/dashboard/groups/${groupId}/settings`}
+                className="btn btn-secondary btn-sm group-rail-cta"
+              >
+                Open full settings →
+              </Link>
+            </>
           )}
         </>
       ) : tab === "schedule" ? (
-        <GroupSchedulePane groupId={groupId} />
+        <GroupSchedulePane groupId={groupId} canUseSchedule={canUseSchedule} />
       ) : tab === "memory" ? (
         <GroupMemoryPane groupId={groupId} canEdit={isManager} />
+      ) : !canReadGroupBrief ? (
+        <div className="group-brief-pane">
+          <div className="group-brief-empty">
+            <p>
+              You don&rsquo;t have access to this group&rsquo;s shared brief.
+              Ask an owner or admin to enable <strong>Use shared group brief</strong>
+              for you in group settings.
+            </p>
+          </div>
+        </div>
       ) : (
         <div className="group-brief-pane">
           {briefError && (
@@ -1061,6 +1162,7 @@ function GroupRightRail({
           )}
         </div>
       )}
+      </div>
     </aside>
   );
 }
@@ -1097,7 +1199,13 @@ const RANGE_OPTIONS: Array<{ label: string; days: number }> = [
   { label: "Next 14 days", days: 14 },
 ];
 
-function GroupSchedulePane({ groupId }: { groupId: string }) {
+function GroupSchedulePane({
+  groupId,
+  canUseSchedule,
+}: {
+  groupId: string;
+  canUseSchedule: boolean;
+}) {
   const [days, setDays] = useState(7);
   const [duration, setDuration] = useState(30);
   const [data, setData] = useState<AvailabilityResponse | null>(null);
@@ -1147,6 +1255,22 @@ function GroupSchedulePane({ groupId }: { groupId: string }) {
     return (data?.members || []).filter((m) => !m.has_calendar);
   }, [data]);
 
+  if (!canUseSchedule) {
+    return (
+      <div className="group-schedule-pane">
+        <div className="group-schedule-hint group-schedule-locked">
+          <span className="group-schedule-hint-icon" aria-hidden>
+            <Lock size={16} strokeWidth={1.8} />
+          </span>
+          <span className="group-schedule-hint-copy">
+            <strong>Calendar checks are off</strong>
+            <small>Ask an owner or admin to enable calendar access for your membership.</small>
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="group-schedule-pane">
       <div className="group-schedule-controls">
@@ -1174,7 +1298,13 @@ function GroupSchedulePane({ groupId }: { groupId: string }) {
             </option>
           ))}
         </select>
-        <Button size="sm" onClick={() => void fetchAvailability()} disabled={loading}>
+        <Button
+          size="sm"
+          className="group-schedule-find"
+          onClick={() => void fetchAvailability()}
+          disabled={loading}
+          leftIcon={<Calendar size={14} strokeWidth={1.8} />}
+        >
           {loading ? "Looking…" : data ? "Refresh" : "Find slots"}
         </Button>
       </div>
@@ -1214,9 +1344,10 @@ function GroupSchedulePane({ groupId }: { groupId: string }) {
                   </div>
                   <Button
                     size="sm"
+                    leftIcon={<Share2 size={13} strokeWidth={1.8} />}
                     onClick={() => setProposingSlot(s)}
                   >
-                    Propose →
+                    Propose
                   </Button>
                 </li>
               ))}
@@ -1226,11 +1357,15 @@ function GroupSchedulePane({ groupId }: { groupId: string }) {
       )}
 
       {!data && !loading && (
-        <p className="group-schedule-hint">
-          Click <strong>Find slots</strong> to see times that work for every
-          member with a connected calendar. Members without calendars are
-          excluded — they&rsquo;ll need to RSVP manually after the proposal.
-        </p>
+        <div className="group-schedule-hint group-schedule-ready">
+          <span className="group-schedule-hint-icon" aria-hidden>
+            <Calendar size={16} strokeWidth={1.8} />
+          </span>
+          <span className="group-schedule-hint-copy">
+            <strong>Ready to scan availability</strong>
+            <small>Connected calendars are included. Members without calendars can RSVP after the proposal.</small>
+          </span>
+        </div>
       )}
 
       {proposingSlot && (
@@ -1568,6 +1703,26 @@ function GroupMemoryPane({
   );
 }
 
+function GroupShareButton({ userId }: { userId?: string }) {
+  const [copied, setCopied] = useState(false);
+  const url = userId && typeof window !== "undefined" ? `${window.location.origin}/p/${userId}` : null;
+  const handle = useCallback(async () => {
+    if (!url) return;
+    try {
+      if (navigator.share) { await navigator.share({ url, title: "My Zynd Persona" }); return; }
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch { /* no-op */ }
+  }, [url]);
+  return (
+    <button type="button" onClick={handle} className="icon-btn" disabled={!url}
+      aria-label={copied ? "Link copied" : "Share my agent"} title={copied ? "Link copied" : "Share my agent"}>
+      {copied ? <Check size={15} strokeWidth={1.8} /> : <Share2 size={15} strokeWidth={1.8} />}
+    </button>
+  );
+}
+
 function PendingRepliesBar({
   pending,
   members,
@@ -1577,17 +1732,34 @@ function PendingRepliesBar({
 }) {
   if (!pending.length) return null;
   return (
-    <div className="group-pending" role="status" aria-live="polite">
+    <ul className="group-msgs group-pending" role="status" aria-live="polite">
       {pending.map((p) => {
         const m = members.find((mm) => mm.user_id === p.userId);
         const name = m?.display_name || "A persona";
         return (
-          <span key={p.userId} className="group-pending-chip">
-            <span className="group-pending-dot" aria-hidden />
-            {name}&rsquo;s persona is thinking…
-          </span>
+          <li key={p.userId} className="group-msg group-msg-agent">
+            <span className="group-msg-avatar" aria-hidden>
+              <Avatar size="sm" name={name} src={m?.avatar_url || undefined} variant="accent" />
+            </span>
+            <div className="group-msg-bubble">
+              <div className="group-msg-name">
+                {name}
+                <span className="group-msg-tag" data-tooltip={`AI agent representing ${name}`}>
+                  <Sparkles size={9} strokeWidth={2} />
+                  AI persona
+                </span>
+              </div>
+              <div className="group-msg-content">
+                <div className="typing-indicator">
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                </div>
+              </div>
+            </div>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }

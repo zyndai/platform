@@ -58,14 +58,7 @@ CREATE POLICY "affected user reads own audit events"
 -- visibility). Service role bypasses RLS for the API write path.
 CREATE POLICY "owner reads group audit events"
     ON persona_group_audit_events
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM persona_group_members m
-             WHERE m.group_id = persona_group_audit_events.group_id
-               AND m.user_id = auth.uid()
-               AND m.role IN ('owner', 'admin')
-        )
-    );
+    FOR SELECT USING (public.is_persona_group_manager(persona_group_audit_events.group_id));
 
 CREATE POLICY "service role full access on persona_group_audit_events"
     ON persona_group_audit_events

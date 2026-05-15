@@ -34,6 +34,54 @@ ALTER TABLE public.persona_group_constraints  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.persona_group_audit_events ENABLE ROW LEVEL SECURITY;
 
 -- ====================================================================
+-- 1b. SECURITY-DEFINER HELPERS FOR GROUP MEMBERSHIP
+-- ====================================================================
+-- RLS policies that query persona_group_members directly can recurse
+-- when the roster table's own policy is being evaluated. Keep the
+-- membership lookup behind security-definer helpers owned by the
+-- migration role, so policies on groups/messages/constraints/realtime
+-- can ask a simple yes/no question without re-entering roster RLS.
+CREATE OR REPLACE FUNCTION public.is_persona_group_member(
+    check_group_id uuid
+) RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT auth.uid() IS NOT NULL
+       AND EXISTS (
+            SELECT 1
+              FROM public.persona_group_members m
+             WHERE m.group_id = check_group_id
+               AND m.user_id = auth.uid()
+        );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_persona_group_manager(
+    check_group_id uuid
+) RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT auth.uid() IS NOT NULL
+       AND EXISTS (
+            SELECT 1
+              FROM public.persona_group_members m
+             WHERE m.group_id = check_group_id
+               AND m.user_id = auth.uid()
+               AND m.role IN ('owner', 'admin')
+        );
+$$;
+
+REVOKE ALL ON FUNCTION public.is_persona_group_member(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.is_persona_group_manager(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_persona_group_member(uuid) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.is_persona_group_manager(uuid) TO authenticated, service_role;
+
+-- ====================================================================
 -- 2. POLICIES. Service-role always bypasses; other policies are
 -- per-table and apply to authenticated frontend reads.
 -- DROP-then-CREATE so re-running this file replaces existing policies
@@ -275,12 +323,7 @@ CREATE POLICY "Service role full access on callback_results" ON public.callback_
 -- ── persona_groups ──────────────────────────────────────────────────
 DROP POLICY IF EXISTS "members read group" ON public.persona_groups;
 CREATE POLICY "members read group" ON public.persona_groups
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.persona_group_members m
-             WHERE m.group_id = persona_groups.id AND m.user_id = auth.uid()
-        )
-    );
+    FOR SELECT USING (public.is_persona_group_member(persona_groups.id));
 DROP POLICY IF EXISTS "service role full access on persona_groups" ON public.persona_groups;
 CREATE POLICY "service role full access on persona_groups" ON public.persona_groups
     FOR ALL USING (auth.role() = 'service_role')
@@ -289,13 +332,7 @@ CREATE POLICY "service role full access on persona_groups" ON public.persona_gro
 -- ── persona_group_members ───────────────────────────────────────────
 DROP POLICY IF EXISTS "members read roster" ON public.persona_group_members;
 CREATE POLICY "members read roster" ON public.persona_group_members
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.persona_group_members m
-             WHERE m.group_id = persona_group_members.group_id
-               AND m.user_id = auth.uid()
-        )
-    );
+    FOR SELECT USING (public.is_persona_group_member(persona_group_members.group_id));
 DROP POLICY IF EXISTS "service role full access on persona_group_members" ON public.persona_group_members;
 CREATE POLICY "service role full access on persona_group_members" ON public.persona_group_members
     FOR ALL USING (auth.role() = 'service_role')
@@ -304,13 +341,7 @@ CREATE POLICY "service role full access on persona_group_members" ON public.pers
 -- ── persona_group_messages ──────────────────────────────────────────
 DROP POLICY IF EXISTS "members read messages" ON public.persona_group_messages;
 CREATE POLICY "members read messages" ON public.persona_group_messages
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.persona_group_members m
-             WHERE m.group_id = persona_group_messages.group_id
-               AND m.user_id = auth.uid()
-        )
-    );
+    FOR SELECT USING (public.is_persona_group_member(persona_group_messages.group_id));
 DROP POLICY IF EXISTS "service role full access on persona_group_messages" ON public.persona_group_messages;
 CREATE POLICY "service role full access on persona_group_messages" ON public.persona_group_messages
     FOR ALL USING (auth.role() = 'service_role')
@@ -319,13 +350,7 @@ CREATE POLICY "service role full access on persona_group_messages" ON public.per
 -- ── persona_group_constraints ──────────────────────────────────────
 DROP POLICY IF EXISTS "members read group constraints" ON public.persona_group_constraints;
 CREATE POLICY "members read group constraints" ON public.persona_group_constraints
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.persona_group_members m
-             WHERE m.group_id = persona_group_constraints.group_id
-               AND m.user_id = auth.uid()
-        )
-    );
+    FOR SELECT USING (public.is_persona_group_member(persona_group_constraints.group_id));
 DROP POLICY IF EXISTS "service role full access on persona_group_constraints" ON public.persona_group_constraints;
 CREATE POLICY "service role full access on persona_group_constraints" ON public.persona_group_constraints
     FOR ALL USING (auth.role() = 'service_role')
@@ -337,18 +362,18 @@ CREATE POLICY "affected user reads own audit events" ON public.persona_group_aud
     FOR SELECT USING (auth.uid() = affected_user_id);
 DROP POLICY IF EXISTS "owner reads group audit events" ON public.persona_group_audit_events;
 CREATE POLICY "owner reads group audit events" ON public.persona_group_audit_events
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.persona_group_members m
-             WHERE m.group_id = persona_group_audit_events.group_id
-               AND m.user_id = auth.uid()
-               AND m.role IN ('owner', 'admin')
-        )
-    );
+    FOR SELECT USING (public.is_persona_group_manager(persona_group_audit_events.group_id));
 DROP POLICY IF EXISTS "service role full access on persona_group_audit_events" ON public.persona_group_audit_events;
 CREATE POLICY "service role full access on persona_group_audit_events" ON public.persona_group_audit_events
     FOR ALL USING (auth.role() = 'service_role')
     WITH CHECK (auth.role() = 'service_role');
+
+-- Clean up the older two-argument helper shape if this file was applied
+-- from an intermediate local branch. The one-argument helpers above read
+-- auth.uid() internally, so direct RPC calls cannot test another user's
+-- membership.
+DROP FUNCTION IF EXISTS public.is_persona_group_member(uuid, uuid);
+DROP FUNCTION IF EXISTS public.is_persona_group_manager(uuid, uuid);
 
 -- ====================================================================
 -- 3. PARTIAL INDEXES Prisma can't express (filter clauses, NULL ordering).

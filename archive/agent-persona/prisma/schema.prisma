@@ -49,6 +49,8 @@ model AuthUser {
   ownedGroups           PersonaGroup[]         @relation("GroupOwner")
   groupMemberships      PersonaGroupMember[]
   invitedMemberships    PersonaGroupMember[]   @relation("GroupInviter")
+  groupInvitesReceived  PersonaGroupInvitation[] @relation("GroupInviteInvitee")
+  groupInvitesSent      PersonaGroupInvitation[] @relation("GroupInviteInviter")
   sentGroupMessages     PersonaGroupMessage[]  @relation("GroupMessageSender")
   authoredConstraints   PersonaGroupConstraint[]
   affectedAuditEvents   PersonaGroupAuditEvent[] @relation("AuditAffected")
@@ -170,6 +172,23 @@ enum GroupVisibility {
 
 enum GroupMemberRole {
   owner
+  admin
+  member
+
+  @@schema("public")
+}
+
+enum GroupInvitationStatus {
+  pending
+  accepted
+  declined
+  revoked
+  expired
+
+  @@schema("public")
+}
+
+enum GroupInviteeRole {
   admin
   member
 
@@ -554,6 +573,7 @@ model PersonaGroup {
   messages     PersonaGroupMessage[]
   constraints  PersonaGroupConstraint[]
   auditEvents  PersonaGroupAuditEvent[]
+  invitations  PersonaGroupInvitation[]
 
   @@index([ownerUserId])
   // Partial index on join_domain (open + non-archived) lives in policies.sql.
@@ -567,8 +587,8 @@ model PersonaGroupMember {
   userId       String          @map("user_id") @db.Uuid
   agentId      String?         @map("agent_id")
   role         GroupMemberRole @default(member)
-  // {can_see_brief, can_query_calendar, can_post, can_invite, can_speak_for_group}
-  permissions  Json            @default("{\"can_see_brief\": false, \"can_query_calendar\": false, \"can_post\": true, \"can_invite\": false, \"can_speak_for_group\": false}") @db.JsonB
+  // {can_see_member_briefs, can_see_group_brief, can_query_calendar, can_post, can_invite, can_speak_for_group}
+  permissions  Json            @default("{\"can_see_brief\": false, \"can_see_member_briefs\": false, \"can_see_group_brief\": true, \"can_query_calendar\": true, \"can_post\": true, \"can_invite\": false, \"can_speak_for_group\": false}") @db.JsonB
   invitedBy    String?         @map("invited_by") @db.Uuid
   joinedAt     DateTime        @default(now()) @map("joined_at") @db.Timestamptz
 
@@ -638,5 +658,29 @@ model PersonaGroupAuditEvent {
   @@index([affectedUserId, createdAt(sort: Desc)])
   @@index([groupId, createdAt(sort: Desc)])
   @@map("persona_group_audit_events")
+  @@schema("public")
+}
+
+model PersonaGroupInvitation {
+  id             String                @id @default(uuid()) @db.Uuid
+  groupId        String                @map("group_id") @db.Uuid
+  inviteeUserId  String                @map("invitee_user_id") @db.Uuid
+  inviterUserId  String?               @map("inviter_user_id") @db.Uuid
+  inviteeRole    GroupInviteeRole      @default(member) @map("invitee_role")
+  status         GroupInvitationStatus @default(pending)
+  message        String?
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz
+  decidedAt      DateTime?             @map("decided_at") @db.Timestamptz
+  expiresAt      DateTime              @map("expires_at") @db.Timestamptz
+
+  group   PersonaGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  invitee AuthUser     @relation("GroupInviteInvitee", fields: [inviteeUserId], references: [id], onDelete: Cascade)
+  inviter AuthUser?    @relation("GroupInviteInviter", fields: [inviterUserId], references: [id], onDelete: SetNull)
+
+  // Partial unique index ("only one open invite per group+invitee") lives
+  // in patch_add_persona_group_invitations.sql — Prisma can't express it.
+  @@index([inviteeUserId, status])
+  @@index([groupId, status])
+  @@map("persona_group_invitations")
   @@schema("public")
 }

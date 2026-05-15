@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS persona_group_members (
                   CHECK (role IN ('owner', 'admin', 'member')),
     permissions   JSONB NOT NULL DEFAULT jsonb_build_object(
                       'can_see_brief',       false,
-                      'can_query_calendar',  false,
+                      'can_see_member_briefs', false,
+                      'can_see_group_brief', true,
+                      'can_query_calendar',  true,
                       'can_post',            true,
                       'can_invite',          false,
                       'can_speak_for_group', false
@@ -89,35 +91,60 @@ CREATE INDEX IF NOT EXISTS persona_group_messages_group_idx
 -- The backend uses the service-role key for all writes and filters by
 -- membership in Python, so RLS here is a defense-in-depth layer for any
 -- direct frontend reads (notably the realtime channel subscription on
--- persona_group_messages). The membership check is a single subquery,
--- which Postgres planner handles cheaply for the table sizes we expect.
+-- persona_group_messages). Membership checks use security-definer
+-- helpers so roster RLS doesn't recurse into itself.
 ALTER TABLE persona_groups        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE persona_group_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE persona_group_messages ENABLE ROW LEVEL SECURITY;
 
+CREATE OR REPLACE FUNCTION public.is_persona_group_member(
+    check_group_id uuid
+) RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT auth.uid() IS NOT NULL
+       AND EXISTS (
+            SELECT 1
+              FROM public.persona_group_members m
+             WHERE m.group_id = check_group_id
+               AND m.user_id = auth.uid()
+        );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_persona_group_manager(
+    check_group_id uuid
+) RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT auth.uid() IS NOT NULL
+       AND EXISTS (
+            SELECT 1
+              FROM public.persona_group_members m
+             WHERE m.group_id = check_group_id
+               AND m.user_id = auth.uid()
+               AND m.role IN ('owner', 'admin')
+        );
+$$;
+
+REVOKE ALL ON FUNCTION public.is_persona_group_member(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.is_persona_group_manager(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_persona_group_member(uuid) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.is_persona_group_manager(uuid) TO authenticated, service_role;
+
 CREATE POLICY "members read group" ON persona_groups
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM persona_group_members m
-             WHERE m.group_id = persona_groups.id AND m.user_id = auth.uid()
-        )
-    );
+    FOR SELECT USING (public.is_persona_group_member(persona_groups.id));
 
 CREATE POLICY "members read roster" ON persona_group_members
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM persona_group_members m
-             WHERE m.group_id = persona_group_members.group_id AND m.user_id = auth.uid()
-        )
-    );
+    FOR SELECT USING (public.is_persona_group_member(persona_group_members.group_id));
 
 CREATE POLICY "members read messages" ON persona_group_messages
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM persona_group_members m
-             WHERE m.group_id = persona_group_messages.group_id AND m.user_id = auth.uid()
-        )
-    );
+    FOR SELECT USING (public.is_persona_group_member(persona_group_messages.group_id));
 
 CREATE POLICY "service role full access on persona_groups" ON persona_groups
     FOR ALL USING (auth.role() = 'service_role')

@@ -36,14 +36,14 @@ import asyncio
 import logging
 import re
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from postgrest.exceptions import APIError
 from pydantic import BaseModel, Field
-from supabase import create_client
+import config
 
 import config
 from api.auth import get_current_user
@@ -52,11 +52,26 @@ router = APIRouter()
 
 
 def _supabase():
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
+
+
 
 
 def _is_missing_table(err: APIError) -> bool:
     return getattr(err, "code", None) == "PGRST205"
+
+
+def _post_group_system_note(sb, group_id: str, note: str) -> None:
+    """Best-effort system message into the group chat. Failure is swallowed."""
+    try:
+        sb.table("persona_group_messages").insert({
+            "group_id": group_id,
+            "channel": "system",
+            "sender_name": "Zynd",
+            "content": note,
+        }).execute()
+    except Exception as e:
+        logger.warning(f"[groups] couldn't post system note in {group_id}: {e}")
 
 
 # Soft cap. Phase 1's design target was small teams of 3–15. We don't want
@@ -167,6 +182,60 @@ def _resolve_display_name(user: dict) -> str:
     )
 
 
+GROUP_PERMISSION_DEFAULTS: dict[str, bool] = {
+    "can_see_brief": False,
+    "can_see_member_briefs": False,
+    "can_see_group_brief": True,
+    "can_query_calendar": True,
+    "can_post": True,
+    "can_invite": False,
+    "can_speak_for_group": False,
+}
+GROUP_PERMISSION_KEYS = set(GROUP_PERMISSION_DEFAULTS.keys())
+
+
+def _normalize_group_permissions(perms: dict | None, role: str | None = None) -> dict:
+    """
+    Return the current group permission shape with legacy values mapped in.
+
+    Older rows used one broad `can_see_brief` flag. The new model splits that:
+      * can_see_member_briefs — may receive private details from mentioned users
+      * can_see_group_brief   — may read/use the shared team brief
+
+    Missing `can_see_group_brief` defaults to True to preserve the original
+    "any member can read the shared group brief" behavior until a manager
+    explicitly turns it off for someone.
+    """
+    raw = perms or {}
+    out = {**GROUP_PERMISSION_DEFAULTS, **raw}
+    if "can_see_member_briefs" not in raw and "can_see_brief" in raw:
+        out["can_see_member_briefs"] = bool(raw.get("can_see_brief"))
+    if "can_see_group_brief" not in raw:
+        out["can_see_group_brief"] = True
+    if role == "owner":
+        out.update({
+            "can_see_member_briefs": True,
+            "can_see_group_brief": True,
+            "can_query_calendar": True,
+            "can_post": True,
+            "can_invite": True,
+            "can_speak_for_group": True,
+        })
+    return out
+
+
+def _permissions_for_member_row(member: dict) -> dict:
+    return _normalize_group_permissions(member.get("permissions"), member.get("role"))
+
+
+def _can_see_member_briefs(perms: dict | None) -> bool:
+    return bool(_normalize_group_permissions(perms).get("can_see_member_briefs"))
+
+
+def _can_see_group_brief(perms: dict | None) -> bool:
+    return bool(_normalize_group_permissions(perms).get("can_see_group_brief"))
+
+
 # ── Pydantic models ─────────────────────────────────────────────────────
 class GroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
@@ -195,6 +264,17 @@ class MemberUpdate(BaseModel):
 class MessagePost(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
     reply_to: str | None = None
+    time_zone: str | None = None
+
+
+class InvitationCreate(BaseModel):
+    user_id: str
+    role: str = Field(default="member", pattern="^(member|admin)$")
+    message: str | None = Field(default=None, max_length=500)
+
+
+class InvitationDecide(BaseModel):
+    decision: str = Field(pattern="^(accept|decline)$")
 
 
 # ── CRUD: groups ────────────────────────────────────────────────────────
@@ -202,7 +282,11 @@ class MessagePost(BaseModel):
 async def create_group(body: GroupCreate, user: dict = Depends(get_current_user)):
     """Create a group; caller becomes the owner."""
     sb = _supabase()
-    slug = _unique_slug(sb, _slugify(body.name))
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Group name can't be empty.")
+    description = (body.description or "").strip() or None
+    slug = _unique_slug(sb, _slugify(name))
     invite_token = _new_invite_token()
 
     try:
@@ -216,8 +300,8 @@ async def create_group(body: GroupCreate, user: dict = Depends(get_current_user)
         group_row = (
             sb.table("persona_groups")
             .insert({
-                "name": body.name.strip(),
-                "description": (body.description or "").strip() or None,
+                "name": name,
+                "description": description,
                 "slug": slug,
                 "owner_user_id": user["id"],
                 "visibility": body.visibility,
@@ -237,22 +321,23 @@ async def create_group(body: GroupCreate, user: dict = Depends(get_current_user)
         raise HTTPException(status_code=500, detail="Couldn't create group.")
     group = group_row.data[0]
 
-    agent_id = _resolve_agent_id(sb, user["id"])
-    sb.table("persona_group_members").insert({
-        "group_id": group["id"],
-        "user_id": user["id"],
-        "agent_id": agent_id,
-        "role": "owner",
-        "permissions": {
-            # Owner gets everything by default; can tighten later.
-            "can_see_brief": True,
-            "can_query_calendar": True,
-            "can_post": True,
-            "can_invite": True,
-            "can_speak_for_group": True,
-        },
-        "invited_by": user["id"],
-    }).execute()
+    try:
+        agent_id = _resolve_agent_id(sb, user["id"])
+        sb.table("persona_group_members").insert({
+            "group_id": group["id"],
+            "user_id": user["id"],
+            "agent_id": agent_id,
+            "role": "owner",
+            "permissions": _normalize_group_permissions(None, "owner"),
+            "invited_by": user["id"],
+        }).execute()
+    except Exception:
+        logger.exception(f"[groups] owner membership insert failed for {group['id']}, rolling back")
+        try:
+            sb.table("persona_groups").delete().eq("id", group["id"]).execute()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="Couldn't set up group membership.")
 
     return {"group": group}
 
@@ -292,6 +377,126 @@ async def list_my_groups(user: dict = Depends(get_current_user)):
     return {"groups": out}
 
 
+# ── Discoverable groups (phase 5) ──────────────────────────────────────
+# Static one-segment routes must be registered before `/{group_id}`.
+# Starlette matches routes in declaration order, so putting `/discover`
+# after `/{group_id}` makes the discovery endpoint look like a missing
+# group with id="discover".
+@router.get("/discover")
+async def discover_groups(
+    query: str | None = Query(default=None, max_length=80),
+    limit: int = Query(default=20, ge=1, le=50),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Return open, non-archived groups the caller isn't already a member of.
+
+    Lightweight — doesn't expose member counts or roster. The /by-invite
+    flow handles the actual join.
+    """
+    sb = _supabase()
+
+    try:
+        # Mine, to exclude.
+        mine = (
+            sb.table("persona_group_members")
+            .select("group_id")
+            .eq("user_id", user["id"])
+            .execute()
+        )
+        my_group_ids = {r["group_id"] for r in (mine.data or [])}
+
+        builder = (
+            sb.table("persona_groups")
+            .select("id, slug, name, description, avatar_url, visibility, join_domain, invite_token, created_at")
+            .eq("visibility", "open")
+            .is_("archived_at", "null")
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
+        if query:
+            pattern = f"%{query.strip()}%"
+            builder = builder.or_(f"name.ilike.{pattern},description.ilike.{pattern}")
+        rows = builder.execute()
+    except APIError as e:
+        if _is_missing_table(e):
+            return {"groups": []}
+        raise
+
+    eligible = [g for g in (rows.data or []) if g["id"] not in my_group_ids]
+
+    member_counts: dict[str, int] = {}
+    if eligible:
+        from collections import Counter
+        try:
+            counts_resp = (
+                sb.table("persona_group_members")
+                .select("group_id")
+                .in_("group_id", [g["id"] for g in eligible])
+                .execute()
+            )
+            member_counts = dict(Counter(r["group_id"] for r in (counts_resp.data or [])))
+        except Exception:
+            pass
+
+    out = []
+    for g in eligible:
+        out.append({
+            "id": g["id"],
+            "slug": g["slug"],
+            "name": g["name"],
+            "description": g.get("description"),
+            "avatar_url": g.get("avatar_url"),
+            "join_domain": g.get("join_domain"),
+            "invite_token": g.get("invite_token"),
+            "member_count": member_counts.get(g["id"], 0),
+            "created_at": g["created_at"],
+        })
+    return {"groups": out}
+
+
+@router.get("/auto-join-candidates")
+async def auto_join_candidates(user: dict = Depends(get_current_user)):
+    """
+    Open groups whose ``join_domain`` matches the caller's email domain.
+
+    Returned as a short list with the invite token so the frontend can
+    one-click join — same code path as following a regular invite link.
+    """
+    email = (user.get("email") or "").lower().strip()
+    if "@" not in email:
+        return {"groups": []}
+    domain = email.rsplit("@", 1)[-1]
+    if not domain:
+        return {"groups": []}
+
+    sb = _supabase()
+    try:
+        mine = (
+            sb.table("persona_group_members")
+            .select("group_id")
+            .eq("user_id", user["id"])
+            .execute()
+        )
+        my_group_ids = {r["group_id"] for r in (mine.data or [])}
+
+        rows = (
+            sb.table("persona_groups")
+            .select("id, slug, name, description, avatar_url, invite_token, join_domain")
+            .eq("visibility", "open")
+            .eq("join_domain", domain)
+            .is_("archived_at", "null")
+            .execute()
+        )
+    except APIError as e:
+        if _is_missing_table(e):
+            return {"groups": []}
+        raise
+
+    out = [g for g in (rows.data or []) if g["id"] not in my_group_ids]
+    return {"groups": out, "domain": domain}
+
+
 @router.get("/{group_id}")
 async def get_group(group_id: str, user: dict = Depends(get_current_user)):
     sb = _supabase()
@@ -324,7 +529,10 @@ async def update_group(
 
     patch: dict = {}
     if body.name is not None:
-        patch["name"] = body.name.strip()
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Group name can't be empty.")
+        patch["name"] = name
     if body.description is not None:
         patch["description"] = body.description.strip() or None
     if body.avatar_url is not None:
@@ -358,6 +566,65 @@ async def archive_group(group_id: str, user: dict = Depends(get_current_user)):
         "archived_at": datetime.now(timezone.utc).isoformat()
     }).eq("id", group_id).execute()
     return {"status": "archived"}
+
+
+async def _migrate_group_brief(
+    *,
+    sb,
+    group_id: str,
+    old_owner_user_id: str,
+    new_owner_user_id: str,
+    group_data: dict,
+) -> None:
+    """
+    Copy the group brief Google Doc into the new owner's Drive after an
+    ownership transfer. Best-effort: logs and returns on any failure so the
+    transfer itself is never rolled back.
+    """
+    old_doc_id = group_data["brief_doc_id"]
+    group_name = group_data.get("name") or "Group"
+
+    def _run() -> None:
+        try:
+            from mcp.tools.google.docs import append_to_document, create_document, read_document
+            fetched = read_document(user_id=old_owner_user_id, document_id=old_doc_id)
+            if not fetched.get("success"):
+                logger.warning(
+                    f"[groups] brief migration: couldn't read old doc {old_doc_id} for {group_id}: "
+                    f"{fetched.get('error')}"
+                )
+                return
+            content = (fetched.get("content") or "").strip()
+            created = create_document(user_id=new_owner_user_id, title=f"Group brief — {group_name}")
+            if not created.get("success"):
+                logger.warning(
+                    f"[groups] brief migration: couldn't create new doc for {group_id}: "
+                    f"{created.get('error')}"
+                )
+                return
+            new_doc_id = created["document_id"]
+            new_doc_url = created.get("link", "")
+            if content:
+                appended = append_to_document(
+                    user_id=new_owner_user_id, document_id=new_doc_id, text=content
+                )
+                if not appended.get("success"):
+                    logger.warning(
+                        f"[groups] brief migration: content copy incomplete for {group_id}: "
+                        f"{appended.get('error')}"
+                    )
+            sb.table("persona_groups").update({
+                "brief_doc_id": new_doc_id,
+                "brief_doc_url": new_doc_url,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", group_id).execute()
+            logger.info(
+                f"[groups] brief migrated {old_doc_id} → {new_doc_id} for group {group_id}"
+            )
+        except Exception as e:
+            logger.warning(f"[groups] brief migration failed for {group_id}: {e}")
+
+    await asyncio.to_thread(_run)
 
 
 class OwnerTransfer(BaseModel):
@@ -429,6 +696,20 @@ async def transfer_owner(
         "owner_user_id": body.new_owner_user_id,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", group_id).execute()
+
+    # Best-effort: migrate the group brief doc to the new owner's Drive.
+    # The brief endpoint reads via owner credentials, so without this the
+    # brief becomes unreadable once the old owner revokes Google access.
+    g = sb.table("persona_groups").select("brief_doc_id, name").eq("id", group_id).limit(1).execute()
+    if g.data and g.data[0].get("brief_doc_id"):
+        asyncio.create_task(_migrate_group_brief(
+            sb=sb,
+            group_id=group_id,
+            old_owner_user_id=user["id"],
+            new_owner_user_id=body.new_owner_user_id,
+            group_data=g.data[0],
+        ))
+
     return {"status": "ok", "new_owner_user_id": body.new_owner_user_id}
 
 
@@ -464,8 +745,29 @@ async def list_members(group_id: str, user: dict = Depends(get_current_user)):
     for m in members:
         p = persona_by_uid.get(m["user_id"]) or {}
         profile = p.get("profile") or {}
+        m["permissions"] = _normalize_group_permissions(m.get("permissions"), m.get("role"))
         m["display_name"] = p.get("name") or "Someone"
-        m["avatar_url"] = profile.get("avatar_url") or profile.get("picture")
+        avatar = profile.get("avatar_url") or profile.get("picture")
+        if not avatar:
+            try:
+                import requests as _req
+                admin_url = f"{config.SUPABASE_URL.rstrip('/')}/auth/v1/admin/users/{m['user_id']}"
+                resp = _req.get(
+                    admin_url,
+                    headers={
+                        "apikey": config.SUPABASE_SERVICE_KEY,
+                        "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
+                    },
+                    timeout=3,
+                )
+                if resp.ok:
+                    md = (resp.json() or {}).get("user_metadata") or {}
+                    pic = md.get("avatar_url") or md.get("picture")
+                    if isinstance(pic, str) and pic:
+                        avatar = pic
+            except Exception:
+                pass
+        m["avatar_url"] = avatar
     return {"members": members}
 
 
@@ -490,6 +792,7 @@ async def add_member(
         "user_id": body.user_id,
         "agent_id": agent_id,
         "role": body.role,
+        "permissions": _normalize_group_permissions(None, body.role),
         "invited_by": user["id"],
     }).execute()
     return {"member": inserted.data[0] if inserted.data else None}
@@ -509,14 +812,23 @@ async def update_member(
     target = _membership(sb, group_id, member_uid)
     if not target:
         raise HTTPException(status_code=404, detail="Member not found.")
-    if target.get("role") == "owner" and member_uid != user["id"]:
+    if target.get("role") == "owner":
         raise HTTPException(status_code=403, detail="Can't modify the owner.")
 
     patch: dict = {}
     if body.role is not None:
         patch["role"] = body.role
     if body.permissions is not None:
-        patch["permissions"] = {**(target.get("permissions") or {}), **body.permissions}
+        unknown = set(body.permissions.keys()) - GROUP_PERMISSION_KEYS
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown permission key: {sorted(unknown)[0]}",
+            )
+        merged = {**_permissions_for_member_row(target), **body.permissions}
+        if "can_see_member_briefs" in body.permissions:
+            merged["can_see_brief"] = bool(body.permissions["can_see_member_briefs"])
+        patch["permissions"] = merged
     if not patch:
         raise HTTPException(status_code=400, detail="Nothing to update.")
 
@@ -599,7 +911,7 @@ async def post_message(
     sb = _supabase()
     m = _require_member(sb, group_id, user["id"])
 
-    perms = m.get("permissions") or {}
+    perms = _permissions_for_member_row(m)
     if perms.get("can_post") is False:
         raise HTTPException(status_code=403, detail="You can't post in this group.")
 
@@ -639,6 +951,7 @@ async def post_message(
         asker_agent_id=m.get("agent_id"),
         asker_permissions=perms,
         message_content=content,
+        time_zone=body.time_zone,
     )
 
     inserted = row.data[0] if row.data else None
@@ -657,6 +970,7 @@ def _spawn_mention_dispatch(
     asker_agent_id: str | None,
     asker_permissions: dict,
     message_content: str,
+    time_zone: str | None = None,
 ) -> list[str]:
     """
     Parse @-mentions, resolve them to roster rows, and schedule a
@@ -681,12 +995,14 @@ def _spawn_mention_dispatch(
     if not raw_mentions:
         return []
 
-    # Brief snapshot (phase 3a). Only fetched when the asker has
-    # can_see_brief — otherwise it would never reach the target's
+    asker_permissions = _normalize_group_permissions(asker_permissions)
+
+    # Brief snapshot (phase 3a). Only fetched when the asker may use the
+    # shared group brief — otherwise it would never reach the target's
     # prompt anyway (the dispatcher gates on the same flag). Owner's
     # Google connection is the read credential.
     group_brief_content: str | None = None
-    if asker_permissions.get("can_see_brief"):
+    if _can_see_group_brief(asker_permissions):
         try:
             grow = (
                 sb.table("persona_groups")
@@ -729,6 +1045,7 @@ def _spawn_mention_dispatch(
         sb.table("persona_group_members")
         .select("user_id, agent_id, role, permissions, joined_at")
         .eq("group_id", group_id)
+        .order("joined_at")
         .execute()
     )
     members = roster.data or []
@@ -753,22 +1070,28 @@ def _spawn_mention_dispatch(
     if not targets:
         return []
 
+    scheduled_user_ids: list[str] = []
     for target in targets:
         if not target.get("agent_id"):
-            # No deployed persona for that member — skip silently, nothing
-            # to invoke. The mention still renders in the human message.
+            display = target.get("display_name") or "That member"
+            _post_group_system_note(sb, group_id, f"{display} hasn't deployed a persona yet.")
             continue
-        # Audit (phase 5): brief actually crosses to this target's prompt.
-        # Only when group_brief_content is non-empty — null content means
-        # nothing was read, so nothing to log.
+        scheduled_user_ids.append(target["user_id"])
+        # Audit (phase 5): shared group brief actually crosses to this
+        # target's prompt. Only when group_brief_content is non-empty —
+        # null content means nothing was read, so nothing to log.
         if group_brief_content:
             _log_audit_event(
                 sb,
                 group_id=group_id,
-                affected_user_id=target["user_id"],
+                affected_user_id=asker_user["id"],
                 actor_user_id=asker_user["id"],
                 kind="brief_shared",
-                metadata={"channel": "group_mention"},
+                metadata={
+                    "channel": "group_mention",
+                    "source": "group_brief",
+                    "target_user_id": target["user_id"],
+                },
             )
         asyncio.create_task(
             dispatch_group_mention(
@@ -781,9 +1104,10 @@ def _spawn_mention_dispatch(
                 asker_permissions=asker_permissions,
                 group_brief_content=group_brief_content,
                 group_constraints=group_constraints,
+                time_zone=time_zone,
             )
         )
-    return [t["user_id"] for t in targets]
+    return scheduled_user_ids
 
 
 # ── Invites ─────────────────────────────────────────────────────────────
@@ -792,7 +1116,7 @@ async def rotate_invite(group_id: str, user: dict = Depends(get_current_user)):
     """Generate a fresh invite token. Older token stops working."""
     sb = _supabase()
     m = _require_member(sb, group_id, user["id"])
-    perms = m.get("permissions") or {}
+    perms = _permissions_for_member_row(m)
     if m.get("role") not in ("owner", "admin") and not perms.get("can_invite"):
         raise HTTPException(status_code=403, detail="Not allowed to issue invites.")
 
@@ -872,6 +1196,7 @@ async def join_via_invite(token: str, user: dict = Depends(get_current_user)):
         "user_id": user["id"],
         "agent_id": agent_id,
         "role": "member",
+        "permissions": _normalize_group_permissions(None, "member"),
         "invited_by": None,
     }).execute()
     sb.table("persona_groups").update({
@@ -880,12 +1205,385 @@ async def join_via_invite(token: str, user: dict = Depends(get_current_user)):
     return {"status": "joined", "group_id": group["id"], "slug": group["slug"]}
 
 
+# ── Invitations (search by name → inbox decision) ───────────────────────
+
+def _require_invite_authority(sb, group_id: str, user_id: str) -> dict:
+    m = _require_member(sb, group_id, user_id)
+    if m.get("role") in ("owner", "admin"):
+        return m
+    if _permissions_for_member_row(m).get("can_invite"):
+        return m
+    raise HTTPException(status_code=403, detail="Not allowed to invite to this group.")
+
+
+def _resolve_avatar_url(sb, user_id: str, profile: dict | None) -> str | None:
+    p = profile or {}
+    candidate = p.get("avatar_url") or p.get("picture")
+    if candidate:
+        return candidate
+    try:
+        import requests as _req
+        admin_url = f"{config.SUPABASE_URL.rstrip('/')}/auth/v1/admin/users/{user_id}"
+        resp = _req.get(
+            admin_url,
+            headers={
+                "apikey": config.SUPABASE_SERVICE_KEY,
+                "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
+            },
+            timeout=3,
+        )
+        if resp.ok:
+            md = (resp.json() or {}).get("user_metadata") or {}
+            pic = md.get("avatar_url") or md.get("picture")
+            if isinstance(pic, str) and pic:
+                return pic
+    except Exception:
+        return None
+    return None
+
+
+def _hydrate_persona(sb, user_ids: list[str]) -> dict[str, dict]:
+    if not user_ids:
+        return {}
+    rows = (
+        sb.table("persona_agents")
+        .select("user_id, agent_id, name, description, profile")
+        .in_("user_id", user_ids)
+        .eq("active", True)
+        .execute()
+    )
+    return {r["user_id"]: r for r in (rows.data or [])}
+
+
+def _hydrate_group_brief(sb, group_id: str) -> dict | None:
+    r = (
+        sb.table("persona_groups")
+        .select("id, slug, name, description, avatar_url, visibility, archived_at")
+        .eq("id", group_id)
+        .limit(1)
+        .execute()
+    )
+    if not r.data:
+        return None
+    g = r.data[0]
+    if g.get("archived_at"):
+        return None
+    counts = (
+        sb.table("persona_group_members")
+        .select("id", count="exact")
+        .eq("group_id", group_id)
+        .execute()
+    )
+    g["member_count"] = getattr(counts, "count", None) or len(counts.data or [])
+    g.pop("archived_at", None)
+    return g
+
+
+@router.get("/{group_id}/invitable")
+async def search_invitable_users(
+    group_id: str,
+    query: str = Query("", max_length=120),
+    limit: int = Query(12, ge=1, le=40),
+    user: dict = Depends(get_current_user),
+):
+    sb = _supabase()
+    _require_invite_authority(sb, group_id, user["id"])
+
+    members = (
+        sb.table("persona_group_members")
+        .select("user_id")
+        .eq("group_id", group_id)
+        .execute()
+    )
+    excluded = {r["user_id"] for r in (members.data or [])}
+    try:
+        pending = (
+            sb.table("persona_group_invitations")
+            .select("invitee_user_id")
+            .eq("group_id", group_id)
+            .eq("status", "pending")
+            .execute()
+        )
+        excluded |= {r["invitee_user_id"] for r in (pending.data or [])}
+    except APIError as e:
+        if not _is_missing_table(e):
+            raise
+
+    q = (query or "").strip()
+    builder = (
+        sb.table("persona_agents")
+        .select("user_id, agent_id, name, description, profile")
+        .eq("active", True)
+        .order("name")
+        .limit(limit)
+    )
+    if q:
+        builder = builder.ilike("name", f"%{q}%")
+    rows = builder.execute().data or []
+
+    results = []
+    for r in rows:
+        uid = r.get("user_id")
+        if not uid or uid in excluded or uid == user["id"]:
+            continue
+        results.append({
+            "user_id": uid,
+            "agent_id": r.get("agent_id"),
+            "name": r.get("name") or "Persona",
+            "description": r.get("description") or "",
+            "avatar_url": _resolve_avatar_url(sb, uid, r.get("profile")),
+        })
+        if len(results) >= limit:
+            break
+    return {"results": results, "count": len(results)}
+
+
+@router.post("/{group_id}/invitations")
+async def create_invitation(
+    group_id: str,
+    body: InvitationCreate,
+    user: dict = Depends(get_current_user),
+):
+    # Member cap is enforced at ACCEPT-time, not here — pending invites
+    # don't consume a slot, so a group can have more pending than cap.
+    sb = _supabase()
+    inviter = _require_invite_authority(sb, group_id, user["id"])
+
+    if body.user_id == user["id"]:
+        raise HTTPException(status_code=400, detail="You can't invite yourself.")
+    if _membership(sb, group_id, body.user_id):
+        raise HTTPException(status_code=409, detail="That user is already a member.")
+    # Verify the invitee actually exists as a Zynd user — otherwise the FK
+    # would block this, but we'd rather return a clean 404 than a 500.
+    invitee_persona = _hydrate_persona(sb, [body.user_id]).get(body.user_id)
+    if not invitee_persona:
+        raise HTTPException(status_code=404, detail="That user doesn't have a deployed persona.")
+
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    try:
+        inserted = sb.table("persona_group_invitations").insert({
+            "group_id": group_id,
+            "invitee_user_id": body.user_id,
+            "inviter_user_id": user["id"],
+            "invitee_role": body.role,
+            "status": "pending",
+            "message": (body.message or "").strip() or None,
+            "expires_at": expires_at,
+        }).execute()
+    except APIError as e:
+        # 23505 — partial unique index `(group_id, invitee_user_id) WHERE status='pending'`
+        if getattr(e, "code", None) == "23505" or "duplicate key" in str(e).lower():
+            raise HTTPException(
+                status_code=409,
+                detail="That user already has a pending invite for this group.",
+            )
+        if _is_missing_table(e):
+            raise HTTPException(
+                status_code=500,
+                detail="Invitations table missing — run patch_add_persona_group_invitations.sql.",
+            )
+        raise
+
+    row = (inserted.data or [None])[0]
+    return {
+        "invitation": _serialize_invitation(row, sb=sb, inviter=inviter) if row else None,
+    }
+
+
+@router.get("/{group_id}/invitations")
+async def list_group_invitations(
+    group_id: str,
+    user: dict = Depends(get_current_user),
+):
+    sb = _supabase()
+    _require_invite_authority(sb, group_id, user["id"])
+    try:
+        rows = (
+            sb.table("persona_group_invitations")
+            .select("*")
+            .eq("group_id", group_id)
+            .eq("status", "pending")
+            .order("created_at", desc=True)
+            .execute()
+        ).data or []
+    except APIError as e:
+        if _is_missing_table(e):
+            return {"invitations": []}
+        raise
+    return {"invitations": [_serialize_invitation(r, sb=sb) for r in rows]}
+
+
+@router.delete("/{group_id}/invitations/{invitation_id}")
+async def revoke_invitation(
+    group_id: str,
+    invitation_id: str,
+    user: dict = Depends(get_current_user),
+):
+    sb = _supabase()
+    _require_invite_authority(sb, group_id, user["id"])
+    inv = (
+        sb.table("persona_group_invitations")
+        .select("*")
+        .eq("id", invitation_id)
+        .eq("group_id", group_id)
+        .limit(1)
+        .execute()
+    )
+    if not inv.data:
+        raise HTTPException(status_code=404, detail="Invitation not found.")
+    if inv.data[0].get("status") != "pending":
+        raise HTTPException(status_code=409, detail="Invitation already resolved.")
+    sb.table("persona_group_invitations").update({
+        "status": "revoked",
+        "decided_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", invitation_id).execute()
+    return {"status": "revoked"}
+
+
+@router.get("/invitations/incoming")
+async def list_incoming_invitations(user: dict = Depends(get_current_user)):
+    sb = _supabase()
+    try:
+        rows = (
+            sb.table("persona_group_invitations")
+            .select("*")
+            .eq("invitee_user_id", user["id"])
+            .eq("status", "pending")
+            .order("created_at", desc=True)
+            .execute()
+        ).data or []
+    except APIError as e:
+        if _is_missing_table(e):
+            return {"invitations": []}
+        raise
+
+    # Filter out expired rows in-memory; no background sweep yet.
+    now = datetime.now(timezone.utc)
+    live: list[dict] = []
+    for r in rows:
+        exp = r.get("expires_at")
+        if exp:
+            try:
+                if datetime.fromisoformat(exp.replace("Z", "+00:00")) <= now:
+                    continue
+            except ValueError:
+                pass
+        live.append(r)
+    return {"invitations": [_serialize_invitation(r, sb=sb) for r in live]}
+
+
+@router.post("/invitations/{invitation_id}/respond")
+async def respond_to_invitation(
+    invitation_id: str,
+    body: InvitationDecide,
+    user: dict = Depends(get_current_user),
+):
+    sb = _supabase()
+    inv_row = (
+        sb.table("persona_group_invitations")
+        .select("*")
+        .eq("id", invitation_id)
+        .limit(1)
+        .execute()
+    )
+    if not inv_row.data:
+        raise HTTPException(status_code=404, detail="Invitation not found.")
+    inv = inv_row.data[0]
+    if inv["invitee_user_id"] != user["id"]:
+        # Same 404 shape as a missing row — don't disclose existence.
+        raise HTTPException(status_code=404, detail="Invitation not found.")
+    if inv.get("status") != "pending":
+        raise HTTPException(status_code=409, detail="Invitation already resolved.")
+
+    exp = inv.get("expires_at")
+    if exp:
+        try:
+            if datetime.fromisoformat(exp.replace("Z", "+00:00")) <= datetime.now(timezone.utc):
+                sb.table("persona_group_invitations").update({
+                    "status": "expired",
+                    "decided_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", invitation_id).execute()
+                raise HTTPException(status_code=410, detail="This invitation has expired.")
+        except ValueError:
+            pass
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if body.decision == "decline":
+        sb.table("persona_group_invitations").update({
+            "status": "declined",
+            "decided_at": now_iso,
+        }).eq("id", invitation_id).execute()
+        return {"status": "declined", "group_id": inv["group_id"]}
+
+    group_id = inv["group_id"]
+    if _membership(sb, group_id, user["id"]):
+        sb.table("persona_group_invitations").update({
+            "status": "accepted",
+            "decided_at": now_iso,
+        }).eq("id", invitation_id).execute()
+        return {"status": "already_member", "group_id": group_id}
+
+    _enforce_member_cap(sb, group_id)
+
+    agent_id = _resolve_agent_id(sb, user["id"])
+    role = inv.get("invitee_role") or "member"
+    sb.table("persona_group_members").insert({
+        "group_id": group_id,
+        "user_id": user["id"],
+        "agent_id": agent_id,
+        "role": role,
+        "permissions": _normalize_group_permissions(None, role),
+        "invited_by": inv.get("inviter_user_id"),
+    }).execute()
+    sb.table("persona_group_invitations").update({
+        "status": "accepted",
+        "decided_at": now_iso,
+    }).eq("id", invitation_id).execute()
+    sb.table("persona_groups").update({
+        "updated_at": now_iso,
+    }).eq("id", group_id).execute()
+    return {"status": "accepted", "group_id": group_id}
+
+
+def _serialize_invitation(row: dict, *, sb, inviter: dict | None = None) -> dict:
+    group = _hydrate_group_brief(sb, row["group_id"]) or {"id": row["group_id"]}
+    invitee_uid = row.get("invitee_user_id")
+    inviter_uid = row.get("inviter_user_id")
+    uids = [u for u in (inviter_uid, invitee_uid) if u]
+    personas = _hydrate_persona(sb, uids)
+    inviter_persona = personas.get(inviter_uid) if inviter_uid else None
+    invitee_persona = personas.get(invitee_uid) if invitee_uid else None
+    return {
+        "id": row["id"],
+        "group_id": row["group_id"],
+        "group": group,
+        "invitee_user_id": invitee_uid,
+        "invitee_name": (invitee_persona or {}).get("name"),
+        "invitee_avatar_url": (
+            _resolve_avatar_url(sb, invitee_uid, (invitee_persona or {}).get("profile"))
+            if invitee_uid else None
+        ),
+        "inviter_user_id": inviter_uid,
+        "inviter_name": (inviter_persona or {}).get("name"),
+        "inviter_avatar_url": (
+            _resolve_avatar_url(sb, inviter_uid, (inviter_persona or {}).get("profile"))
+            if inviter_uid else None
+        ),
+        "invitee_role": row.get("invitee_role") or "member",
+        "status": row.get("status") or "pending",
+        "message": row.get("message"),
+        "created_at": row.get("created_at"),
+        "decided_at": row.get("decided_at"),
+        "expires_at": row.get("expires_at"),
+    }
+
+
 # ── Group brief (phase 3a) ──────────────────────────────────────────────
 # The shared Google Doc lives in the OWNER's Drive — that keeps the
 # storage cost on the owner who creates the group, and makes deletion
 # semantics obvious (revoke their Google access or archive the group →
-# nobody reads the brief any longer). Reads go to any member; writes to
-# owner/admin only.
+# nobody reads the brief any longer). Reads are gated by the member's
+# `can_see_group_brief` permission; writes go to owner/admin only.
 
 @router.post("/{group_id}/brief/init")
 async def init_group_brief(group_id: str, user: dict = Depends(get_current_user)):
@@ -942,7 +1640,7 @@ async def init_group_brief(group_id: str, user: dict = Depends(get_current_user)
 @router.get("/{group_id}/brief")
 async def get_group_brief(group_id: str, user: dict = Depends(get_current_user)):
     """
-    Return the group's brief content. Any member can read.
+    Return the group's brief content when this member has group-brief access.
 
     Reads go directly to Google Docs (rather than serving a cached snapshot)
     so co-editors see each other's writes within a refresh. The brief is
@@ -950,7 +1648,9 @@ async def get_group_brief(group_id: str, user: dict = Depends(get_current_user))
     rail's polling cadence.
     """
     sb = _supabase()
-    _require_member(sb, group_id, user["id"])
+    m = _require_member(sb, group_id, user["id"])
+    if not _can_see_group_brief(_permissions_for_member_row(m)):
+        raise HTTPException(status_code=403, detail="You don't have permission to read this group's shared brief.")
 
     g = sb.table("persona_groups").select("*").eq("id", group_id).limit(1).execute()
     if not g.data or g.data[0].get("archived_at"):
@@ -1050,7 +1750,7 @@ async def group_availability(
     sb = _supabase()
     m = _require_member(sb, group_id, user["id"])
 
-    perms = m.get("permissions") or {}
+    perms = _permissions_for_member_row(m)
     if not perms.get("can_query_calendar"):
         raise HTTPException(
             status_code=403,
@@ -1156,7 +1856,7 @@ async def create_group_meeting(
     sb = _supabase()
     m = _require_member(sb, group_id, user["id"])
 
-    perms = m.get("permissions") or {}
+    perms = _permissions_for_member_row(m)
     if not perms.get("can_query_calendar"):
         # Same gate as availability — booking implies viewing.
         raise HTTPException(
@@ -1467,110 +2167,6 @@ def _log_audit_event(
             logger.warning(f"[group-audit] couldn't log {kind} for {affected_user_id}: {e}")
     except Exception as e:
         logger.warning(f"[group-audit] couldn't log {kind} for {affected_user_id}: {e}")
-
-
-# ── Discoverable groups (phase 5) ──────────────────────────────────────
-@router.get("/discover")
-async def discover_groups(
-    query: str | None = Query(default=None, max_length=80),
-    limit: int = Query(default=20, ge=1, le=50),
-    user: dict = Depends(get_current_user),
-):
-    """
-    Return open, non-archived groups the caller isn't already a member of.
-
-    Lightweight — doesn't expose member counts or roster. The /by-invite
-    flow handles the actual join.
-    """
-    sb = _supabase()
-
-    try:
-        # Mine, to exclude.
-        mine = (
-            sb.table("persona_group_members")
-            .select("group_id")
-            .eq("user_id", user["id"])
-            .execute()
-        )
-        my_group_ids = {r["group_id"] for r in (mine.data or [])}
-
-        builder = (
-            sb.table("persona_groups")
-            .select("id, slug, name, description, avatar_url, visibility, join_domain, invite_token, created_at")
-            .eq("visibility", "open")
-            .is_("archived_at", "null")
-            .order("created_at", desc=True)
-            .limit(limit)
-        )
-        if query:
-            pattern = f"%{query.strip()}%"
-            builder = builder.or_(f"name.ilike.{pattern},description.ilike.{pattern}")
-        rows = builder.execute()
-    except APIError as e:
-        if _is_missing_table(e):
-            return {"groups": []}
-        raise
-
-    out = []
-    for g in rows.data or []:
-        if g["id"] in my_group_ids:
-            continue
-        # invite_token is what /g/[slug]/[token] needs; safe to expose for
-        # an open group (anyone can join anyway). We strip it for private
-        # groups by virtue of the visibility filter above.
-        out.append({
-            "id": g["id"],
-            "slug": g["slug"],
-            "name": g["name"],
-            "description": g.get("description"),
-            "avatar_url": g.get("avatar_url"),
-            "join_domain": g.get("join_domain"),
-            "invite_token": g.get("invite_token"),
-            "created_at": g["created_at"],
-        })
-    return {"groups": out}
-
-
-@router.get("/auto-join-candidates")
-async def auto_join_candidates(user: dict = Depends(get_current_user)):
-    """
-    Open groups whose ``join_domain`` matches the caller's email domain.
-
-    Returned as a short list with the invite token so the frontend can
-    one-click join — same code path as following a regular invite link.
-    """
-    email = (user.get("email") or "").lower().strip()
-    if "@" not in email:
-        return {"groups": []}
-    domain = email.rsplit("@", 1)[-1]
-    if not domain:
-        return {"groups": []}
-
-    sb = _supabase()
-    try:
-        mine = (
-            sb.table("persona_group_members")
-            .select("group_id")
-            .eq("user_id", user["id"])
-            .execute()
-        )
-        my_group_ids = {r["group_id"] for r in (mine.data or [])}
-
-        rows = (
-            sb.table("persona_groups")
-            .select("id, slug, name, description, avatar_url, invite_token, join_domain")
-            .eq("visibility", "open")
-            .eq("join_domain", domain)
-            .is_("archived_at", "null")
-            .execute()
-        )
-    except APIError as e:
-        if _is_missing_table(e):
-            return {"groups": []}
-        raise
-
-    out = [g for g in (rows.data or []) if g["id"] not in my_group_ids]
-    return {"groups": out, "domain": domain}
 
 
 # ── Audit (phase 5) ────────────────────────────────────────────────────

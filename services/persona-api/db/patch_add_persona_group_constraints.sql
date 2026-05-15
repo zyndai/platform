@@ -34,13 +34,7 @@ CREATE INDEX IF NOT EXISTS persona_group_constraints_group_idx
 ALTER TABLE persona_group_constraints ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "members read group constraints" ON persona_group_constraints
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM persona_group_members m
-             WHERE m.group_id = persona_group_constraints.group_id
-               AND m.user_id = auth.uid()
-        )
-    );
+    FOR SELECT USING (public.is_persona_group_member(persona_group_constraints.group_id));
 
 CREATE POLICY "service role full access on persona_group_constraints"
     ON persona_group_constraints

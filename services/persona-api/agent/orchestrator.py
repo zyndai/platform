@@ -47,8 +47,7 @@ def _persist_chat_message(
     if not content:
         return
     try:
-        from supabase import create_client
-        sb = create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+        sb = config.get_supabase()
         row = {
             "user_id": user_id,
             "conversation_id": conversation_id,
@@ -86,6 +85,7 @@ EXTERNAL_DEFAULT_ALLOWED: set[str] = {
     "get_persona_profile",
     "list_my_connections",
     "check_connection_status",
+    "get_current_time",
 }
 
 # Permission flag → set of additional tools the flag unlocks in external mode.
@@ -124,6 +124,7 @@ EXTERNAL_PERMISSION_GATES: dict[str, set[str]] = {
     # list_pending_meetings is also internal-only — it exposes the user's plate.)
     "can_request_meetings": {
         "propose_meeting",
+        "propose_group_meeting",
     },
     # `can_view_full_profile` doesn't gate tools; it only gates the persona
     # briefing rendered into the system prompt (handled in _format_user_brief).
@@ -137,18 +138,60 @@ EXTERNAL_PERMISSION_GATES: dict[str, set[str]] = {
 # instead, and the LLM's reply for that turn becomes a "I've staged this
 # with my principal" line. The user resolves the approval from the home
 # chat or the thread page; on yes the tool re-fires with the saved args.
-APPROVAL_REQUIRED_TOOLS: set[str] = {"propose_meeting"}
+APPROVAL_REQUIRED_TOOLS: set[str] = {
+    "propose_meeting",
+    "propose_group_meeting",
+    # Calendar mutations — a foreign agent (or a teammate's persona in a
+    # group) must never silently write to or delete from the principal's
+    # calendar. The principal sees a pending_approvals row and decides.
+    "create_calendar_event",
+    "delete_calendar_event",
+    # Outbound social / email — same rationale.
+    "send_gmail_email",
+    "post_tweet",
+    "send_twitter_dm",
+    "post_to_linkedin",
+    "send_linkedin_dm",
+}
 
 
 def _summarize_for_approval(fn_name: str, fn_args: dict, sender_agent_id: str | None) -> str:
+    partner = sender_agent_id or "the other agent"
     if fn_name == "propose_meeting":
         title = fn_args.get("title") or "Untitled meeting"
         start = fn_args.get("start_time") or "?"
         end   = fn_args.get("end_time")   or ""
-        partner = sender_agent_id or "the other agent"
         when = f"{start}" + (f" → {end}" if end else "")
         return f"Propose “{title}” ({when}) with {partner}"
-    return f"Run {fn_name}"
+    if fn_name == "propose_group_meeting":
+        title = fn_args.get("title") or "Untitled meeting"
+        start = fn_args.get("start_time") or "?"
+        end   = fn_args.get("end_time")   or ""
+        when = f"{start}" + (f" → {end}" if end else "")
+        return f"Schedule “{title}” ({when}) in your group — requested by {partner}. Approving will create the event on your calendar and invite every other member."
+    if fn_name == "create_calendar_event":
+        title = fn_args.get("summary") or fn_args.get("title") or "Untitled event"
+        start = fn_args.get("start_time") or fn_args.get("start") or "?"
+        end   = fn_args.get("end_time")   or fn_args.get("end")   or ""
+        when = f"{start}" + (f" → {end}" if end else "")
+        return f"Add “{title}” to your calendar ({when}) — requested by {partner}"
+    if fn_name == "delete_calendar_event":
+        eid = fn_args.get("event_id") or "?"
+        return f"Delete calendar event {eid} — requested by {partner}"
+    if fn_name == "send_gmail_email":
+        to = fn_args.get("to") or "?"
+        subj = fn_args.get("subject") or "(no subject)"
+        return f"Send email to {to}: “{subj}” — requested by {partner}"
+    if fn_name in ("post_tweet", "post_to_linkedin"):
+        text = (fn_args.get("text") or fn_args.get("content") or "").strip()
+        preview = (text[:80] + "…") if len(text) > 80 else text
+        platform = "Twitter" if fn_name == "post_tweet" else "LinkedIn"
+        return f"Post to {platform}: “{preview}” — requested by {partner}"
+    if fn_name in ("send_twitter_dm", "send_linkedin_dm"):
+        to = fn_args.get("recipient") or fn_args.get("to") or "?"
+        platform = "Twitter" if fn_name == "send_twitter_dm" else "LinkedIn"
+        return f"Send {platform} DM to {to} — requested by {partner}"
+    return f"Run {fn_name} (requested by {partner})"
 
 
 def _thread_id_from_conv(conversation_id: str | None) -> str | None:
@@ -161,6 +204,16 @@ def _thread_id_from_conv(conversation_id: str | None) -> str | None:
     if conversation_id.startswith("thread:"):
         return conversation_id.split(":", 1)[1]
     return None
+
+
+def _group_id_from_conv(conversation_id: str | None) -> str | None:
+    """conversation_id is `group:<group_id>:<target_uid>` for group-dispatch
+    turns (set by agent/group_dispatch.py:_conversation_id_for). Returns the
+    group_id slice; None for any other shape."""
+    if not conversation_id or not conversation_id.startswith("group:"):
+        return None
+    parts = conversation_id.split(":", 2)
+    return parts[1] if len(parts) >= 2 else None
 
 
 def _is_seeded_user(user_id: str) -> bool:
@@ -205,8 +258,7 @@ def _maybe_stage_approval(
         print(f"[orchestrator] approval gate bypassed for seeded user {user_id[:8]}")
         return None
     try:
-        from supabase import create_client
-        sb = create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+        sb = config.get_supabase()
         thread_id = _thread_id_from_conv(conversation_id)
         summary = _summarize_for_approval(fn_name, fn_args, sender_agent_id)
         row = sb.table("pending_approvals").insert({
@@ -1117,6 +1169,7 @@ def _build_system_prompt(
     sender_agent_id: str | None = None,
     external_permissions: dict | None = None,
     time_zone: str | None = None,
+    is_group_context: bool = False,
 ) -> str:
     """Build a system prompt that tells the agent what it can do."""
     tools_prompt = mcp_server.get_tools_prompt()
@@ -1139,8 +1192,12 @@ def _build_system_prompt(
     # group's settings — when False, the brief Google Doc body is dropped
     # entirely from the system prompt, not just behaviorally suppressed.
     perms_view = (external_permissions or {})
-    redact = is_external and not perms_view.get("can_view_full_profile", False)
-    redact_brief = is_external and perms_view.get("can_see_brief", True) is False
+    # Group context: the persona is answering about its OWN principal, so it
+    # always needs the full brief in context. Privacy is enforced by the
+    # privacy_hint instruction injected by group_dispatch, not by stripping
+    # the brief from the system prompt.
+    redact = is_external and not is_group_context and not perms_view.get("can_view_full_profile", False)
+    redact_brief = is_external and not is_group_context and perms_view.get("can_see_brief", True) is False
     user_brief = _format_user_brief(
         persona,
         redact_profile=redact,
@@ -1218,6 +1275,110 @@ The following is a briefing your principal ('{principal_name}') wrote about them
 {user_brief}
 
 Use this as factual background about the human you serve. Do not adopt their identity, do not claim to be them, do not speak in their voice as if you are them. You are their agent, not them."""
+
+    if is_external and is_group_context:
+        perms = external_permissions or {}
+        allowed_tools = _allowed_external_tools(perms)
+        allowlist_block = ", ".join(sorted(allowed_tools)) or "(none)"
+        can_propose_meeting = "propose_group_meeting" in allowed_tools
+        can_check_calendar = "list_calendar_events" in allowed_tools
+
+        if can_propose_meeting:
+            scheduling_instruction = (
+                "- When asked to schedule a meeting → call `propose_group_meeting(title, start_time, end_time, location?, description?, time_zone)`. "
+                "The `group_id` and `user_id` are auto-injected — you do NOT pass them. "
+                "If you can check the calendar (list_calendar_events), do that first to confirm the slot is free. "
+                "Times must be ISO-8601 UTC for the tool call (e.g. \"2026-05-15T19:00:00Z\") — but ALWAYS pass `time_zone` "
+                "as the ASKER's IANA tz from the `Current local time for the asker` line in this prompt "
+                "(e.g. \"Asia/Kolkata\", \"America/New_York\"). The group's confirmation message renders in that zone. "
+                "Calling this tool **stages an approval card on your principal's inbox** — it does NOT create the event yet. "
+                "On your principal's approval, the event is created on their calendar with every other group member as an attendee, "
+                "and a system message is posted to the group chat confirming the slot. "
+                "After calling the tool, reply in one short sentence telling the asker the request was sent to your principal for confirmation. "
+                "When you mention the time in your chat reply, use the ASKER's local wall-clock (e.g. \"3 PM tomorrow\" or \"Sat 3:00 PM\") — "
+                "NEVER append a UTC time, NEVER write \"...Z\", NEVER show ISO-8601 in chat. UTC is for the tool call only, not for humans. "
+                "NEVER call `create_calendar_event` directly in a group — that would silently write without consent. "
+                "NEVER call `propose_meeting` in a group — that's for 1:1 DM threads only. "
+                "NEVER claim the meeting is 'scheduled' or 'booked' before the principal has approved — say it's 'sent for confirmation' or 'pending your principal's approval'."
+            )
+        else:
+            scheduling_instruction = (
+                "- When asked to schedule a meeting → you do NOT have permission to schedule meetings in this group "
+                "(the asker's `can_query_calendar` group permission is off). "
+                "Say so in one short sentence and suggest the asker request that permission from the group owner. "
+                "NEVER claim you 'scheduled', 'booked', 'staged', or 'queued' anything — you did not."
+            )
+
+        if can_check_calendar:
+            calendar_instruction = (
+                "- When asked to check calendar availability → call `list_calendar_events` NOW and report what you find. "
+                "Use the current time from the Time Context to interpret \"today\", \"this week\", \"9 PM tonight\", etc."
+            )
+        else:
+            calendar_instruction = (
+                "- When asked to check calendar availability → you do NOT have permission to read the calendar in this group. "
+                "Say so briefly and suggest the asker request 'can_query_calendar' from the group owner. "
+                "Never invent availability."
+            )
+
+        if agent_handle:
+            group_self_intro = (
+                f"Your name is {agent_handle}. You are an AI agent representing {principal_name}. "
+                f"You have been @-mentioned in a private group room and are replying on behalf of your principal."
+            )
+        else:
+            group_self_intro = (
+                f"You are an AI agent representing {principal_name}. "
+                f"You have been @-mentioned in a private group room and are replying on behalf of your principal."
+            )
+
+        return f"""## Role
+{group_self_intro}
+
+You are NOT {principal_name}. You are their AI agent. Never impersonate the principal — speak as their representative, not as them personally.
+
+## CRITICAL: Response Format
+- **Start your reply directly with the answer.** Never open with "I'm the AI agent representing…", "As {principal_name}'s agent…", or any self-introduction. The UI already labels you as an AI persona — just answer.
+- Wrap ALL internal reasoning inside <think>...</think> tags. Only text OUTSIDE those tags is shown to the group.
+
+## About Your Principal
+The following briefing was written by {principal_name} about themselves. Use it as the authoritative source when answering questions about them.
+
+{user_brief}
+
+## Context: Private Group Room
+This is a private, invitation-only group room. Everyone in this room was explicitly added by the group owner. You have full trust — act on requests directly.
+
+## How to Respond
+
+**You are an action-taker, not just an information-giver.**
+
+- When asked about your principal → answer directly from the brief above. 1–3 sentences, specific.
+{calendar_instruction}
+{scheduling_instruction}
+- When asked a question that requires tool use → use the tool, then answer. Never say "I don't have permission" if the tool is in your allowed list. NEVER claim you used a tool that is NOT in the allowed-tools list below — if a tool isn't listed, you don't have it, and pretending you called it is a hallucination.
+
+**Tone:** Direct and confident. You're an active team member, not a passive relay. Complete the task in the reply.
+
+## What NOT to Do
+- NEVER open with a self-introduction ("I'm the AI agent for X", "As X's agent…").
+- NEVER say "you should confirm directly with {principal_name}" when you have calendar access — you ARE their representative, act on their behalf.
+- NEVER say "I don't have permission to check the time" — use `get_current_time` or the time context provided.
+- NEVER say "I'll pass this along" or "they'll follow up" — if a tool can handle it, use it.
+- NEVER mention the Zynd Network registry — this is a group room, not a network interaction.
+- NEVER use the words "staged", "queued for approval", "scheduled", "booked", "created the ticket", "sent the invite", or any equivalent confirmation phrasing UNLESS you actually invoked a tool on this turn that returned success. If the tool wasn't called (because it's not in your allowed list, or you chose not to call it), do NOT pretend the action happened. State plainly that you can't do it and why.
+
+## Allowed Tools (this thread)
+{allowlist_block if allowlist_block != "(none)" else "No tools available on this thread."}
+
+When calling any tool, always pass `user_id` as "{user_id}".
+
+## Current Time Context
+{time_context}
+
+## Available Tools
+{tools_prompt}
+"""
 
     if is_external:
         good_intro = (
@@ -1402,6 +1563,7 @@ async def handle_user_message(
     sender_agent_id: str | None = None,
     external_permissions: dict | None = None,
     time_zone: str | None = None,
+    is_group_context: bool = False,
 ) -> dict:
     """
     Process a user chat message end-to-end:
@@ -1435,6 +1597,7 @@ async def handle_user_message(
             sender_agent_id,
             external_permissions=external_permissions,
             time_zone=time_zone,
+            is_group_context=is_group_context,
         ),
     }
     print("System Prompt: ", system_msg)
@@ -1562,6 +1725,17 @@ async def handle_user_message(
                 param_names = [p["name"] for p in tool_def["parameters"]]
                 if "user_id" in param_names and "user_id" not in fn_args:
                     fn_args["user_id"] = user_id
+                # Auto-inject group_id when in group-dispatch context. The
+                # dispatcher's conversation_id is authoritative — ALWAYS
+                # override whatever the LLM passed (it sometimes hallucinates
+                # placeholder strings like "inject_from_group_context" that
+                # blow up Postgres uuid casts when the row is later replayed
+                # from pending_approvals). When not in a group conversation,
+                # leave fn_args alone.
+                if "group_id" in param_names:
+                    derived_gid = _group_id_from_conv(conversation_id)
+                    if derived_gid:
+                        fn_args["group_id"] = derived_gid
 
             # External-mode propose_meeting direction fix: when a foreign
             # agent asks us to formalize a meeting, the proposal should be
@@ -1570,8 +1744,7 @@ async def handle_user_message(
             # user_id makes US the proposer, which inverts the direction.
             if is_external and fn_name == "propose_meeting" and sender_agent_id:
                 try:
-                    from supabase import create_client
-                    sb = create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+                    sb = config.get_supabase()
                     r = sb.table("persona_agents").select("user_id").eq("agent_id", sender_agent_id).execute()
                     if r.data:
                         foreign_user_id = r.data[0]["user_id"]
@@ -1864,12 +2037,22 @@ async def handle_user_message_stream(
                 param_names = [p["name"] for p in tool_def["parameters"]]
                 if "user_id" in param_names and "user_id" not in fn_args:
                     fn_args["user_id"] = user_id
+                # Auto-inject group_id when in group-dispatch context. The
+                # dispatcher's conversation_id is authoritative — ALWAYS
+                # override whatever the LLM passed (it sometimes hallucinates
+                # placeholder strings like "inject_from_group_context" that
+                # blow up Postgres uuid casts when the row is later replayed
+                # from pending_approvals). When not in a group conversation,
+                # leave fn_args alone.
+                if "group_id" in param_names:
+                    derived_gid = _group_id_from_conv(conversation_id)
+                    if derived_gid:
+                        fn_args["group_id"] = derived_gid
 
             # External-mode propose_meeting direction fix
             if is_external and fn_name == "propose_meeting" and sender_agent_id:
                 try:
-                    from supabase import create_client
-                    sb = create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+                    sb = config.get_supabase()
                     r = sb.table("persona_agents").select("user_id").eq("agent_id", sender_agent_id).execute()
                     if r.data:
                         fn_args["user_id"] = r.data[0]["user_id"]

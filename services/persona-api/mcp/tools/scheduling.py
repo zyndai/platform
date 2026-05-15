@@ -24,9 +24,55 @@ External mode (foreign agent contacting us):
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from services import meetings as meetings_svc
+
+
+def _format_group_meeting_line(
+    *,
+    title: str,
+    start_time: str,
+    end_time: str,
+    time_zone: str | None,
+    attendee_count: int,
+) -> str:
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(time_zone) if time_zone else timezone.utc
+    except Exception:
+        tz = timezone.utc
+
+    def _to_dt(s: str) -> datetime:
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(tz)
+
+    try:
+        sdt = _to_dt(start_time)
+        edt = _to_dt(end_time)
+    except Exception:
+        clean = lambda x: x.replace("Z", " UTC").replace("T", " ")
+        line = f"{title} confirmed — {clean(start_time)} → {clean(end_time)}."
+        if attendee_count:
+            line += f" Invites sent to {attendee_count} member(s)."
+        return line
+
+    same_day = sdt.date() == edt.date()
+    day_part = sdt.strftime("%a %b %-d")
+    start_part = sdt.strftime("%-I:%M %p").lstrip("0")
+    end_part = edt.strftime("%-I:%M %p").lstrip("0")
+    tz_part = sdt.strftime("%Z") or (time_zone or "UTC")
+
+    if same_day:
+        when = f"{day_part}, {start_part}–{end_part} {tz_part}"
+    else:
+        end_day = edt.strftime("%a %b %-d")
+        when = f"{day_part} {start_part} → {end_day} {end_part} {tz_part}"
+
+    line = f"{title} confirmed — {when}."
+    if attendee_count:
+        line += f" Invites sent to {attendee_count} member(s)."
+    return line
 
 
 def propose_meeting(
@@ -130,6 +176,132 @@ def respond_to_meeting(
         "meeting_status": row["status"],
         "payload": row["payload"],
         "message": f"Meeting {row['status']}.",
+    }
+
+
+def propose_group_meeting(
+    user_id: str,
+    group_id: str,
+    title: str,
+    start_time: str,
+    end_time: str,
+    location: str = "",
+    description: str = "",
+    time_zone: str = "",
+) -> dict:
+    """
+    Propose a meeting in a group room. Use this (NOT propose_meeting) when
+    you're @-mentioned in a group and asked to schedule a time. Externally
+    invoked calls of this tool are gated by the approval flow — the
+    principal sees a card in their inbox and decides accept/decline. On
+    accept, the actual calendar event is created with every other group
+    member as an attendee (Google sends invitations), and a system message
+    is posted to the group chat so everyone sees the confirmed slot.
+
+    Args:
+        user_id:    The principal whose calendar the event will be created on (injected).
+        group_id:   The persona_groups row this meeting is scoped to (injected from group context).
+        title:      Short human title, e.g. "Dev intro".
+        start_time: ISO-8601 start in UTC, e.g. "2026-05-15T19:00:00Z".
+        end_time:   ISO-8601 end in UTC.
+        location:   Optional venue or video-call URL.
+        description: Optional agenda / longer body.
+        time_zone:  IANA tz of the ASKER (e.g. "Asia/Kolkata"). Used to render
+                    the group chat confirmation line in their wall-clock time
+                    instead of raw UTC. Pass the asker's tz from your prompt
+                    context. Leave blank only if truly unknown.
+    """
+    from datetime import datetime, timezone
+    import asyncio
+    import config
+    from api.groups import _create_event_with_attendees, _fetch_user_emails
+
+    sb = config.get_supabase()
+
+    g = sb.table("persona_groups").select("id, name, archived_at").eq("id", group_id).limit(1).execute()
+    if not g.data or g.data[0].get("archived_at"):
+        return {"error": f"Group {group_id} not found or archived."}
+    group_name = g.data[0]["name"]
+
+    roster = (
+        sb.table("persona_group_members")
+        .select("user_id")
+        .eq("group_id", group_id)
+        .execute()
+    )
+    all_uids = [r["user_id"] for r in (roster.data or [])]
+    if user_id not in all_uids:
+        return {"error": "You're not a member of this group; cannot schedule here."}
+    attendee_uids = [u for u in all_uids if u != user_id]
+
+    try:
+        attendee_emails = _fetch_user_emails(attendee_uids) if attendee_uids else []
+    except Exception as e:
+        return {"error": f"Couldn't resolve attendees: {e}"}
+
+    attendees_payload = [{"email": e} for e in attendee_emails if e]
+    result = _create_event_with_attendees(
+        user_id=user_id,
+        summary=title,
+        start_time=start_time,
+        end_time=end_time,
+        description=description or f"Proposed in group: {group_name}",
+        location=location or "",
+        time_zone=time_zone or "UTC",
+        attendees=attendees_payload,
+    )
+    if not result.get("success"):
+        return {"error": result.get("error") or "Couldn't create the calendar event."}
+
+    ev = result.get("event") or {}
+    try:
+        meta = {
+            "kind": "group_meeting_proposal",
+            "event_id": ev.get("id"),
+            "title": title,
+            "start": start_time,
+            "end": end_time,
+            "location": location or None,
+            "html_link": ev.get("htmlLink"),
+            "attendee_count": len(attendees_payload),
+            "proposed_by": user_id,
+            "time_zone": time_zone or None,
+            "via": "persona_approval",
+        }
+        line = _format_group_meeting_line(
+            title=title,
+            start_time=start_time,
+            end_time=end_time,
+            time_zone=time_zone,
+            attendee_count=len(attendees_payload),
+        )
+        sb.table("persona_group_messages").insert({
+            "group_id": group_id,
+            "sender_user_id": user_id,
+            "sender_name": "Zynd",
+            "channel": "system",
+            "content": line.strip(),
+            "metadata": meta,
+        }).execute()
+        sb.table("persona_groups").update({
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }).eq("id", group_id).execute()
+    except Exception as e:
+        # Don't fail the whole tool — event was created; the system note
+        # is best-effort.
+        return {
+            "status": "success",
+            "event_id": ev.get("id"),
+            "html_link": ev.get("htmlLink"),
+            "warning": f"Calendar event created but group message failed: {e}",
+        }
+
+    return {
+        "status": "success",
+        "event_id": ev.get("id"),
+        "html_link": ev.get("htmlLink"),
+        "attendee_count": len(attendees_payload),
+        "message": f"Meeting '{title}' scheduled. Invitations sent to {len(attendees_payload)} member(s).",
     }
 
 

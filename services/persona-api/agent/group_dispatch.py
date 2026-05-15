@@ -31,8 +31,8 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from supabase import create_client
 
 import config
 
@@ -117,24 +117,42 @@ def _group_perms_to_external(group_perms: dict | None) -> dict:
 
     Group key                → external key(s)
       can_query_calendar     → can_query_availability
-      can_speak_for_group    → can_post_on_my_behalf
-      can_see_brief          → can_see_brief AND can_view_full_profile
+      can_see_member_briefs → can_see_brief AND can_view_full_profile
 
-    `can_see_brief` is the umbrella "private info" toggle in group MVP —
-    granting it to a member lets the target persona share both the brief
-    Google Doc body AND the profile fields (title, org, location, etc.)
-    with that asker. The orchestrator now reads them as two independent
-    gates, but the group UI exposes one switch; we set them in lock-step
-    here so the simpler UI stays in lock-step with the deeper model.
+    `can_speak_for_group` is INTENTIONALLY NOT mapped to `can_post_on_my_behalf`.
+    Group context never grants broad write permissions on a teammate's accounts
+    (calendar mutations, email sends, social posts). Scheduling in groups goes
+    through the dedicated proposal/approval flow (Schedule pane → /api/groups/
+    {id}/meetings) which writes a recipient-side approval row, not directly to
+    anyone's calendar. The `can_speak_for_group` flag is for group-internal
+    role gating (who can post system notes, edit rules, etc.) — not a
+    cross-account write grant.
+
+    `can_see_member_briefs` gates another member's private persona brief.
+    Legacy rows may still carry `can_see_brief`; map that into the new key.
+    The shared group brief is intentionally separate (`can_see_group_brief`)
+    and is injected by this dispatcher, not by the target persona prompt.
     """
     g = group_perms or {}
-    see_brief = bool(g.get("can_see_brief"))
+    see_brief = bool(g.get("can_see_member_briefs", g.get("can_see_brief", False)))
+    can_calendar = bool(g.get("can_query_calendar", False))
     return {
-        "can_query_availability": bool(g.get("can_query_calendar")),
+        "can_query_availability": can_calendar,
+        "can_request_meetings":   can_calendar,
         "can_see_brief":          see_brief,
         "can_view_full_profile":  see_brief,
-        "can_post_on_my_behalf":  bool(g.get("can_speak_for_group")),
+        "can_post_on_my_behalf":  False,
     }
+
+
+def _can_see_member_briefs(group_perms: dict | None) -> bool:
+    g = group_perms or {}
+    return bool(g.get("can_see_member_briefs", g.get("can_see_brief", False)))
+
+
+def _can_see_group_brief(group_perms: dict | None) -> bool:
+    g = group_perms or {}
+    return g.get("can_see_group_brief", True) is not False
 
 
 # ── Constraints rendering ───────────────────────────────────────────────
@@ -185,6 +203,10 @@ def _format_constraints_block(constraints: list[dict] | None) -> str:
 
 # ── Dispatch ────────────────────────────────────────────────────────────
 _GROUP_CONVERSATION_PREFIX = "group:"
+_SHORT_FOLLOWUP_RE = re.compile(
+    r"^\s*@?[A-Za-z0-9_\s-]{0,60}\s*(do it|answer|reply|tell (us|me)|go ahead|yes|yep|please do|share it)\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
 
 
 def _conversation_id_for(group_id: str, target_user_id: str) -> str:
@@ -198,7 +220,81 @@ def _conversation_id_for(group_id: str, target_user_id: str) -> str:
 
 
 def _supabase():
-    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
+    return config.get_supabase()
+
+
+def _format_recent_group_context(group_id: str, current_message: str) -> str:
+    """
+    Give the mentioned persona the visible group context around this turn.
+
+    The orchestrator conversation history is per target persona and in-memory,
+    so after a deploy/restart or when the target wasn't mentioned in the
+    previous turn, a short follow-up like "@Sahil do it" can look like a vague
+    action request. The group message table is the canonical room transcript;
+    include a compact recent slice so the persona can resolve "it" to the
+    latest visible question.
+    """
+    try:
+        sb = _supabase()
+        rows = (
+            sb.table("persona_group_messages")
+            .select("sender_name, channel, content, created_at")
+            .eq("group_id", group_id)
+            .order("created_at", desc=True)
+            .limit(8)
+            .execute()
+        )
+        messages = list(reversed(rows.data or []))
+    except Exception as e:
+        logger.warning(f"[group-dispatch] couldn't load recent transcript for {group_id}: {e}")
+        messages = []
+
+    lines = ["\n\n## Recent visible group context"]
+    if messages:
+        for row in messages:
+            sender = (row.get("sender_name") or "Someone").strip()
+            channel = row.get("channel") or "human"
+            content = (row.get("content") or "").strip().replace("\n", " ")
+            if len(content) > 500:
+                content = content[:500].rstrip() + " ..."
+            lines.append(f"- {sender} ({channel}): {content}")
+    else:
+        lines.append(f"- Current message: {(current_message or '').strip()}")
+    return "\n".join(lines)
+
+
+def _group_reply_mode_block(*, target_display: str, asker_display_name: str, user_message: str) -> str:
+    """Extra instructions that specialize external-mode behavior for group rooms."""
+    followup_hint = ""
+    if _SHORT_FOLLOWUP_RE.match(user_message or ""):
+        followup_hint = (
+            "\n- The current message is a short follow-up. Resolve words like "
+            "\"it\" or \"do it\" from the recent group context, then answer that "
+            "latest group question as the mentioned persona."
+        )
+
+    return f"""
+
+## Group mention mode — override generic networking handoff behavior
+This is a group room reply for @{target_display}, requested by {asker_display_name}.
+Treat the @mention as a request for this persona to answer the group, not as a
+request to connect the two humans.
+
+Rules for this group reply:
+- If the group asks about your principal, answer from the principal briefing and
+  any allowed group/private brief context available in this prompt.
+- If the group asks "what is {target_display} working on?", "what do they do?",
+  or similar, answer directly with known facts. Do not say you'll pass it along.
+- Do NOT use phrases like "I'll pass this along", "they'll follow up", "looping
+  them in", or "connect with them" unless the human explicitly asks you to notify
+  your principal outside the group.
+- If the message is ambiguous but the recent group context contains a clear
+  question, answer that question. If it is still ambiguous, ask one concise
+  clarifying question in the group instead of escalating to the principal.
+- Keep the visible reply as the agent representing {target_display}; do not
+  impersonate the human.
+{followup_hint}
+"""
 
 
 async def dispatch_group_mention(
@@ -212,6 +308,7 @@ async def dispatch_group_mention(
     asker_permissions: dict,
     group_brief_content: str | None = None,
     group_constraints: list[dict] | None = None,
+    time_zone: str | None = None,
 ) -> None:
     """
     Invoke the target member's persona for an @-mention in a group room
@@ -243,18 +340,17 @@ async def dispatch_group_mention(
     # suspenders: even though the brief body is already stripped from the
     # system prompt when permission is off, telling the LLM not to leak
     # equivalent details from memory keeps replies aligned.
-    if asker_permissions.get("can_see_brief"):
+    if _can_see_member_briefs(asker_permissions):
         privacy_hint = (
-            f"{asker_display_name} has been granted access to your principal's "
-            f"private brief in this group. You may share specifics about what "
-            f"they're working on, plans, and goals."
+            f"{asker_display_name} is a trusted group member with full brief access. "
+            f"Answer questions about your principal's work, focus, goals, and background "
+            f"fully and specifically — draw on everything in the briefing above."
         )
     else:
         privacy_hint = (
-            f"{asker_display_name} has NOT been granted access to your principal's "
-            f"private brief. Keep your reply at the level of the public "
-            f"description — don't share what they're working on, internal goals, "
-            f"or other brief specifics. Decline politely if the question requires it."
+            f"{asker_display_name} does not have brief access for this member. "
+            f"Limit your reply to publicly visible information (name, title, general role). "
+            f"Do not reveal current projects, internal goals, or detailed work context."
         )
     # Group brief content (phase 3a) — when present, give the target
     # persona the SHARED context the team has co-authored. Truncated
@@ -262,7 +358,7 @@ async def dispatch_group_mention(
     # _LLM_BRIEF_CHAR_CAP used by the per-user brief because we're
     # appending on top of the existing prompt, not replacing it.
     brief_context = ""
-    if group_brief_content and asker_permissions.get("can_see_brief"):
+    if group_brief_content and _can_see_group_brief(asker_permissions):
         snippet = group_brief_content.strip()
         if snippet:
             if len(snippet) > 2000:
@@ -286,12 +382,30 @@ async def dispatch_group_mention(
     # the team's shared rules and apply to every member's persona in
     # the room regardless of the asker's permission set.
     constraints_block = _format_constraints_block(group_constraints)
+    recent_group_context = _format_recent_group_context(group_id, user_message)
+    group_reply_mode = _group_reply_mode_block(
+        target_display=target_display,
+        asker_display_name=asker_display_name,
+        user_message=user_message,
+    )
+
+    try:
+        tz = ZoneInfo(time_zone) if time_zone else timezone.utc
+    except ZoneInfoNotFoundError:
+        tz = timezone.utc
+    now_local = datetime.now(tz)
+    time_str = now_local.strftime("%A, %B %-d %Y %-I:%M %p") + (
+        f" ({time_zone})" if time_zone and time_zone != "UTC" else " UTC"
+    )
 
     prefixed_message = (
         f"[Group room context — you were @-mentioned by {asker_display_name} "
         f"in a private group. Reply as your principal's persona would, in 1–3 "
         f"sentences. The other group members will see your reply.\n"
+        f"Current local time for the asker: {time_str}\n"
         f"{privacy_hint}]"
+        f"{group_reply_mode}"
+        f"{recent_group_context}"
         f"{constraints_block}"
         f"{brief_context}"
         f"\n\n{user_message}"
@@ -310,6 +424,8 @@ async def dispatch_group_mention(
             is_external=True,
             sender_agent_id=asker_agent_id,
             external_permissions=external_perms,
+            is_group_context=True,
+            time_zone=time_zone,
         )
     except Exception as e:
         logger.exception(f"[group-dispatch] {target_uid} failed to answer in group {group_id}: {e}")
@@ -322,6 +438,7 @@ async def dispatch_group_mention(
     reply = (result or {}).get("reply") or ""
     if not reply.strip():
         logger.info(f"[group-dispatch] {target_uid} produced an empty reply in group {group_id}")
+        _post_system_note(group_id, f"{target_display}'s persona didn't have a response for that.")
         return
 
     try:

@@ -29,6 +29,14 @@ import ApprovalsIndicator from "@/components/ApprovalsIndicator";
 import { InvitePeoplePanel } from "@/components/groups/InvitePeoplePanel";
 import { apiDelete, apiGet, apiPatch, apiPost, invalidate } from "@/lib/api";
 import { getSupabase } from "@/lib/supabase";
+import ServicesPanel from "@/components/chat/ServicesPanel";
+import type { ServicesPanelPayload } from "@/components/chat/types";
+import {
+  parseSlashCommand,
+  runServiceSearch,
+  runServiceCard,
+  HELP_TEXT,
+} from "@/lib/services-commands";
 
 interface Group {
   id: string;
@@ -62,6 +70,10 @@ interface Message {
   content: string;
   reply_to: string | null;
   created_at: string;
+  /** Local-only payload for slash-command results (e.g. /services). These
+   *  rows live in client state only — they are not POSTed to the server
+   *  and not broadcast to other members. Marked with id `local-svc-…`. */
+  services?: ServicesPanelPayload;
 }
 
 export default function GroupChatPage() {
@@ -321,11 +333,133 @@ export default function GroupChatPage() {
     firstScrollRef.current = false;
   }, [messages.length]);
 
+  // Slash-command results in groups are LOCAL-ONLY — they render in the
+  // user's view but are never posted to /api/groups/{id}/messages or
+  // broadcast to other members. The `local-svc-` id prefix keeps them
+  // from colliding with optimistic message ids or realtime arrivals.
+  const appendLocalServiceMsg = useCallback(
+    (services: ServicesPanelPayload): string => {
+      if (!groupId || !user) return "";
+      const id = `local-svc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const row: Message = {
+        id,
+        group_id: groupId,
+        sender_user_id: user.id,
+        sender_agent_id: null,
+        sender_name: null,
+        channel: "system",
+        content: "",
+        reply_to: null,
+        created_at: new Date().toISOString(),
+        services,
+      };
+      setMessages((prev) => [...prev, row]);
+      return id;
+    },
+    [groupId, user],
+  );
+
+  const updateLocalServiceMsg = useCallback(
+    (id: string, services: ServicesPanelPayload) => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, services } : m)),
+      );
+    },
+    [],
+  );
+
+  const handleCardLookup = useCallback(
+    async (entityId: string) => {
+      const id = appendLocalServiceMsg({
+        kind: "card",
+        entityId,
+        loading: true,
+      });
+      try {
+        const card = await runServiceCard(entityId);
+        updateLocalServiceMsg(id, { kind: "card", entityId, card });
+      } catch (e) {
+        updateLocalServiceMsg(id, {
+          kind: "error",
+          error: e instanceof Error ? e.message : "Couldn't load card.",
+        });
+      }
+    },
+    [appendLocalServiceMsg, updateLocalServiceMsg],
+  );
+
+  const tryHandleSlashCommand = useCallback(
+    async (content: string): Promise<boolean> => {
+      const cmd = parseSlashCommand(content);
+      if (!cmd) return false;
+
+      // The user's command itself is echoed as a local "human" message so
+      // they can see what they typed — but we set sender_name to "you (private)"
+      // to make clear it's not broadcast. Skipping the echo entirely also works;
+      // we keep it for now so the thread reads naturally.
+      if (cmd.kind === "help") {
+        appendLocalServiceMsg({ kind: "help", helpText: HELP_TEXT });
+        setDraft("");
+        return true;
+      }
+      if (cmd.kind === "invalid") {
+        appendLocalServiceMsg({ kind: "error", error: cmd.hint });
+        setDraft("");
+        return true;
+      }
+      if (cmd.kind === "services") {
+        const id = appendLocalServiceMsg({
+          kind: "search",
+          query: cmd.query,
+          loading: true,
+        });
+        setDraft("");
+        try {
+          const search = await runServiceSearch(cmd.query);
+          updateLocalServiceMsg(id, { kind: "search", query: cmd.query, search });
+        } catch (e) {
+          updateLocalServiceMsg(id, {
+            kind: "error",
+            error: e instanceof Error ? e.message : "Search failed.",
+          });
+        }
+        return true;
+      }
+      if (cmd.kind === "card") {
+        const id = appendLocalServiceMsg({
+          kind: "card",
+          entityId: cmd.entityId,
+          loading: true,
+        });
+        setDraft("");
+        try {
+          const card = await runServiceCard(cmd.entityId);
+          updateLocalServiceMsg(id, {
+            kind: "card",
+            entityId: cmd.entityId,
+            card,
+          });
+        } catch (e) {
+          updateLocalServiceMsg(id, {
+            kind: "error",
+            error: e instanceof Error ? e.message : "Couldn't load card.",
+          });
+        }
+        return true;
+      }
+      return false;
+    },
+    [appendLocalServiceMsg, updateLocalServiceMsg],
+  );
+
   const handleSend = useCallback(async () => {
     if (!groupId || !user) return;
     const content = draft.trim();
     if (!content) return;
     setError(null);
+
+    // Slash commands run locally; never POSTed to the group.
+    if (await tryHandleSlashCommand(content)) return;
 
     // Optimistic append — render the message instantly so the chat
     // feels snappy. We tag the id with `local-` so the realtime
@@ -391,7 +525,7 @@ export default function GroupChatPage() {
     } finally {
       setSending(false);
     }
-  }, [groupId, draft, user, myMembership]);
+  }, [groupId, draft, user, myMembership, tryHandleSlashCommand]);
 
   if (notFound) {
     return (
@@ -529,6 +663,18 @@ export default function GroupChatPage() {
           ) : (
             <ul className="group-msgs">
               {messages.map((m, i) => {
+                // Local-only slash-command result rows render as a
+                // private inline panel — not as a chat bubble.
+                if (m.services) {
+                  return (
+                    <li key={m.id} className="group-msg-services-row">
+                      <ServicesPanel
+                        payload={m.services}
+                        onCardLookup={handleCardLookup}
+                      />
+                    </li>
+                  );
+                }
                 const isMine = m.sender_user_id === user?.id;
                 const prev = i > 0 ? messages[i - 1] : null;
                 // Only show the sender label on the first message of a
@@ -674,7 +820,7 @@ export default function GroupChatPage() {
                 rows={1}
                 placeholder={
                   canPost
-                    ? "Message group… @ to mention"
+                    ? "Message group… @ to mention · /services for tools"
                     : "Posting is disabled"
                 }
                 maxLength={4000}

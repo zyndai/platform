@@ -59,6 +59,25 @@ def get_user_id_for_chat(chat_id: str | int) -> str | None:
     return None
 
 
+def get_chat_id_for_user(user_id: str) -> str | None:
+    """Reverse lookup — Telegram chat_id for a Supabase user, or None
+    if they haven't linked Telegram. Used by push-notification senders."""
+    try:
+        r = (
+            _sb()
+            .table("telegram_links")
+            .select("chat_id")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if r.data:
+            return r.data[0]["chat_id"]
+    except Exception as e:
+        logger.warning(f"[telegram_store] get_chat_id_for_user failed: {e}")
+    return None
+
+
 def link_chat_to_user(chat_id: str | int, user_id: str) -> None:
     """
     Upsert the (user_id, chat_id) link. Idempotent — relinking is fine.

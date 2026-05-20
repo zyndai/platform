@@ -354,6 +354,60 @@ class _Admitted:
         self.is_continuation = is_continuation
 
 
+def _ping_inbound_dm(
+    recipient_user_id: str,
+    thread: dict,
+    sender_entity_id: str,
+    inbound_text: str,
+) -> None:
+    """Best-effort Telegram ping for an inbound persona DM.
+
+    Gating rule: only ping when the receiver's side of the thread is in
+    'human' mode (the user has taken over from their agent on this
+    thread). When the receiver is still in 'agent' mode their persona
+    will reply automatically, so a Telegram ping would just be noise.
+
+    Fire-and-forget — runs as an asyncio task so the admission gate
+    isn't blocked on Telegram's API.
+    """
+    try:
+        mode = (thread.get("mode") or "agent").lower()
+        if mode != "human":
+            return
+
+        # Identify the partner (the sender side of the thread) for the
+        # message header. sender_entity_id == one of the thread's two
+        # participants — pick the one that's NOT the recipient agent.
+        if sender_entity_id == thread.get("initiator_id"):
+            partner_name = thread.get("initiator_name") or "Someone"
+        else:
+            partner_name = thread.get("receiver_name") or "Someone"
+
+        snippet = (inbound_text or "").strip()[:300]
+        msg = (
+            f"💬 *{partner_name}* says:\n{snippet}\n\n"
+            "Reply in the dashboard: https://persona.zynd.ink/dashboard/messages"
+        )
+        from services.telegram_notify import notify_user
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(notify_user(recipient_user_id, msg))
+        except RuntimeError:
+            # No running loop (sync caller). Run synchronously off-thread
+            # so we still never block the caller.
+            import threading
+
+            def _runner():
+                try:
+                    asyncio.run(notify_user(recipient_user_id, msg))
+                except Exception as e:
+                    logger.warning(f"[a2a inbound ping] runner failed: {e}")
+
+            threading.Thread(target=_runner, daemon=True).start()
+    except Exception as e:
+        logger.warning(f"[a2a inbound ping] failed: {e}")
+
+
 async def _admit_message_send(
     user_id: str,
     addressee_agent_id: str,
@@ -530,6 +584,9 @@ async def _admit_message_send(
         except Exception as e:
             logger.warning(f"{log_prefix} mirror inbound to dm_messages failed: {e}")
 
+        # Ping the user on Telegram if they've taken over this thread.
+        _ping_inbound_dm(user_id, thread, sender_entity_id, inbound_text)
+
         return (
             _Admitted(
                 task_id=task_id,
@@ -590,6 +647,9 @@ async def _admit_message_send(
         }).execute()
     except Exception as e:
         logger.warning(f"{log_prefix} mirror to dm_messages failed: {e}")
+
+    # Ping the user on Telegram if they've taken over this thread.
+    _ping_inbound_dm(user_id, thread, sender_entity_id, inbound_text)
 
     return (
         _Admitted(

@@ -244,6 +244,46 @@ def _is_seeded_user(user_id: str) -> bool:
         return False
 
 
+def _ping_telegram_approval(user_id: str, summary: str) -> None:
+    """Fire-and-forget Telegram ping for a freshly-staged approval.
+
+    Called from `_maybe_stage_approval` after the DB insert succeeds.
+    The actual send goes through `services.telegram_notify.notify_user`,
+    which is a no-op if the user hasn't linked Telegram — so we don't
+    have to check for that here.
+
+    We schedule via `asyncio.create_task` if we're inside an event loop
+    (the normal webhook path), and fall back to `asyncio.run` in a
+    detached thread otherwise so sync callers don't crash.
+    """
+    msg = (
+        f"🔔 *Approval needed*\n{summary}\n\n"
+        "Open the dashboard to accept or decline: "
+        "https://persona.zynd.ink/dashboard/approvals"
+    )
+    try:
+        from services.telegram_notify import notify_user
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None:
+            loop.create_task(notify_user(user_id, msg))
+        else:
+            import threading
+
+            def _runner():
+                try:
+                    asyncio.run(notify_user(user_id, msg))
+                except Exception as e:
+                    print(f"[orchestrator] approval ping runner failed: {e}")
+
+            threading.Thread(target=_runner, daemon=True).start()
+    except Exception as e:
+        # Notifications must never break the orchestrator path.
+        print(f"[orchestrator] approval ping failed: {e}")
+
+
 def _maybe_stage_approval(
     user_id: str,
     fn_name: str,
@@ -278,6 +318,13 @@ def _maybe_stage_approval(
         }).execute()
         approval_id = row.data[0]["id"] if row.data else None
         print(f"[orchestrator] staged approval {approval_id} for {fn_name}: {summary}")
+
+        # Push a Telegram ping to the principal so they actually see the
+        # approval card without having the dashboard open. Best-effort —
+        # fired as a background task so it never blocks the webhook /
+        # orchestrator turn that staged the row.
+        _ping_telegram_approval(user_id, summary)
+
         return {
             "status": "queued_for_approval",
             "approval_id": approval_id,
@@ -1551,9 +1598,12 @@ summarization, niche lookups. Personas on the network publish these as *services
    `"text-nlp"`). Pick the highest-scored ACTIVE result whose summary matches.
 2. `get_zynd_service_card(entity_id)` — read `input_schema` to learn what shape the
    service wants. NEVER skip this — the schema is the only way to know whether to
-   pass `text=` or `data=`.
+   pass `text=` or `data=`. **Fetch one card per service**, not multiple to "compare".
+   You picked the top search result in step 1 — commit to it.
 3. `call_zynd_service(entity_id, text=…, data=…)` — invoke. See the schema rules
-   below for how to choose between `text` and `data`.
+   below for how to choose between `text` and `data`. Aim to get the call shape
+   right on the FIRST try by reading the schema carefully. You have a small
+   tool-call budget; don't burn it shopping between services.
 
 **Reading `input_schema` to choose `text` vs `data`:**
 - If `input_schema.properties` has **task-specific fields** (e.g. `target_language`,
@@ -1697,13 +1747,12 @@ async def handle_user_message(
     actions_taken = []
     executed_tools = set()  # Track which tools already ran this turn
 
-    # LLM loop — keep going until the model produces a final text response
+    # LLM loop — keep going until the model produces a final text response.
     # Multi-step workflows like "search → check → message → summarize" need
-    # at least N+1 iterations: one per tool call plus a final iteration where
-    # the LLM produces the text response that wraps up for the user. With 3
-    # we hit the cap before the wrap-up and fall through to the generic
-    # fallback message. 6 gives comfortable headroom for chained tool flows.
-    max_iterations = 6
+    # at least N+1 iterations. The Zynd-services flow (search → card → call,
+    # possibly retried across 2-3 candidates) can take 6-8 tool turns plus a
+    # final summary turn, so 10 is the floor that avoids cap-exhaustion stubs.
+    max_iterations = 10
     for iteration in range(max_iterations):
         # The LLM SDKs (OpenAI, Gemini) are sync and block the event loop
         # while they wait for the model response. That's catastrophic in a
@@ -1894,15 +1943,30 @@ async def handle_user_message(
                     )
                 )
 
-    # Fallback if we hit max iterations. We make the message specific so the
-    # user knows we ran out of room to summarize and can ask for a recap.
-    tools_called = ", ".join(a.get("tool", "?") for a in actions_taken) or "none"
-    return {
-        "reply": (
-            "I performed the requested actions but ran out of reasoning steps before I could "
-            "summarize the results for you. Tools I called this turn: "
-            f"{tools_called}. Ask me to summarize the latest result and I'll do it now."
+    # Iteration cap hit. Do one final LLM call with tools disabled so the
+    # model can write a clean summary from the tool results already in the
+    # messages history, instead of returning a generic stub.
+    messages.append({
+        "role": "user",
+        "content": (
+            "STOP CALLING TOOLS. You have used your tool-call budget for this "
+            "turn. Based on the tool results already in this conversation, "
+            "write your final reply to your principal now. Lead with the "
+            "answer (the translated text, the converted output, the data they "
+            "asked for). Do not call any more tools — there will be no more "
+            "tool execution this turn."
         ),
+    })
+    summary_text, _ = await asyncio.to_thread(provider.chat_with_tools, messages, [])
+    if not summary_text:
+        tools_called = ", ".join(a.get("tool", "?") for a in actions_taken) or "none"
+        summary_text = (
+            "I ran the requested tools but couldn't compose a final summary. "
+            f"Tools called: {tools_called}. Ask me to recap and I'll do it now."
+        )
+    history.append({"role": "assistant", "content": summary_text})
+    return {
+        "reply": strip_think_tags(summary_text),
         "actions_taken": actions_taken,
         "conversation_id": conversation_id,
     }
@@ -2002,7 +2066,7 @@ async def handle_user_message_stream(
     actions_taken: list[dict] = []
     executed_tools: set = set()
 
-    max_iterations = 6
+    max_iterations = 10
     for iteration in range(max_iterations):
         turn_text = ""
         turn_tool_calls: list[dict] | None = None
@@ -2183,19 +2247,50 @@ async def handle_user_message_stream(
                     )
                 )
 
-    # Fallback: hit the iteration cap
-    tools_called = ", ".join(a.get("tool", "?") for a in actions_taken) or "none"
-    fallback = (
-        "I performed the requested actions but ran out of reasoning steps before I could "
-        f"summarize. Tools called: {tools_called}. Ask me to summarize and I'll do it now."
-    )
+    # Iteration cap hit. Instead of dumping a generic "I ran out of steps"
+    # stub, do ONE more LLM call with tools disabled — let the model write
+    # the final summary from the tool results already in messages history.
+    # The user sees a clean answer based on the work that was actually done.
+    messages.append({
+        "role": "user",
+        "content": (
+            "STOP CALLING TOOLS. You have used your tool-call budget for this "
+            "turn. Based on the tool results already in this conversation, "
+            "write your final reply to your principal now. Lead with the "
+            "answer (the translated text, the converted output, the data they "
+            "asked for). Do not call any more tools — there will be no more "
+            "tool execution this turn."
+        ),
+    })
+
+    final_text = ""
+    async for event in _run_provider_stream(provider, messages, []):
+        etype = event.get("type")
+        if etype == "turn_done":
+            final_text = (event.get("text") or "").strip()
+            break
+        if etype == "error":
+            yield event
+            break
+        # Pass-through text/thinking deltas so the user sees the summary stream in
+        yield event
+
+    if not final_text:
+        tools_called = ", ".join(a.get("tool", "?") for a in actions_taken) or "none"
+        final_text = (
+            "I ran the requested tools but couldn't compose a final summary. "
+            f"Tools called: {tools_called}. Ask me to recap and I'll do it now."
+        )
+
+    final_reply = strip_think_tags(final_text)
+    history.append({"role": "assistant", "content": final_text})
     if not is_external:
         _persist_chat_message(
-            user_id, conversation_id, "assistant", fallback, actions_taken,
+            user_id, conversation_id, "assistant", final_reply, actions_taken,
         )
     yield {
         "type": "done",
-        "reply": fallback,
+        "reply": final_reply,
         "actions_taken": actions_taken,
         "conversation_id": conversation_id,
     }

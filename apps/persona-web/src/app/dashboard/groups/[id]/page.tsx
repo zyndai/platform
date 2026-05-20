@@ -88,6 +88,18 @@ export default function GroupChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  const resizeComposerInput = useCallback((el: HTMLTextAreaElement | null = inputRef.current) => {
+    if (!el) return;
+    const maxHeight =
+      typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches
+        ? 112
+        : 160;
+    el.style.height = "auto";
+    const nextHeight = Math.min(el.scrollHeight, maxHeight);
+    el.style.height = `${nextHeight}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, []);
+
   // ── @-mention autocomplete state ──────────────────────────────────
   // mentionQuery is the text after the trigger `@`, or null when no
   // mention is in flight. mentionStart is the index of the `@` in the
@@ -187,10 +199,15 @@ export default function GroupChatPage() {
         const pos = before.length + name.length + 2;
         el.focus();
         el.setSelectionRange(pos, pos);
+        resizeComposerInput(el);
       });
     },
-    [draft, mentionQuery, mentionStart],
+    [draft, mentionQuery, mentionStart, resizeComposerInput],
   );
+
+  useEffect(() => {
+    resizeComposerInput();
+  }, [draft, resizeComposerInput]);
 
   useEffect(() => {
     if (!groupId) return;
@@ -413,7 +430,7 @@ export default function GroupChatPage() {
             alt=""
           />
         </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="group-chat-heading">
           <h2 className="group-chat-title">{group.name}</h2>
           <div className="group-chat-meta">
             {group.visibility === "private" ? (
@@ -619,7 +636,10 @@ export default function GroupChatPage() {
               <textarea
                 ref={inputRef}
                 value={draft}
-                onChange={(e) => handleDraftChange(e.target.value)}
+                onChange={(e) => {
+                  handleDraftChange(e.target.value);
+                  resizeComposerInput(e.currentTarget);
+                }}
                 onKeyDown={(e) => {
                   if (mentionQuery !== null && mentionSuggestions.length > 0) {
                     if (e.key === "ArrowDown") {
@@ -654,7 +674,7 @@ export default function GroupChatPage() {
                 rows={1}
                 placeholder={
                   canPost
-                    ? "Message the group…  Type @ to mention someone's persona."
+                    ? "Message group… @ to mention"
                     : "Posting is disabled"
                 }
                 maxLength={4000}

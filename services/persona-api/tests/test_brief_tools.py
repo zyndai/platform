@@ -81,6 +81,12 @@ def _install_stub_persona_manager(monkeypatch, *, brief_state, init_outcome="ok"
     if "agent" not in sys.modules:
         monkeypatch.setitem(sys.modules, "agent", types.ModuleType("agent"))
     monkeypatch.setitem(sys.modules, "agent.persona_manager", stub)
+    # If `agent` is the real package (already imported by a prior test),
+    # `from agent import persona_manager` reads the cached attribute on
+    # the package object, NOT sys.modules. Patch the attribute so the
+    # stub actually takes effect.
+    agent_pkg = sys.modules["agent"]
+    monkeypatch.setattr(agent_pkg, "persona_manager", stub, raising=False)
     return stub
 
 

@@ -362,17 +362,40 @@ def _ping_inbound_dm(
 ) -> None:
     """Best-effort Telegram ping for an inbound persona DM.
 
-    Gating rule: only ping when the receiver's side of the thread is in
-    'human' mode (the user has taken over from their agent on this
-    thread). When the receiver is still in 'agent' mode their persona
-    will reply automatically, so a Telegram ping would just be noise.
+    Gating rule: only ping when the recipient's side of the thread is in
+    'human' mode (they've taken over from their agent on this thread).
+    When their side is still in 'agent' mode their persona will reply
+    automatically, so a Telegram ping would just be noise.
+
+    Reads the per-side mode column (`initiator_mode` / `receiver_mode`)
+    on dm_threads — the legacy single-column `mode` flag is stale and
+    nullable, so trusting it caused this function to silently no-op.
 
     Fire-and-forget — runs as an asyncio task so the admission gate
     isn't blocked on Telegram's API.
     """
     try:
-        mode = (thread.get("mode") or "agent").lower()
-        if mode != "human":
+        # Resolve which side of the thread the recipient is on, then
+        # read the matching per-side mode column.
+        from agent.persona_manager import get_persona_status
+        try:
+            recipient_persona = get_persona_status(recipient_user_id)
+        except Exception as e:
+            logger.warning(f"[a2a inbound ping] persona lookup failed: {e}")
+            return
+        recipient_agent_id = recipient_persona.get("agent_id")
+        if not recipient_agent_id:
+            return
+
+        if recipient_agent_id == thread.get("initiator_id"):
+            side_mode = (thread.get("initiator_mode") or "agent").lower()
+        elif recipient_agent_id == thread.get("receiver_id"):
+            side_mode = (thread.get("receiver_mode") or "agent").lower()
+        else:
+            # Recipient isn't actually a participant — bail.
+            return
+
+        if side_mode != "human":
             return
 
         # Identify the partner (the sender side of the thread) for the

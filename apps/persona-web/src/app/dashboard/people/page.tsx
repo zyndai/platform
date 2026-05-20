@@ -486,8 +486,3 @@ function QuickStarts({ onPick }: { onPick: (query: string) => void }) {
     </section>
   );
 }
-
-function compactAgentId(agentId: string): string {
-  if (agentId.length <= 18) return agentId;
-  return `${agentId.slice(0, 9)}...${agentId.slice(-5)}`;
-}

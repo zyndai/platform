@@ -47,6 +47,13 @@ from mcp.tools.zynd_network import (
     read_agent_channel,
 )
 
+# ── Import Zynd Network Services Tools ──
+from mcp.tools.zynd_services import (
+    search_zynd_services,
+    get_zynd_service_card,
+    call_zynd_service,
+)
+
 # ── Import Scheduling Tools ──
 from mcp.tools.scheduling import (
     propose_meeting,
@@ -124,6 +131,13 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(check_connection_status, name="check_connection_status", description="Check if the user is connected to a specific persona")
     mcp.register(message_zynd_agent, name="message_zynd_agent", description="Send a message to another persona's agent on the Zynd Network")
     mcp.register(read_agent_channel, name="read_agent_channel", description="Read recent agent-channel messages on a DM thread. Use to check what was said across turns, verify replies arrived, or reconstruct context. Never reads the human Conversation tab.")
+
+    # ── Zynd Network service-discovery tools ───────────────────────
+    # Three-step flow when no built-in tool covers the user's ask:
+    # search → get_card (to learn the I/O schema and the real URL) → call.
+    mcp.register(search_zynd_services, name="search_zynd_services", description="Search the Zynd Network for services that can fulfill capabilities you don't have built in (file conversion, currency, translation, niche lookups). Use this whenever no other tool fits the user's ask.")
+    mcp.register(get_zynd_service_card, name="get_zynd_service_card", description="Fetch a service's input/output schema and live endpoint. Call this AFTER search_zynd_services and BEFORE call_zynd_service so you know what payload shape to send.")
+    mcp.register(call_zynd_service, name="call_zynd_service", description="Invoke a Zynd Network service. Use the input_schema from get_zynd_service_card to shape the text/data payload — most services read from a text part.")
 
     # ── Scheduling / meeting tools ─────────────────────────────────
     mcp.register(propose_meeting, name="propose_meeting", description="Formalise a negotiated meeting as a ticket on a DM thread. Only call AFTER negotiating a time and getting your principal's explicit confirmation.")

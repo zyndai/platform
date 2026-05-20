@@ -2,6 +2,7 @@
 /.zyndai-agent/
 /supabase/
 /out.txt
+/.claude/
 
 # Common language/environment files
 __pycache__/

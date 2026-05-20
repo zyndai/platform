@@ -62,6 +62,15 @@ from mcp.tools.scheduling import (
     list_pending_meetings,
 )
 
+# ── Import Brief Tools ──
+# Principal-private; never added to any external allowlist.
+from mcp.tools.brief import (
+    read_my_brief,
+    append_to_my_brief,
+    replace_my_brief,
+    clear_my_brief,
+)
+
 
 def create_mcp_server(disable_security: bool = True) -> ContextAware:
     """
@@ -144,6 +153,14 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(propose_group_meeting, name="propose_group_meeting", description="Propose a meeting in a group room. The principal sees an approval card; on accept, the calendar event is created with every other group member as an attendee and a system message is posted to the group chat.")
     mcp.register(respond_to_meeting, name="respond_to_meeting", description="Accept, counter, decline, or cancel an existing meeting ticket.")
     mcp.register(list_pending_meetings, name="list_pending_meetings", description="List the principal's open meeting tickets, split by who needs to act next.")
+
+    # ── Brief tools (principal-private) ────────────────────────────
+    # These read/write the user's Brief Google Doc. Auto-init the doc
+    # on first append/replace. Never exposed to foreign agents.
+    mcp.register(read_my_brief, name="read_my_brief", description="Read the principal's Brief — the long-form context doc this persona uses to know its principal. Returns plain text + Google Doc URL. Use this whenever you need durable context about the user (preferences, role, ongoing projects).")
+    mcp.register(append_to_my_brief, name="append_to_my_brief", description="Append a line to the principal's Brief Google Doc. Use this when the user tells you something durable about themselves that you should remember across conversations. Creates the brief lazily if it doesn't exist yet.")
+    mcp.register(replace_my_brief, name="replace_my_brief", description="Replace the entire body of the principal's Brief Google Doc. Use only when the user explicitly asks to rewrite their brief — prefer append_to_my_brief for additions.")
+    mcp.register(clear_my_brief, name="clear_my_brief", description="Empty the principal's Brief Google Doc. Use only when the user explicitly asks to clear their brief.")
 
     # ── Default utility tools ──────────────────────
     mcp.register_default(names=["internet_search", "webpage_scrape", "get_current_time", "calculate"])

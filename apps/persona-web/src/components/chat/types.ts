@@ -34,6 +34,20 @@ export interface ChatMessage {
   /** True while the SSE is open. */
   streaming?: boolean;
   error?: string;
+  /** Slash-command result payload (e.g. `/services <query>`). Rendered
+   *  inline as a card list instead of markdown. Local-only, never persisted. */
+  services?: ServicesPanelPayload;
+}
+
+export interface ServicesPanelPayload {
+  kind: "search" | "card" | "help" | "error";
+  query?: string;
+  entityId?: string;
+  search?: import("@/lib/services-commands").ServiceSearchPayload;
+  card?: import("@/lib/services-commands").ServiceCardPayload;
+  helpText?: string;
+  error?: string;
+  loading?: boolean;
 }
 
 export interface IncomingRequest {

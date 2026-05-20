@@ -118,3 +118,61 @@ export const HELP_TEXT = `**Slash commands**
 - \`/help\` — show this help.
 
 For natural-language requests like *"translate this to French"* your agent will pick a service automatically — slash commands are a faster, deterministic path.`;
+
+/**
+ * Definitions used to power the slash-command autocomplete popover in chat
+ * composers. Keep this list in sync with the parser above — every entry here
+ * must be a name `parseSlashCommand` understands.
+ */
+export interface SlashCommandDef {
+  /** Canonical name as the user types it (no leading slash). */
+  name: string;
+  /** Short usage hint shown next to the name, e.g. "<query>". */
+  args: string;
+  /** One-line description for the popover row. */
+  description: string;
+  /** A concrete usage example shown in muted text. */
+  example: string;
+  /** What the input should look like AFTER picking this command. The caret
+   *  lands at the end of insertText, ready for the user to type the argument. */
+  insertText: string;
+}
+
+export const SLASH_COMMANDS: SlashCommandDef[] = [
+  {
+    name: "services",
+    args: "<query>",
+    description: "Search the Zynd registry for a service that can do this.",
+    example: "/services translate text",
+    insertText: "/services ",
+  },
+  {
+    name: "card",
+    args: "<entity_id>",
+    description: "Show a service's input schema, endpoint, and live status.",
+    example: "/card zns:svc:c565a80…",
+    insertText: "/card ",
+  },
+  {
+    name: "help",
+    args: "",
+    description: "List every slash command and what it does.",
+    example: "/help",
+    insertText: "/help",
+  },
+];
+
+/**
+ * Match a partial command at the start of `text`. Returns the slice of
+ * commands whose name starts with the typed prefix, or `null` if the input
+ * is not in a "still typing the command name" state (e.g. the user has
+ * already typed an argument after a space).
+ */
+export function suggestSlashCommands(text: string): SlashCommandDef[] | null {
+  if (!text.startsWith("/")) return null;
+  const space = text.indexOf(" ");
+  if (space !== -1) return null; // already typing args — no more suggestions
+  const prefix = text.slice(1).toLowerCase();
+  if (!prefix) return SLASH_COMMANDS;
+  return SLASH_COMMANDS.filter((c) => c.name.startsWith(prefix));
+}

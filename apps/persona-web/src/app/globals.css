@@ -5744,9 +5744,19 @@ textarea.input { resize: vertical; min-height: 88px; }
   animation: mic-pulse 1.6s ease-in-out infinite;
 }
 .chat-input-v2 .row-2 .mic-btn.recording:hover:not(:disabled) { background: #15803d; }
+.chat-input-v2 .row-2 .mic-btn.transcribing {
+  background: var(--accent, #6366f1);
+  color: #ffffff;
+}
+.chat-input-v2 .row-2 .mic-btn.transcribing svg {
+  animation: mic-spin 1.2s linear infinite;
+}
 @keyframes mic-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45); }
   50%      { box-shadow: 0 0 0 8px rgba(22, 163, 74, 0); }
+}
+@keyframes mic-spin {
+  to { transform: rotate(360deg); }
 }
 
 .chat-input-frame {
@@ -8144,6 +8154,61 @@ textarea.input { resize: vertical; min-height: 88px; }
   text-transform: uppercase;
   letter-spacing: 0.4px;
   color: var(--text-muted);
+}
+
+/* ── Slash-command picker (composer dropdown for /services, /card…) ─ */
+.slash-picker {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+  animation: thinking-reveal 100ms var(--ease-out);
+}
+.slash-picker-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--t-micro);
+  user-select: none;
+  white-space: nowrap;
+}
+.slash-picker-row.is-active,
+.slash-picker-row:hover { background: var(--surface-raised); }
+.slash-picker-name {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--accent, #6366f1);
+  flex-shrink: 0;
+}
+.slash-picker-args {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--ink-muted);
+  flex-shrink: 0;
+}
+.slash-picker-desc {
+  font-family: var(--font-geist), system-ui, sans-serif;
+  font-size: 12px;
+  color: var(--ink-secondary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 640px) {
+  .slash-picker-row { padding: 6px 8px; }
+  .slash-picker-desc { font-size: 11.5px; }
 }
 
 /* ── In-bubble @mention chips ───────────────────────────────────── */

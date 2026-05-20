@@ -14,6 +14,10 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import { QUICK_PROMPTS } from "./quickPrompts";
+import { getSupabase } from "@/lib/supabase";
+import { suggestSlashCommands, type SlashCommandDef } from "@/lib/services-commands";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 function LinkedinIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -23,35 +27,23 @@ function LinkedinIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-// Minimal typings for the Web Speech API (not in lib.dom).
-type SRResult = {
-  isFinal: boolean;
-  0: { transcript: string };
-};
-type SRResultList = ArrayLike<SRResult>;
-type SREvent = { results: SRResultList; resultIndex: number };
-type SRErrorEvent = { error: string; message?: string };
-type SpeechRecognitionLike = {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-  onstart: (() => void) | null;
-  onend: (() => void) | null;
-  onerror: ((e: SRErrorEvent) => void) | null;
-  onresult: ((e: SREvent) => void) | null;
-};
-type SRConstructor = new () => SpeechRecognitionLike;
-
-function getSpeechRecognition(): SRConstructor | null {
-  if (typeof window === "undefined") return null;
-  const w = window as unknown as {
-    SpeechRecognition?: SRConstructor;
-    webkitSpeechRecognition?: SRConstructor;
-  };
-  return w.SpeechRecognition || w.webkitSpeechRecognition || null;
+// Pick the best audio mime type the current browser will actually record in.
+// Chrome/Edge ship `audio/webm;codecs=opus`, Safari does `audio/mp4`, and
+// some platforms only do generic `audio/webm`. Groq's Whisper accepts all
+// of these, so we just hand off whatever MediaRecorder produces — we only
+// need this when we want to NAME the file extension for the upload.
+function pickAudioMime(): { mime: string; ext: string } | null {
+  if (typeof MediaRecorder === "undefined") return null;
+  const candidates: Array<{ mime: string; ext: string }> = [
+    { mime: "audio/webm;codecs=opus", ext: "webm" },
+    { mime: "audio/webm",             ext: "webm" },
+    { mime: "audio/mp4",              ext: "m4a" },
+    { mime: "audio/mpeg",             ext: "mp3" },
+  ];
+  for (const c of candidates) {
+    if (MediaRecorder.isTypeSupported(c.mime)) return c;
+  }
+  return null;
 }
 
 interface SuggestPill {
@@ -114,214 +106,155 @@ export default function ChatInput({
     };
   }, [addOpen, toolsOpen]);
 
-  // Voice-to-text via Web Speech API.
+  // Voice-to-text via MediaRecorder + Groq Whisper (server-side).
   //
-  // Browser quirk: even with continuous=true, Chrome (and Safari to a lesser
-  // extent) auto-ends the recognizer on a few seconds of silence — onend
-  // fires and recording stops mid-thought from the user's perspective. The
-  // fix is to distinguish a USER-initiated stop (mic button click, unmount)
-  // from a BROWSER auto-end, and restart the recognizer in the latter case
-  // until the user actually wants to stop.
-  //
-  // Second quirk: each restarted session emits results from index 0, so we
-  // must commit any finalized transcripts into baseValueRef as they arrive.
-  // If we only read from e.results at result-time, the next session's
-  // interim text would replace everything the previous session captured.
+  // Click mic → request mic, start recording. Click again → stop, POST the
+  // audio blob to /api/transcribe, append the returned text to the input.
+  // Much more reliable than the browser's SpeechRecognition API (which
+  // routes through Google's servers, drops sessions on silence, and is
+  // gated behind opaque restart quirks). The actual recognition runs on
+  // Groq's Whisper-Large-v3-turbo — fast (~1s for a 30s clip) and free
+  // for our volume.
   const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  // Cumulative committed text — built up across session restarts. Interim
-  // (in-progress) speech is appended on top of this for display, but only
-  // finalized text gets promoted into baseValueRef.
-  const baseValueRef = useRef("");
-  // Flipped when the user explicitly clicks the mic to stop OR when the
-  // component unmounts. While false, onend → auto-restart.
-  const userStoppedRef = useRef(false);
-  const mountedRef = useRef(true);
-  // Pending restart timer + restart-storm detection. If the browser keeps
-  // ending sessions back-to-back without giving us any audio in between,
-  // restart attempts make things worse — we'd be in a tight loop of
-  // failing .start() calls while the user stares at a "recording" mic
-  // that captures nothing. We track recent restart timestamps and bail
-  // out after 4 consecutive restarts inside a 4-second window.
-  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const recentRestartsRef = useRef<number[]>([]);
-  // Keep `onChange` reference stable for handlers attached to `recognition`.
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const mimeRef = useRef<{ mime: string; ext: string } | null>(null);
+  // Keep `onChange` and `value` references stable for handlers — without
+  // these refs, the recorder's `onstop` would capture a stale closure and
+  // overwrite intervening keystrokes.
   const onChangeRef = useRef(onChange);
+  const valueRef = useRef(value);
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+  useEffect(() => { valueRef.current = value; }, [value]);
 
-  const clearPendingRestart = () => {
-    if (restartTimerRef.current) {
-      clearTimeout(restartTimerRef.current);
-      restartTimerRef.current = null;
+  const releaseStream = () => {
+    const s = streamRef.current;
+    if (!s) return;
+    for (const t of s.getTracks()) {
+      try { t.stop(); } catch { /* noop */ }
     }
+    streamRef.current = null;
   };
 
   const stopRecording = useCallback(() => {
-    userStoppedRef.current = true;
-    clearPendingRestart();
-    const r = recognitionRef.current;
+    const r = recorderRef.current;
     if (!r) return;
-    // abort() is more decisive than stop() — releases the audio resource
-    // immediately so a follow-up start() doesn't race with cleanup.
-    try { r.abort(); } catch { /* ignore */ }
-    recognitionRef.current = null;
-    setRecording(false);
+    try { r.stop(); } catch { /* state error, ignore */ }
+    // onstop handler will release the stream + POST the audio.
   }, []);
 
-  const startRecording = useCallback(() => {
-    const Ctor = getSpeechRecognition();
-    if (!Ctor) {
-      setVoiceError(
-        "Voice input isn't supported in this browser. Try Chrome, Edge, or Safari.",
-      );
+  const startRecording = useCallback(async () => {
+    if (recording || transcribing) return;
+    const pick = pickAudioMime();
+    if (!pick || typeof navigator === "undefined" || !navigator.mediaDevices) {
+      setVoiceError("Voice input isn't supported in this browser.");
       return;
     }
-    userStoppedRef.current = false;
-    recentRestartsRef.current = [];
-    baseValueRef.current = value;
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (/NotAllowed|denied/i.test(msg)) {
+        setVoiceError("Mic permission was denied. Allow it in your browser settings.");
+      } else {
+        setVoiceError("Couldn't access the microphone.");
+      }
+      return;
+    }
+    streamRef.current = stream;
+    mimeRef.current = pick;
+    chunksRef.current = [];
 
-    // Build a recognizer instance bound to the current handlers. Hoisted
-    // into a factory so the onend auto-restart path can rebuild a clean
-    // session without recursing through startRecording's closure.
-    const spawn = (): SpeechRecognitionLike => {
-      const r = new Ctor();
-      r.lang = "en-US";
-      r.continuous = true;
-      r.interimResults = true;
+    const rec = new MediaRecorder(stream, { mimeType: pick.mime });
+    rec.ondataavailable = (e: BlobEvent) => {
+      if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+    };
+    rec.onstop = async () => {
+      const audio = new Blob(chunksRef.current, { type: pick.mime });
+      chunksRef.current = [];
+      releaseStream();
+      recorderRef.current = null;
+      setRecording(false);
 
-      r.onstart = () => {
-        setRecording(true);
-        setVoiceError(null);
-      };
+      if (audio.size < 1000) {
+        // Nothing meaningful captured (under ~1KB ≈ silence or instant tap).
+        return;
+      }
 
-      r.onend = () => {
-        recognitionRef.current = null;
-        // If the user clicked the mic or we've unmounted, this is a real
-        // stop — drop out of recording state.
-        if (userStoppedRef.current || !mountedRef.current) {
-          setRecording(false);
-          return;
+      setTranscribing(true);
+      try {
+        const fd = new FormData();
+        fd.append("file", audio, `voice.${pick.ext}`);
+        const sb = getSupabase();
+        const { data: { session } } = await sb.auth.getSession();
+        const res = await fetch(`${API_URL}/api/transcribe/`, {
+          method: "POST",
+          headers: session?.access_token
+            ? { Authorization: `Bearer ${session.access_token}` }
+            : {},
+          body: fd,
+        });
+        if (!res.ok) {
+          const detail = await res.text().catch(() => "");
+          throw new Error(detail || `Transcription failed (${res.status})`);
         }
+        const data = await res.json();
+        const text = ((data && data.text) || "").trim();
+        if (!text) return;
 
-        // Restart-storm guard: if we've had 4 onend events inside the
-        // last 4 seconds, something is wrong with the audio stack and
-        // restarting again will just keep failing silently. Surface a
-        // visible error and stop instead of churning forever.
-        const now = Date.now();
-        recentRestartsRef.current = [
-          ...recentRestartsRef.current.filter((t) => now - t < 4000),
-          now,
-        ];
-        if (recentRestartsRef.current.length > 4) {
-          userStoppedRef.current = true;
-          setRecording(false);
-          setVoiceError("Mic kept dropping — try again, or check your input device.");
-          return;
-        }
-
-        // Otherwise the browser auto-ended the session (silence timeout,
-        // no-speech, etc.). Restart after a short delay so the audio
-        // resource has time to be released — starting immediately can
-        // race with the platform's mic teardown and produce a session
-        // that's alive in JS but capturing nothing.
-        clearPendingRestart();
-        restartTimerRef.current = setTimeout(() => {
-          restartTimerRef.current = null;
-          if (userStoppedRef.current || !mountedRef.current) return;
-          try {
-            const next = spawn();
-            recognitionRef.current = next;
-            next.start();
-          } catch {
-            setRecording(false);
-          }
-        }, 250);
-      };
-
-      r.onerror = (e) => {
-        // Permission denied is a real stop — don't auto-retry, it would
-        // just spam the user's deny prompt.
-        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-          userStoppedRef.current = true;
-          clearPendingRestart();
-          setRecording(false);
-          recognitionRef.current = null;
-          setVoiceError("Mic permission was denied. Allow it in your browser settings.");
-          return;
-        }
-        // "aborted" specifically means we called .abort() — never auto-restart.
-        if (e.error === "aborted") {
-          userStoppedRef.current = true;
-          clearPendingRestart();
-          return;
-        }
-        // Other errors (network, no-speech, audio-capture) are typical
-        // during a session — let onend handle the restart.
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.debug("[speech] non-fatal error:", e.error);
-        }
-      };
-
-      r.onresult = (e) => {
-        // Real audio came through — reset the storm counter. We're not in
-        // a tight failure loop, just normal continuous speech.
-        recentRestartsRef.current = [];
-        // Walk the result set, separating finalized phrases from in-progress
-        // interim text. We commit finalized text to baseValueRef so a
-        // mid-recording session restart doesn't lose what was already said.
-        let interim = "";
-        let final = "";
-        for (let i = 0; i < e.results.length; i++) {
-          const res = e.results[i];
-          if (res.isFinal) final += res[0].transcript;
-          else interim += res[0].transcript;
-        }
-        if (final) {
-          const base = baseValueRef.current;
-          const sep = base && !/\s$/.test(base) ? " " : "";
-          baseValueRef.current = (base + sep + final).slice(0, MAX_CHARS);
-        }
-        // Compose what the textarea should show right now: committed text
-        // + the live interim portion.
-        const base = baseValueRef.current;
-        const sep = base && !/\s$/.test(base) && interim ? " " : "";
-        const displayed = (base + sep + interim).slice(0, MAX_CHARS);
-        onChangeRef.current(displayed);
-      };
-
-      return r;
+        const base = valueRef.current;
+        const sep = base && !/\s$/.test(base) ? " " : "";
+        onChangeRef.current((base + sep + text).slice(0, MAX_CHARS));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Couldn't transcribe.";
+        setVoiceError(
+          msg.length > 120 ? "Couldn't transcribe — try again." : msg,
+        );
+      } finally {
+        setTranscribing(false);
+      }
+    };
+    rec.onerror = () => {
+      setVoiceError("Recording failed — try again.");
+      releaseStream();
+      recorderRef.current = null;
+      setRecording(false);
     };
 
+    recorderRef.current = rec;
+    setVoiceError(null);
+    setRecording(true);
     try {
-      const r = spawn();
-      recognitionRef.current = r;
-      r.start();
+      rec.start();
     } catch {
-      // Already started or invalid state — leave UI alone.
+      setVoiceError("Couldn't start the recorder.");
+      releaseStream();
+      recorderRef.current = null;
+      setRecording(false);
     }
-  }, [value]);
+  }, [recording, transcribing]);
 
   const toggleMic = useCallback(() => {
     if (disabled) return;
     if (recording) stopRecording();
-    else startRecording();
+    else void startRecording();
   }, [disabled, recording, startRecording, stopRecording]);
 
-  // Cleanup: hard-abort any active recognition on unmount, cancel any
-  // scheduled restart, and flip the user-stopped flag so an in-flight
-  // restart timer that fires after unmount becomes a no-op.
+  // Cleanup on unmount: stop the recorder and release the mic stream so
+  // the OS-level recording indicator goes away even if the user navigates
+  // away mid-recording.
   useEffect(() => {
     return () => {
-      mountedRef.current = false;
-      userStoppedRef.current = true;
-      clearPendingRestart();
-      const r = recognitionRef.current;
-      if (r) {
-        try { r.abort(); } catch { /* ignore */ }
-        recognitionRef.current = null;
+      const r = recorderRef.current;
+      if (r && r.state !== "inactive") {
+        try { r.stop(); } catch { /* noop */ }
       }
+      releaseStream();
+      recorderRef.current = null;
     };
   }, []);
 
@@ -347,6 +280,36 @@ export default function ChatInput({
     if (!t || disabled) return;
     onSend(t);
   };
+
+  // ── Slash-command autocomplete ────────────────────────────────────
+  // When the input starts with `/` and the user is still typing the command
+  // name (no space yet), show a small popover above the input listing the
+  // matching commands. Arrow keys + Enter/Tab to pick; Esc to dismiss.
+  const slashSuggestions: SlashCommandDef[] = suggestSlashCommands(value) || [];
+  const slashOpen = slashSuggestions.length > 0;
+  const [slashIndex, setSlashIndex] = useState(0);
+  useEffect(() => {
+    // Reset the highlight whenever the suggestion list changes (e.g., the
+    // user typed another letter and the list shrank — keep the highlight
+    // valid).
+    if (slashIndex >= slashSuggestions.length) setSlashIndex(0);
+  }, [slashSuggestions.length, slashIndex]);
+
+  const pickSlashCommand = useCallback(
+    (cmd: SlashCommandDef) => {
+      onChange(cmd.insertText);
+      // Move the caret to end of inserted text so the user can immediately
+      // type the argument. requestAnimationFrame gives React a tick to
+      // apply the value update before we move the caret.
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(cmd.insertText.length, cmd.insertText.length);
+      });
+    },
+    [onChange],
+  );
 
   if (variant === "v1") {
     return (
@@ -413,6 +376,33 @@ export default function ChatInput({
           </div>
         )}
 
+        {slashOpen && (
+          <ul
+            className="slash-picker"
+            role="listbox"
+            aria-label="Slash commands"
+          >
+            {slashSuggestions.map((cmd, i) => (
+              <li
+                key={cmd.name}
+                role="option"
+                aria-selected={i === slashIndex}
+                className={`slash-picker-row ${i === slashIndex ? "is-active" : ""}`}
+                onMouseEnter={() => setSlashIndex(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pickSlashCommand(cmd);
+                }}
+              >
+                <span className="slash-picker-name">/{cmd.name}</span>
+                {cmd.args && (
+                  <span className="slash-picker-args">{cmd.args}</span>
+                )}
+                <span className="slash-picker-desc">{cmd.description}</span>
+              </li>
+            ))}
+          </ul>
+        )}
         <div className={`chat-input-v2 ${hasText ? "has-text" : ""}`}>
           <div className="chat-input-v2-inner">
             <div className="row-1">
@@ -425,6 +415,33 @@ export default function ChatInput({
                   onChange(next);
                 }}
                 onKeyDown={(e) => {
+                  if (slashOpen) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setSlashIndex((i) => (i + 1) % slashSuggestions.length);
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setSlashIndex(
+                        (i) =>
+                          (i - 1 + slashSuggestions.length) % slashSuggestions.length,
+                      );
+                      return;
+                    }
+                    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                      e.preventDefault();
+                      pickSlashCommand(slashSuggestions[slashIndex]);
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      // Clear the leading slash so the popover hides without
+                      // having to track a separate dismiss flag.
+                      onChange("");
+                      return;
+                    }
+                  }
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     handleSend();
@@ -540,10 +557,10 @@ export default function ChatInput({
               </div>
               <button
                 type="button"
-                className={`mic-btn ${recording ? "recording" : ""}`}
+                className={`mic-btn ${recording ? "recording" : ""} ${transcribing ? "transcribing" : ""}`}
                 onClick={toggleMic}
-                disabled={disabled}
-                aria-label={recording ? "Stop recording" : "Start voice input"}
+                disabled={disabled || transcribing}
+                aria-label={recording ? "Stop recording" : transcribing ? "Transcribing…" : "Start voice input"}
                 aria-pressed={recording}
               >
                 {recording ? <MicOff /> : <Mic />}
@@ -555,9 +572,11 @@ export default function ChatInput({
         <div className="disclaimer">
           {voiceError
             ? voiceError
-            : recording
-              ? "Listening… click the mic again to stop."
-              : "Your Persona may make mistakes — double-check anything important."}
+            : transcribing
+              ? "Transcribing…"
+              : recording
+                ? "Listening… click the mic again to stop."
+                : "Your Persona may make mistakes — double-check anything important."}
         </div>
       </div>
     </div>

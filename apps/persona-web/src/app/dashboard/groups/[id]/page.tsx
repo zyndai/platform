@@ -35,6 +35,8 @@ import {
   parseSlashCommand,
   runServiceSearch,
   runServiceCard,
+  suggestSlashCommands,
+  type SlashCommandDef,
   HELP_TEXT,
 } from "@/lib/services-commands";
 
@@ -119,6 +121,30 @@ export default function GroupChatPage() {
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionStart, setMentionStart] = useState<number>(0);
   const [mentionIndex, setMentionIndex] = useState(0);
+
+  // ── Slash-command autocomplete state ──────────────────────────────
+  // Slash suggestions only fire when the draft starts with `/` and no
+  // space has been typed yet. Mutually exclusive with the @-mention
+  // picker (which never triggers at position 0 with `/`).
+  const slashSuggestions: SlashCommandDef[] = suggestSlashCommands(draft) || [];
+  const slashOpen = slashSuggestions.length > 0;
+  const [slashIndex, setSlashIndex] = useState(0);
+  useEffect(() => {
+    if (slashIndex >= slashSuggestions.length) setSlashIndex(0);
+  }, [slashSuggestions.length, slashIndex]);
+  const pickSlashCommand = useCallback(
+    (cmd: SlashCommandDef) => {
+      setDraft(cmd.insertText);
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(cmd.insertText.length, cmd.insertText.length);
+        resizeComposerInput(el);
+      });
+    },
+    [resizeComposerInput],
+  );
 
   // ── "X's persona is replying…" indicator ──────────────────────────
   // After a successful POST, the backend returns mentioned_user_ids. We
@@ -776,6 +802,33 @@ export default function GroupChatPage() {
             ))}
           </ul>
         )}
+        {slashOpen && (
+          <ul
+            className="slash-picker"
+            role="listbox"
+            aria-label="Slash commands"
+          >
+            {slashSuggestions.map((cmd, i) => (
+              <li
+                key={cmd.name}
+                role="option"
+                aria-selected={i === slashIndex}
+                className={`slash-picker-row ${i === slashIndex ? "is-active" : ""}`}
+                onMouseEnter={() => setSlashIndex(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pickSlashCommand(cmd);
+                }}
+              >
+                <span className="slash-picker-name">/{cmd.name}</span>
+                {cmd.args && (
+                  <span className="slash-picker-args">{cmd.args}</span>
+                )}
+                <span className="slash-picker-desc">{cmd.description}</span>
+              </li>
+            ))}
+          </ul>
+        )}
         <div className={`chat-input-v2 group-chat-input-v2 ${draft.trim() ? "has-text" : ""}`}>
           <div className="chat-input-v2-inner">
             <div className="row-1">
@@ -787,6 +840,31 @@ export default function GroupChatPage() {
                   resizeComposerInput(e.currentTarget);
                 }}
                 onKeyDown={(e) => {
+                  if (slashOpen) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setSlashIndex((i) => (i + 1) % slashSuggestions.length);
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setSlashIndex(
+                        (i) =>
+                          (i - 1 + slashSuggestions.length) % slashSuggestions.length,
+                      );
+                      return;
+                    }
+                    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                      e.preventDefault();
+                      pickSlashCommand(slashSuggestions[slashIndex]);
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setDraft("");
+                      return;
+                    }
+                  }
                   if (mentionQuery !== null && mentionSuggestions.length > 0) {
                     if (e.key === "ArrowDown") {
                       e.preventDefault();

@@ -82,18 +82,25 @@ def _search_cache_put(key: tuple[str, int, str], value: dict) -> None:
 def search_zynd_services(query: str, top_k: int = 5, category: str = "") -> dict:
     """
     Search the Zynd Network for services that can fulfill capabilities you don't have built in.
-    Use this when no other tool covers the user's ask — e.g. file/format conversion,
-    currency conversion, translation, image manipulation, niche data lookups.
+    Use this when, and ONLY when, no built-in tool covers the user's ask — e.g. file/format
+    conversion (pdf→text, xml→json, docx→text), currency conversion, translation, text
+    summarization, image manipulation, niche data lookups. Do NOT use this for things an LLM
+    can answer from general knowledge, or where a built-in tool already covers the task.
 
-    Always follow up with ``get_zynd_service_card`` on the candidate(s) you want to use,
-    so you see the real endpoint URL and the input/output schema before calling.
+    Mandatory next step: pick the highest-scored ACTIVE result and pass its ``entity_id``
+    to ``get_zynd_service_card`` to read its input/output schema. NEVER skip the card fetch
+    — the search result's ``service_endpoint`` is deployer-internal and NOT callable.
+
+    Cached for 30s per ``(query, top_k, category)`` triple to soften repeat queries.
 
     Args:
         query: Natural-language description of the capability you need (e.g. 'translate text',
-               'convert xml to json', 'currency converter').
-        top_k: Maximum results to return (default 5).
-        category: Optional category filter (e.g. 'conversion', 'finance', 'text-nlp').
-                  Leave empty to search all categories.
+               'convert xml to json', 'currency converter'). Short and specific beats long
+               and ambiguous — service summaries are ~1 line each.
+        top_k: Maximum results to return (1–25, default 5). Use 3 unless you specifically
+               want a wider net.
+        category: Optional category filter. Known values: 'conversion', 'finance',
+                  'text-nlp'. Leave empty to search all categories.
     """
     q = (query or "").strip()
     if not q:
@@ -189,12 +196,26 @@ def search_zynd_services(query: str, top_k: int = 5, category: str = "") -> dict
 
 def get_zynd_service_card(entity_id: str) -> dict:
     """
-    Fetch a service's live agent-card from the registry. Contains the real A2A endpoint URL,
-    the input/output schema declared by the service author, available skills, pricing,
-    and current status.
+    Fetch a service's live agent-card from the registry. REQUIRED step between
+    ``search_zynd_services`` and ``call_zynd_service`` — never skip it.
 
-    Call this AFTER search_zynd_services and BEFORE call_zynd_service so you know what
-    payload shape to send.
+    Returns the real callable ``url``, the ``input_schema`` (which decides what payload
+    shape to send), the ``output_schema`` (so you know what fields to read out of the
+    reply), available skills, pricing, and live ``service_status``.
+
+    Use the ``input_schema`` to choose between ``text=`` and ``data=`` on the call:
+      - Task-specific fields like ``target_language``, ``amount``, ``from_currency``,
+        ``pdf_url`` → pass them in ``data={...}``.
+      - A single free-text field (just ``content`` or ``text``) → use ``text=...``.
+      - A generic Zynd-message envelope (``sender_id``, ``conversation_id``, etc.) →
+        task params usually go in ``metadata`` (pass ``data={"metadata": {...}}``) or
+        the service treats ``content`` as the payload (pass ``text=``).
+
+    Distinct error statuses:
+      - ``status: "not_found"`` — no such entity. Try a different search result.
+      - ``status: "unreachable"`` — registered but deployment broken. Move to the next
+        search result; do NOT retry this one.
+      - ``status: "error"`` — registry/network problem; safe to retry once.
 
     Args:
         entity_id: The service's registry id, e.g. 'zns:svc:c565a80ae1c70f794d7afaf8ca17f953'.
@@ -335,15 +356,47 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None) -> dict
     Invoke a Zynd Network service via plain A2A v3 JSON-RPC. Services are unauthenticated —
     no signing or persona keypair is needed.
 
-    Always call get_zynd_service_card first so you know the input_schema. Most services
-    expect the user's request as the message's text part; some accept structured data parts.
-    You may pass both ``text`` and ``data`` — at least one is required.
+    PRECONDITION: you must have already called ``get_zynd_service_card`` for this entity_id
+    and read its ``input_schema``. Shape the payload based on what the schema declares:
+
+      - Schema declares task-specific fields (``target_language``, ``amount``,
+        ``from_currency``, ``to_currency``, ``pdf_url``, etc.) → pass them in ``data``:
+
+            call_zynd_service(eid, data={"amount": 100, "from_currency": "USD",
+                                          "to_currency": "EUR"})
+
+      - Schema declares ONLY a single free-text field (``content`` or ``text``) →
+        pass the request in ``text``:
+
+            call_zynd_service(eid, text="Summarize this paragraph: …")
+
+      - Schema is a generic Zynd-message envelope (fields like ``sender_id``,
+        ``message_id``, ``conversation_id``, ``content``, ``metadata``) → the task
+        parameters usually go in metadata, or the service treats ``content`` as the
+        body. Pass ``text=<request body>`` and optionally
+        ``data={"metadata": {"target_language": "fr"}}`` per the service description.
+
+    You may pass both ``text`` and ``data``; they ride in separate parts and the service
+    picks whichever it needs. At least one must be provided.
+
+    Reading the reply:
+      - ``structured_output`` is the JSON-parsed reply when the service returns a JSON
+        blob. Prefer reading individual fields from here.
+      - ``reply_text`` is the raw text fallback. Use only when ``structured_output``
+        is None.
+      - ``task_state == "completed"`` with empty reply usually means the payload shape
+        was wrong — re-read input_schema and retry with a different ``data`` shape.
+
+    On failure, never retry the same entity_id silently:
+      - ``status: "error"`` from the card load → pick a different search result.
+      - 90s timeout → tell the principal the service didn't respond and offer to retry.
 
     Args:
         entity_id: The service's registry id, e.g. 'zns:svc:c565a80ae1c70f794d7afaf8ca17f953'.
-        text: The text payload for the A2A message text part (e.g. content to translate).
-        data: Optional structured payload for an A2A data part. Used by services whose
-              input_schema expects fields beyond a single text blob.
+        text: Free-text payload for the A2A message text part. Use when input_schema
+              accepts free text (single ``content``/``text`` field, or generic envelope).
+        data: Structured payload for the A2A data part. Use when input_schema declares
+              specific named fields. Shape it to match the schema's ``properties``.
     """
     eid = (entity_id or "").strip()
     if not eid:

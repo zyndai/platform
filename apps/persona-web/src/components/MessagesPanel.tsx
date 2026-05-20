@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { ArrowLeft } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { getSupabase } from "@/lib/supabase";
@@ -697,6 +698,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
 
   return (
     <div
+      className={`messages-panel ${activeThread ? "has-active-thread" : ""}`}
       style={{
         display: "flex",
         height: "calc(100vh - 73px)",
@@ -707,6 +709,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     >
       {/* -- Left: Thread Inbox -- */}
       <div
+        className="messages-sidebar"
         style={{
           width: "300px",
           borderRight: "1px solid var(--border-subtle)",
@@ -718,6 +721,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
       >
         {/* Header & Search */}
         <div
+          className="messages-sidebar-head"
           style={{
             padding: "20px 16px",
             borderBottom: "1px solid var(--border-subtle)",
@@ -754,6 +758,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
           {/* Live Search Dropdown */}
           {(searchResults.length > 0 || isSearching) && (
             <div
+              className="messages-search-popover"
               style={{
                 position: "absolute",
                 top: "100%",
@@ -829,10 +834,10 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
         </div>
 
         {/* Thread list */}
-        <div style={{ flex: 1, overflowY: "auto" }}>
+        <div className="messages-thread-list" style={{ flex: 1, overflowY: "auto" }}>
           {/* Requests */}
           {requests.length > 0 && (
-            <div style={{ padding: "12px 16px" }}>
+            <div className="messages-thread-section" style={{ padding: "12px 16px" }}>
               <p
                 className="section-label"
                 style={{ color: "var(--accent, #6366f1)", marginBottom: "8px" }}
@@ -843,7 +848,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                 <div
                   key={t.id}
                   onClick={() => setActiveThread(t)}
-                  className="card"
+                  className={`card messages-thread-card ${activeThread?.id === t.id ? "is-active" : ""}`}
                   style={{
                     padding: "12px",
                     marginBottom: "6px",
@@ -886,7 +891,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
           )}
 
           {/* Primary inbox */}
-          <div style={{ padding: "12px 16px" }}>
+          <div className="messages-thread-section" style={{ padding: "12px 16px" }}>
             <p className="section-label" style={{ marginBottom: "8px" }}>
               PRIMARY INBOX
             </p>
@@ -896,7 +901,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                 <div
                   key={t.id}
                   onClick={() => setActiveThread(t)}
-                  className="card"
+                  className={`card messages-thread-card ${activeThread?.id === t.id ? "is-active" : ""}`}
                   style={{
                     padding: "12px",
                     marginBottom: "6px",
@@ -959,6 +964,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
 
       {/* -- Main Chat Area -- */}
       <div
+        className="messages-chat-panel"
         style={{
           flex: 1,
           display: "flex",
@@ -971,7 +977,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
           <>
             {/* Chat header */}
             <div
-              className="topbar"
+              className="topbar messages-chat-header"
               style={{
                 gap: "14px",
                 borderBottom: "1px solid var(--border-subtle)",
@@ -979,7 +985,16 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                 rowGap: "10px",
               }}
             >
+              <button
+                type="button"
+                className="messages-mobile-back"
+                onClick={() => setActiveThread(null)}
+                aria-label="Back to threads"
+              >
+                <ArrowLeft size={16} strokeWidth={1.8} />
+              </button>
               <div
+                className="messages-chat-avatar"
                 style={{
                   width: "36px",
                   height: "36px",
@@ -998,7 +1013,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
               >
                 {getPartnerName(activeThread)?.charAt(0) || "Z"}
               </div>
-              <div>
+              <div className="messages-chat-heading">
                 <h3
                   style={{
                     fontFamily: "Syne, sans-serif",
@@ -1023,7 +1038,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                   {getPartnerId(activeThread)}
                 </p>
               </div>
-              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px" }}>
+              <div className="messages-chat-actions" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px" }}>
                 {(() => {
                   // Terminal connection states take precedence over the
                   // conversation-phase pill — blocked/declined/revoked
@@ -1108,6 +1123,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
 
             {/* ── Channel tabs: Conversation vs Agent Activity ── */}
             <div
+              className="messages-channel-tabs"
               style={{
                 display: "flex",
                 gap: "4px",
@@ -1124,6 +1140,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                 return (
                   <button
                     key={tab.key}
+                    className={`messages-channel-tab ${isActive ? "is-active" : ""}`}
                     onClick={() => setActiveChannel(tab.key)}
                     title={tab.help}
                     style={{
@@ -1147,6 +1164,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
 
             {/* Messages area */}
             <div
+              className="messages-scroll"
               style={{
                 flex: 1,
                 overflowY: "auto",
@@ -1602,6 +1620,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                   return (
                     <div
                       key={m.id}
+                      className={`messages-bubble-row ${isMe ? "is-mine" : ""}`}
                       style={{
                         alignSelf: isMe ? "flex-end" : "flex-start",
                         maxWidth: "75%",
@@ -1613,6 +1632,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                       {/* Partner avatar */}
                       {!isMe && (
                         <div
+                          className="messages-bubble-avatar"
                           style={{
                             width: "28px",
                             height: "28px",
@@ -2137,6 +2157,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                 read-only transparency log; humans don't type into it. */}
             {activeChannel === "human" ? (
               <div
+                className="messages-composer"
                 style={{
                   padding: "16px 24px 20px",
                   borderTop: "1px solid var(--border-subtle)",
@@ -2144,6 +2165,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                 }}
               >
                 <div
+                  className="messages-composer-inner"
                   style={{ maxWidth: "720px", margin: "0 auto" }}
                 >
                   <div className="input-wrap">
@@ -2185,13 +2207,14 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
             ) : myMode === "human" ? (
               /* Taken-over mode: the user can type on the agent channel */
               <div
+                className="messages-composer"
                 style={{
                   padding: "16px 24px 20px",
                   borderTop: "1px solid var(--border-subtle)",
                   background: "var(--bg-surface)",
                 }}
               >
-                <div style={{ maxWidth: "720px", margin: "0 auto" }}>
+                <div className="messages-composer-inner" style={{ maxWidth: "720px", margin: "0 auto" }}>
                   <div className="input-wrap">
                     <input
                       className="chat-input"
@@ -2234,6 +2257,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
             ) : (
               /* AI Handling mode: read-only log with a Take Over button */
               <div
+                className="messages-ai-notice"
                 style={{
                   padding: "14px 24px 18px",
                   borderTop: "1px solid var(--border-subtle)",
@@ -2275,6 +2299,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
           </>
         ) : (
           <div
+            className="messages-empty-state"
             style={{
               flex: 1,
               display: "flex",

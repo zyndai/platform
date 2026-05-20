@@ -72,6 +72,10 @@ ZYND_DEVELOPER_KEYPAIR_PATH: str = os.getenv(
 )
 ZYND_REGISTRY_URL: str = os.getenv("ZYND_REGISTRY_URL", "https://zns01.zynd.ai")
 ZYND_WEBHOOK_BASE_URL: str = os.getenv("ZYND_WEBHOOK_BASE_URL", "")
+
+# Groq — used for voice-to-text via Whisper. Free tier, no credit card.
+GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+GROQ_WHISPER_MODEL: str = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
 NGROK_AUTH_TOKEN: str = os.getenv("NGROK_AUTH_TOKEN", "")
 
 # ── Telegram ─────────────────────────────────────────────────────────

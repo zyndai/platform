@@ -31,6 +31,13 @@ import MatchCard from "./MatchCard";
 import IntroPreviewModal from "./IntroPreviewModal";
 import ApprovalCard, { type PendingApproval } from "./ApprovalCard";
 import IncomingRequestCard from "./IncomingRequestCard";
+import ServicesPanel from "./ServicesPanel";
+import {
+  parseSlashCommand,
+  runServiceSearch,
+  runServiceCard,
+  HELP_TEXT,
+} from "@/lib/services-commands";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -127,6 +134,7 @@ function MessageRow({
   busyId,
   onSayHi,
   onActOnHandoff,
+  onCardLookup,
   userId,
   userName,
   userAvatarUrl,
@@ -136,6 +144,7 @@ function MessageRow({
   busyId: string | null;
   onSayHi: (h: PersonaHit) => void;
   onActOnHandoff: (h: ThreadHandoff) => void;
+  onCardLookup: (entityId: string) => void;
   userId: string;
   userName: string;
   userAvatarUrl: string | null;
@@ -148,6 +157,16 @@ function MessageRow({
         userId={userId}
         onReplied={onIncomingReplied}
       />
+    );
+  }
+
+  // Slash-command result panels are pure system-side renders — no avatar,
+  // no bubble wrapper, just the inline cards.
+  if (message.services && message.role === "assistant") {
+    return (
+      <div className="services-panel-wrap">
+        <ServicesPanel payload={message.services} onCardLookup={onCardLookup} />
+      </div>
     );
   }
 
@@ -453,8 +472,164 @@ export default function ChatInterface() {
     [updateStreaming],
   );
 
+  // Slash commands (e.g. `/services translate text`) are intercepted and
+  // run against /api/services/* directly — they bypass the LLM and render
+  // structured cards inline. Returns true when the message was a command
+  // and was handled; false to let the normal LLM flow proceed.
+  const tryHandleSlashCommand = useCallback(
+    async (text: string): Promise<boolean> => {
+      const cmd = parseSlashCommand(text);
+      if (!cmd) return false;
+
+      const userMsg: ChatMessage = { role: "user", content: text };
+
+      if (cmd.kind === "help") {
+        setMessages((prev) => [
+          ...prev,
+          userMsg,
+          {
+            role: "assistant",
+            content: "",
+            services: { kind: "help", helpText: HELP_TEXT },
+          },
+        ]);
+        setInput("");
+        return true;
+      }
+
+      if (cmd.kind === "invalid") {
+        setMessages((prev) => [
+          ...prev,
+          userMsg,
+          {
+            role: "assistant",
+            content: "",
+            services: { kind: "error", error: cmd.hint },
+          },
+        ]);
+        setInput("");
+        return true;
+      }
+
+      // /services <query>
+      if (cmd.kind === "services") {
+        const placeholder: ChatMessage = {
+          role: "assistant",
+          content: "",
+          services: { kind: "search", query: cmd.query, loading: true },
+        };
+        setMessages((prev) => [...prev, userMsg, placeholder]);
+        setInput("");
+        try {
+          const search = await runServiceSearch(cmd.query);
+          setMessages((prev) => {
+            const out = prev.slice();
+            const idx = out.length - 1;
+            if (out[idx]?.services?.kind === "search") {
+              out[idx] = {
+                ...out[idx],
+                services: { kind: "search", query: cmd.query, search },
+              };
+            }
+            return out;
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Search failed.";
+          setMessages((prev) => {
+            const out = prev.slice();
+            const idx = out.length - 1;
+            if (out[idx]?.services) {
+              out[idx] = { ...out[idx], services: { kind: "error", error: msg } };
+            }
+            return out;
+          });
+        }
+        return true;
+      }
+
+      // /card <entity_id>
+      if (cmd.kind === "card") {
+        const placeholder: ChatMessage = {
+          role: "assistant",
+          content: "",
+          services: { kind: "card", entityId: cmd.entityId, loading: true },
+        };
+        setMessages((prev) => [...prev, userMsg, placeholder]);
+        setInput("");
+        try {
+          const card = await runServiceCard(cmd.entityId);
+          setMessages((prev) => {
+            const out = prev.slice();
+            const idx = out.length - 1;
+            if (out[idx]?.services?.kind === "card") {
+              out[idx] = {
+                ...out[idx],
+                services: { kind: "card", entityId: cmd.entityId, card },
+              };
+            }
+            return out;
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Couldn't load card.";
+          setMessages((prev) => {
+            const out = prev.slice();
+            const idx = out.length - 1;
+            if (out[idx]?.services) {
+              out[idx] = { ...out[idx], services: { kind: "error", error: msg } };
+            }
+            return out;
+          });
+        }
+        return true;
+      }
+
+      return false;
+    },
+    [setMessages],
+  );
+
+  // Triggered by "View card" buttons inside service search results.
+  // Appends a new card-payload message rather than mutating the search.
+  const handleCardLookup = useCallback(
+    async (entityId: string) => {
+      const placeholder: ChatMessage = {
+        role: "assistant",
+        content: "",
+        services: { kind: "card", entityId, loading: true },
+      };
+      setMessages((prev) => [...prev, placeholder]);
+      try {
+        const card = await runServiceCard(entityId);
+        setMessages((prev) => {
+          const out = prev.slice();
+          const idx = out.length - 1;
+          if (out[idx]?.services?.kind === "card") {
+            out[idx] = {
+              ...out[idx],
+              services: { kind: "card", entityId, card },
+            };
+          }
+          return out;
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Couldn't load card.";
+        setMessages((prev) => {
+          const out = prev.slice();
+          const idx = out.length - 1;
+          if (out[idx]?.services) {
+            out[idx] = { ...out[idx], services: { kind: "error", error: msg } };
+          }
+          return out;
+        });
+      }
+    },
+    [setMessages],
+  );
+
   const sendMessage = async (text: string) => {
     if (!text || loading) return;
+
+    if (await tryHandleSlashCommand(text)) return;
 
     const userMsg: ChatMessage = { role: "user", content: text };
     const placeholder: ChatMessage = {
@@ -661,6 +836,7 @@ export default function ChatInterface() {
                 busyId={busyId}
                 onSayHi={openIntroForPersona}
                 onActOnHandoff={actOnHandoff}
+                onCardLookup={handleCardLookup}
                 userId={user?.id || ""}
                 userName={
                   user?.user_metadata?.full_name ||

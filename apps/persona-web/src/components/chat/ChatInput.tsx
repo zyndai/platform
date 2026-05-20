@@ -77,7 +77,7 @@ export default function ChatInput({
   onSend,
   disabled = false,
   pills,
-  placeholder = "Ask your agent anything…",
+  placeholder = "Ask your agent anything…  Try /services <query>",
   variant = "v2",
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);

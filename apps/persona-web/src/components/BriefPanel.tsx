@@ -201,35 +201,21 @@ function BriefEditor({
         background: "var(--bg-base)",
       }}
     >
-      <div
-        style={{
-          maxWidth: "760px",
-          width: "100%",
-          margin: "0 auto",
-          padding: "40px 32px 48px",
-        }}
-      >
+      <div className="brief-page-shell">
         <h1
-          className="display-m"
+          className="display-m brief-page-title"
           style={{ margin: "0 0 8px", color: "var(--text-primary)" }}
         >
           Your brief
         </h1>
-        <p
-          style={{
-            margin: "0 0 28px",
-            color: "var(--text-secondary)",
-            fontSize: "15px",
-            lineHeight: 1.55,
-            maxWidth: "560px",
-          }}
-        >
+        <p className="brief-page-lede">
           The long-form context your agent uses to represent you. Lives as a single Google Doc
           only your agent can see. Edit here or in Google Docs — your agent re-reads it whenever
           it changes.
         </p>
 
         <div
+          className="brief-page-header"
           style={{
             display: "flex",
             alignItems: "center",
@@ -245,13 +231,16 @@ function BriefEditor({
             initialIsSynced={!!brief.content && brief.content.length > 1}
             hasError={!!saveError}
           />
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <div
+            className="brief-page-actions"
+            style={{ display: "flex", gap: "8px", alignItems: "center" }}
+          >
             {brief.url && (
               <a
                 href={brief.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="btn btn-secondary"
+                className="btn btn-secondary brief-page-docs-link"
                 style={{ textDecoration: "none" }}
               >
                 Open in Google Docs ↗
@@ -299,6 +288,7 @@ function BriefEditor({
 
         {startedFromTemplate && draft === DEFAULT_TEMPLATE && (
           <div
+            className="brief-template-hint"
             style={{
               marginTop: "14px",
               display: "flex",

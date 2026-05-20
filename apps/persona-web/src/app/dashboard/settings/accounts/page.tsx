@@ -23,7 +23,8 @@ import { getSupabase } from "@/lib/supabase";
 import { useDashboard } from "@/contexts/DashboardContext";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const TELEGRAM_BOT = "zynd_persona_telegram_bot";
+// Bot swapped 2026-05-20: was @zynd_persona_telegram_bot — now @zynd_brief_bot.
+const TELEGRAM_BOT = "zynd_brief_bot";
 
 type ConnId = "linkedin" | "brief" | "calendar" | "telegram";
 

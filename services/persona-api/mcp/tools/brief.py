@@ -243,3 +243,48 @@ def clear_my_brief(user_id: str) -> dict:
         user_id: Injected automatically by the orchestrator.
     """
     return replace_my_brief(user_id, "")
+
+
+def add_todo(user_id: str, title: str) -> dict:
+    """Add an actionable todo to the user's todo list.
+
+    Direct write into the `brief_todos` table — bypasses the
+    brief_watcher's 5-minute poll cycle so the new item shows up on
+    the dashboard's Todos tab immediately. Use this whenever the user
+    explicitly asks to remember something as a todo / task / action item
+    ('add a todo', 'remind me to', 'put X on my list'). Do NOT use it
+    to record general profile facts — those belong in the Brief via
+    `append_to_my_brief`.
+
+    Args:
+        user_id: Injected automatically by the orchestrator.
+        title: Short imperative phrase, ~3–12 words. The function
+            trims whitespace and caps overly-long input.
+    """
+    if not isinstance(title, str) or not title.strip():
+        return {"success": False, "error": "Nothing to add — `title` was empty."}
+
+    cleaned = title.strip()
+    if len(cleaned) > 200:
+        cleaned = cleaned[:200].rstrip()
+
+    import config
+
+    try:
+        sb = config.get_supabase()
+        row = sb.table("brief_todos").insert({
+            "user_id": user_id,
+            "title": cleaned,
+            "source_text": cleaned,
+            "done": False,
+        }).execute()
+        inserted_id = row.data[0]["id"] if row.data else None
+    except Exception as e:
+        logger.warning(f"[brief] add_todo failed: {e}")
+        return {"success": False, "error": str(e)}
+
+    return {
+        "success": True,
+        "todo_id": inserted_id,
+        "title": cleaned,
+    }

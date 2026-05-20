@@ -69,6 +69,7 @@ from mcp.tools.brief import (
     append_to_my_brief,
     replace_my_brief,
     clear_my_brief,
+    add_todo,
 )
 
 
@@ -161,6 +162,7 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(append_to_my_brief, name="append_to_my_brief", description="Append a line to the principal's Brief Google Doc. Use this when the user tells you something durable about themselves that you should remember across conversations. Creates the brief lazily if it doesn't exist yet.")
     mcp.register(replace_my_brief, name="replace_my_brief", description="Replace the entire body of the principal's Brief Google Doc. Use only when the user explicitly asks to rewrite their brief — prefer append_to_my_brief for additions.")
     mcp.register(clear_my_brief, name="clear_my_brief", description="Empty the principal's Brief Google Doc. Use only when the user explicitly asks to clear their brief.")
+    mcp.register(add_todo, name="add_todo", description="Add an actionable todo to the principal's todo list. PREFER this tool over append_to_my_brief whenever the user explicitly asks to track a task — phrases like 'add a todo', 'remind me to', 'put X on my list', 'add this to my todos'. The item shows up immediately on the dashboard's Todos tab (no 5-minute extractor wait). For general profile facts ('I work at X', 'I prefer afternoons'), use append_to_my_brief instead.")
 
     # ── Default utility tools ──────────────────────
     mcp.register_default(names=["internet_search", "webpage_scrape", "get_current_time", "calculate"])

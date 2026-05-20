@@ -290,3 +290,59 @@ def test_clear_my_brief_happy_path(monkeypatch):
     result = brief.clear_my_brief("user_1")
     assert result["success"] is True
     assert result["content"] == ""
+
+
+# ── add_todo ─────────────────────────────────────────────────────────
+
+
+class _CapturingSB:
+    """Lightweight Supabase stub that captures the last `insert` payload
+    so a test can assert what we tried to write."""
+
+    def __init__(self):
+        self.last_insert: dict | None = None
+
+    def table(self, _name):
+        return self
+
+    def insert(self, payload):
+        self.last_insert = payload
+        return self
+
+    def execute(self):
+        return types.SimpleNamespace(data=[{"id": "todo_abc", **(self.last_insert or {})}])
+
+
+def test_add_todo_inserts_row(monkeypatch):
+    brief = _reload_brief_module()
+    import config
+
+    stub = _CapturingSB()
+    monkeypatch.setattr(config, "get_supabase", lambda: stub)
+
+    result = brief.add_todo("user_1", "Email Sarah about the demo")
+    assert result["success"] is True
+    assert result["title"] == "Email Sarah about the demo"
+    assert result["todo_id"] == "todo_abc"
+    # The agent never sets done=True itself — that's the user's job.
+    assert stub.last_insert["done"] is False
+    assert stub.last_insert["user_id"] == "user_1"
+
+
+def test_add_todo_rejects_empty_title(monkeypatch):
+    brief = _reload_brief_module()
+    result = brief.add_todo("user_1", "   ")
+    assert result["success"] is False
+
+
+def test_add_todo_truncates_overly_long_title(monkeypatch):
+    brief = _reload_brief_module()
+    import config
+
+    stub = _CapturingSB()
+    monkeypatch.setattr(config, "get_supabase", lambda: stub)
+
+    long_title = "x" * 500
+    result = brief.add_todo("user_1", long_title)
+    assert result["success"] is True
+    assert len(result["title"]) <= 200

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Check, Share2 } from "lucide-react";
 import { Avatar } from "@/components/ui";
@@ -55,9 +56,14 @@ export default function AppTopBar() {
       <div className="topbar-actions">
         <ApprovalsIndicator />
         <ShareAgentButton url={shareUrl} />
-        <span className="topbar-avatar" aria-label={displayName}>
+        <Link
+          href="/dashboard/settings/you"
+          className="topbar-avatar"
+          aria-label={`Edit ${displayName}'s profile`}
+          title="Edit profile"
+        >
           <Avatar size="sm" src={avatarUrl} name={displayName} />
-        </span>
+        </Link>
       </div>
     </div>
   );

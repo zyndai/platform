@@ -165,24 +165,134 @@ def _discover_cache_put(key: tuple[str, int], value: dict) -> None:
                 _DISCOVER_CACHE.pop(k, None)
 
 
+def _discover_local(q: str, top_k: int, avatars: dict[str, str]) -> list[dict]:
+    """
+    Query local persona_agents using Postgres FTS (ranked) or a broad
+    ORDER BY updated_at for empty/catchall queries.
+
+    Returns a list of {name, agent_id, description, avatar_url} dicts.
+    Falls back to ILIKE when the FTS RPC fails (e.g. migration not yet applied).
+    """
+    sb = _get_supabase()
+    broad = not q or q.lower() in (
+        "persona", "all", "any", "everyone", "personas", "agents", "network", "list", "",
+    )
+
+    rows_data: list[dict] = []
+
+    if broad:
+        result = (
+            sb.table("persona_agents")
+            .select("agent_id,name,description")
+            .eq("active", True)
+            .order("updated_at", desc=True)
+            .limit(top_k)
+            .execute()
+        )
+        rows_data = result.data or []
+    else:
+        try:
+            result = sb.rpc(
+                "search_personas_fts",
+                {"query_text": q, "result_limit": top_k},
+            ).execute()
+            rows_data = result.data or []
+        except Exception as fts_err:
+            logger.warning(f"[discover] FTS RPC failed ({fts_err!r}), falling back to ILIKE")
+            pattern = f"%{q}%"
+            result = (
+                sb.table("persona_agents")
+                .select("agent_id,name,description")
+                .eq("active", True)
+                .or_(f"name.ilike.{pattern},description.ilike.{pattern},brief_content.ilike.{pattern}")
+                .limit(top_k)
+                .execute()
+            )
+            rows_data = result.data or []
+
+    return [
+        {
+            "name": r.get("name") or "",
+            "agent_id": r.get("agent_id") or "",
+            "description": r.get("description") or "",
+            "avatar_url": avatars.get(r.get("agent_id") or ""),
+        }
+        for r in rows_data
+        if r.get("agent_id")
+    ]
+
+
+def _discover_registry(q: str, top_k: int, avatars: dict[str, str]) -> list[dict]:
+    """
+    Query the Zynd registry for personas matching `q`.
+    Returns same {name, agent_id, description, avatar_url} shape as _discover_local.
+    Returns [] on any error — callers treat registry as best-effort supplement.
+    """
+    registry_q = q if (q and q.lower() not in ("", "persona")) else "persona"
+    try:
+        resp = requests.post(
+            f"{config.ZYND_REGISTRY_URL}/v1/search",
+            json={
+                "query": registry_q,
+                "tags": ["persona"],
+                "max_results": max(int(top_k), _REGISTRY_POOL_FLOOR),
+                "status": "any",
+            },
+            timeout=4,
+        )
+        resp.raise_for_status()
+        raw = resp.json().get("results", [])
+    except requests.exceptions.Timeout:
+        logger.warning("[discover] registry timed out")
+        return []
+    except Exception as e:
+        logger.warning(f"[discover] registry call failed ({e!r})")
+        return []
+
+    out: list[dict] = []
+    for a in raw:
+        tags = a.get("tags") or []
+        if "persona" not in tags:
+            caps = a.get("capability_summary") or a.get("capabilities") or {}
+            if isinstance(caps, str):
+                try:
+                    caps = json.loads(caps)
+                except Exception:
+                    caps = {}
+            if isinstance(caps, dict):
+                if "persona" not in caps.get("services", []) and "persona" not in caps.get("skills", []):
+                    continue
+            else:
+                continue
+        aid = a.get("entity_id") or a.get("agent_id") or ""
+        if not aid:
+            continue
+        out.append({
+            "name": a.get("name") or "",
+            "agent_id": aid,
+            "description": a.get("summary") or a.get("description") or "",
+            "avatar_url": avatars.get(aid),
+        })
+    return out
+
+
 def discover_personas(query: str, top_k: int = 20) -> dict:
     """
-    Lean discovery search for the dashboard People page.
+    Local-first people discovery for the dashboard People page.
 
-    Trades off vs. ``search_zynd_personas``:
-      * 4s registry timeout (not 10) — UI deserves to fail fast.
-      * No N+1 webhook resolution. The list view doesn't need webhook_url;
-        it gets resolved at thread-create time by the existing service.
-      * 30s in-process cache keyed by (query, top_k) — typing fast no
-        longer slams the registry.
-      * If the registry times out / errors, fall back to local
-        ``persona_agents`` rows so the page never goes blank.
+    Strategy:
+      1. Query local persona_agents via Postgres FTS (ranked by relevance).
+         Broad/empty queries return all active personas ordered by recency.
+      2. If local results don't fill top_k, supplement with the Zynd registry
+         (deduped by agent_id so a persona that's both local and in the registry
+         only appears once — with the richer local description).
+      3. 30s in-process cache keyed by (query, top_k) — typing fast no
+         longer slams the DB or the registry.
 
-    Returns: ``{status, count, results: [{name, agent_id, description}], from_cache, source}``
+    Returns: ``{status, count, results: [{name, agent_id, description, avatar_url}],
+               from_cache, source}``
     """
     q = (query or "").strip()
-    if q.lower() in ("all", "any", "everyone", "personas", "agents", "network", "list", ""):
-        q = "persona"
     key = (q.lower(), int(top_k))
 
     cached = _discover_cache_get(key)
@@ -191,98 +301,44 @@ def discover_personas(query: str, top_k: int = 20) -> dict:
 
     avatars = _get_avatar_map()
 
-    # 1) Try the registry. Short timeout — registry health is variable.
     try:
-        resp = requests.post(
-            f"{config.ZYND_REGISTRY_URL}/v1/search",
-            json={
-                "query": q,
-                "tags": ["persona"],
-                # Widen past top_k: the registry caps the pool before the
-                # persona tag filter, so top_k=20 returned only 3. Request
-                # the floor, then trim to top_k below.
-                "max_results": max(int(top_k), _REGISTRY_POOL_FLOOR),
-                # No enrich=True — we don't need full agent cards on a list view.
-                "status": "any",
-            },
-            timeout=4,
-        )
-        resp.raise_for_status()
-        raw = resp.json().get("results", [])
-        personas: list[dict] = []
-        for a in raw:
-            tags = a.get("tags") or []
-            if "persona" not in tags:
-                caps = a.get("capability_summary") or a.get("capabilities") or {}
-                if isinstance(caps, str):
-                    try:
-                        caps = json.loads(caps)
-                    except Exception:
-                        caps = {}
-                if isinstance(caps, dict):
-                    if "persona" not in caps.get("services", []) and "persona" not in caps.get("skills", []):
-                        continue
-                else:
-                    continue
-            aid = a.get("entity_id") or a.get("agent_id") or ""
-            if not aid:
-                continue
-            personas.append({
-                "name": a.get("name") or "",
-                "agent_id": aid,
-                "description": a.get("summary") or a.get("description") or "",
-                "avatar_url": avatars.get(aid),
-            })
-        total_available = len(personas)
-        personas = personas[:top_k]
-        out = {
-            "status": "success",
-            "count": len(personas),
-            "total_available": total_available,
-            "results": personas,
-            "source": "registry",
-        }
-        _discover_cache_put(key, out)
-        return out
-    except requests.exceptions.Timeout:
-        logger.warning("[discover] registry timed out — serving local fallback")
+        local = _discover_local(q, top_k, avatars)
     except Exception as e:
-        logger.warning(f"[discover] registry call failed ({e!r}) — serving local fallback")
+        logger.error(f"[discover] local query failed: {e}")
+        local = []
 
-    # 2) Local DB fallback. Better than a blank screen — at least the
-    #    user sees the personas we know about directly. Filtered by a
-    #    cheap ILIKE so the keyword search still narrows results.
-    try:
-        sb = _get_supabase()
-        builder = (
-            sb.table("persona_agents")
-            .select("agent_id,name,description")
-            .eq("active", True)
-            .limit(top_k)
-        )
-        if q and q != "persona":
-            # Supabase python client supports `or_` for combined ILIKE filters.
-            pattern = f"%{q}%"
-            builder = builder.or_(f"name.ilike.{pattern},description.ilike.{pattern}")
-        rows = builder.execute()
-        local = [
-            {
-                "name": r.get("name") or "",
-                "agent_id": r.get("agent_id") or "",
-                "description": r.get("description") or "",
-                "avatar_url": avatars.get(r.get("agent_id") or ""),
-            }
-            for r in (rows.data or [])
-            if r.get("agent_id")
-        ]
-        out = {"status": "degraded", "count": len(local), "results": local, "source": "local_db"}
-        # Cache the fallback too — but for a much shorter window so we
-        # try the registry again soon.
-        _discover_cache_put(key, out)
-        return out
-    except Exception as e:
-        logger.error(f"[discover] local fallback also failed: {e}")
-        return {"status": "error", "error": str(e), "results": [], "count": 0, "source": "none"}
+    seen_ids: set[str] = {p["agent_id"] for p in local}
+    combined = list(local)
+
+    if len(combined) < top_k:
+        needed = top_k - len(combined)
+        registry = _discover_registry(q, needed + 10, avatars)
+        for p in registry:
+            if p["agent_id"] not in seen_ids:
+                combined.append(p)
+                seen_ids.add(p["agent_id"])
+                if len(combined) >= top_k:
+                    break
+
+    results = combined[:top_k]
+    source = (
+        "local+registry" if len(combined) > len(local)
+        else "local" if local
+        else "registry"
+    )
+
+    if not results:
+        return {"status": "error", "error": "No personas found.", "results": [], "count": 0, "source": "none"}
+
+    out = {
+        "status": "success",
+        "count": len(results),
+        "total_available": len(combined),
+        "results": results,
+        "source": source,
+    }
+    _discover_cache_put(key, out)
+    return out
 
 
 def _fetch_agent_card(agent_id: str) -> dict | None:

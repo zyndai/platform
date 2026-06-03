@@ -733,6 +733,15 @@ def save_brief_content(user_id: str, content: str) -> dict:
     result = replace_document_body(user_id=user_id, document_id=doc_id, text=content)
     if not result.get("success"):
         return {"success": False, "error": result.get("error")}
+
+    try:
+        sb = _get_supabase()
+        sb.table("persona_agents").update({
+            "brief_content": content or None,
+        }).eq("user_id", user_id).execute()
+    except Exception as e:
+        logger.warning(f"[persona] brief_content DB sync failed (non-fatal): {e}")
+
     return {"success": True, "doc_id": doc_id, "content": content}
 
 

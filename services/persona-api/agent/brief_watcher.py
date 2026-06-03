@@ -285,6 +285,7 @@ class BriefWatcher:
 
         sb.table("persona_agents").update({
             "brief_doc_revision_id": current_revision,
+            "brief_content": content or None,
         }).eq("user_id", user_id).execute()
         logger.info(
             f"[brief_watcher] {user_id}: revision {last_revision} → {current_revision}, "

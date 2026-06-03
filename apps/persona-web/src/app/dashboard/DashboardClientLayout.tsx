@@ -66,6 +66,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     onboardingStep,
     onboardingLoading,
     personaLoading,
+    knownOnboarded,
     handleLogout,
   } = useDashboard();
   const pathname = usePathname();
@@ -99,10 +100,16 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     }
   }, [loading, onboardingLoading, onboardingStep, router]);
 
+  // Returning, already-onboarded users (cached) only wait on the fast local
+  // auth check — the shell renders immediately and the persona/calendar fetches
+  // (+ the onboarding-redirect effect) reconcile in the background. First-time /
+  // un-onboarded users keep the protective full-screen loader until status
+  // resolves, so they never flash the dashboard before the onboarding redirect.
   const stillBooting =
     loading ||
-    onboardingLoading ||
-    (onboardingStep !== null && onboardingStep !== "done");
+    (!knownOnboarded &&
+      (onboardingLoading ||
+        (onboardingStep !== null && onboardingStep !== "done")));
 
   if (stillBooting) {
     let stage: BootStage = "signin";

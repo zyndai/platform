@@ -30,7 +30,8 @@ import {
   extractPersonaHits,
 } from "./helpers";
 import GenUiResult, { LongResponseCard, isLongResponse } from "./GenUiResult";
-import ChatInput from "./ChatInput";
+import ChatInput, { type ChatInputHandle } from "./ChatInput";
+import ChatThreadSkeleton from "./ChatThreadSkeleton";
 import MatchCard from "./MatchCard";
 import IntroPreviewModal from "./IntroPreviewModal";
 import ApprovalCard, { type PendingApproval } from "./ApprovalCard";
@@ -332,8 +333,11 @@ export default function ChatInterface() {
     setMessages,
     conversationId,
     setConversationId,
+    hydrated,
   } = useChat();
-  const [input, setInput] = useState("");
+  // The chat draft lives inside ChatInput (so keystrokes don't re-render the
+  // thread). We only need an imperative handle to clear/focus it.
+  const chatInputRef = useRef<ChatInputHandle>(null);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   // Holds the in-flight SSE fetch's abort handle so the Stop button (and
@@ -694,7 +698,6 @@ export default function ChatInterface() {
             services: { kind: "help", helpText: HELP_TEXT },
           },
         ]);
-        setInput("");
         return true;
       }
 
@@ -708,7 +711,6 @@ export default function ChatInterface() {
             services: { kind: "error", error: cmd.hint },
           },
         ]);
-        setInput("");
         return true;
       }
 
@@ -720,7 +722,6 @@ export default function ChatInterface() {
           services: { kind: "agents", query: cmd.query, loading: true },
         };
         setMessages((prev) => [...prev, userMsg, placeholder]);
-        setInput("");
         try {
           const agents = await runAgentSearch(cmd.query);
           setMessages((prev) => {
@@ -762,7 +763,6 @@ export default function ChatInterface() {
           services: { kind: "search", query: cmd.query, loading: true },
         };
         setMessages((prev) => [...prev, userMsg, placeholder]);
-        setInput("");
         try {
           const search = await runServiceSearch(cmd.query);
           setMessages((prev) => {
@@ -798,7 +798,6 @@ export default function ChatInterface() {
           services: { kind: "card", entityId: cmd.entityId, loading: true },
         };
         setMessages((prev) => [...prev, userMsg, placeholder]);
-        setInput("");
         try {
           const card = await runServiceCard(cmd.entityId);
           setMessages((prev) => {
@@ -957,7 +956,6 @@ export default function ChatInterface() {
       streaming: true,
     };
     setMessages((prev) => [...prev, userMsg, placeholder]);
-    setInput("");
     setLoading(true);
 
     const controller = new AbortController();
@@ -1032,6 +1030,13 @@ export default function ChatInterface() {
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort();
   }, []);
+
+  // `sendMessage` is re-created each render (big closure). Hand ChatInput a
+  // STABLE wrapper that always calls the latest one, so the memoized ChatInput
+  // doesn't re-render on every streamed token.
+  const sendMessageRef = useRef(sendMessage);
+  sendMessageRef.current = sendMessage;
+  const handleSend = useCallback((text: string) => sendMessageRef.current(text), []);
 
   // Stable callback used by MessageRow (via memo) to mark an incoming request
   // as replied. Takes the message index so the closure doesn't re-create on
@@ -1140,12 +1145,17 @@ export default function ChatInterface() {
     }
   }, [router]);
 
+  // No messages + history not yet hydrated → still loading (show skeleton).
+  // No messages + hydrated → genuinely empty (show the welcome hero).
   const isEmpty = messages.length === 0;
+  const isLoadingHistory = isEmpty && !hydrated;
 
   return (
     <>
       <div className="chat-area">
-        {isEmpty ? (
+        {isLoadingHistory ? (
+          <ChatThreadSkeleton />
+        ) : isEmpty ? (
           <div className="welcome-hero">
             <h1>Welcome to <em>ZyndAI</em></h1>
             <p className="welcome-sub">
@@ -1217,9 +1227,8 @@ export default function ChatInterface() {
           </div>
         )}
         <ChatInput
-          value={input}
-          onChange={setInput}
-          onSend={sendMessage}
+          ref={chatInputRef}
+          onSend={handleSend}
           onStop={stopStreaming}
           streaming={loading}
           disabled={loading}

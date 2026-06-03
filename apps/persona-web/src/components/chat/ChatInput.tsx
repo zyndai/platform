@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import {
   ArrowUp,
@@ -53,8 +61,6 @@ interface SuggestPill {
 }
 
 interface ChatInputProps {
-  value: string;
-  onChange: (next: string) => void;
   onSend: (text: string) => void;
   /** Called when the user interrupts a streaming reply (Stop button / Esc). */
   onStop?: () => void;
@@ -67,21 +73,41 @@ interface ChatInputProps {
   variant?: "v1" | "v2";
 }
 
+/** Imperative handle so the parent can clear/focus the box without owning the
+ *  draft text — keeping keystrokes off the parent's render path. */
+export interface ChatInputHandle {
+  clear: () => void;
+  focus: () => void;
+}
+
 const MAX_CHARS = 3000;
 
-export default function ChatInput({
-  value,
-  onChange,
-  onSend,
-  onStop,
-  streaming = false,
-  disabled = false,
-  pills,
-  placeholder = "Ask your agent anything…  Try /services <query>",
-  variant = "v2",
-}: ChatInputProps) {
+const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
+  {
+    onSend,
+    onStop,
+    streaming = false,
+    disabled = false,
+    pills,
+    placeholder = "Ask your agent anything…  Try /services <query>",
+    variant = "v2",
+  }: ChatInputProps,
+  ref,
+) {
+  // The draft text lives HERE, not in the parent — typing must not re-render
+  // ChatInterface (and the whole message thread) on every keystroke.
+  const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const hasText = value.trim().length > 0;
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      clear: () => setValue(""),
+      focus: () => textareaRef.current?.focus(),
+    }),
+    [],
+  );
 
   // Popovers for the + (quick prompts) and Tools (connections) buttons.
   const [addOpen, setAddOpen] = useState(false);
@@ -130,12 +156,9 @@ export default function ChatInput({
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const mimeRef = useRef<{ mime: string; ext: string } | null>(null);
-  // Keep `onChange` and `value` references stable for handlers — without
-  // these refs, the recorder's `onstop` would capture a stale closure and
-  // overwrite intervening keystrokes.
-  const onChangeRef = useRef(onChange);
+  // Keep a live `value` ref so the recorder's `onstop` closure appends to the
+  // latest draft instead of a stale one captured when recording started.
   const valueRef = useRef(value);
-  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
   useEffect(() => { valueRef.current = value; }, [value]);
 
   const releaseStream = () => {
@@ -216,7 +239,7 @@ export default function ChatInput({
 
         const base = valueRef.current;
         const sep = base && !/\s$/.test(base) ? " " : "";
-        onChangeRef.current((base + sep + text).slice(0, MAX_CHARS));
+        setValue((base + sep + text).slice(0, MAX_CHARS));
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Couldn't transcribe.";
         setVoiceError(
@@ -287,6 +310,7 @@ export default function ChatInput({
     const t = value.trim();
     if (!t || disabled) return;
     onSend(t);
+    setValue("");
   };
 
   // ── Slash-command autocomplete ────────────────────────────────────
@@ -305,7 +329,7 @@ export default function ChatInput({
 
   const pickSlashCommand = useCallback(
     (cmd: SlashCommandDef) => {
-      onChange(cmd.insertText);
+      setValue(cmd.insertText);
       // Move the caret to end of inserted text so the user can immediately
       // type the argument. requestAnimationFrame gives React a tick to
       // apply the value update before we move the caret.
@@ -316,7 +340,7 @@ export default function ChatInput({
         el.setSelectionRange(cmd.insertText.length, cmd.insertText.length);
       });
     },
-    [onChange],
+    [],
   );
 
   if (variant === "v1") {
@@ -341,7 +365,7 @@ export default function ChatInput({
             ref={textareaRef}
             rows={1}
             value={value}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => setValue(e.target.value.slice(0, MAX_CHARS))}
             onKeyDown={(e) => {
               if (e.key === "Escape" && streaming && onStop) {
                 e.preventDefault();
@@ -440,7 +464,7 @@ export default function ChatInput({
                 value={value}
                 onChange={(e) => {
                   const next = e.target.value.slice(0, MAX_CHARS);
-                  onChange(next);
+                  setValue(next);
                 }}
                 onKeyDown={(e) => {
                   if (slashOpen) {
@@ -466,7 +490,7 @@ export default function ChatInput({
                       e.preventDefault();
                       // Clear the leading slash so the popover hides without
                       // having to track a separate dismiss flag.
-                      onChange("");
+                      setValue("");
                       return;
                     }
                   }
@@ -520,7 +544,7 @@ export default function ChatInput({
                               const next = (value
                                 ? value + (/\s$/.test(value) ? "" : " ")
                                 : "") + p.send;
-                              onChange(next.slice(0, MAX_CHARS));
+                              setValue(next.slice(0, MAX_CHARS));
                               setAddOpen(false);
                               textareaRef.current?.focus();
                             }}
@@ -609,4 +633,6 @@ export default function ChatInput({
       </div>
     </div>
   );
-}
+});
+
+export default memo(ChatInput);

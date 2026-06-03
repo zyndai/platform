@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type ReactNode,
 } from "react";
@@ -42,6 +43,10 @@ interface DashboardContextValue {
   personaLoading: boolean;
   onboardingStep: OnboardingStep | null;
   onboardingLoading: boolean;
+  /** Cached "this user finished onboarding" hint (localStorage). Lets the shell
+   *  render immediately for returning users instead of waiting on the persona/
+   *  calendar fetches. */
+  knownOnboarded: boolean;
   refreshPersona: () => Promise<void>;
   refreshOnboarding: () => Promise<void>;
   handleLogout: () => Promise<void>;
@@ -54,10 +59,14 @@ const DashboardContext = createContext<DashboardContextValue>({
   personaLoading: true,
   onboardingStep: null,
   onboardingLoading: true,
+  knownOnboarded: false,
   refreshPersona: async () => {},
   refreshOnboarding: async () => {},
   handleLogout: async () => {},
 });
+
+/** localStorage key for the cached onboarding-done flag, per user. */
+const onboardedKey = (userId: string) => `zynd:onboarded:${userId}`;
 
 export function useDashboard() {
   return useContext(DashboardContext);
@@ -121,6 +130,16 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       });
       setOnboardingStep(step);
       setOnboardingLoading(false);
+
+      // Cache the terminal state so the NEXT load can skip the boot gate. The
+      // `knownOnboarded` value below is derived from this cache (re-read when
+      // onboardingStep changes), so no extra state update is needed here.
+      try {
+        if (step === "done") window.localStorage.setItem(onboardedKey(currentUser.id), "1");
+        else window.localStorage.removeItem(onboardedKey(currentUser.id));
+      } catch {
+        /* localStorage unavailable */
+      }
     },
     [],
   );
@@ -176,6 +195,20 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     }
   }, [user, recomputeOnboarding]);
 
+  // Derived from the localStorage cache (written by recomputeOnboarding) rather
+  // than held as state: true the moment a returning user resolves, so the shell
+  // renders without waiting on the persona/calendar fetches. The un-onboarded
+  // edge is handled by the redirect effect above, so re-reading on every step
+  // change isn't needed — keying on `user` is enough.
+  const knownOnboarded = useMemo(() => {
+    if (!user) return false;
+    try {
+      return window.localStorage.getItem(onboardedKey(user.id)) === "1";
+    } catch {
+      return false;
+    }
+  }, [user]);
+
   const handleLogout = async () => {
     await getSupabase().auth.signOut();
     router.push("/");
@@ -190,6 +223,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         personaLoading,
         onboardingStep,
         onboardingLoading,
+        knownOnboarded,
         refreshPersona,
         refreshOnboarding,
         handleLogout,

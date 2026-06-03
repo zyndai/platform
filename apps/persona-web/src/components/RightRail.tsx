@@ -28,6 +28,9 @@ export default function RightRail() {
   const [threads, setThreads] = useState<RailThread[]>([]);
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [agentId, setAgentId] = useState<string | null>(null);
+  // False until the threads query resolves, so we show skeletons instead of an
+  // immediate "No threads yet." flash on first load.
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -60,7 +63,9 @@ export default function RightRail() {
         .or(queryStr)
         .order("updated_at", { ascending: false })
         .limit(8);
-      if (cancelled || !threadRows) return;
+      if (cancelled) return;
+      setLoaded(true);
+      if (!threadRows) return;
       setThreads(threadRows as RailThread[]);
 
       const ids = threadRows.map((t) => t.id);
@@ -101,7 +106,16 @@ export default function RightRail() {
         </Link>
       </div>
 
-      {threads.length === 0 ? (
+      {!loaded ? (
+        <div className="rail-skeleton" aria-hidden="true">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="rail-skel-card">
+              <span className="rail-skel-line rail-skel-title" />
+              <span className="rail-skel-line rail-skel-sub" />
+            </div>
+          ))}
+        </div>
+      ) : threads.length === 0 ? (
         <div className="rail-empty">No threads yet.</div>
       ) : (
         threads.map((t) => {

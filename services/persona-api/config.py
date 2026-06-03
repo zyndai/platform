@@ -71,6 +71,10 @@ ZYND_DEVELOPER_KEYPAIR_PATH: str = os.getenv(
     os.path.expanduser("~/.zynd/developer.json")
 )
 ZYND_REGISTRY_URL: str = os.getenv("ZYND_REGISTRY_URL", "https://zns01.zynd.ai")
+# Deployer hosts the running agent/service containers. Some are live there
+# but never made it into the registry's search index, so network search
+# supplements registry results with the deployer's running deployments.
+ZYND_DEPLOYER_URL: str = os.getenv("ZYND_DEPLOYER_URL", "https://deployer.zynd.ai")
 ZYND_WEBHOOK_BASE_URL: str = os.getenv("ZYND_WEBHOOK_BASE_URL", "")
 
 # Groq — used for voice-to-text via Whisper. Free tier, no credit card.

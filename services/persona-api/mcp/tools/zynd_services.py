@@ -18,10 +18,12 @@ Three-step flow:
    address (``http://localhost:5000``) and must NOT be used — only the
    card's ``url`` is authoritative.
 
-3. ``call_zynd_service`` — POST a plain A2A v3 JSON-RPC ``message/send``
-   to the service. Services are unauthenticated at the wire level (no
-   ``x-zynd-auth`` signature required), so this is a direct HTTP call with
-   no persona keypair, no DB writes, and no ``dm_threads`` row.
+3. ``call_zynd_service`` — POST an A2A v3 JSON-RPC ``message/send`` to the
+   service, SIGNED with the principal's persona keypair (x-zynd-auth) when
+   one is available so the service can attribute the call. Services that
+   don't require auth ignore the signature. No DB writes and no
+   ``dm_threads`` row — services are stateless from our side. If the
+   principal has no persona the call still goes out unsigned.
 
 The registry itself lives at ``config.ZYND_REGISTRY_URL`` and exposes the
 endpoints documented at ``{registry}/swagger/index.html``.
@@ -40,8 +42,44 @@ import httpx
 import requests
 
 import config
+from agent.a2a.types import (
+    ZYND_AUTH_EXPIRED,
+    ZYND_AUTH_FAILED,
+    ZYND_REPLAY_DETECTED,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _flatten_schema_refs(schema: Any, _defs: dict | None = None, _depth: int = 0) -> Any:
+    """Inline ``$ref`` references against ``$defs``/``definitions`` and drop
+    the defs block, returning a self-contained JSON Schema.
+
+    Service authors using Pydantic emit schemas with ``$defs`` + ``$ref``
+    (e.g. ``CompetitorInput``). Strict function-calling backends (Gemini)
+    reject those — both when the schema rides in a tool DEFINITION and when
+    it comes back inside a tool RESULT. Flattening keeps the schema usable
+    (fields stay visible so the caller can build the payload) while removing
+    the references. Recursion is depth-bounded to defang cyclic refs."""
+    if _defs is None and isinstance(schema, dict):
+        _defs = schema.get("$defs") or schema.get("definitions") or {}
+    if _depth > 12 or not isinstance(schema, (dict, list)):
+        return schema
+    if isinstance(schema, list):
+        return [_flatten_schema_refs(v, _defs, _depth + 1) for v in schema]
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/"):
+        key = ref.split("/")[-1]
+        target = (_defs or {}).get(key)
+        if isinstance(target, dict):
+            return _flatten_schema_refs(target, _defs, _depth + 1)
+        return {"type": "object"}  # unresolvable — degrade to open object
+    out: dict = {}
+    for k, v in schema.items():
+        if k in ("$defs", "definitions", "$ref", "$schema"):
+            continue
+        out[k] = _flatten_schema_refs(v, _defs, _depth + 1)
+    return out
 
 
 # ── Search-result cache ────────────────────────────────────────────────
@@ -260,6 +298,12 @@ def get_zynd_service_card(entity_id: str) -> dict:
             "hint": "This service's deployment is broken. Try another result from search_zynd_services.",
         }
     if resp.status_code == 404:
+        # Not in the registry — but it may be a deployer slug for an agent
+        # that's live on the deployer yet never registered (the network
+        # search now surfaces those). Try the deployer's card directly.
+        deployer_card = _deployer_card_fallback(eid)
+        if deployer_card is not None:
+            return deployer_card
         return {
             "status": "not_found",
             "entity_id": eid,
@@ -274,9 +318,12 @@ def get_zynd_service_card(entity_id: str) -> dict:
             "error": f"Registry returned HTTP {resp.status_code}: {e}",
         }
 
-    card = resp.json() or {}
-    x_zynd = card.get("x-zynd") or {}
+    return _card_to_result(resp.json() or {}, eid)
 
+
+def _card_to_result(card: dict, eid: str) -> dict:
+    """Shape a raw agent-card dict into the get_zynd_service_card result."""
+    x_zynd = card.get("x-zynd") or {}
     return {
         "status": "success",
         "entity_id": eid,
@@ -286,8 +333,8 @@ def get_zynd_service_card(entity_id: str) -> dict:
         "preferred_transport": card.get("preferredTransport") or "",
         "default_input_modes": card.get("defaultInputModes") or [],
         "default_output_modes": card.get("defaultOutputModes") or [],
-        "input_schema": x_zynd.get("inputSchema") or {},
-        "output_schema": x_zynd.get("outputSchema") or {},
+        "input_schema": _flatten_schema_refs(x_zynd.get("inputSchema") or {}),
+        "output_schema": _flatten_schema_refs(x_zynd.get("outputSchema") or {}),
         "skills": card.get("skills") or [],
         "capabilities": card.get("capabilities") or {},
         "pricing": card.get("pricing") or {},
@@ -300,6 +347,32 @@ def get_zynd_service_card(entity_id: str) -> dict:
             "Many services read the user's request from the 'text' part of the A2A message."
         ),
     }
+
+
+def _deployer_card_fallback(eid: str) -> dict | None:
+    """Fetch an agent/service card straight from the deployer for entities
+    that are live there but missing from the registry. ``eid`` is the
+    deployer slug (e.g. ``grant-finder-48da29``). Returns a card result, or
+    None if the deployer doesn't have it either.
+
+    The deployer serves cards at both /agent/<slug> and /service/<slug>;
+    we try the slug under each prefix's well-known path. The card's own
+    ``url`` is authoritative for the callable endpoint, so we trust it
+    rather than guessing agent-vs-service from the prefix."""
+    base = config.ZYND_DEPLOYER_URL.rstrip("/")
+    for prefix in ("agent", "service"):
+        url = f"{base}/{prefix}/{eid}/.well-known/agent-card.json"
+        try:
+            r = requests.get(url, timeout=8)
+            if r.status_code == 200:
+                # The card's x-zynd.entityId is the real registry id; prefer
+                # it so downstream signing/dispatch uses the canonical id.
+                card = r.json() or {}
+                real_eid = (card.get("x-zynd") or {}).get("entityId") or eid
+                return _card_to_result(card, real_eid)
+        except Exception:
+            continue
+    return None
 
 
 # ── Call ───────────────────────────────────────────────────────────────
@@ -319,28 +392,73 @@ def _join_text_parts(parts: Any) -> str:
     return "\n".join(out)
 
 
+# Field names agents commonly use to carry the human-readable reply inside
+# a DataPart payload. Checked in order; first non-empty wins.
+_DATA_REPLY_FIELDS = ("response", "text", "message", "reply", "answer", "result", "output", "summary")
+
+
+def _data_part_payloads(parts: Any) -> list[dict | list]:
+    """Collect the ``data`` object of every DataPart in a parts array."""
+    out: list[dict | list] = []
+    if not isinstance(parts, list):
+        return out
+    for p in parts:
+        if isinstance(p, dict) and p.get("kind") == "data":
+            d = p.get("data")
+            if isinstance(d, (dict, list)):
+                out.append(d)
+    return out
+
+
+def _readable_from_data(payload: dict | list) -> str:
+    """Pull a human-readable string out of a DataPart payload, if any."""
+    if isinstance(payload, dict):
+        for f in _DATA_REPLY_FIELDS:
+            v = payload.get(f)
+            if isinstance(v, str) and v.strip():
+                return v
+            if isinstance(v, (dict, list)) and v:
+                return json.dumps(v, indent=2)
+    return ""
+
+
 def _extract_reply_from_task(task: dict) -> tuple[str, dict | list | None]:
     """Return (reply_text, structured_output) from an A2A Task.
 
-    Prefers ``status.message.parts`` over ``artifacts[*].parts`` to match
-    the agent client. ``structured_output`` is the JSON-parsed reply text
-    when it parses to an object or list, otherwise None — services like
-    the translation service emit their structured output as a JSON-encoded
-    string inside a TextPart.
-    """
-    text = ""
-    status_msg = (task.get("status") or {}).get("message") or {}
-    text = _join_text_parts(status_msg.get("parts"))
-    if not text:
-        for art in task.get("artifacts") or []:
-            if isinstance(art, dict):
-                chunk = _join_text_parts(art.get("parts"))
-                if chunk:
-                    text = chunk
-                    break
+    Handles BOTH reply shapes seen on the network:
+      * TextPart — plain text, or a JSON-encoded string (translation-style).
+      * DataPart — a structured ``data`` object (competitor-monitor-style,
+        which returns ``{"mode": "chat", "response": "…"}``). The human
+        text is pulled from common fields (response/text/message/…); the
+        whole object becomes ``structured_output``.
 
+    Prefers ``status.message.parts`` over ``artifacts[*].parts`` to match
+    the agent client.
+    """
+    status_msg = (task.get("status") or {}).get("message") or {}
+    sources = [status_msg.get("parts")] + [
+        art.get("parts") for art in (task.get("artifacts") or []) if isinstance(art, dict)
+    ]
+
+    text = ""
     structured: dict | list | None = None
-    if text:
+
+    for parts in sources:
+        # 1) Text parts.
+        chunk = _join_text_parts(parts)
+        if chunk and not text:
+            text = chunk
+        # 2) Data parts.
+        for payload in _data_part_payloads(parts):
+            if structured is None:
+                structured = payload
+            if not text:
+                text = _readable_from_data(payload)
+        if text or structured is not None:
+            break
+
+    # A JSON-encoded string in a TextPart is structured output too.
+    if structured is None and text:
         try:
             parsed = json.loads(text)
             if isinstance(parsed, (dict, list)):
@@ -351,10 +469,73 @@ def _extract_reply_from_task(task: dict) -> tuple[str, dict | list | None]:
     return text, structured
 
 
-def call_zynd_service(entity_id: str, text: str = "", data: dict = None) -> dict:
+# Tokens that distinguish a payload-shape rejection (LLM should fix `data`
+# and retry) from a generic handler crash. Advisory only — it steers the
+# hint, never blocks a retry.
+_SCHEMA_ERROR_TOKENS = ("schema", "valid", "required", "expected", "property", "parse", "zod")
+
+
+def classify_task_result(
+    task_state: str, reply_text: str, structured: dict | list | None = None
+) -> tuple[str, str]:
+    """Map an A2A task state + extracted reply into a (status, hint) the LLM
+    can act on. Shared by call_zynd_service and call_zynd_agent's inline
+    (SEND) path so both speak the same failure vocabulary.
+
+    The A2A SDK reports schema mismatches, handler crashes, and missing
+    handlers as a Task with state="failed"/"rejected" — NOT as a thrown
+    error — so the caller must inspect the state, which is what this does.
     """
-    Invoke a Zynd Network service via plain A2A v3 JSON-RPC. Services are unauthenticated —
-    no signing or persona keypair is needed.
+    low = (reply_text or "").lower()
+    if task_state == "completed":
+        if reply_text or structured:
+            return "success", "Use reply_text / structured_output as the answer."
+        return (
+            "empty_result",
+            "Completed with no output — the payload shape was likely wrong. "
+            "Re-read input_schema and retry with a different data shape.",
+        )
+    if task_state == "failed":
+        if any(tok in low for tok in _SCHEMA_ERROR_TOKENS):
+            return (
+                "bad_request",
+                "The agent rejected the payload shape. Fix `data` to match input_schema "
+                "and retry; the validation message is in reply_text.",
+            )
+        return (
+            "remote_failed",
+            "The agent's handler failed. Tell the user and offer to retry or pick another result.",
+        )
+    if task_state == "rejected":
+        return (
+            "rejected",
+            "The agent can't handle this request — pick a different result; do NOT retry this id.",
+        )
+    if task_state == "input-required":
+        return (
+            "needs_input",
+            "The agent paused and asked for more info (in reply_text) — bring the question to the user.",
+        )
+    if task_state == "auth-required":
+        return (
+            "auth_required",
+            "This entity is a signed agent, not an unauthenticated service. "
+            "Call it via call_zynd_agent (which signs the request) instead.",
+        )
+    if task_state in ("working", "submitted"):
+        return (
+            "working",
+            "The agent didn't complete synchronously. Tell the user it's still processing and offer to retry.",
+        )
+    return "partial", "Unexpected task state — surface reply_text to the user."
+
+
+def call_zynd_service(entity_id: str, text: str = "", data: dict = None, user_id: str = "") -> dict:
+    """
+    Invoke a Zynd Network service via A2A v3 JSON-RPC. The request is SIGNED with the
+    principal's persona keypair (x-zynd-auth) when a persona is available, so the service
+    can attribute the call; services that don't require auth simply ignore the signature.
+    (If the principal has no deployed persona the call still goes out unsigned.)
 
     PRECONDITION: you must have already called ``get_zynd_service_card`` for this entity_id
     and read its ``input_schema``. Shape the payload based on what the schema declares:
@@ -397,6 +578,9 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None) -> dict
               accepts free text (single ``content``/``text`` field, or generic envelope).
         data: Structured payload for the A2A data part. Use when input_schema declares
               specific named fields. Shape it to match the schema's ``properties``.
+        user_id: Auto-injected by the orchestrator — the calling principal. Used to sign
+                 the request (x-zynd-auth) with their persona keypair. Optional: if absent
+                 or the principal has no persona, the call is sent unsigned.
     """
     eid = (entity_id or "").strip()
     if not eid:
@@ -448,11 +632,36 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None) -> dict
         "contextId": str(uuid.uuid4()),  # services are stateless — fresh context per call
         "parts": parts,
     }
+
+    # Sign with the principal's persona keypair so the service can attribute
+    # the call (x-zynd-auth). Best-effort: if there's no active persona (or
+    # signing fails for any reason) the message goes out unsigned — services
+    # that don't require auth ignore the missing signature; those that do
+    # reply with an auth error, which the JSON-RPC error branch maps below.
+    if (user_id or "").strip():
+        try:
+            from mcp.tools.zynd_network import _persona_signer
+            from agent.a2a.auth import sign_message
+
+            signer = _persona_signer(user_id)
+            if signer is not None:
+                keypair, sender_agent_id, developer_proof = signer
+                sign_message(
+                    message,
+                    keypair,
+                    sender_agent_id,
+                    developer_proof=developer_proof,
+                )
+        except Exception as e:  # noqa: BLE001 — never block the call on signing
+            logger.warning("call_zynd_service: signing failed, sending unsigned: %s", e)
+
     body = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
         "method": "message/send",
-        "params": {"message": message},
+        # blocking: hold the response until the task is terminal rather than
+        # acking early with state="working" — services are synchronous.
+        "params": {"message": message, "configuration": {"blocking": True}},
     }
 
     try:
@@ -485,14 +694,28 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None) -> dict
         }
     if "error" in envelope:
         err = envelope["error"] or {}
+        code = err.get("code")
+        if code in (ZYND_AUTH_FAILED, ZYND_REPLAY_DETECTED, ZYND_AUTH_EXPIRED):
+            # The "service" rejected us for auth — it's actually a signed
+            # agent. Tell the LLM to route via the signed call_zynd_agent.
+            return {
+                "status": "auth_required",
+                "entity_id": eid,
+                "url": url,
+                "error_code": code,
+                "error_message": err.get("message") or "Authentication required.",
+                "hint": "This entity is a signed agent, not an unauthenticated service. "
+                        "Call it via call_zynd_agent (which signs the request) instead.",
+            }
         return {
             "status": "error",
             "entity_id": eid,
             "url": url,
-            "error_code": err.get("code"),
+            "error_code": code,
             "error_message": err.get("message") or "Unknown JSON-RPC error.",
             "error_data": err.get("data"),
             "error": f"JSON-RPC error from service: {err.get('message')}",
+            "hint": "Network/registry issue or a malformed call — retry once or pick another result.",
         }
 
     task = envelope.get("result") or {}
@@ -506,9 +729,11 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None) -> dict
 
     task_state = ((task.get("status") or {}).get("state")) or "unknown"
     reply_text, structured = _extract_reply_from_task(task)
+    status, hint = classify_task_result(task_state, reply_text, structured)
 
     return {
-        "status": "success" if task_state == "completed" else "partial",
+        "status": status,
+        "hint": hint,
         "entity_id": eid,
         "task_id": task.get("id"),
         "task_state": task_state,

@@ -1,7 +1,12 @@
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import quote
-from ddgs import DDGS
+try:
+    # The package was renamed duckduckgo_search → ddgs upstream. Support
+    # both so the import works regardless of which one is installed.
+    from ddgs import DDGS
+except ModuleNotFoundError:
+    from duckduckgo_search import DDGS
 from googlesearch import search as google_search
 import datetime
 import platform

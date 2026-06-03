@@ -33,6 +33,7 @@ import ServicesPanel from "@/components/chat/ServicesPanel";
 import type { ServicesPanelPayload } from "@/components/chat/types";
 import {
   parseSlashCommand,
+  runAgentSearch,
   runServiceSearch,
   runServiceCard,
   suggestSlashCommands,
@@ -431,6 +432,24 @@ export default function GroupChatPage() {
       if (cmd.kind === "invalid") {
         appendLocalServiceMsg({ kind: "error", error: cmd.hint });
         setDraft("");
+        return true;
+      }
+      if (cmd.kind === "agents") {
+        const id = appendLocalServiceMsg({
+          kind: "agents",
+          query: cmd.query,
+          loading: true,
+        });
+        setDraft("");
+        try {
+          const agents = await runAgentSearch(cmd.query);
+          updateLocalServiceMsg(id, { kind: "agents", query: cmd.query, agents });
+        } catch (e) {
+          updateLocalServiceMsg(id, {
+            kind: "error",
+            error: e instanceof Error ? e.message : "Search failed.",
+          });
+        }
         return true;
       }
       if (cmd.kind === "services") {

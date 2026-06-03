@@ -83,7 +83,7 @@ def _ensure_brief_doc(user_id: str) -> dict:
             "message": (
                 "I need Google Drive access to create your brief. "
                 "Connect Google in Settings → Accounts: "
-                "https://persona.zynd.ink/dashboard/settings/accounts"
+                "https://persona.zynd.ai/dashboard/settings/accounts"
             ),
         }
     except Exception as e:
@@ -94,7 +94,7 @@ def _ensure_brief_doc(user_id: str) -> dict:
             "message": (
                 "I need Google Drive access to create your brief. "
                 "Connect Google in Settings → Accounts: "
-                "https://persona.zynd.ink/dashboard/settings/accounts"
+                "https://persona.zynd.ai/dashboard/settings/accounts"
             ),
         }
 

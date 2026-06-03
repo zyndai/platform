@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -21,21 +21,28 @@ import type {
   ChatMessage,
   PersonaHit,
   ThreadHandoff,
+  ServicesPanelPayload,
+  ToolCallState,
 } from "./types";
 import {
+  extractCallResults,
   extractHandoffs,
   extractPersonaHits,
 } from "./helpers";
+import GenUiResult, { LongResponseCard, isLongResponse } from "./GenUiResult";
 import ChatInput from "./ChatInput";
 import MatchCard from "./MatchCard";
 import IntroPreviewModal from "./IntroPreviewModal";
 import ApprovalCard, { type PendingApproval } from "./ApprovalCard";
 import IncomingRequestCard from "./IncomingRequestCard";
 import ServicesPanel from "./ServicesPanel";
+import type { CallTarget } from "./ServicesPanel";
 import {
   parseSlashCommand,
+  runAgentSearch,
   runServiceSearch,
   runServiceCard,
+  runServiceCall,
   HELP_TEXT,
 } from "@/lib/services-commands";
 
@@ -51,6 +58,37 @@ function TypingIndicator() {
       <span className="typing-dot" />
       <span className="typing-dot" />
       <span className="typing-dot" />
+    </div>
+  );
+}
+
+// Friendly progress labels for slow network tools, so a 15-40s find→call
+// flow shows what's happening instead of a silent spinner.
+const TOOL_PROGRESS_LABELS: Record<string, string> = {
+  search_zynd_network: "Looking for a matching agent or service",
+  search_zynd_personas: "Looking for a matching person",
+  search_zynd_services: "Looking for a matching service",
+  get_zynd_service_card: "Reading the agent's details",
+  call_zynd_service: "Calling the agent",
+  call_zynd_agent: "Calling the agent",
+  message_zynd_agent: "Messaging the agent",
+  request_connection: "Sending a connection request",
+};
+
+function ToolProgress({ toolCalls }: { toolCalls: ToolCallState[] }) {
+  // Show the most recent still-running tool (the one we're waiting on).
+  const active = [...toolCalls].reverse().find((t) => t.status === "running");
+  const label = active
+    ? TOOL_PROGRESS_LABELS[active.name] ||
+      `Running ${active.name.replace(/_/g, " ")}`
+    : null;
+  // Show a friendly label even after the last tool finishes (composing reply).
+  const text = label || "Working on it";
+  // Append the called agent's entity id tail when it's an agent call.
+  return (
+    <div className="tool-progress" role="status">
+      <span className="tool-progress-spin" />
+      <span className="tool-progress-label">{text}…</span>
     </div>
   );
 }
@@ -129,33 +167,61 @@ function HandoffCards({
   );
 }
 
-function MessageRow({
+/** Patch the last "call"-kind message matching `entityId`. Matching on
+ *  entityId (not just "the last call message") keeps two open call forms
+ *  for different agents from clobbering each other. */
+function updateLastCall(
+  prev: ChatMessage[],
+  entityId: string,
+  patch: (s: ServicesPanelPayload) => ServicesPanelPayload,
+): ChatMessage[] {
+  const out = prev.slice();
+  const idx = out.findLastIndex(
+    (m) => m.services?.kind === "call" && m.services.entityId === entityId,
+  );
+  if (idx >= 0 && out[idx].services) {
+    out[idx] = { ...out[idx], services: patch(out[idx].services as ServicesPanelPayload) };
+  }
+  return out;
+}
+
+function MessageRowInner({
   message,
+  messageIndex,
   busyId,
   onSayHi,
   onActOnHandoff,
   onCardLookup,
+  onCallAgent,
+  onCall,
+  onAskPersona,
   userId,
   userName,
   userAvatarUrl,
   onIncomingReplied,
 }: {
   message: ChatMessage;
+  /** Row index in the message list — passed so the stable onIncomingReplied
+   *  callback can target the correct slot without an inline closure. */
+  messageIndex: number;
   busyId: string | null;
   onSayHi: (h: PersonaHit) => void;
   onActOnHandoff: (h: ThreadHandoff) => void;
   onCardLookup: (entityId: string) => void;
+  onCallAgent: (target: CallTarget) => void;
+  onCall: (entityId: string, args: { text?: string; data?: Record<string, unknown> }) => void;
+  onAskPersona: (target: CallTarget & { intent?: string }) => void;
   userId: string;
   userName: string;
   userAvatarUrl: string | null;
-  onIncomingReplied: () => void;
+  onIncomingReplied: (index: number) => void;
 }) {
   if (message.incoming) {
     return (
       <IncomingRequestCard
         request={message.incoming}
         userId={userId}
-        onReplied={onIncomingReplied}
+        onReplied={() => onIncomingReplied(messageIndex)}
       />
     );
   }
@@ -165,7 +231,13 @@ function MessageRow({
   if (message.services && message.role === "assistant") {
     return (
       <div className="services-panel-wrap">
-        <ServicesPanel payload={message.services} onCardLookup={onCardLookup} />
+        <ServicesPanel
+          payload={message.services}
+          onCardLookup={onCardLookup}
+          onCallAgent={onCallAgent}
+          onCall={onCall}
+          onAskPersona={onAskPersona}
+        />
       </div>
     );
   }
@@ -173,6 +245,10 @@ function MessageRow({
   const isAria = message.role === "assistant";
   const personaHits = isAria ? extractPersonaHits(message.actions) : [];
   const handoffs = isAria ? extractHandoffs(message.actions) : [];
+  const callResults = isAria
+    ? extractCallResults(message.actions, message.toolCalls)
+    : [];
+  const activeTools = (message.toolCalls || []).length > 0;
   const showTyping = isAria && !!message.streaming && !message.content;
 
   return (
@@ -180,14 +256,25 @@ function MessageRow({
       <div className={`msg ${isAria ? "aria" : "user"}`}>
         {isAria && <Monogram size="sm" />}
         <div className="bubble">
-          {showTyping && <TypingIndicator />}
-          {message.content && (
-            <div className="markdown-content">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {message.content}
-              </ReactMarkdown>
-            </div>
-          )}
+          {showTyping &&
+            (activeTools ? (
+              <ToolProgress toolCalls={message.toolCalls || []} />
+            ) : (
+              <TypingIndicator />
+            ))}
+          {message.content &&
+            (isAria && isLongResponse(message.content) ? (
+              <LongResponseCard
+                markdown={message.content}
+                streaming={message.streaming}
+              />
+            ) : (
+              <div className="markdown-content">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {message.content}
+                </ReactMarkdown>
+              </div>
+            ))}
           {message.error && (
             <p className="msg-error body-s">⚠ {message.error}</p>
           )}
@@ -198,6 +285,15 @@ function MessageRow({
           </span>
         )}
       </div>
+      {callResults.length > 0 && (
+        <div className="genui-stack">
+          {callResults.map((r, i) => (
+            <div className="genui-wrap" key={`${r.entity_id}-${i}`}>
+              <GenUiResult result={r} title={r.entity_id} />
+            </div>
+          ))}
+        </div>
+      )}
       {personaHits.length > 0 && (
         <MatchCardRow
           hits={personaHits}
@@ -215,6 +311,11 @@ function MessageRow({
     </>
   );
 }
+
+// Memoized so only the message that actually changed (the streaming tail)
+// re-renders on each token — avoids re-running extractCallResults /
+// extractPersonaHits / isLongResponse on every other message in the thread.
+const MessageRow = memo(MessageRowInner);
 
 // ─────────────────────────────────────────────────────────────────────
 // Main
@@ -235,6 +336,10 @@ export default function ChatInterface() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Holds the in-flight SSE fetch's abort handle so the Stop button (and
+  // Escape key in ChatInput) can cancel a streaming reply. Cleared on
+  // completion / error.
+  const abortRef = useRef<AbortController | null>(null);
 
   // S10 intro modal state. Holds the persona we're drafting an intro to.
   const [introTarget, setIntroTarget] = useState<PersonaHit | null>(null);
@@ -319,6 +424,15 @@ export default function ChatInterface() {
   );
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  // Whether the user is parked at the bottom. We only auto-scroll when pinned,
+  // so reading a big card mid-stream isn't yanked back down on every token.
+  const pinnedRef = useRef(true);
+  const handleThreadScroll = useCallback(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
 
   // Fetch the user's persona name once so the intro draft can sign as them.
   useEffect(() => {
@@ -346,7 +460,11 @@ export default function ChatInterface() {
   const displayMessages = messages;
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!pinnedRef.current) return;
+    const streaming = displayMessages[displayMessages.length - 1]?.streaming;
+    // Instant during streaming (no smooth-scroll thrash on every token); smooth
+    // once a turn settles.
+    bottomRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
   }, [displayMessages]);
 
   const updateStreaming = useCallback(
@@ -361,6 +479,85 @@ export default function ChatInterface() {
       });
     },
     [],
+  );
+
+  // Render network-search tool results from plain chat as clickable cards,
+  // inserted just before the streaming assistant bubble. Mirrors the shape
+  // the /agents slash command produces so the same ServicesPanel + Call
+  // buttons light up. Personas-only and services-only searches map too.
+  const maybeInsertSearchCards = useCallback(
+    (event: Record<string, unknown>) => {
+      const tool = event.name as string | undefined;
+      const result = event.result as Record<string, unknown> | undefined;
+      if (!tool || !result || typeof result !== "object") return;
+      const rows = result.results;
+      if (!Array.isArray(rows) || rows.length === 0) return;
+
+      let panel: ServicesPanelPayload | null = null;
+      const query =
+        (result.query_used as string) || (result.query as string) || "";
+
+      if (tool === "search_zynd_network") {
+        panel = {
+          kind: "agents",
+          query,
+          agents: {
+            status: "success",
+            count: rows.length,
+            total_available: result.total_available as number | undefined,
+            by_kind: result.by_kind as Record<string, number> | undefined,
+            results: rows as never[],
+          },
+        };
+      } else if (tool === "search_zynd_personas") {
+        // Persona rows use agent_id/description/webhook_url — adapt to the
+        // AgentSearchResult shape the cards expect, tagging kind "persona".
+        const adapted = (rows as Record<string, unknown>[]).map((r) => ({
+          entity_id: (r.agent_id as string) || (r.entity_id as string) || "",
+          name: (r.name as string) || "",
+          kind: "persona",
+          summary: (r.description as string) || (r.summary as string) || "",
+          category: "persona",
+          avatar_url: (r.avatar_url as string) ?? null,
+        }));
+        panel = {
+          kind: "agents",
+          query,
+          agents: {
+            status: "success",
+            count: adapted.length,
+            total_available: result.total_available as number | undefined,
+            results: adapted as never[],
+          },
+        };
+      } else if (tool === "search_zynd_services") {
+        panel = {
+          kind: "search",
+          query,
+          search: {
+            status: "success",
+            count: rows.length,
+            results: rows as never[],
+          },
+        };
+      }
+      if (!panel) return;
+
+      const cardMsg: ChatMessage = { role: "assistant", content: "", services: panel };
+      // Insert before the trailing streaming assistant message so the prose
+      // reply stays at the bottom.
+      setMessages((prev) => {
+        if (prev.length === 0) return [cardMsg];
+        const lastIdx = prev.length - 1;
+        if (prev[lastIdx].role === "assistant" && prev[lastIdx].streaming) {
+          const out = prev.slice();
+          out.splice(lastIdx, 0, cardMsg);
+          return out;
+        }
+        return [...prev, cardMsg];
+      });
+    },
+    [setMessages],
   );
 
   const handleStreamEvent = useCallback(
@@ -433,6 +630,10 @@ export default function ChatInterface() {
                 : tc,
             ),
           }));
+          // When the persona searched the network in plain chat, render the
+          // same clickable result cards (with Call buttons) the /agents
+          // command shows — inserted just above the streaming reply bubble.
+          maybeInsertSearchCards(event);
           break;
         }
         case "text_to_thinking":
@@ -469,7 +670,7 @@ export default function ChatInterface() {
           break;
       }
     },
-    [updateStreaming],
+    [updateStreaming, maybeInsertSearchCards],
   );
 
   // Slash commands (e.g. `/services translate text`) are intercepted and
@@ -508,6 +709,48 @@ export default function ChatInterface() {
           },
         ]);
         setInput("");
+        return true;
+      }
+
+      // /agents <query>
+      if (cmd.kind === "agents") {
+        const placeholder: ChatMessage = {
+          role: "assistant",
+          content: "",
+          services: { kind: "agents", query: cmd.query, loading: true },
+        };
+        setMessages((prev) => [...prev, userMsg, placeholder]);
+        setInput("");
+        try {
+          const agents = await runAgentSearch(cmd.query);
+          setMessages((prev) => {
+            const out = prev.slice();
+            // Find the loading placeholder from the end — robust to a
+            // message landing after it while the search was in flight.
+            const idx = out.findLastIndex(
+              (m) => m.services?.kind === "agents" && m.services.loading,
+            );
+            if (idx >= 0) {
+              out[idx] = {
+                ...out[idx],
+                services: { kind: "agents", query: cmd.query, agents },
+              };
+            }
+            return out;
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Search failed.";
+          setMessages((prev) => {
+            const out = prev.slice();
+            const idx = out.findLastIndex(
+              (m) => m.services?.kind === "agents" && m.services.loading,
+            );
+            if (idx >= 0) {
+              out[idx] = { ...out[idx], services: { kind: "error", error: msg } };
+            }
+            return out;
+          });
+        }
         return true;
       }
 
@@ -626,6 +869,80 @@ export default function ChatInterface() {
     [setMessages],
   );
 
+  // Open the schema-driven Call form: append a "call"-kind message and
+  // fetch the card to drive the form. Mirrors handleCardLookup.
+  const handleCallAgent = useCallback(
+    async ({ entityId, name, kind }: CallTarget) => {
+      const placeholder: ChatMessage = {
+        role: "assistant",
+        content: "",
+        services: {
+          kind: "call",
+          entityId,
+          callName: name,
+          callKind: kind,
+          callLoading: true,
+        },
+      };
+      setMessages((prev) => [...prev, placeholder]);
+      try {
+        const card = await runServiceCard(entityId);
+        setMessages((prev) =>
+          updateLastCall(prev, entityId, (s) => ({
+            ...s,
+            callLoading: false,
+            card,
+            callName: name || card.name,
+          })),
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Couldn't load the form.";
+        setMessages((prev) =>
+          updateLastCall(prev, entityId, (s) => ({
+            ...s,
+            callLoading: false,
+            callError: msg,
+          })),
+        );
+      }
+    },
+    [setMessages],
+  );
+
+  // Submit a Call form. Result persists on the message payload.
+  const handleCall = useCallback(
+    async (entityId: string, args: { text?: string; data?: Record<string, unknown> }) => {
+      setMessages((prev) =>
+        updateLastCall(prev, entityId, (s) => ({
+          ...s,
+          callSubmitting: true,
+          callError: undefined,
+          callResult: undefined,
+        })),
+      );
+      try {
+        const result = await runServiceCall(entityId, args);
+        setMessages((prev) =>
+          updateLastCall(prev, entityId, (s) => ({
+            ...s,
+            callSubmitting: false,
+            callResult: result,
+          })),
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "The call failed.";
+        setMessages((prev) =>
+          updateLastCall(prev, entityId, (s) => ({
+            ...s,
+            callSubmitting: false,
+            callError: msg,
+          })),
+        );
+      }
+    },
+    [setMessages],
+  );
+
   const sendMessage = async (text: string) => {
     if (!text || loading) return;
 
@@ -643,11 +960,14 @@ export default function ChatInterface() {
     setInput("");
     setLoading(true);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
       const sb = getSupabase();
       const { data: { session } } = await sb.auth.getSession();
       const res = await fetch(`${API}/api/chat/stream`, {
         method: "POST",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           ...(session?.access_token
@@ -690,22 +1010,59 @@ export default function ChatInterface() {
       }
       updateStreaming((m) => ({ ...m, streaming: false }));
     } catch (err) {
-      updateStreaming((m) => ({
-        ...m,
-        error: err instanceof Error ? err.message : String(err),
-        streaming: false,
-      }));
+      // AbortError == user clicked Stop / hit Esc. Not an error — just
+      // close the stream cleanly and leave whatever content arrived.
+      const isAbort =
+        err instanceof DOMException && err.name === "AbortError";
+      if (isAbort) {
+        updateStreaming((m) => ({ ...m, streaming: false }));
+      } else {
+        updateStreaming((m) => ({
+          ...m,
+          error: err instanceof Error ? err.message : String(err),
+          streaming: false,
+        }));
+      }
     } finally {
+      abortRef.current = null;
       setLoading(false);
     }
   };
 
+  const stopStreaming = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  // Stable callback used by MessageRow (via memo) to mark an incoming request
+  // as replied. Takes the message index so the closure doesn't re-create on
+  // every render — avoids busting React.memo on unchanged rows.
+  const markIncomingReplied = useCallback((idx: number) => {
+    setMessages((prev) =>
+      prev.map((msg, i) =>
+        i === idx && msg.incoming
+          ? { ...msg, incoming: { ...msg.incoming, replied: true } }
+          : msg,
+      ),
+    );
+  }, [setMessages]);
+
+  // "Let my persona handle it" — hand the request to the LLM chat, which
+  // has the search/card/call tools. Plain function (not memoized) so it
+  // always closes over the current sendMessage.
+  const handleAskPersona = useCallback(({ entityId, name, intent }: CallTarget & { intent?: string }) => {
+    const label = name ? `${name} (${entityId})` : entityId;
+    const text = intent?.trim()
+      ? `Use the Zynd network agent ${label} to ${intent.trim()}`
+      : `Use the Zynd network agent ${label} for me — figure out what it does from its card and call it.`;
+    void sendMessage(text);
+  }, [sendMessage]);
+
   // S9 → S10: clicking "Say hi" on a match card opens the intro preview
   // modal. The actual send happens through `sendIntro` below; this just
   // stages the target.
-  const openIntroForPersona = (hit: PersonaHit) => {
+  const openIntroForPersona = useCallback((hit: PersonaHit) => {
     setIntroTarget(hit);
-  };
+  }, []);
 
   // Two-step send: create the agent-mode thread, post the first message
   // through it. Returns the new thread id so the modal can confirm + the
@@ -765,7 +1122,7 @@ export default function ChatInterface() {
 
   // For meeting hand-offs: just navigate (keep AI mode). For DM hand-offs:
   // flip to human mode then navigate.
-  const actOnHandoff = async (h: ThreadHandoff) => {
+  const actOnHandoff = useCallback(async (h: ThreadHandoff) => {
     setBusyId(h.thread_id);
     try {
       if (h.source_tool !== "propose_meeting") {
@@ -781,7 +1138,7 @@ export default function ChatInterface() {
       setBusyId(null);
       router.push(`/dashboard/messages?thread=${h.thread_id}`);
     }
-  };
+  }, [router]);
 
   const isEmpty = messages.length === 0;
 
@@ -817,7 +1174,7 @@ export default function ChatInterface() {
             </div>
           </div>
         ) : (
-          <div className="chat-thread">
+          <div className="chat-thread" ref={threadRef} onScroll={handleThreadScroll}>
             {approvals.length > 0 && (
               <div className="approvals-stack">
                 {approvals.map((a) => (
@@ -833,10 +1190,14 @@ export default function ChatInterface() {
               <MessageRow
                 key={i}
                 message={m}
+                messageIndex={i}
                 busyId={busyId}
                 onSayHi={openIntroForPersona}
                 onActOnHandoff={actOnHandoff}
                 onCardLookup={handleCardLookup}
+                onCallAgent={handleCallAgent}
+                onCall={handleCall}
+                onAskPersona={handleAskPersona}
                 userId={user?.id || ""}
                 userName={
                   user?.user_metadata?.full_name ||
@@ -849,15 +1210,7 @@ export default function ChatInterface() {
                   user?.user_metadata?.picture ||
                   null
                 }
-                onIncomingReplied={() => {
-                  setMessages((prev) =>
-                    prev.map((msg, idx) =>
-                      idx === i && msg.incoming
-                        ? { ...msg, incoming: { ...msg.incoming, replied: true } }
-                        : msg,
-                    ),
-                  );
-                }}
+                onIncomingReplied={markIncomingReplied}
               />
             ))}
             <div ref={bottomRef} />
@@ -867,6 +1220,8 @@ export default function ChatInterface() {
           value={input}
           onChange={setInput}
           onSend={sendMessage}
+          onStop={stopStreaming}
+          streaming={loading}
           disabled={loading}
         />
       </div>

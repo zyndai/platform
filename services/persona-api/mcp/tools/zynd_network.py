@@ -18,13 +18,24 @@ import logging
 import re
 import threading
 import time
-from typing import Optional
+import uuid
+from typing import Any, Optional
 
 import requests
 
 import config
 
 logger = logging.getLogger(__name__)
+
+
+# The registry's /v1/search applies `max_results` to the raw candidate
+# pool BEFORE it applies the `tags`/`entity_type` filter. So a filtered
+# search with max_results=25 can return far fewer than 25 matching rows
+# (e.g. entity_type=agent max=25 → 5, even though 20 agents exist),
+# because most of the 25-row pool gets filtered out server-side. To
+# surface the real catalog we widen the pool to this floor whenever a
+# filter is active, then trim to the caller's top_k locally.
+_REGISTRY_POOL_FLOOR = 60
 
 
 # ── In-process cache for the People discovery surface ────────────────
@@ -187,7 +198,10 @@ def discover_personas(query: str, top_k: int = 20) -> dict:
             json={
                 "query": q,
                 "tags": ["persona"],
-                "max_results": top_k,
+                # Widen past top_k: the registry caps the pool before the
+                # persona tag filter, so top_k=20 returned only 3. Request
+                # the floor, then trim to top_k below.
+                "max_results": max(int(top_k), _REGISTRY_POOL_FLOOR),
                 # No enrich=True — we don't need full agent cards on a list view.
                 "status": "any",
             },
@@ -219,7 +233,15 @@ def discover_personas(query: str, top_k: int = 20) -> dict:
                 "description": a.get("summary") or a.get("description") or "",
                 "avatar_url": avatars.get(aid),
             })
-        out = {"status": "success", "count": len(personas), "results": personas, "source": "registry"}
+        total_available = len(personas)
+        personas = personas[:top_k]
+        out = {
+            "status": "success",
+            "count": len(personas),
+            "total_available": total_available,
+            "results": personas,
+            "source": "registry",
+        }
         _discover_cache_put(key, out)
         return out
     except requests.exceptions.Timeout:
@@ -299,6 +321,378 @@ def _get_supabase():
 
 # ── Discovery Tools ──────────────────────────────────────────────────
 
+
+# Stop-words to strip when broadening a literal user query into something
+# the registry's keyword search can match. The registry indexes agent
+# names + tags + category, all single-domain keywords — so verbose
+# user phrases like "competitors of Zynd AI" return zero unless we trim
+# the connective scaffolding.
+_QUERY_STOPWORDS: set[str] = {
+    "a", "an", "the", "of", "for", "to", "with", "from", "on", "in", "by",
+    "at", "and", "or", "is", "are", "as", "any", "some",
+    # Common LLM/user verbs that aren't part of the topic
+    "find", "search", "search-for", "look", "look-for", "show", "show-me",
+    "get", "give", "give-me", "tell", "tell-me", "list", "fetch", "discover",
+    "want", "need", "please", "can", "could", "would",
+    # Pronouns / fillers
+    "me", "my", "i", "you", "your", "us", "we", "they", "them", "it", "this", "that",
+    # Domain noise common in agent-ask phrasing
+    "agent", "agents", "service", "services", "tool", "tools", "thing", "things",
+    "something", "someone", "anyone", "anything",
+}
+
+
+def _normalize_query(q: str) -> str:
+    """Strip stop-words and trim verbose user prose into 1–4 keyword tokens.
+
+    Registry search is keyword-substring + tag-match; multi-word phrases
+    that don't share lexical content with a real entity's name/tags
+    return zero. We pre-clean to give the registry something it can
+    actually find.
+
+    Examples:
+      "competitors of Zynd AI"   -> "competitors zynd ai"
+      "find me a translation agent" -> "translation"
+      "search for influencer discovery agents" -> "influencer discovery"
+    """
+    import re as _re
+    if not q:
+        return ""
+    # Lowercase + split on non-word chars (keeps hyphens by re-splitting).
+    tokens = [t for t in _re.split(r"[^\w-]+", q.lower()) if t]
+    filtered = [t for t in tokens if t not in _QUERY_STOPWORDS and len(t) > 1]
+    if not filtered:
+        return q.strip()
+    # Keep the first 4 content tokens — registry full-text search uses
+    # OR semantics, so the first few words drive recall.
+    return " ".join(filtered[:4])
+
+
+def _call_registry_search(query: str, kind: str, top_k: int) -> tuple[list[dict], Optional[str]]:
+    """Single round-trip to the registry's /v1/search. Returns
+    (raw_results, error_message_or_None).
+
+    When a server-side filter (`tags`/`entity_type`) is active, we widen
+    `max_results` to `_REGISTRY_POOL_FLOOR` so the pre-filter pool cap
+    (see the constant's docstring) doesn't starve the result set. The
+    caller is responsible for trimming the returned rows to its own
+    top_k after any further client-side filtering.
+    """
+    filtered = kind in ("persona", "agent", "service")
+    requested = max(int(top_k), _REGISTRY_POOL_FLOOR) if filtered else int(top_k)
+    body: dict[str, Any] = {
+        "query": query,
+        "max_results": requested,
+        "status": "any",
+        "enrich": True,
+    }
+    # The registry honors `entity_type` (exactly "agent"|"service") as a
+    # server-side filter; it ignores the legacy `type` key. Personas are a
+    # tag, not an entity_type, so filter those by tag.
+    if kind == "persona":
+        body["tags"] = ["persona"]
+    elif kind in ("agent", "service"):
+        body["entity_type"] = kind
+    try:
+        resp = requests.post(
+            f"{config.ZYND_REGISTRY_URL}/v1/search",
+            json=body,
+            timeout=8,
+        )
+        resp.raise_for_status()
+        return (resp.json() or {}).get("results") or [], None
+    except requests.exceptions.Timeout:
+        return [], "Registry timed out."
+    except Exception as e:
+        return [], f"Registry search failed: {e}"
+
+
+# ── Deployer fallback ────────────────────────────────────────────────
+# Agents/services run on the deployer but don't always make it into the
+# registry's search index (entityId stays null). So a registry-only
+# search under-reports what's actually live. We supplement registry
+# results with the deployer's *running* deployments. The deployment list
+# is heavy (800+ rows) and changes slowly, so cache it briefly.
+_DEPLOYER_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_DEPLOYER_CACHE_LOCK = threading.Lock()
+_DEPLOYER_CACHE_TTL = 60.0  # seconds
+
+
+def _deployer_running_entities() -> list[dict]:
+    """Fetch the deployer's RUNNING agents/services as search-result rows.
+
+    Each row mirrors the shape `search_zynd_network` emits. We build the
+    A2A url + a kind from the cheap deployment row (name/slug/entityType/
+    hostUrl) — NO per-entity card fetch (that's an 800-way N+1). The full
+    card is resolved lazily later, at call time, by the existing
+    get_zynd_service_card / call paths.
+    """
+    with _DEPLOYER_CACHE_LOCK:
+        hit = _DEPLOYER_CACHE.get("running")
+        if hit is not None and (time.time() - hit[0]) < _DEPLOYER_CACHE_TTL:
+            return hit[1]
+
+    rows: list[dict] = []
+    try:
+        resp = requests.get(f"{config.ZYND_DEPLOYER_URL}/api/deployments", timeout=6)
+        resp.raise_for_status()
+        deployments = (resp.json() or {}).get("deployments") or []
+        for d in deployments:
+            if d.get("status") != "running":
+                continue
+            etype = (d.get("entityType") or "").lower()
+            if etype not in ("agent", "service"):
+                continue
+            name = d.get("name") or d.get("slug") or ""
+            slug = d.get("slug") or ""
+            host = (d.get("hostUrl") or "").rstrip("/")
+            if not (name and host):
+                continue
+            # The card's A2A endpoint is always <hostUrl>/a2a/v1 on the
+            # deployer. We use the slug as a stable entity_id when the
+            # deployment row carries no registry entityId.
+            rows.append({
+                "name": name,
+                "entity_id": d.get("entityId") or slug,
+                "kind": etype,
+                "entity_type": etype,
+                "summary": "",  # not on the cheap row; filled from card at call time
+                "category": "",
+                "tags": [],
+                "url": f"{host}/a2a/v1",
+                "status": "active",
+                "avatar_url": None,
+                "source": "deployer",
+            })
+    except Exception as e:
+        logger.warning(f"[deployer] running-entities fetch failed: {e!r}")
+        return []
+
+    with _DEPLOYER_CACHE_LOCK:
+        _DEPLOYER_CACHE["running"] = (time.time(), rows)
+    return rows
+
+
+def _merge_deployer_entities(
+    results: list[dict], kind: str, query: str
+) -> list[dict]:
+    """Supplement registry `results` with deployer running entities that
+    the registry didn't surface. Dedupes by entity_id and by name (the
+    same agent can carry a registry id AND a deployer slug). Honors the
+    requested `kind` and a cheap name/substring filter for keyword asks."""
+    deployer = _deployer_running_entities()
+    if not deployer:
+        return results
+
+    seen_ids = {r.get("entity_id") for r in results if r.get("entity_id")}
+    seen_names = {(r.get("name") or "").lower() for r in results}
+    q = (query or "").strip().lower()
+
+    for d in deployer:
+        if kind == "agent" and d["kind"] != "agent":
+            continue
+        if kind == "service" and d["kind"] != "service":
+            continue
+        if kind == "persona":
+            continue  # personas never live on the deployer
+        if d["entity_id"] in seen_ids or d["name"].lower() in seen_names:
+            continue
+        # For keyword (non-broad) asks, only include deployer rows whose
+        # name actually matches — we have no summary/tags to match on.
+        if q and q not in ("persona",) and q not in d["name"].lower():
+            continue
+        results.append(d)
+        seen_ids.add(d["entity_id"])
+        seen_names.add(d["name"].lower())
+    return results
+
+
+def search_zynd_network(query: str, top_k: int = 8, kind: str = "any") -> dict:
+    """
+    Find ANY callable thing on the Zynd Network — personas, services, and
+    agents — in one search. Use this FIRST when the user asks to find an
+    agent, service, persona, or "something that can do X" — without
+    knowing whether the target is a human's persona or a standalone agent.
+
+    Each result carries a ``kind`` field so the caller can decide the
+    right next step:
+      * ``persona`` — a human's AI persona. Requires ``request_connection``
+        (the receiver must accept) before ``message_zynd_agent`` will
+        deliver. Signed Ed25519 A2A.
+      * ``service`` / ``agent`` — a standalone agent / service. Skip the
+        connection flow entirely. Call ``get_zynd_service_card`` to read
+        its input schema, then ``call_zynd_service`` to invoke it.
+
+    The query is auto-normalized before hitting the registry (stop-words
+    stripped, trimmed to ~4 keyword tokens). If the literal query yields
+    zero hits, a broadened retry runs with just the first content token
+    so verbose user phrases ("find competitors of Zynd AI") still match
+    catalog entries (``competitor-monitor``).
+
+    Args:
+        query: Natural-language description ("competitor research",
+               "translate text", "Alice", "find influencers on TikTok").
+               Empty string returns a broad sample of active entities.
+        top_k: Max results (1–25, default 8).
+        kind:  Restrict to one kind: ``persona`` | ``service`` | ``agent``
+               | ``any`` (default). Pick ``any`` when in doubt — the
+               result rows are tagged so the caller can branch.
+
+    Returns ``{status, count, results: [{name, entity_id, kind, summary,
+    category, tags, url, status}], source, query_used}``. ``query_used``
+    echoes the actual string sent to the registry (post-normalization
+    or post-broadening) so callers can show the user what was searched.
+    """
+    raw_query = (query or "").strip()
+    top_k = max(1, min(int(top_k or 8), 25))
+    kind = (kind or "any").lower().strip()
+
+    # Catch-all asks ("what agents are on the network", "show me everything",
+    # "list all agents") carry no real keyword — the registry's keyword search
+    # returns ~nothing for them, but an EMPTY query returns the broad catalog.
+    # Detect these and search broad instead of normalizing the prose to junk.
+    q_lower = raw_query.lower()
+    _CATCHALL = {
+        "", "*", "all", "any", "anything", "everything", "everyone",
+        "agents", "agent", "services", "service", "personas", "network",
+        "list", "catalog", "directory",
+    }
+    _CATCHALL_TOKENS = {
+        "agents", "agent", "services", "service", "everything", "anything",
+        "all", "available", "network", "catalog", "directory", "list",
+    }
+    is_catchall = (
+        q_lower in _CATCHALL
+        or set(re.findall(r"[a-z]+", q_lower)).issubset(_CATCHALL_TOKENS | {"on", "the", "what", "are", "is", "show", "me", "find", "get"})
+    )
+
+    if is_catchall:
+        # Empty query → broad catalog; skip the keyword fallbacks below.
+        cleaned = ""
+        raw, err = _call_registry_search("", kind, top_k)
+        query_used = ""
+    else:
+        # Try the normalized form first.
+        cleaned = _normalize_query(raw_query)
+        query_used = cleaned or raw_query
+        raw, err = _call_registry_search(query_used, kind, top_k)
+
+    # Fallback 1: if normalization produced zero hits but the raw query
+    # was different, try the raw form (sometimes the user typed an exact
+    # agent name and we shouldn't have trimmed it).
+    if not raw and not err and cleaned and cleaned != raw_query:
+        raw, err = _call_registry_search(raw_query, kind, top_k)
+        if raw:
+            query_used = raw_query
+
+    # Fallback 2: if still zero, try the FIRST content token alone —
+    # broadest meaningful query, catches cases like "competitors" → match
+    # "competitor".
+    if not raw and not err and cleaned:
+        first_token = cleaned.split()[0]
+        if first_token and first_token != query_used:
+            raw, err = _call_registry_search(first_token, kind, top_k)
+            if raw:
+                query_used = first_token
+
+    # A registry error is no longer fatal: the deployer can still serve
+    # the live catalog. Note the error and fall through to the merge.
+    registry_error = err or None
+
+    avatars = _get_avatar_map()
+    results: list[dict] = []
+    for a in raw:
+        aid = a.get("entity_id") or a.get("agent_id") or ""
+        if not aid:
+            continue
+        tags = a.get("tags") or []
+        category = a.get("category") or ""
+        # The registry's authoritative type field is `entity_type` —
+        # exactly "agent" | "service". `category` ("general", "marketing")
+        # is a topic label, NOT the entity type, so we must not derive kind
+        # from it. Personas are surfaced via the persona tag/category.
+        entity_type = (a.get("entity_type") or a.get("type") or "").lower()
+        is_persona = "persona" in tags or category == "persona" or entity_type == "persona"
+        if is_persona:
+            row_kind = "persona"
+        elif entity_type in ("agent", "service"):
+            row_kind = entity_type
+        else:
+            # Registry didn't tag a type — fall back to a neutral "agent".
+            row_kind = "agent"
+
+        # Enforce the caller's requested kind against the real type.
+        #
+        # `kind="agent"` is a colloquial "show me the autonomous things on
+        # the network" ask. Human personas come back as entity_type=agent +
+        # category=persona, so a strict `row_kind == "agent"` test silently
+        # dropped every persona — the bug behind "only 2 agents". We keep
+        # personas here (still tagged kind="persona" so the caller knows
+        # they need a connection) and only exclude genuine services.
+        if kind == "persona" and not is_persona:
+            continue
+        if kind == "agent" and row_kind == "service":
+            continue
+        if kind == "service" and row_kind != "service":
+            continue
+        # The card URL is in `url` on the search row (with enrich=True);
+        # fall back to the older fields for backward compat.
+        endpoint = a.get("url") or _agent_url_from_card(a.get("card")) or a.get("service_endpoint") or a.get("entity_url") or ""
+        results.append({
+            "name": a.get("name") or "",
+            "entity_id": aid,
+            "kind": row_kind,
+            "entity_type": entity_type or row_kind,
+            "summary": a.get("summary") or a.get("description") or "",
+            "category": category,
+            "tags": tags[:10],
+            "url": endpoint,
+            "status": a.get("status") or "",
+            "avatar_url": avatars.get(aid),
+        })
+
+    # Supplement with the deployer's running entities. The registry's
+    # search index misses agents/services that are live on the deployer
+    # but never registered (entityId null), so a registry-only result
+    # under-reports the network. Personas don't live on the deployer, so
+    # skip the merge for persona-only asks.
+    if kind != "persona":
+        results = _merge_deployer_entities(results, kind, query_used or raw_query)
+
+    # `_call_registry_search` widens the pool past top_k for filtered
+    # queries, so `results` may exceed what the caller asked for. Report
+    # the real catalog size (total_available) so the model can say "I
+    # found 20 agents" truthfully, then return at most top_k rows.
+    total_available = len(results)
+    by_kind: dict[str, int] = {}
+    for r in results:
+        by_kind[r["kind"]] = by_kind.get(r["kind"], 0) + 1
+
+    # If the registry errored AND the deployer gave us nothing, surface
+    # the error. Otherwise we have live results — report success.
+    if registry_error and not results:
+        return {
+            "status": "error",
+            "error": registry_error,
+            "results": [],
+            "count": 0,
+            "query_used": query_used,
+        }
+
+    has_deployer = any(r.get("source") == "deployer" for r in results)
+    source = "registry+deployer" if has_deployer else "registry"
+
+    return {
+        "status": "success",
+        "count": min(len(results), top_k),
+        "total_available": total_available,
+        "by_kind": by_kind,
+        "results": results[:top_k],
+        "source": source,
+        "query_used": query_used,
+    }
+
+
 def search_zynd_personas(query: str, top_k: int = 5) -> dict:
     """
     Search the Zynd AI Network for other people's agent personas.
@@ -333,12 +727,16 @@ def search_zynd_personas(query: str, top_k: int = 5) -> dict:
 
         print(f"[zynd_network] Searching registry with query: '{query}' (original: '{original_query}')")
 
+        # Widen the pool: the registry caps the candidate pool before
+        # applying the persona tag filter, so max_results=top_k starves
+        # broad asks (e.g. top_k=5 → 3 personas when 17 exist). Request
+        # the floor, then trim to top_k after assembly.
         resp = requests.post(
             f"{config.ZYND_REGISTRY_URL}/v1/search",
             json={
                 "query": query,
                 "tags": ["persona"],
-                "max_results": top_k,
+                "max_results": max(int(top_k), _REGISTRY_POOL_FLOOR),
                 "enrich": True,  # include the full AgentCard inline so we get endpoints.invoke
                 "status": "any",  # don't filter out agents whose heartbeat is mid-cycle
             },
@@ -350,7 +748,8 @@ def search_zynd_personas(query: str, top_k: int = 5) -> dict:
 
         avatars = _get_avatar_map()
 
-        personas = []
+        # Pass 1: collect every persona row (cheap — no webhook resolution).
+        matched: list[dict] = []
         for a in results:
             caps = a.get("capability_summary") or a.get("capabilities") or {}
             if isinstance(caps, str):
@@ -366,7 +765,15 @@ def search_zynd_personas(query: str, top_k: int = 5) -> dict:
 
             if not is_persona:
                 continue
+            matched.append(a)
 
+        total_available = len(matched)
+
+        # Pass 2: resolve webhooks ONLY for the top_k rows we actually
+        # return — webhook resolution does a card fetch + DB lookup per
+        # row (N+1), so we must not run it across the full widened pool.
+        personas = []
+        for a in matched[:top_k]:
             # Registry switched from `agent_id` to `entity_id` in the new schema;
             # accept either so this works across versions.
             aid = a.get("entity_id") or a.get("agent_id") or ""
@@ -393,7 +800,13 @@ def search_zynd_personas(query: str, top_k: int = 5) -> dict:
             })
 
         if personas:
-            return {"status": "success", "count": len(personas), "results": personas, "source": "registry"}
+            return {
+                "status": "success",
+                "count": len(personas),
+                "total_available": total_available,
+                "results": personas,
+                "source": "registry",
+            }
 
         # Registry returned zero hits. The orchestrator hits this any time it
         # picks a query like "people" or "*" that the registry's FTS can't
@@ -662,70 +1075,74 @@ def check_connection_status(user_id: str, target_agent_id: str) -> dict:
 # ── Messaging Tool ───────────────────────────────────────────────────
 
 
-def _send_via_a2a_v3(
-    sender_agent_id: str,
-    sender_user_id: str,
-    target_agent_id: str,
-    target_webhook_url: str,
-    context_id: str,
-    message_text: str,
-) -> dict:
-    """Run an A2A v3 JSON-RPC message/send call on a worker thread.
+def _persona_signer(user_id: str):
+    """Return ``(keypair, agent_id, developer_proof)`` for the user's active
+    persona, or ``None`` when there's no active persona.
 
-    `mcp_server._call` invokes tool functions synchronously, so we host
-    the async A2A client inside an asyncio.run() per call. Each call gets
-    a fresh event loop scoped to this thread; httpx.AsyncClient is
-    constructed and torn down inside .send(). The overhead is microseconds.
+    Reconstructs the keypair via the same HD-derivation path
+    persona_manager.startup uses on rehydration (microseconds — nothing is
+    persisted). Used by every signed outbound call so the x-zynd-auth block
+    is built from one place.
     """
-    from agent.a2a.client import (
-        A2AClient,
-        A2AError,
-        extract_reply_text,
-        resolve_a2a_url,
-        resolve_card_url,
-    )
-    from agent.persona_manager import (
-        _derive_agent_keypair,
-        _load_developer_seed,
-    )
-    from agent.zynd_identity import keypair_from_seed, generate_developer_id, build_derivation_proof
+    from agent.persona_manager import _derive_agent_keypair, _load_developer_seed
+    from agent.zynd_identity import keypair_from_seed, build_derivation_proof
 
     sb = _get_supabase()
-
-    # Resolve the v3 URL from whatever's stored on persona_agents.
-    # Personas registered before phase 4.1 store the legacy webhook URL;
-    # newer ones store the v3 URL directly. The resolver handles both.
-    a2a_url = resolve_a2a_url(target_webhook_url)
-    if not a2a_url:
-        return {
-            "error": (
-                "Could not resolve an A2A v3 URL from the partner's stored URL. "
-                f"webhook_url={target_webhook_url!r}"
-            )
-        }
-
-    # Reconstruct the sender's keypair via the same HD-derivation path
-    # persona_manager.startup uses on rehydration. Microseconds.
-    persona_row = (
+    row = (
         sb.table("persona_agents")
-        .select("derivation_index")
-        .eq("user_id", sender_user_id)
+        .select("agent_id,derivation_index")
+        .eq("user_id", user_id)
         .eq("active", True)
         .execute()
     )
-    if not persona_row.data:
-        return {"error": "Sender persona not found or inactive."}
-    index = persona_row.data[0]["derivation_index"]
+    if not row.data:
+        return None
+    index = row.data[0]["derivation_index"]
+    agent_id = row.data[0]["agent_id"]
 
     dev_seed = _load_developer_seed()
     private_seed, public_key_bytes = _derive_agent_keypair(dev_seed, index)
     keypair = keypair_from_seed(private_seed)
-
-    # Carry developer_proof on every send for now — bytes are cheap and
-    # the receiver may require it on first contact within a context. We
-    # can drop it on continuations once interrupted-state resume lands
-    # in phase 3.4.
+    # Carry developer_proof on every send for now — bytes are cheap and the
+    # receiver may require it on first contact within a context.
     developer_proof = build_derivation_proof(dev_seed, public_key_bytes, index)
+    return keypair, agent_id, developer_proof
+
+
+def _signed_a2a_send(
+    *,
+    sender_agent_id: str,
+    sender_user_id: str,
+    target_agent_id: str,
+    peer_a2a_url: str,
+    peer_card_url: Optional[str],
+    context_id: str,
+    text: str = "",
+    data: "Any" = None,
+    intent=None,
+    origin_kind: str = "mcp_tool",
+    origin_ref: Optional[dict] = None,
+) -> dict:
+    """Sign one A2A v3 message with the sender persona's derived keypair and
+    dispatch it to `peer_a2a_url`. Wire-only — the caller owns URL
+    resolution, DB writes, and prompt shaping.
+
+    Returns one of:
+      * ``{"error": ...}`` — pre-flight failure (no persona keypair).
+      * ``{"status": "delivery_failed", ...}`` — A2A reject / transport error.
+      * success base ``{"task", "task_state", "reply_text", "transport"}``,
+        plus ``callback_id``/``pending``/``message`` when transport was PUSH.
+
+    `mcp_server._call` runs tools synchronously, so the async client is
+    hosted in asyncio.run() per call (fresh event loop, microsecond overhead).
+    """
+    from agent.a2a.client import A2AClient, A2AError, extract_reply_text
+    from agent.a2a.transport import dispatch, Intent, Transport, infer_intent
+
+    signer = _persona_signer(sender_user_id)
+    if signer is None:
+        return {"error": "Sender persona not found or inactive."}
+    keypair, _signer_agent_id, developer_proof = signer
 
     client = A2AClient(
         keypair=keypair,
@@ -733,29 +1150,23 @@ def _send_via_a2a_v3(
         developer_proof=developer_proof,
     )
 
-    # Card sits at `{base}/.well-known/agent-card.json` — sibling of the
-    # A2A endpoint, derived from the same stored URL.
-    card_url = resolve_card_url(target_webhook_url)
-
-    from agent.a2a.transport import dispatch, Intent, Transport, infer_intent
+    if intent is None:
+        intent = infer_intent(target_agent_id)
 
     async def _go() -> tuple[dict, Transport, Optional[str]]:
         result = await dispatch(
             client,
             peer_entity_id=target_agent_id,
-            peer_a2a_url=a2a_url,
-            peer_card_url=card_url,
+            peer_a2a_url=peer_a2a_url,
+            peer_card_url=peer_card_url,
             user_id=sender_user_id,
             thread_id=context_id,
             context_id=context_id,
-            text=message_text,
-            # context_id is a thread id; the tool is invoked from the
-            # LLM tool loop, so the eventual reply should route back to
-            # the orchestrator. origin_ref carries the thread so the
-            # frontend can also pin it to a chat.
-            intent=infer_intent(target_agent_id),
-            origin_kind="mcp_tool",
-            origin_ref={"thread_id": context_id, "tool": "message_zynd_agent"},
+            text=text,
+            data=data,
+            intent=intent,
+            origin_kind=origin_kind,
+            origin_ref=origin_ref or {},
         )
         return (result.task or {}), result.transport, result.callback_id
 
@@ -807,12 +1218,54 @@ def _send_via_a2a_v3(
         base["callback_id"] = callback_id
         base["pending"] = True
         base["message"] = (
-            "The message was delivered. The other persona is processing it — "
+            "The message was delivered. The other agent is processing it — "
             "their reply will arrive asynchronously and surface in the chat "
             "when it's ready. Tell the user you've sent the message and "
             "they'll see the response come in shortly."
         )
     return base
+
+
+def _send_via_a2a_v3(
+    sender_agent_id: str,
+    sender_user_id: str,
+    target_agent_id: str,
+    target_webhook_url: str,
+    context_id: str,
+    message_text: str,
+) -> dict:
+    """Resolve a partner persona's stored URL to its v3 A2A endpoint and
+    sign+dispatch a message to it. Thin wrapper over ``_signed_a2a_send`` —
+    the persona path stores either a legacy webhook or a v3 URL, so URL
+    resolution happens here before the shared wire send."""
+    from agent.a2a.client import resolve_a2a_url, resolve_card_url
+
+    # Resolve the v3 URL from whatever's stored on persona_agents.
+    # Personas registered before phase 4.1 store the legacy webhook URL;
+    # newer ones store the v3 URL directly. The resolver handles both.
+    a2a_url = resolve_a2a_url(target_webhook_url)
+    if not a2a_url:
+        return {
+            "error": (
+                "Could not resolve an A2A v3 URL from the partner's stored URL. "
+                f"webhook_url={target_webhook_url!r}"
+            )
+        }
+    # Card sits at `{base}/.well-known/agent-card.json` — sibling of the
+    # A2A endpoint, derived from the same stored URL.
+    card_url = resolve_card_url(target_webhook_url)
+
+    return _signed_a2a_send(
+        sender_agent_id=sender_agent_id,
+        sender_user_id=sender_user_id,
+        target_agent_id=target_agent_id,
+        peer_a2a_url=a2a_url,
+        peer_card_url=card_url,
+        context_id=context_id,
+        text=message_text,
+        origin_kind="mcp_tool",
+        origin_ref={"thread_id": context_id, "tool": "message_zynd_agent"},
+    )
 
 
 def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: str, message: str) -> dict:
@@ -1011,6 +1464,163 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
     if proposal_note:
         result["message"] = proposal_note + " Then, " + result["message"]
     return result
+
+
+def call_zynd_agent(entity_id: str, text: str = "", data: dict = None, user_id: str = "") -> dict:
+    """
+    Invoke a standalone Zynd Network AGENT (not a stateless `zns:svc:` service,
+    not a human's persona) over SIGNED A2A v3. Use this for non-persona results
+    from ``search_zynd_network`` whose ``kind`` is ``agent`` or a domain
+    category (market-intelligence, recruiting, marketing, …) — anything that
+    isn't a service and isn't a persona.
+
+    Two ways this differs from ``call_zynd_service``:
+      1. It SIGNS the request with your persona's keypair, so agents running
+         ``auth_mode=strict`` accept it (a plain service call is rejected).
+      2. It dispatches ASYNCHRONOUSLY. Agents take time to run, so when the
+         agent supports push notifications the call returns immediately with
+         ``status="dispatched"`` and the agent's reply arrives LATER (it
+         surfaces in the chat when ready). Do NOT block or re-poll — tell the
+         user you've dispatched it and move on.
+
+    No connection request is needed (that's only for personas).
+
+    Returns:
+      - ``status="dispatched"`` — async; the agent is running, reply comes
+        later via the callback. ``callback_id`` identifies the pending result.
+      - ``status="success"|"bad_request"|"remote_failed"|"rejected"|"needs_input"|…``
+        — the agent answered (or failed) synchronously because it doesn't
+        support push; read ``reply_text`` / ``structured_output`` and follow
+        ``hint``.
+
+    Args:
+        entity_id: The agent's registry id (from ``search_zynd_network``).
+        text: Free-text payload for the message text part.
+        data: Structured payload for the message data part (shape per the
+              agent's card ``input_schema``).
+        user_id: Auto-injected by the orchestrator — the calling user. Needed
+                 to derive the signing keypair; a deployed persona is required.
+    """
+    eid = (entity_id or "").strip()
+    if not eid:
+        return {"status": "error", "error": "entity_id is required."}
+    if not (user_id or "").strip():
+        return {
+            "status": "error",
+            "entity_id": eid,
+            "error": "Signed agent calls require a calling user with a deployed persona.",
+            "hint": "This works for the principal's own persona, not in unauthenticated contexts.",
+        }
+
+    has_text = bool((text or "").strip())
+    has_data = isinstance(data, dict) and len(data) > 0
+    if not has_text and not has_data:
+        return {
+            "status": "error",
+            "entity_id": eid,
+            "error": "At least one of 'text' or 'data' must be provided.",
+            "hint": "Check the input_schema from get_zynd_service_card and try again.",
+        }
+
+    # Pull the real A2A endpoint from the registry card (same source services
+    # use). The search row's url is fine too, but the card is authoritative.
+    from mcp.tools.zynd_services import (
+        get_zynd_service_card,
+        classify_task_result,
+        _extract_reply_from_task,
+    )
+
+    card = get_zynd_service_card(eid)
+    if card.get("status") != "success":
+        return {
+            "status": "unreachable" if card.get("status") == "unreachable" else "error",
+            "entity_id": eid,
+            "error": f"Could not load the agent card ({card.get('status')}): {card.get('error')}",
+            "hint": card.get("hint") or "Try a different result from search_zynd_network.",
+        }
+    peer_a2a_url = card.get("url") or ""
+    if not peer_a2a_url:
+        return {
+            "status": "error",
+            "entity_id": eid,
+            "error": "Agent card has no 'url' field — agent may be misconfigured.",
+        }
+    # The card may resolve a different (canonical) entity_id than the slug
+    # we were handed — e.g. a deployer-only agent whose card carries its
+    # real zns: id. Use the resolved one for signing/dispatch.
+    eid = card.get("entity_id") or eid
+    # A card URL dispatch() can GET to read the agent's transport caps.
+    # Derive it from the actual endpoint (works for deployer-hosted agents
+    # that aren't in the registry); fall back to the registry card route.
+    from agent.a2a.client import resolve_card_url
+    card_url = resolve_card_url(peer_a2a_url) or f"{config.ZYND_REGISTRY_URL}/v1/entities/{eid}/card"
+
+    # Resolve the caller's persona identity (the signer).
+    signer = _persona_signer(user_id)
+    if signer is None:
+        return {
+            "status": "error",
+            "entity_id": eid,
+            "error": "No active persona for the calling user — cannot sign the request.",
+        }
+    sender_agent_id = signer[1]
+
+    from agent.a2a.transport import Intent
+
+    delivery = _signed_a2a_send(
+        sender_agent_id=sender_agent_id,
+        sender_user_id=user_id,
+        target_agent_id=eid,
+        peer_a2a_url=peer_a2a_url,
+        peer_card_url=card_url,
+        context_id=str(uuid.uuid4()),  # standalone agents are stateless to us
+        text=text,
+        data=data if has_data else None,
+        intent=Intent.AGENT_TO_AGENT,
+        origin_kind="mcp_tool",
+        origin_ref={"tool": "call_zynd_agent", "entity_id": eid},
+    )
+
+    # Pre-flight failure (no persona keypair) — surface verbatim.
+    if "error" in delivery and "task" not in delivery:
+        delivery.setdefault("status", "error")
+        delivery["entity_id"] = eid
+        return delivery
+    # A2A reject / transport failure — pass through with entity tag.
+    if delivery.get("status") == "delivery_failed":
+        delivery["entity_id"] = eid
+        return delivery
+
+    task = delivery.get("task") or {}
+    task_state = delivery.get("task_state") or "unknown"
+
+    if delivery.get("transport") == "push":
+        # Async path: the agent acked and will push its reply back later.
+        return {
+            "status": "dispatched",
+            "entity_id": eid,
+            "task_id": task.get("id"),
+            "task_state": task_state,
+            "callback_id": delivery.get("callback_id"),
+            "hint": (
+                "Agent is running; its reply arrives asynchronously and appears in the chat "
+                "when ready. Tell the user you've dispatched it — do NOT wait or re-poll."
+            ),
+        }
+
+    # Inline (SEND) result — agent doesn't support push, answered now.
+    # Classify it with the same vocabulary as a service reply.
+    reply_text, structured = _extract_reply_from_task(task)
+    status, hint = classify_task_result(task_state, reply_text, structured)
+    return {
+        "status": status,
+        "hint": hint,
+        "entity_id": eid,
+        "task_id": task.get("id"),
+        "task_state": task_state,
+        "reply_text": reply_text,
+        "structured_output": structured,
+    }
 
 
 def read_agent_channel(user_id: str, thread_id: str, limit: int = 20) -> dict:

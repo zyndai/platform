@@ -1,20 +1,7 @@
-"""
-Agent Orchestrator — the brain of the system.
-
-Takes a user message, figures out what tool(s) to call via the MCP
-server, executes them, and returns a natural-language response.
-
-Supports OpenAI, Google Gemini, and Custom OpenAI-compatible endpoints.
-The provider is chosen via the LLM_PROVIDER env var:
-  "openai"  — official OpenAI API
-  "gemini"  — Google Gemini via google-genai SDK
-  "custom"  — any OpenAI-compatible endpoint (base_url + api_key + model)
-
-All tool execution is routed through the ContextAware `_call` method.
-"""
 
 import asyncio
 import json
+import re
 import uuid
 
 import config
@@ -22,12 +9,6 @@ from mcp.server import mcp_server
 from services.token_store import list_connected_providers
 
 # ── Conversation memory ──────────────────────────────────────────────
-# In-memory cache for the LLM turn loop (same conversation can fire
-# many tool-call iterations within a single send), backed by a row
-# per message in `chat_messages` so /api/chat/history can rehydrate
-# on page reload. The cache is best-effort — losing it on restart
-# just means the first message after a redeploy starts a slightly
-# fresh prompt, which is fine.
 _conversations: dict[str, list[dict]] = {}
 
 
@@ -81,18 +62,21 @@ def _persist_chat_message(
 # they reveal nothing private about the principal beyond what's already
 # on the public registry card.
 EXTERNAL_DEFAULT_ALLOWED: set[str] = {
+    "search_zynd_network",
     "search_zynd_personas",
     "get_persona_profile",
     "list_my_connections",
     "check_connection_status",
     "get_current_time",
-    # Zynd Network service-discovery: unauthenticated, read-only/stateless
-    # from our side. Safe to expose in external + group contexts so the
-    # agent can reach for capabilities (translation, conversion, etc.)
-    # when the user's ask doesn't fit a built-in tool.
+    # Zynd Network service DISCOVERY: read-only/stateless from our side.
+    # Safe to expose in external + group contexts so the agent can see what
+    # capabilities exist. The INVOCATION tools (call_zynd_service,
+    # call_zynd_agent) are deliberately NOT here: both sign as the principal,
+    # so exposing them externally would let a foreign agent make our persona
+    # fire signed calls under our identity (confused-deputy). Invocation is
+    # internal-only.
     "search_zynd_services",
     "get_zynd_service_card",
-    "call_zynd_service",
 }
 
 # Permission flag → set of additional tools the flag unlocks in external mode.
@@ -259,7 +243,7 @@ def _ping_telegram_approval(user_id: str, summary: str) -> None:
     msg = (
         f"🔔 *Approval needed*\n{summary}\n\n"
         "Open the dashboard to accept or decline: "
-        "https://persona.zynd.ink/dashboard/approvals"
+        "https://persona.zynd.ai/dashboard/approvals"
     )
     try:
         from services.telegram_notify import notify_user
@@ -357,6 +341,113 @@ def _filter_tools_by_allowlist(tools: list[dict], allowed: set[str]) -> list[dic
     return [t for t in tools if t.get("name") in allowed]
 
 
+# Some OpenAI-compatible models (notably DeepSeek-v3 over OpenRouter)
+# intermittently emit tool calls as plain text in their native template
+# instead of structured `tool_calls`. When that happens the OpenAI SDK
+# reports no tool_calls and the raw template leaks to the user as the
+# "answer" — so nothing executes. This recovers those calls.
+#
+# DeepSeek's template (both the unicode ｜▁ glyphs and ASCII fallbacks
+# seen in the wild):
+#   <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>NAME
+#   ```json
+#   {…args…}
+#   ```<｜tool▁call▁end｜>…<｜tool▁calls▁end｜>
+_TEXT_TOOLCALL_SENTINELS = ("tool▁calls▁begin", "tool_calls_begin")
+# Locates each per-call header up to (and including) the tool name. The
+# JSON args that follow are extracted with a balanced-brace scan so
+# nested objects (e.g. data={"metadata": {...}}) aren't truncated.
+_TEXT_TOOLCALL_HEAD_RE = re.compile(
+    r"tool[▁_]call[▁_]begin[｜|<>]*"         # per-call opener (glyphs vary)
+    r"\s*function\s*"
+    r"[｜|<>]*tool[▁_]sep[｜|<>]*"           # name separator, bracketed
+    r"\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)",  # tool name
+    re.DOTALL,
+)
+
+
+def _scan_balanced_json(text: str, start: int) -> tuple[dict | None, int]:
+    """From the first '{' at/after `start`, return (parsed_object, end_index)
+    for the smallest balanced-brace span that parses as a JSON object.
+    Returns (None, start) if none found. Brace counting ignores braces
+    inside strings."""
+    open_idx = text.find("{", start)
+    if open_idx == -1:
+        return None, start
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(open_idx, len(text)):
+        ch = text[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                blob = text[open_idx : i + 1]
+                try:
+                    obj = json.loads(blob)
+                except Exception:
+                    return None, i + 1
+                return (obj if isinstance(obj, dict) else None), i + 1
+    return None, len(text)
+
+
+def _parse_text_tool_calls(raw_text: str) -> list[dict] | None:
+    """Recover tool calls a model emitted as plain text instead of as
+    structured `tool_calls`. Returns the same shape the providers use
+    (``[{"id", "name", "arguments": dict}]``) or ``None`` if the text
+    carries no recognizable tool-call markers."""
+    if not raw_text or not any(s in raw_text for s in _TEXT_TOOLCALL_SENTINELS):
+        return None
+    calls: list[dict] = []
+    for m in _TEXT_TOOLCALL_HEAD_RE.finditer(raw_text):
+        name = m.group("name")
+        args, _ = _scan_balanced_json(raw_text, m.end())
+        if args is None:
+            continue
+        calls.append({"id": f"text_{uuid.uuid4().hex[:24]}", "name": name, "arguments": args})
+    return calls or None
+
+
+def _sanitize_json_schema(schema):
+    """Make a JSON Schema safe for strict function-calling backends (Gemini
+    via OpenRouter rejects the whole request otherwise).
+
+    - Every ``type: "array"`` MUST declare ``items`` — default to a permissive
+      string item when missing.
+    - Strip ``$defs`` / ``definitions`` / ``$ref`` (Gemini can't resolve
+      cross-references in tool schemas; the ``CompetitorInput`` error).
+    Recurses through nested ``properties`` and ``items``."""
+    if not isinstance(schema, dict):
+        return schema
+    out: dict = {}
+    for k, v in schema.items():
+        if k in ("$defs", "definitions", "$ref", "$schema"):
+            continue
+        if k == "properties" and isinstance(v, dict):
+            out[k] = {pk: _sanitize_json_schema(pv) for pk, pv in v.items()}
+        elif k == "items":
+            out[k] = _sanitize_json_schema(v)
+        elif isinstance(v, dict):
+            out[k] = _sanitize_json_schema(v)
+        else:
+            out[k] = v
+    if out.get("type") == "array" and "items" not in out:
+        out["items"] = {"type": "string"}
+    return out
+
+
 # =====================================================================
 # LLM Provider Abstraction
 # =====================================================================
@@ -434,9 +525,16 @@ class ThinkTagParser:
 
 
 def strip_think_tags(text: str) -> str:
-    """Remove all <think>...</think> blocks from a string (for non-streaming paths)."""
+    """Remove all <think>...</think> blocks from a string (for non-streaming paths).
+
+    Also strips a dangling, unclosed <think> (model emitted reasoning but
+    never closed the tag before the answer / before the turn was cut off) —
+    its content is internal and must never reach the user."""
     import re
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # Drop any remaining unclosed <think> through end-of-string.
+    cleaned = re.sub(r"<think>.*\Z", "", cleaned, flags=re.DOTALL)
+    return cleaned.strip()
 
 
 class LLMProvider:
@@ -530,7 +628,13 @@ class OpenAIProvider(LLMProvider):
         # reasoning on subsequent turns. The user-facing `reply` is stripped
         # by the orchestrator before returning to the client.
         if not choice.message.tool_calls:
-            return choice.message.content or "", None
+            content = choice.message.content or ""
+            # Recover tool calls a quirky model emitted as plain text rather
+            # than as structured tool_calls (see _parse_text_tool_calls).
+            recovered = _parse_text_tool_calls(content)
+            if recovered:
+                return "", recovered
+            return content, None
 
         tool_calls = [
             {
@@ -685,11 +789,32 @@ class OpenAIProvider(LLMProvider):
                 "arguments": args,
             }
 
+        raw_text = "".join(raw_text_parts)
+
+        # No structured tool calls? A quirky model may have streamed the
+        # call as plain text instead (see _parse_text_tool_calls). Recover
+        # it and emit the start/end events the frontend expects. The leaked
+        # template text already streamed as `text`, but turn_tool_calls
+        # being non-empty makes the orchestrator fire `text_to_thinking`,
+        # moving it out of the answer bubble.
+        if not final_tool_calls:
+            recovered = _parse_text_tool_calls(raw_text)
+            if recovered:
+                for tc in recovered:
+                    yield {"type": "tool_call_start", "id": tc["id"], "name": tc["name"]}
+                    yield {
+                        "type": "tool_call_end",
+                        "id": tc["id"],
+                        "name": tc["name"],
+                        "arguments": tc["arguments"],
+                    }
+                final_tool_calls = recovered
+
         yield {
             "type": "turn_done",
             # RAW text (with <think> tags) — orchestrator stores this in
             # history and strips for the user-facing reply.
-            "text": "".join(raw_text_parts),
+            "text": raw_text,
             "tool_calls": final_tool_calls if final_tool_calls else None,
         }
 
@@ -702,11 +827,11 @@ class OpenAIProvider(LLMProvider):
                 "function": {
                     "name": t["name"],
                     "description": t.get("description", ""),
-                    "parameters": {
+                    "parameters": _sanitize_json_schema({
                         "type": "object",
                         "properties": t["properties"],
                         "required": t.get("required", []),
-                    },
+                    }),
                 },
             }
             for t in tools
@@ -1041,7 +1166,7 @@ def _get_provider() -> LLMProvider:
             api_key=config.OPENROUTER_API_KEY,
             model=config.OPENROUTER_MODEL,
             default_headers={
-                "HTTP-Referer": config.FRONTEND_URL or "https://persona.zynd.ink",
+                "HTTP-Referer": config.FRONTEND_URL or "https://persona.zynd.ai",
                 "X-Title": "Zynd",
             },
         )
@@ -1224,8 +1349,14 @@ def _build_system_prompt(
     external_permissions: dict | None = None,
     time_zone: str | None = None,
     is_group_context: bool = False,
+    surface: str = "web",
 ) -> str:
-    """Build a system prompt that tells the agent what it can do."""
+    """Build a system prompt that tells the agent what it can do.
+
+    `surface` is the channel the reply will render on: "web" (the app, which
+    renders service/agent results as rich cards) or anything else (e.g.
+    "telegram", plain text — include the answer inline since there's no card).
+    """
     tools_prompt = mcp_server.get_tools_prompt()
     providers_str = ", ".join(connected_providers) if connected_providers else "none"
 
@@ -1539,6 +1670,25 @@ If the foreign agent's most recent message indicates that THEY are bringing the 
 """
 
     # ── Internal mode: chatting directly with the principal ──────────
+    # How to surface a service/agent call result depends on the channel: the
+    # web app renders the full structured result as a card, so the model should
+    # only lead in; plain-text channels (Telegram) have no card, so it must
+    # include the answer inline.
+    if surface == "web":
+        render_hint = (
+            "- The full structured result is ALSO rendered for your principal as a "
+            "formatted card directly below your message in the app. So when the reply "
+            "is large — a list, a table, a multi-field record, or more than ~3 sentences "
+            "— do NOT re-type it. Give ONE short framing sentence (e.g. \"Here are the 5 "
+            "matching vendors:\" or \"Done — the converted figures are below.\") and let "
+            "the card carry the detail. Only inline the value yourself when it's small and "
+            "atomic (a single translated sentence, one number, a yes/no)."
+        )
+    else:
+        render_hint = (
+            "- This channel has no rich cards, so put the actual answer in your reply. "
+            "Keep it readable — short lines or bullet points for lists — and never paste raw JSON."
+        )
     return f"""{identity_preamble}
 
 ## Current Conversation
@@ -1588,17 +1738,76 @@ When your principal asks about themselves — what they're working on, what's on
 3. Combine both into a single answer. Lead with what the Brief says; use the calendar as supporting time-bound context. Do NOT call `list_calendar_events` for questions that are purely about substance ("what am I working on?") — the Brief already answers that.
 
 ## Networking Strategy
-When your principal asks about a person, company, or topic:
-1. FIRST search the Zynd Network with `search_zynd_personas` — this is your primary discovery tool.
-2. If you find relevant personas, present them with name, description, and agent_id.
-3. Offer to view a full profile (`get_persona_profile`) or initiate a connection (`request_connection`).
-4. THEN supplement with `internet_search` only if your principal wants broader information beyond the network.
-5. Always prioritize network results — these are real agents your principal can actually interact with.
 
-When your principal asks to connect, message, or interact with someone:
+When your principal asks to **find, use, or call** an agent / service / persona on the network, or asks a domain question that a network agent is built to answer ("competitors of X", "translate this", "find influencers for Y"), follow this algorithm exactly. Do NOT stop after the search and ask "would you like me to call it?" — that's a wasted turn. Search, then act.
+
+### Step 0 — Decide whether this needs the network AT ALL (external-intent gate)
+Do NOT search the network for ordinary conversation. The network is for asks that genuinely need **someone or something else** — another person's persona, or an agent/service with a capability you don't have built in. Only proceed past Step 0 when the message implies external intent:
+- It names or asks to find/reach a **person / persona** ("ask Alice", "who on the network does X", "find someone who…").
+- It requests a **task you have no built-in tool for** (translation, niche lookup, competitor monitoring, influencer discovery, format conversion…).
+- It explicitly asks to **browse the network** ("what agents are on the network", "show me everything").
+
+If the message is small talk, an opinion, a question you can answer from general knowledge, or something a built-in tool already covers — **answer directly. Do NOT search the network.**
+
+### Step 1 — Persona FIRST, then agents/services (priority order)
+When external intent IS present, prefer connecting your principal to **a human's persona** over a standalone agent/service whenever a persona is a comparable match — your principal is part of a human network first. Concretely:
+
+1. **Run one broad search** with `search_zynd_network(query=<keywords>, top_k=8, kind="any")`. Every result row carries a `kind` (`persona` | `agent` | `service`) and a relevance ordering (best matches first).
+2. **Pick the target by best match, persona as the tie-breaker.** Scan the top results: if a **persona** matches the ask about as well as any agent/service, choose the persona. Only choose an `agent`/`service` when it is a clearly better fit for the specific capability (e.g. "translate this" → a translation *service* beats a random persona; "who can intro me to a designer" → a *persona* wins). On a genuine tie, persona wins.
+3. Then branch on the chosen row's `kind` (Step 2).
+
+#### Search with KEYWORDS, not the user's full sentence
+The registry's search is keyword-based, not semantic. Pass **1–3 content keywords** extracted from the user's ask, NOT their full sentence.
+
+Examples:
+- User says *"find competitors of Zynd AI"* → search `"competitor"` (or `"competitor monitoring"`), NOT `"competitors of Zynd AI"`.
+- User says *"find me an agent that can do influencer discovery"* → search `"influencer discovery"`, NOT the whole sentence.
+- User says *"I want to translate this text to French"* → search `"translation"`.
+
+Each result has a `kind` field that determines what to do next.
+
+**Browsing the whole network.** When the user asks broadly — *"what agents are on the network?"*, *"show me everything"*, *"list all agents"* — they want a CATALOG, not a narrow match. Call `search_zynd_network(query="", top_k=25, kind=...)` (empty query returns a broad sample). Do NOT pass words like "agents"/"all"/"everything" as the query — they aren't keywords and return nothing.
+
+**State the REAL total.** The search result includes `total_available` (the full count on the network) and `by_kind` (how many of each kind). `results`/`count` are only the page you were shown. When you tell the user how many there are, use `total_available`, not `count` — e.g. result `{{count: 8, total_available: 25, by_kind: {{persona: 18, agent: 7}}}}` → say *"There are 25 on the network (18 personas, 7 agents) — here are the top matches"*, NOT "I found 8". Never under-report the network size.
+
+The network has TWO distinct entity types, exposed via the `kind` parameter and the `kind` field on each result:
+- `kind="agent"` — standalone autonomous agents.
+- `kind="service"` — single-capability services (converters, lookups, generators).
+- `kind="persona"` — a human's AI persona (needs a connection before messaging).
+- `kind="any"` (default) — all three, each result tagged with its real type.
+
+Honor the user's wording when choosing the filter:
+- "what **agents** are on the network" → `kind="agent"` (they asked for agents specifically, not services).
+- "what **services** are there" → `kind="service"`.
+- "who / which **people** / personas" → `kind="persona"`.
+- "what's on the network" / "show me everything" → `kind="any"`.
+
+After the search, the UI shows the user clickable result cards (each labeled agent/service/persona) with Call buttons, so keep your text reply short ("Here are the agents on the network — click Call on any to run it") rather than re-listing every result in prose.
+
+### Step 2 — Branch on `kind`
+- **`kind == "persona"`** (a human's AI persona): do NOT call it directly. Offer to view the profile (`get_persona_profile`) or send a connection request (`request_connection`). Personas require the other side to accept a connection before traffic flows.
+- **`kind == "service"`** (a `zns:svc:…` stateless tool — translation, conversion, currency, summarization): **call it now, in this same turn**, no permission ask. Synchronous:
+  1. `get_zynd_service_card(entity_id)` to read `input_schema`
+  2. `call_zynd_service(entity_id, text=..., data=...)` shaped to the schema — pass the user's actual question/data
+  3. Present the reply (prefer `structured_output`) as your answer
+- **Any other `kind`** (`agent`, `marketing`, `market-intelligence`, `recruiting`, anything else): it's a standalone agent — **call it now** via `call_zynd_agent`, which signs the request and dispatches asynchronously:
+  1. `get_zynd_service_card(entity_id)` to read `input_schema` (optional but recommended to shape `data`)
+  2. `call_zynd_agent(entity_id, text=..., data=...)` with the user's actual question/data
+  3. If it returns `status="dispatched"`, the agent is long-running: tell the user you've dispatched it and its answer will appear in the chat when ready — do NOT wait or re-poll. If it returns `status="success"` (the agent answered inline), present the reply as your answer.
+
+### Step 3 — Present
+Render the agent's actual output, not a placeholder. Lead with what was found, not "I searched the network and got…".
+
+### Hard rules
+- **Never invent links** to a "details page" or "view details URL." The search result's `url` field is the agent's A2A endpoint, NOT a human-viewable page — do not include it in chat as a clickable link. If the user wants the raw endpoint, mention it as plain text (`zns:abc…`).
+- **Never stop at "found, want me to call it?"** for non-persona kinds. The user already asked you to do the thing. Confirmation turns are only for actions that commit on the user's behalf (sending money, posting to social, etc.), not for read-only agent calls.
+- Use `search_zynd_personas` (persona-only) **only** when the user explicitly asked for a human; otherwise prefer `search_zynd_network`.
+- **On zero hits: RETRY before falling back.** Try a shorter / different keyword from the user's ask (e.g. zero hits on `"competitor monitoring"` → retry with `"competitor"`; zero on `"recruiting agent"` → retry with `"recruit"` or `"resume"`). Only after 2 failed retries should you fall back to `internet_search`, and when you do, tell the user explicitly that no on-network agent was found.
+
+When your principal asks to connect, message, or interact with a specific persona by name:
 1. First check if they're already connected (`check_connection_status` or `list_my_connections`).
 2. If not connected, search and offer to send a connection request.
-3. If connected, send the message via the other agent's webhook.
+3. If connected, send the message via `message_zynd_agent`.
 
 ## Capability Extension via Zynd Services
 You have three tools — `search_zynd_services`, `get_zynd_service_card`, `call_zynd_service` —
@@ -1650,16 +1859,27 @@ summarization, niche lookups. Personas on the network publish these as *services
 - You can pass BOTH `text` and `data` — they go in separate parts of the A2A
   message and the service can read whichever it needs.
 
-**Handling failures:**
-- `status: "not_found"` or `"unreachable"` → pick the NEXT result from your
-  search (don't retry the same one — its deployment is broken). If you've burned
-  through every search result, tell your principal the capability isn't available
-  on the network right now.
-- `task_state: "completed"` but `reply_text` is empty → the service ran but didn't
-  produce output. Often means the payload shape was wrong; re-read `input_schema`
-  and try again with a different `data` shape.
-- A timeout (90s) → tell your principal the service didn't respond and offer to
-  retry or to try a different one.
+**Handling failures (the `status` field tells you what to do — read its `hint`):**
+- `status: "not_found"` / `"unreachable"` → pick the NEXT search result (don't retry
+  the same one — its deployment is broken). If you've burned through every result,
+  tell your principal the capability isn't available on the network right now.
+- `status: "empty_result"` (completed, empty reply) → payload shape was likely wrong;
+  re-read `input_schema` and retry with a different `data` shape.
+- `status: "bad_request"` → the agent rejected your payload shape. Fix `data` to match
+  `input_schema` (the validation message is in `reply_text`) and retry ONCE.
+- `status: "remote_failed"` → the agent's own handler crashed. Tell the principal it
+  failed on their side; offer to retry or pick another result.
+- `status: "rejected"` → the agent can't handle this request. Pick another result; do
+  NOT retry the same id.
+- `status: "needs_input"` → the agent paused and asked a question (in `reply_text`).
+  Bring it to the principal verbatim.
+- `status: "auth_required"` (from `call_zynd_service`) → this entity is actually a
+  signed agent, not a service. Re-call it with `call_zynd_agent` instead.
+- `status: "working"` / a 90s timeout → it didn't finish synchronously. Tell your
+  principal it's still processing and offer to retry.
+- `status: "dispatched"` (from `call_zynd_agent`) → NOT a failure. The agent is
+  long-running; its reply arrives asynchronously in the chat. Tell the principal
+  you've dispatched it and move on — do NOT wait or re-poll.
 
 **What to tell your principal:**
 - Lead with the answer (the translated text, the converted file's text, the
@@ -1668,6 +1888,8 @@ summarization, niche lookups. Personas on the network publish these as *services
   but don't make it the headline.
 - If `structured_output` is non-null, use ITS fields for the answer (it's parsed
   JSON). Use `reply_text` only as a fallback when `structured_output` is null.
+- Never paste raw JSON or a re-typed `data:`/`{{...}}` blob into your reply.
+{render_hint}
 
 ## Connected Accounts
 Your principal currently has these accounts connected: {providers_str}
@@ -1697,7 +1919,7 @@ When your principal asks you to schedule a meeting with someone:
 4. When scheduling calendar events, always confirm the date/time with your principal before creating.
 5. For tweets, respect the 280 character limit.
 6. NEVER call the same tool more than once in a single turn unless your principal explicitly asks for multiple actions.
-7. After a tool executes, you MUST summarize the result in detail. If the tool returns a list, list out the names/details so your principal can see them.
+7. After a tool executes, surface the result for your principal. For built-in tools that return lists (emails, connections), list the names/details. For `call_zynd_service` / `call_zynd_agent` results, follow the "What to tell your principal" guidance above — a one-line lead-in is enough when a card is shown; otherwise include the details.
 8. If you have any doubt about what your principal wants, ask for clarification.
 9. Never claim to be your principal. You are their AI agent, not them.
 10. If a tool returns an error (the result contains an "error" field, a timeout, permission_denied, or any failure), DO NOT silently claim success. Tell your principal exactly what failed, what you tried, and offer a next step (retry, different approach, ask for clarification). Never end a turn with a generic "I completed the requested actions" when a step actually failed.
@@ -1717,6 +1939,7 @@ async def handle_user_message(
     external_permissions: dict | None = None,
     time_zone: str | None = None,
     is_group_context: bool = False,
+    surface: str = "web",
 ) -> dict:
     """
     Process a user chat message end-to-end:
@@ -1751,6 +1974,7 @@ async def handle_user_message(
             external_permissions=external_permissions,
             time_zone=time_zone,
             is_group_context=is_group_context,
+            surface=surface,
         ),
     }
     print("System Prompt: ", system_msg)
@@ -2047,6 +2271,7 @@ async def handle_user_message_stream(
     sender_agent_id: str | None = None,
     external_permissions: dict | None = None,
     time_zone: str | None = None,
+    surface: str = "web",
 ):
     """
     Streaming version of handle_user_message. Yields event dicts as the
@@ -2076,6 +2301,7 @@ async def handle_user_message_stream(
             sender_agent_id,
             external_permissions=external_permissions,
             time_zone=time_zone,
+            surface=surface,
         ),
     }
     user_msg = {"role": "user", "content": message}

@@ -409,7 +409,7 @@ def _ping_inbound_dm(
         snippet = (inbound_text or "").strip()[:300]
         msg = (
             f"💬 *{partner_name}* says:\n{snippet}\n\n"
-            "Reply in the dashboard: https://persona.zynd.ink/dashboard/messages"
+            "Reply in the dashboard: https://persona.zynd.ai/dashboard/messages"
         )
         from services.telegram_notify import notify_user
         try:

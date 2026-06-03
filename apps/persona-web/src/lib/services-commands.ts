@@ -1,12 +1,13 @@
 /**
- * Slash-command parser + API client for Zynd service-discovery commands.
+ * Slash-command parser + API client for Zynd network-discovery commands.
  *
  * Supported commands:
- *   /services <query>         → search the registry
- *   /card <entity_id>         → fetch a service's agent-card
+ *   /agents <query>           → search the WHOLE network (personas + services + agents)
+ *   /services <query>         → narrow search to services only
+ *   /card <entity_id>         → fetch any entity's agent-card
  *   /help                     → show available commands
  *
- * Commands are intercepted client-side and call /api/services/* directly,
+ * Commands are intercepted client-side and call /api/{agents,services}/* directly,
  * bypassing the LLM. The orchestrator can still reach for the same tools
  * in natural-language chat — slash commands are a power-user shortcut.
  */
@@ -14,12 +15,13 @@
 import { apiPost, apiGet } from "@/lib/api";
 
 export type SlashCommand =
+  | { kind: "agents"; query: string }
   | { kind: "services"; query: string }
   | { kind: "card"; entityId: string }
   | { kind: "help" }
   | { kind: "invalid"; raw: string; hint: string };
 
-const VALID_NAMES = ["services", "card", "help"] as const;
+const VALID_NAMES = ["agents", "services", "card", "help"] as const;
 
 export function parseSlashCommand(input: string): SlashCommand | null {
   const trimmed = input.trim();
@@ -28,6 +30,16 @@ export function parseSlashCommand(input: string): SlashCommand | null {
   const name = (space === -1 ? trimmed.slice(1) : trimmed.slice(1, space)).toLowerCase();
   const arg = space === -1 ? "" : trimmed.slice(space + 1).trim();
 
+  if (name === "agents") {
+    if (!arg) {
+      return {
+        kind: "invalid",
+        raw: trimmed,
+        hint: "Usage: /agents <query>  — e.g. `/agents competitor monitoring`",
+      };
+    }
+    return { kind: "agents", query: arg };
+  }
   if (name === "services" || name === "search") {
     if (!arg) {
       return {
@@ -55,7 +67,7 @@ export function parseSlashCommand(input: string): SlashCommand | null {
     return {
       kind: "invalid",
       raw: trimmed,
-      hint: `Unknown command \`/${name}\`. Try /services, /card, or /help.`,
+      hint: `Unknown command \`/${name}\`. Try /agents, /services, /card, or /help.`,
     };
   }
   return null;
@@ -69,6 +81,33 @@ export interface ServiceSearchResult {
   tags?: string[];
   status?: string;
   score?: number;
+}
+
+export interface AgentSearchResult {
+  entity_id: string;
+  name: string;
+  kind: string; // "persona" | "agent" | "service" — the registry entity_type
+  /** Registry's authoritative entity_type ("agent" | "service" | "persona"). */
+  entity_type?: string;
+  summary: string;
+  category: string; // topic label e.g. "marketing", "general" — NOT the type
+  tags?: string[];
+  url?: string;
+  status?: string;
+  avatar_url?: string | null;
+}
+
+export interface AgentSearchPayload {
+  status: "success" | "error";
+  /** Rows in this page (results.length). */
+  count: number;
+  /** Full number of matches on the network, before the page limit. */
+  total_available?: number;
+  /** Breakdown of total_available by kind, e.g. { persona: 18, agent: 2 }. */
+  by_kind?: Record<string, number>;
+  results: AgentSearchResult[];
+  source?: string;
+  error?: string;
 }
 
 export interface ServiceSearchPayload {
@@ -105,19 +144,67 @@ export async function runServiceSearch(query: string): Promise<ServiceSearchPayl
   });
 }
 
+export async function runAgentSearch(query: string): Promise<AgentSearchPayload> {
+  return apiPost<AgentSearchPayload>("/api/agents/search", {
+    query,
+    top_k: 8,
+    kind: "any",
+  });
+}
+
 export async function runServiceCard(entityId: string): Promise<ServiceCardPayload> {
   return apiGet<ServiceCardPayload>(
     `/api/services/card/${encodeURIComponent(entityId)}`,
   );
 }
 
+export interface ServiceCallResult {
+  // The backend (classify_task_result + dispatch paths) emits more states than
+  // the original three — keep them in the union so the gen-UI renderer can
+  // switch on them without casts.
+  status:
+    | "success"
+    | "partial"
+    | "error"
+    | "auth_required"
+    | "needs_input"
+    | "working"
+    | "dispatched"
+    | "empty_result"
+    | "bad_request"
+    | "remote_failed"
+    | "rejected"
+    | "not_found"
+    | "unreachable";
+  entity_id: string;
+  task_id?: string;
+  task_state?: string;
+  reply_text?: string | null;
+  structured_output?: unknown; // JSON-parsed reply; prefer over reply_text
+  error?: string;
+  error_message?: string;
+  error_code?: string | number;
+  error_data?: unknown;
+}
+
+export async function runServiceCall(
+  entityId: string,
+  args: { text?: string; data?: Record<string, unknown> },
+): Promise<ServiceCallResult> {
+  return apiPost<ServiceCallResult>(
+    `/api/services/call/${encodeURIComponent(entityId)}`,
+    { text: args.text, data: args.data },
+  );
+}
+
 export const HELP_TEXT = `**Slash commands**
 
-- \`/services <query>\` — search the Zynd registry for services that fulfill the capability (e.g. \`/services translate text\`).
-- \`/card <entity_id>\` — fetch a service's full agent-card (input schema, endpoint URL, status).
+- \`/agents <query>\` — search the entire Zynd Network: personas, services, and standalone agents (e.g. \`/agents influencer discovery\`). Each result has a **Call** button (fill in the agent's inputs and run it) and a **Let my persona handle it** button.
+- \`/services <query>\` — narrow search to capability-style services only (e.g. \`/services translate text\`).
+- \`/card <entity_id>\` — fetch any entity's full agent-card (input schema, endpoint URL, status).
 - \`/help\` — show this help.
 
-For natural-language requests like *"translate this to French"* your agent will pick a service automatically — slash commands are a faster, deterministic path.`;
+For natural-language requests like *"find a competitor research agent and run it"* your persona will search, read the card, and call it automatically — slash commands are a faster, deterministic path.`;
 
 /**
  * Definitions used to power the slash-command autocomplete popover in chat
@@ -139,6 +226,13 @@ export interface SlashCommandDef {
 }
 
 export const SLASH_COMMANDS: SlashCommandDef[] = [
+  {
+    name: "agents",
+    args: "<query>",
+    description: "Find any agent, service, or persona on the network — then call it.",
+    example: "/agents competitor monitoring",
+    insertText: "/agents ",
+  },
   {
     name: "services",
     args: "<query>",

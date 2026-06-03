@@ -40,14 +40,29 @@ export interface ChatMessage {
 }
 
 export interface ServicesPanelPayload {
-  kind: "search" | "card" | "help" | "error";
+  kind: "search" | "card" | "help" | "error" | "agents" | "call";
   query?: string;
   entityId?: string;
   search?: import("@/lib/services-commands").ServiceSearchPayload;
+  agents?: import("@/lib/services-commands").AgentSearchPayload;
+  /** For kind "card" AND "call" — the call form reads its input_schema. */
   card?: import("@/lib/services-commands").ServiceCardPayload;
   helpText?: string;
   error?: string;
   loading?: boolean;
+  // ── kind === "call" ──────────────────────────────────────────────
+  /** Display name of the entity being called (from the search row). */
+  callName?: string;
+  /** Persona hint threaded from the originating search row, if any. */
+  callKind?: string;
+  /** True while the card (form schema) is being fetched. */
+  callLoading?: boolean;
+  /** True while a submitted call is in flight. */
+  callSubmitting?: boolean;
+  /** Result of the most recent submit. */
+  callResult?: import("@/lib/services-commands").ServiceCallResult;
+  /** Top-level error (card fetch failed, or the call threw). */
+  callError?: string;
 }
 
 export interface IncomingRequest {

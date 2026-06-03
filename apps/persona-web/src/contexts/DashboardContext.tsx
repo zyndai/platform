@@ -19,6 +19,22 @@ import {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+/**
+ * Pick the user object to store on an auth event. Keep the previous
+ * reference on a pure token refresh (same id + unchanged user_metadata) so
+ * downstream effects don't re-run on every tab refocus. But ACCEPT the new
+ * object when user_metadata changed — otherwise onboarding flags written via
+ * updateUser (brief_created, pending_brief_create, …) never propagate to the
+ * live context, which strands the onboarding flow on a step it already
+ * completed.
+ */
+function mergeUser(prev: User | null, next: User): User {
+  if (prev?.id !== next.id) return next;
+  const a = JSON.stringify(prev.user_metadata ?? {});
+  const b = JSON.stringify(next.user_metadata ?? {});
+  return a === b ? prev : next;
+}
+
 interface DashboardContextValue {
   user: User | null;
   loading: boolean;
@@ -134,13 +150,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       if (!session) {
         router.replace("/");
       } else {
-        // Token refreshes ship a new `session.user` reference with the
-        // same id — keep the prev object so downstream effects don't
-        // re-run on every tab refocus (which used to flash the
-        // "Just a sec…" loader).
-        setUser((prev) =>
-          prev?.id === session.user.id ? prev : session.user,
-        );
+        // Keep the prev object on a pure token refresh, but adopt the new
+        // one when user_metadata changed (see mergeUser) so onboarding
+        // flags propagate instead of getting silently dropped.
+        setUser((prev) => mergeUser(prev, session.user));
         setLoading(false);
       }
     });
@@ -149,9 +162,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       if (!session) {
         router.replace("/");
       } else {
-        setUser((prev) =>
-          prev?.id === session.user.id ? prev : session.user,
-        );
+        setUser((prev) => mergeUser(prev, session.user));
         setLoading(false);
       }
     });

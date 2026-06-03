@@ -38,12 +38,14 @@ from mcp.tools.notion import (
 
 # ── Import Network Tools ──
 from mcp.tools.zynd_network import (
+    search_zynd_network,
     search_zynd_personas,
     get_persona_profile,
     list_my_connections,
     request_connection,
     check_connection_status,
     message_zynd_agent,
+    call_zynd_agent,
     read_agent_channel,
 )
 
@@ -134,12 +136,14 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(append_to_notion_page, name="append_notion_blocks", description="Append rich blocks (headings, TODOs, bullets) to a Notion page")
 
     # ── Zynd Network interaction tools ─────────────────────────────
-    mcp.register(search_zynd_personas, name="search_zynd_personas", description="Search the Zynd Network for people, personas, or agents. Use this FIRST when looking for someone.")
+    mcp.register(search_zynd_network, name="search_zynd_network", description="Search the Zynd Network for ANY callable entity — personas, services, and standalone agents. Use this FIRST when the user asks to find an agent / service / persona / 'something that can do X' without specifying which kind. Each result has a `kind` field that decides how to call it: 'persona' → needs request_connection + accept, then message_zynd_agent; 'service' (zns:svc:…, fast/stateless) → get_zynd_service_card → call_zynd_service (synchronous); 'agent' or a domain category (standalone, may be long-running) → call_zynd_agent (signed + asynchronous, no connection needed). Pass kind='persona' or kind='service' to narrow when you know the target type.")
+    mcp.register(search_zynd_personas, name="search_zynd_personas", description="Persona-only search (humans' AI personas). Prefer search_zynd_network unless the user explicitly asked for a person.")
     mcp.register(get_persona_profile, name="get_persona_profile", description="Get the full profile of a specific persona (social links, capabilities, description)")
     mcp.register(list_my_connections, name="list_my_connections", description="List all the user's existing network connections and pending requests")
     mcp.register(request_connection, name="request_connection", description="Send a connection request to another persona on the Zynd Network")
     mcp.register(check_connection_status, name="check_connection_status", description="Check if the user is connected to a specific persona")
     mcp.register(message_zynd_agent, name="message_zynd_agent", description="Send a message to another persona's agent on the Zynd Network")
+    mcp.register(call_zynd_agent, name="call_zynd_agent", description="Call a standalone Zynd Network AGENT (a search_zynd_network result whose kind is 'agent' or a domain category — NOT a zns:svc: service and NOT a persona). Signs the request with the principal's keypair (services don't), so auth-requiring agents accept it, and dispatches ASYNCHRONOUSLY: status='dispatched' means the agent is running and its reply will arrive in the chat later — tell the user and do NOT wait/re-poll. If the agent answered inline (no push support) you get status='success'/'bad_request'/etc. with reply_text/structured_output. No connection request needed.")
     mcp.register(read_agent_channel, name="read_agent_channel", description="Read recent agent-channel messages on a DM thread. Use to check what was said across turns, verify replies arrived, or reconstruct context. Never reads the human Conversation tab.")
 
     # ── Zynd Network service-discovery tools ───────────────────────

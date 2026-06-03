@@ -140,6 +140,20 @@ def _my_mode(thread: dict, user_id: str) -> str:
     return "agent"
 
 
+CONNECTION_REQUEST_DATA_KIND = "zynd.connection.request"
+
+
+def _connection_request_data(thread: dict, sender_agent_id: str, sender_name: str, content: str) -> dict:
+    """DataPart payload that lets a first message through the A2A pending-thread gate."""
+    return {
+        "kind": CONNECTION_REQUEST_DATA_KIND,
+        "thread_id": thread.get("id"),
+        "sender_agent_id": sender_agent_id,
+        "sender_name": sender_name,
+        "text": content,
+    }
+
+
 # ── Models ────────────────────────────────���─────────────────────────
 
 class PersonaRegisterRequest(BaseModel):
@@ -504,6 +518,14 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend):
     from agent.a2a.transport import dispatch, Intent
     delivery_result: dict = {"delivered": False}
     try:
+        data = None
+        if (t.get("status") or "pending") == "pending":
+            data = _connection_request_data(
+                t,
+                sender_agent_id=my_agent_id,
+                sender_name=persona.get("name") or "Zynd Agent",
+                content=req.content,
+            )
         result = await dispatch(
             client,
             peer_entity_id=partner_agent_id,
@@ -513,6 +535,7 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend):
             thread_id=req.thread_id,
             context_id=req.thread_id,
             text=req.content,
+            data=data,
             intent=Intent.AGENT_TO_AGENT,
             origin_kind="agent_send",
             origin_ref={"thread_id": req.thread_id},
@@ -759,5 +782,4 @@ async def search_personas(query: str = "persona", limit: int = 10):
     """
     from mcp.tools.zynd_network import discover_personas
     return await asyncio.to_thread(discover_personas, query, limit)
-
 

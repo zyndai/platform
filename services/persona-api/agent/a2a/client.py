@@ -106,6 +106,12 @@ class A2AClient:
             if push_token:
                 push_cfg["token"] = push_token
             params["configuration"] = {"pushNotificationConfig": push_cfg}
+        else:
+            # Sync path: tell the receiver to hold the response until the
+            # task reaches a terminal/interrupted state instead of acking
+            # early with state="working". Matches the SDK client default;
+            # without it a slow peer can return an empty "working" task.
+            params["configuration"] = {"blocking": True}
 
         body = {
             "jsonrpc": "2.0",

@@ -36,7 +36,6 @@ module.exports = {
       // never flushes to PM2's log buffer until the process exits.
       env: {
         PYTHONUNBUFFERED: "1",
-        OPENROUTER_MODEL: "google/gemini-2.5-flash",
       },
       out_file: "/home/ubuntu/.pm2/logs/api-out.log",
       error_file: "/home/ubuntu/.pm2/logs/api-err.log",
@@ -59,7 +58,7 @@ module.exports = {
       max_memory_restart: "1G",
       env: {
         NODE_ENV: "production",
-        NEXT_PUBLIC_API_URL: "https://persona.zynd.ai",
+        NEXT_PUBLIC_API_URL: "https://persona.zynd.ink",
         PORT: "3001",
         HOSTNAME: "127.0.0.1",
       },

@@ -54,7 +54,7 @@ router = APIRouter()
 TELEGRAM_TOKEN = config.TELEGRAM_BOT_TOKEN
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-DASHBOARD_BASE = "https://persona.zynd.ink"
+DASHBOARD_BASE = "https://persona.zynd.ai"
 
 # Telegram caps a single message at 4096 chars. Lists get truncated at
 # this many rows with a "…and N more" footer instead.
@@ -900,6 +900,7 @@ async def process_telegram_message(chat_id: int, text: str):
             user_id=user_id,
             message=text,
             conversation_id=conv_id,
+            surface="telegram",  # no rich cards here — keep answers inline
         )
         reply = result.get("reply", "Done.")
 

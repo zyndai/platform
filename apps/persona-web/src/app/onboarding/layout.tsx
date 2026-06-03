@@ -33,8 +33,13 @@ function OnboardingShell({ children }: { children: React.ReactNode }) {
     }
   }, [loading, user, onboardingLoading, onboardingStep, router]);
 
+  // Only block on the INITIAL load (no step computed yet). `onboardingLoading`
+  // flips true→false on every background refreshOnboarding() call; gating the
+  // whole shell on it would unmount the active step mid-flow — wiping its local
+  // state (e.g. the brief's "created" view) and re-firing its resume effect in
+  // a loop. Once a step is known, keep the step mounted across refreshes.
   const stillBooting =
-    loading || onboardingLoading || !user || onboardingStep === "done";
+    loading || !user || onboardingStep === null || onboardingStep === "done";
 
   if (stillBooting) {
     let stage: BootStage = "signin";

@@ -11,6 +11,7 @@ import {
   FileText,
   Calendar,
   Send,
+  Square,
   ArrowUpRight,
 } from "lucide-react";
 import { QUICK_PROMPTS } from "./quickPrompts";
@@ -55,6 +56,11 @@ interface ChatInputProps {
   value: string;
   onChange: (next: string) => void;
   onSend: (text: string) => void;
+  /** Called when the user interrupts a streaming reply (Stop button / Esc). */
+  onStop?: () => void;
+  /** True while an SSE response is open. Swaps the Send button for a Stop button
+   *  and binds Escape to onStop. */
+  streaming?: boolean;
   disabled?: boolean;
   pills?: SuggestPill[];
   placeholder?: string;
@@ -67,6 +73,8 @@ export default function ChatInput({
   value,
   onChange,
   onSend,
+  onStop,
+  streaming = false,
   disabled = false,
   pills,
   placeholder = "Ask your agent anything…  Try /services <query>",
@@ -335,24 +343,44 @@ export default function ChatInput({
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={(e) => {
+              if (e.key === "Escape" && streaming && onStop) {
+                e.preventDefault();
+                onStop();
+                return;
+              }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 handleSend();
               }
             }}
             placeholder={placeholder}
-            disabled={disabled}
+            // Streaming should NOT disable the textarea — the user can
+            // still type their next prompt while the current one streams,
+            // and Esc only works if the field is focusable.
+            disabled={disabled && !streaming}
             aria-label="Chat with your Persona"
           />
-          <button
-            type="button"
-            className="send-btn"
-            onClick={handleSend}
-            disabled={!hasText || disabled}
-            aria-label="Send"
-          >
-            <ArrowUp />
-          </button>
+          {streaming && onStop ? (
+            <button
+              type="button"
+              className="send-btn stop-btn"
+              onClick={onStop}
+              aria-label="Stop generating"
+              title="Stop generating (Esc)"
+            >
+              <Square />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="send-btn"
+              onClick={handleSend}
+              disabled={!hasText || disabled}
+              aria-label="Send"
+            >
+              <ArrowUp />
+            </button>
+          )}
         </div>
       </div>
     );

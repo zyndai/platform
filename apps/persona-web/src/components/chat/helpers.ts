@@ -1,4 +1,5 @@
-import type { ActionRecord, PersonaHit, ThreadHandoff } from "./types";
+import type { ActionRecord, PersonaHit, ThreadHandoff, ToolCallState } from "./types";
+import type { ServiceCallResult } from "@/lib/services-commands";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -53,6 +54,59 @@ export function extractHandoffs(actions: ActionRecord[] | undefined): ThreadHand
       partner_agent_id: typeof r.partner_agent_id === "string" ? r.partner_agent_id : undefined,
       source_tool: a.tool,
     });
+  }
+  return out;
+}
+
+const CALL_TOOLS = new Set(["call_zynd_service", "call_zynd_agent"]);
+
+/** Does a call result carry something worth rendering as a card? */
+function hasRenderableContent(r: Record<string, unknown>): boolean {
+  const so = r.structured_output;
+  const soOk = so != null && !(typeof so === "string" && so.trim() === "");
+  const textOk = typeof r.reply_text === "string" && r.reply_text.trim().length > 0;
+  return soOk || textOk;
+}
+
+/**
+ * Pull service/agent call results out of a finished message (`actions`, which
+ * persists + rehydrates) or, while still streaming, the live `toolCalls`. The
+ * GenUiResult card renders these below the assistant bubble — so cards survive
+ * reload exactly like MatchCard/HandoffCards do.
+ */
+export function extractCallResults(
+  actions: ActionRecord[] | undefined,
+  toolCalls: ToolCallState[] | undefined,
+): ServiceCallResult[] {
+  const out: ServiceCallResult[] = [];
+  const seen = new Set<string>();
+
+  const push = (tool: string, result: unknown) => {
+    if (!CALL_TOOLS.has(tool) || !isPlainObject(result)) return;
+    const status = typeof result.status === "string" ? result.status : "";
+    // Async dispatch has no reply yet — the model's "I sent it" prose is right.
+    if (status === "dispatched") return;
+    const isError =
+      status === "error" || status === "auth_required" || status === "remote_failed" ||
+      status === "bad_request" || status === "rejected";
+    if (!hasRenderableContent(result) && !isError && status !== "needs_input") return;
+    const key =
+      (typeof result.task_id === "string" && result.task_id) ||
+      `${result.entity_id ?? ""}:${JSON.stringify(result.structured_output ?? result.reply_text ?? "").slice(0, 240)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(result as unknown as ServiceCallResult);
+  };
+
+  // Prefer the persisted/finished actions; fall back to live tool calls so the
+  // card appears as soon as the result streams in (before the lead-in finishes).
+  if (actions && actions.length) {
+    for (const a of actions) push(a.tool, a.result);
+  }
+  if (out.length === 0 && toolCalls && toolCalls.length) {
+    for (const tc of toolCalls) {
+      if (tc.status === "done" || tc.status === "error") push(tc.name, tc.result);
+    }
   }
   return out;
 }

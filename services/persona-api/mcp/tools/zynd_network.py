@@ -1524,7 +1524,7 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
     return result
 
 
-def call_zynd_agent(entity_id: str, text: str = "", data: dict = None, user_id: str = "") -> dict:
+def call_zynd_agent(entity_id: str, text: str = "", data: dict = None, user_id: str = "", conversation_id: str = "") -> dict:
     """
     Invoke a standalone Zynd Network AGENT (not a stateless `zns:svc:` service,
     not a human's persona) over SIGNED A2A v3. Use this for non-persona results
@@ -1558,6 +1558,9 @@ def call_zynd_agent(entity_id: str, text: str = "", data: dict = None, user_id: 
               agent's card ``input_schema``).
         user_id: Auto-injected by the orchestrator — the calling user. Needed
                  to derive the signing keypair; a deployed persona is required.
+        conversation_id: Auto-injected by the orchestrator — the chat session
+                         that triggered this call. Stored so the async reply
+                         can be posted back to the right conversation.
     """
     eid = (entity_id or "").strip()
     if not eid:
@@ -1590,7 +1593,7 @@ def call_zynd_agent(entity_id: str, text: str = "", data: dict = None, user_id: 
 
     threading.Thread(
         target=_dispatch_agent_call_bg,
-        args=(eid, text, data if has_data else None, user_id),
+        args=(eid, text, data if has_data else None, user_id, conversation_id),
         daemon=True,
     ).start()
 
@@ -1606,17 +1609,21 @@ def call_zynd_agent(entity_id: str, text: str = "", data: dict = None, user_id: 
     }
 
 
-def _dispatch_agent_call_bg(entity_id: str, text: str, data: "Any", user_id: str) -> None:
+def _dispatch_agent_call_bg(entity_id: str, text: str, data: "Any", user_id: str, conversation_id: str = "") -> None:
     """Background worker for ``call_zynd_agent``: resolve the agent card,
     sign, and dispatch via PUSH off the chat turn so nothing blocks the user.
     The reply returns asynchronously through the push callback path."""
+    print(f"[call_zynd_agent bg] started eid={entity_id} user={user_id[:8]}")
     try:
         from agent.a2a.client import resolve_card_url
         from agent.a2a.transport import Intent, Transport, TransportHints
         from mcp.tools.zynd_services import get_zynd_service_card
 
+        print(f"[call_zynd_agent bg] fetching card for {entity_id}")
         card = get_zynd_service_card(entity_id)
+        print(f"[call_zynd_agent bg] card status={card.get('status')} url={card.get('url')!r}")
         if card.get("status") != "success":
+            print(f"[call_zynd_agent bg] card load failed: {card}")
             logger.warning(
                 "call_zynd_agent[bg] card load failed for %s: %s",
                 entity_id, card.get("status"),
@@ -1624,17 +1631,25 @@ def _dispatch_agent_call_bg(entity_id: str, text: str, data: "Any", user_id: str
             return
         peer_a2a_url = card.get("url") or ""
         if not peer_a2a_url:
+            print(f"[call_zynd_agent bg] no a2a url on card: {card}")
             logger.warning("call_zynd_agent[bg] agent card has no url: %s", entity_id)
             return
         # The card may resolve a canonical entity_id different from the slug.
         eid = card.get("entity_id") or entity_id
         card_url = resolve_card_url(peer_a2a_url) or f"{config.ZYND_REGISTRY_URL}/v1/entities/{eid}/card"
 
+        print(f"[call_zynd_agent bg] signer lookup for user={user_id[:8]}")
         signer = _persona_signer(user_id)
         if signer is None:
+            print(f"[call_zynd_agent bg] no active persona/signer for user={user_id[:8]}")
             logger.warning("call_zynd_agent[bg] no active persona for user=%s", user_id)
             return
         sender_agent_id = signer[1]
+        print(f"[call_zynd_agent bg] sending to {peer_a2a_url} as {sender_agent_id[:20]}")
+
+        origin_ref = {"tool": "call_zynd_agent", "entity_id": eid}
+        if conversation_id:
+            origin_ref["conversation_id"] = conversation_id
 
         delivery = _signed_a2a_send(
             sender_agent_id=sender_agent_id,
@@ -1651,22 +1666,21 @@ def _dispatch_agent_call_bg(entity_id: str, text: str, data: "Any", user_id: str
             # pushNotifications, so force it rather than sniff capabilities.
             hints=TransportHints(force=Transport.PUSH),
             origin_kind="mcp_tool",
-            origin_ref={"tool": "call_zynd_agent", "entity_id": eid},
+            origin_ref=origin_ref,
         )
-        # Record the agent's immediate send-ack (task id + acceptance) on the
-        # call row so the Agent Calls card is built from the response.
         cb_id = delivery.get("callback_id")
         task = delivery.get("task")
-        if cb_id and isinstance(task, dict):
-            from services import callbacks as cb_service
-            cb_service.record_dispatch_ack(cb_id, task)
-
+        print(
+            f"[call_zynd_agent bg] done: cb={cb_id} transport={delivery.get('transport')} "
+            f"task_id={(task or {}).get('id') if isinstance(task, dict) else None}"
+        )
         logger.info(
             "call_zynd_agent[bg] dispatched eid=%s transport=%s state=%s cb=%s task=%s",
             eid, delivery.get("transport"), delivery.get("task_state"),
             cb_id, (task or {}).get("id") if isinstance(task, dict) else None,
         )
     except Exception as e:  # noqa: BLE001
+        print(f"[call_zynd_agent bg] EXCEPTION: {type(e).__name__}: {e}")
         logger.exception("call_zynd_agent[bg] dispatch failed for %s: %s", entity_id, e)
 
 

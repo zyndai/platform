@@ -2101,6 +2101,8 @@ async def handle_user_message(
                 param_names = [p["name"] for p in tool_def["parameters"]]
                 if "user_id" in param_names and "user_id" not in fn_args:
                     fn_args["user_id"] = user_id
+                if "conversation_id" in param_names and "conversation_id" not in fn_args:
+                    fn_args["conversation_id"] = conversation_id
                 # Auto-inject group_id when in group-dispatch context. The
                 # dispatcher's conversation_id is authoritative — ALWAYS
                 # override whatever the LLM passed (it sometimes hallucinates
@@ -2430,6 +2432,8 @@ async def handle_user_message_stream(
                 param_names = [p["name"] for p in tool_def["parameters"]]
                 if "user_id" in param_names and "user_id" not in fn_args:
                     fn_args["user_id"] = user_id
+                if "conversation_id" in param_names and "conversation_id" not in fn_args:
+                    fn_args["conversation_id"] = conversation_id
                 # Auto-inject group_id when in group-dispatch context. The
                 # dispatcher's conversation_id is authoritative — ALWAYS
                 # override whatever the LLM passed (it sometimes hallucinates

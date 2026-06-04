@@ -1731,8 +1731,26 @@ async def a2a_push_inbound(user_id: str, request: Request):
 
     callback = cb_service.lookup_by_token(bearer) if bearer else None
     if callback is None and task_id:
-        # Fallback: correlate by the peer Task.id we linked at dispatch.
+        # Fallback 1: correlate by the peer Task.id we linked at dispatch.
         callback = cb_service.lookup_by_peer_task(task_id)
+    if callback is None and sender_entity_id:
+        # Fallback 2: peer didn't send our bearer token and the push arrived
+        # before mark_peer_task ran (race between push delivery and our ack
+        # processing). Match the most recent pending row for this peer+user.
+        callback = cb_service.lookup_pending_for_peer(user_id, sender_entity_id)
+        if callback:
+            logger.info(
+                "[a2a push-inbound user=%s] correlated via peer fallback cb=%s peer=%s task=%s",
+                user_id[:8], str(callback.get("id", ""))[:8],
+                sender_entity_id[:16], str(task_id or "")[:8],
+            )
+            # Link the task ID now so future pushes and the poller can use it.
+            if task_id and not callback.get("peer_task_id"):
+                try:
+                    cb_service.mark_peer_task_sync(callback["id"], task_id)
+                    callback["peer_task_id"] = task_id
+                except Exception as _e:
+                    logger.warning("[a2a push-inbound] mark_peer_task_sync failed: %s", _e)
     if callback is None:
         logger.warning(
             "[a2a push-inbound user=%s] uncorrelated push (bearer=%s task=%s from=%s) — acking & dropping",
@@ -1914,6 +1932,115 @@ def _record_push_result(cb_service, callback, cb_id, *, task_state, reply, struc
         cb_id, str(result_id)[:8], task_state, raw_event.get("source", "tasks/get"),
     )
 
+    if task_state == "completed" and callback.get("origin_kind") == "mcp_tool":
+        origin = callback.get("origin_ref") or {}
+        chat_conv_id = origin.get("conversation_id")
+        if chat_conv_id:
+            _track_push_task(_autonomous_chat_reply(
+                user_id=callback["user_id"],
+                conversation_id=chat_conv_id,
+                peer_agent_id=callback.get("peer_agent_id", "unknown agent"),
+                reply_text=reply_text or "",
+                structured=raw_event.get("structured"),
+            ))
+
+
+async def _autonomous_chat_reply(
+    user_id: str,
+    conversation_id: str,
+    peer_agent_id: str,
+    reply_text: str,
+    structured: Any = None,
+) -> None:
+    """Re-enter the LLM to compose a natural reply from an async agent result.
+
+    The synthetic user turn is kept in-memory only so it doesn't pollute the
+    chat history. Only the assistant reply is persisted and shown to the user.
+    """
+    from agent.orchestrator import (
+        _build_system_prompt,
+        _conversations,
+        _get_provider,
+        _persist_chat_message,
+        strip_think_tags,
+    )
+    from services.token_store import list_connected_providers
+
+    # Reload conversation history from DB if this server process lost it.
+    if not _conversations.get(conversation_id):
+        try:
+            import config as _cfg
+            sb = _cfg.get_supabase()
+            rows = (
+                sb.table("chat_messages")
+                .select("role,content")
+                .eq("user_id", user_id)
+                .eq("conversation_id", conversation_id)
+                .order("created_at", desc=False)
+                .limit(50)
+                .execute()
+            )
+            if rows.data:
+                _conversations[conversation_id] = [
+                    {"role": r["role"], "content": r["content"] or ""}
+                    for r in rows.data
+                    if r["role"] in ("user", "assistant")
+                ]
+                logger.info(
+                    "[a2a push] reloaded %d messages for conv=%s",
+                    len(_conversations[conversation_id]), conversation_id[:8],
+                )
+        except Exception as e:
+            logger.warning("[a2a push] history reload failed conv=%s: %s", conversation_id[:8], e)
+
+    history = list(_conversations.get(conversation_id) or [])
+
+    # Build the synthetic message. If we have the full structured payload
+    # (e.g. a shortlist with detailed influencer data), include it so the LLM
+    # can present rich results rather than just the one-line summary.
+    result_body = reply_text
+    if structured is not None:
+        try:
+            result_body = (
+                f"{reply_text}\n\nFull result data:\n"
+                f"```json\n{json.dumps(structured, ensure_ascii=False, indent=2)}\n```"
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    synthetic = {
+        "role": "user",
+        "content": (
+            f"[Async result from agent {peer_agent_id}]\n\n"
+            f"{result_body}\n\n"
+            "Present this result to your principal."
+        ),
+    }
+    history.append(synthetic)
+
+    try:
+        user_conns = list_connected_providers(user_id)
+        connected = [c["provider"] for c in user_conns]
+        system_msg = {"role": "system", "content": _build_system_prompt(user_id, connected)}
+        messages = [system_msg] + history
+
+        provider = _get_provider()
+        raw_reply, _ = await asyncio.to_thread(provider.chat_with_tools, messages, [])
+        final_reply = strip_think_tags(raw_reply or "")
+
+        # Append to the real in-memory history (synthetic user turn stays local).
+        real_history = _conversations.setdefault(conversation_id, [])
+        real_history.append(synthetic)
+        real_history.append({"role": "assistant", "content": raw_reply or ""})
+
+        _persist_chat_message(user_id, conversation_id, "assistant", final_reply, [])
+        logger.info(
+            "[a2a push] autonomous reply posted conv=%s peer=%s",
+            conversation_id[:8], peer_agent_id[:16],
+        )
+    except Exception as e:
+        logger.warning("[a2a push] autonomous reply failed conv=%s: %s", conversation_id[:8], e)
+
 
 def _push_body_as_task(event: dict[str, Any], wrapper: dict[str, Any]) -> dict[str, Any]:
     """Assemble a Task-like view of a result that may be delivered INSIDE the
@@ -1957,53 +2084,65 @@ _ACK_NARRATION_KEYS = frozenset({
     "delivery", "mode", "taskid", "task_id", "contextid", "context_id",
     "status", "state", "response", "message", "note", "detail",
 })
-_ACK_PHRASES = ("when ready", "task accepted", "will be posted", "will be pushed")
+_ACK_PHRASES = (
+    "when ready", "task accepted", "will be posted", "will be pushed",
+    "delivered via push", "search done", "result delivered",
+)
 
 
 def _push_result_ready(task: dict[str, Any]) -> tuple[bool, Optional[str], Any]:
     """Decide whether a fetched Task carries the real result vs. a deferral
     ack. Returns ``(ready, reply_text, structured_payload)``.
 
-    Generic by design (no service-specific field names): a Task is ready
-    when it has readable reply text or a structured DataPart payload that
-    is more than an acceptance ack. See :func:`_is_acceptance_ack`."""
+    A task can have multiple artifacts: an early deferral ack (shortlist=null,
+    delivery="push") followed by the real result (shortlist populated). We scan
+    ALL data payloads and return the first non-ack one."""
     if not isinstance(task, dict):
         return False, None, None
 
     from agent.a2a.client import extract_reply_text
 
-    reply = extract_reply_text(task) or None
-    structured = _first_data_payload(task)
+    base_reply = extract_reply_text(task) or None
 
-    if _is_acceptance_ack(reply, structured):
-        return False, None, None
-    if reply or structured:
-        return True, reply, structured
+    for structured in _all_data_payloads(task):
+        if not _is_acceptance_ack(base_reply, structured):
+            # Prefer the response/reply field embedded in the payload itself
+            # (e.g. "Ranked 2 influencers…") over the generic status text.
+            payload_reply = structured.get("response") or structured.get("message") or base_reply
+            return True, payload_reply, structured
+
+    # No structured payload at all — a plain text reply is the result.
+    if base_reply and not _is_acceptance_ack(base_reply, None):
+        return True, base_reply, None
+
     return False, None, None
 
 
-def _first_data_payload(task: dict[str, Any]) -> Optional[dict[str, Any]]:
-    """First non-empty DataPart payload from status.message or artifacts."""
+def _all_data_payloads(task: dict[str, Any]) -> list[dict[str, Any]]:
+    """All non-empty DataPart payloads from status.message and every artifact,
+    in document order."""
+    results: list[dict[str, Any]] = []
 
-    def _scan(parts: Any) -> Optional[dict[str, Any]]:
+    def _scan(parts: Any) -> None:
         for p in parts or []:
             if isinstance(p, dict) and p.get("kind") == "data":
                 d = p.get("data")
                 if isinstance(d, dict) and d:
-                    return d
-        return None
+                    results.append(d)
 
     msg = (task.get("status") or {}).get("message")
     if isinstance(msg, dict):
-        hit = _scan(msg.get("parts"))
-        if hit is not None:
-            return hit
+        _scan(msg.get("parts"))
     for art in task.get("artifacts") or []:
         if isinstance(art, dict):
-            hit = _scan(art.get("parts"))
-            if hit is not None:
-                return hit
-    return None
+            _scan(art.get("parts"))
+    return results
+
+
+def _first_data_payload(task: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """First non-empty DataPart payload (kept for callers outside this module)."""
+    payloads = _all_data_payloads(task)
+    return payloads[0] if payloads else None
 
 
 def _nonempty(v: Any) -> bool:
@@ -2017,10 +2156,13 @@ def _nonempty(v: Any) -> bool:
 def _is_acceptance_ack(reply: Optional[str], structured: Any) -> bool:
     """True when the Task is just an 'accepted; result will be pushed later'
     placeholder — a structured DataPart with ``delivery=="push"`` and no
-    populated payload field, or an accepted/when-ready narration alongside no
-    payload. A plain text reply (no structured part) is never treated as an
-    ack — that's the real answer on the agent path."""
+    populated payload field, or a text-only notification whose text matches
+    a known ack phrase (e.g. 'Search done; result delivered via push.')."""
     if not isinstance(structured, dict):
+        # Text-only message: check whether it's a push-delivery notification.
+        if isinstance(reply, str):
+            low = reply.lower()
+            return any(p in low for p in _ACK_PHRASES)
         return False
 
     narration = reply or ""

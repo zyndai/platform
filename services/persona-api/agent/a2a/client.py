@@ -93,6 +93,16 @@ class A2AClient:
             A2AError on a JSON-RPC error envelope from the receiver.
             httpx.HTTPError on transport-level failure.
         """
+        # When dispatching in push mode, tell the peer to ack immediately and
+        # deliver the result asynchronously via the callback URL. Without this,
+        # peers that default to synchronous execution hold the HTTP connection
+        # for the full task duration (minutes), causing our 90s timeout to fire
+        # before we can create the callback row or receive the task ID.
+        if push_url and isinstance(data, dict):
+            data = {**data, "defer_to_push": True}
+        elif push_url and data is None:
+            data = {"defer_to_push": True}
+
         msg = self._build_signed_message(
             text=text,
             data=data,
@@ -120,13 +130,14 @@ class A2AClient:
             "params": params,
         }
 
-        logger.info(
-            "[a2a client] POST %s body=%s",
-            a2a_url,
-            json.dumps(body)[:1000],
-        )
+        body_str = json.dumps(body)
+        print(f"[a2a client] → POST {a2a_url}")
+        print(f"[a2a client]   body: {body_str[:2000]}")
+        logger.info("[a2a client] POST %s body=%s", a2a_url, body_str[:1000])
         async with httpx.AsyncClient(timeout=self._timeout) as h:
             resp = await h.post(a2a_url, json=body)
+            print(f"[a2a client]   HTTP {resp.status_code} from {a2a_url}")
+            print(f"[a2a client]   response: {resp.text[:2000]}")
             resp.raise_for_status()
             envelope = resp.json()
 

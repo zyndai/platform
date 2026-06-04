@@ -225,11 +225,31 @@ def pick_transport(
 
 class CallbackRegistrar(Protocol):
     """Plugged in by ``services.callbacks`` (Phase 3). The dispatcher
-    needs ``register`` (creates the row, returns the credentials the
-    peer should use to push back), ``mark_peer_task`` (link Task.id
-    once known), and ``record_inline_result`` (synthesize a callback
-    result when the peer completed inline rather than pushing — A2A
-    permits both, so the surface should be uniform)."""
+    needs ``mint_credentials`` + ``register_with_task`` (two-phase: generate
+    credentials before the send, insert the row with the task ID after),
+    ``mark_peer_task`` (fallback when task ID was unavailable at insert),
+    and ``record_inline_result`` (synthesize a callback result when the peer
+    completed inline rather than pushing — A2A permits both)."""
+
+    def mint_credentials(self, user_id: str) -> tuple[str, str]:
+        """Generate ``(push_url, push_token)`` without touching the DB."""
+        ...
+
+    async def register_with_task(
+        self,
+        *,
+        user_id: str,
+        thread_id: str,
+        peer_agent_id: str,
+        our_message_id: str,
+        origin_kind: str,
+        origin_ref: dict[str, Any],
+        push_token: str,
+        peer_a2a_url: Optional[str] = None,
+        peer_task_id: Optional[str] = None,
+    ) -> str:
+        """Insert the callback row (with task ID already known). Returns callback_id."""
+        ...
 
     async def register(
         self,
@@ -242,7 +262,7 @@ class CallbackRegistrar(Protocol):
         origin_ref: dict[str, Any],
         peer_a2a_url: Optional[str] = None,
     ) -> tuple[str, str, str]:
-        """Returns ``(callback_id, push_url, push_token)``."""
+        """Legacy one-shot: insert before send. Returns ``(callback_id, push_url, push_token)``."""
         ...
 
     async def mark_peer_task(self, callback_id: str, peer_task_id: str) -> None:
@@ -340,12 +360,11 @@ async def dispatch(
             )
             transport = Transport.SEND
         else:
-            # Generate a fresh messageId so the registrar can store it
-            # before we send. We'll pass the same id into client.send
-            # via the rebuilt message — but A2AClient owns messageId
-            # generation. Workaround: register first with a placeholder
-            # id, then update once the receiver responds with their
-            # Task.id.
+            # Row-first: create the callback row BEFORE the send so the push
+            # URL + token exist in the DB before any inbound push can arrive.
+            # The peer can push back at any point during the send (including
+            # before message/send returns an ack) — if the row doesn't exist
+            # yet, the push is dropped as uncorrelated.
             our_message_id = f"out-{int(time.time() * 1000)}"
             callback_id, push_url, push_token = await _callback_registrar.register(
                 user_id=user_id,
@@ -356,6 +375,10 @@ async def dispatch(
                 origin_ref=origin_ref or {},
                 peer_a2a_url=peer_a2a_url,
             )
+            print(
+                f"[a2a dispatch] row created cb={callback_id} PUSH → {peer_a2a_url} | "
+                f"push_url={push_url} token={push_token[:12]}..."
+            )
             task = await client.send(
                 peer_a2a_url,
                 context_id=context_id,
@@ -365,13 +388,16 @@ async def dispatch(
                 push_url=push_url,
                 push_token=push_token,
             )
-            # Best-effort: link the callback row to the peer's task id
-            # so phase 4's correlation has another join key beyond the
-            # bearer token.
             peer_task_id = task.get("id") if isinstance(task, dict) else None
+            print(
+                f"[a2a dispatch] peer ack: task_id={peer_task_id} "
+                f"state={((task.get('status') or {}).get('state'))!r} "
+                f"raw={str(task)[:300]}"
+            )
             if peer_task_id:
                 try:
                     await _callback_registrar.mark_peer_task(callback_id, peer_task_id)
+                    print(f"[a2a dispatch] mark_peer_task done cb={callback_id} peer_task={peer_task_id}")
                 except Exception as e:  # noqa: BLE001
                     logger.warning(
                         "transport.dispatch: mark_peer_task failed cb=%s peer_task=%s: %s",

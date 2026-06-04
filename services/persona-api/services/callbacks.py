@@ -68,6 +68,54 @@ def _push_url_for(user_id: str) -> str:
 # ── Public API ───────────────────────────────────────────────────────
 
 
+def mint_credentials(user_id: str) -> tuple[str, str]:
+    """Generate push credentials (push_url, push_token) without touching
+    the database. The caller passes these into the outgoing message so the
+    peer knows where to push back, then calls ``register_with_task`` once
+    the peer has acked and returned a Task ID."""
+    return _push_url_for(user_id), _mint_token()
+
+
+async def register_with_task(
+    *,
+    user_id: str,
+    thread_id: str,
+    peer_agent_id: str,
+    our_message_id: str,
+    origin_kind: str,
+    origin_ref: dict[str, Any],
+    push_token: str,
+    peer_a2a_url: Optional[str] = None,
+    peer_task_id: Optional[str] = None,
+) -> str:
+    """Insert the outbound_callbacks row after the peer has acked.
+
+    Because credentials were already minted with ``mint_credentials``,
+    the row is written with ``peer_task_id`` populated in a single
+    INSERT — the frontend realtime subscription sees one INSERT event
+    with the task ID already present instead of an INSERT-then-UPDATE.
+    Returns the new ``callback_id``.
+    """
+    row = {
+        "user_id": user_id,
+        "thread_id": thread_id,
+        "peer_agent_id": peer_agent_id,
+        "peer_a2a_url": peer_a2a_url,
+        "our_message_id": our_message_id,
+        "origin_kind": origin_kind,
+        "origin_ref": origin_ref or {},
+        "push_token": push_token,
+        "status": "pending",
+    }
+    if peer_task_id:
+        row["peer_task_id"] = peer_task_id
+    sb = _supabase()
+    res = sb.table(_TABLE_OUTBOUND).insert(row).execute()
+    if not res.data:
+        raise RuntimeError("services.callbacks.register_with_task: insert returned no rows")
+    return res.data[0]["id"]
+
+
 async def register(
     *,
     user_id: str,
@@ -78,45 +126,26 @@ async def register(
     origin_ref: dict[str, Any],
     peer_a2a_url: Optional[str] = None,
 ) -> tuple[str, str, str]:
-    """Create a pending callback row. Returns
-    ``(callback_id, push_url, push_token)``. The dispatcher passes
-    push_url + push_token into the peer's ``pushNotificationConfig``;
-    the peer echoes the token in ``Authorization: Bearer …`` on the
-    push back.
-
-    ``peer_a2a_url`` is the exact endpoint we dispatched to — stored so
-    the inbound push handler can pull the real result with ``tasks/get``
-    without re-resolving the peer from the registry.
-
-    The supabase client is sync; we run inserts on the event loop
-    directly because the per-call cost is small and the dispatcher
-    is already doing async work around us. Switch to ``run_in_executor``
-    if profiling shows blocking.
-    """
-    token = _mint_token()
-    row = {
-        "user_id": user_id,
-        "thread_id": thread_id,
-        "peer_agent_id": peer_agent_id,
-        "peer_a2a_url": peer_a2a_url,
-        "our_message_id": our_message_id,
-        "origin_kind": origin_kind,
-        "origin_ref": origin_ref or {},
-        "push_token": token,
-        "status": "pending",
-    }
-    sb = _supabase()
-    res = sb.table(_TABLE_OUTBOUND).insert(row).execute()
-    if not res.data:
-        raise RuntimeError("services.callbacks.register: insert returned no rows")
-    callback_id = res.data[0]["id"]
-    return callback_id, _push_url_for(user_id), token
+    """Legacy: create a pending row before the send, returns
+    ``(callback_id, push_url, push_token)``. Kept for callers that
+    can't use the two-phase mint_credentials/register_with_task flow."""
+    push_url, token = mint_credentials(user_id)
+    callback_id = await register_with_task(
+        user_id=user_id,
+        thread_id=thread_id,
+        peer_agent_id=peer_agent_id,
+        our_message_id=our_message_id,
+        origin_kind=origin_kind,
+        origin_ref=origin_ref,
+        push_token=token,
+        peer_a2a_url=peer_a2a_url,
+        peer_task_id=None,
+    )
+    return callback_id, push_url, token
 
 
 async def mark_peer_task(callback_id: str, peer_task_id: str) -> None:
-    """Once the receiver has acked our message/send, link their Task.id
-    onto our row. Used as a secondary correlation key alongside the
-    bearer token."""
+    """Link the peer's Task.id onto a row that was inserted without one."""
     sb = _supabase()
     sb.table(_TABLE_OUTBOUND).update({"peer_task_id": peer_task_id}).eq(
         "id", callback_id
@@ -203,6 +232,36 @@ def list_pending(max_age_hours: int = 48, limit: int = 100) -> list[dict[str, An
         .execute()
     )
     return res.data or []
+
+
+def lookup_pending_for_peer(user_id: str, peer_agent_id: str) -> Optional[dict[str, Any]]:
+    """Third-tier fallback: peer didn't send our bearer token and the push
+    arrived before mark_peer_task ran. Match the most recent pending row for
+    this peer+user combination."""
+    if not user_id or not peer_agent_id:
+        return None
+    sb = _supabase()
+    res = (
+        sb.table(_TABLE_OUTBOUND)
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("peer_agent_id", peer_agent_id)
+        .eq("status", "pending")
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return res.data[0] if res.data else None
+
+
+def mark_peer_task_sync(callback_id: str, peer_task_id: str) -> None:
+    """Sync variant of mark_peer_task for use in sync call sites
+    (the push inbound handler runs async but calls this in a non-async
+    fallback path)."""
+    sb = _supabase()
+    sb.table(_TABLE_OUTBOUND).update({"peer_task_id": peer_task_id}).eq(
+        "id", callback_id
+    ).execute()
 
 
 def lookup_by_peer_task(peer_task_id: str) -> Optional[dict[str, Any]]:
@@ -300,9 +359,35 @@ def expire_old() -> int:
 
 
 class _ServiceRegistrar:
-    """Adapter satisfying the :class:`CallbackRegistrar` Protocol with
-    module-level functions. The dispatcher only invokes
-    ``register`` and ``mark_peer_task``."""
+    """Adapter satisfying the :class:`CallbackRegistrar` Protocol."""
+
+    def mint_credentials(self, user_id: str) -> tuple[str, str]:
+        return mint_credentials(user_id)
+
+    async def register_with_task(
+        self,
+        *,
+        user_id: str,
+        thread_id: str,
+        peer_agent_id: str,
+        our_message_id: str,
+        origin_kind: str,
+        origin_ref: dict[str, Any],
+        push_token: str,
+        peer_a2a_url: Optional[str] = None,
+        peer_task_id: Optional[str] = None,
+    ) -> str:
+        return await register_with_task(
+            user_id=user_id,
+            thread_id=thread_id,
+            peer_agent_id=peer_agent_id,
+            our_message_id=our_message_id,
+            origin_kind=origin_kind,
+            origin_ref=origin_ref,
+            push_token=push_token,
+            peer_a2a_url=peer_a2a_url,
+            peer_task_id=peer_task_id,
+        )
 
     async def register(
         self,

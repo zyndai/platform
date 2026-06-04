@@ -1176,6 +1176,7 @@ def _signed_a2a_send(
     text: str = "",
     data: "Any" = None,
     intent=None,
+    hints=None,
     origin_kind: str = "mcp_tool",
     origin_ref: Optional[dict] = None,
 ) -> dict:
@@ -1221,6 +1222,7 @@ def _signed_a2a_send(
             text=text,
             data=data,
             intent=intent,
+            hints=hints,
             origin_kind=origin_kind,
             origin_ref=origin_ref or {},
         )
@@ -1578,105 +1580,94 @@ def call_zynd_agent(entity_id: str, text: str = "", data: dict = None, user_id: 
             "hint": "Check the input_schema from get_zynd_service_card and try again.",
         }
 
-    # Pull the real A2A endpoint from the registry card (same source services
-    # use). The search row's url is fine too, but the card is authoritative.
-    from mcp.tools.zynd_services import (
-        get_zynd_service_card,
-        classify_task_result,
-        _extract_reply_from_task,
-    )
+    # Fire-and-forget: resolving the card, signing, and the message/send
+    # round-trip are all network calls, and the agent itself runs for
+    # seconds-to-minutes. Doing any of that inline would freeze the chat
+    # turn, so we hand the whole dispatch to a background thread and return
+    # immediately. The agent's reply surfaces later via the push callback →
+    # callback_results → chat (ChatContext auto-appends it) and a toast.
+    import threading
 
-    card = get_zynd_service_card(eid)
-    if card.get("status") != "success":
-        return {
-            "status": "unreachable" if card.get("status") == "unreachable" else "error",
-            "entity_id": eid,
-            "error": f"Could not load the agent card ({card.get('status')}): {card.get('error')}",
-            "hint": card.get("hint") or "Try a different result from search_zynd_network.",
-        }
-    peer_a2a_url = card.get("url") or ""
-    if not peer_a2a_url:
-        return {
-            "status": "error",
-            "entity_id": eid,
-            "error": "Agent card has no 'url' field — agent may be misconfigured.",
-        }
-    # The card may resolve a different (canonical) entity_id than the slug
-    # we were handed — e.g. a deployer-only agent whose card carries its
-    # real zns: id. Use the resolved one for signing/dispatch.
-    eid = card.get("entity_id") or eid
-    # A card URL dispatch() can GET to read the agent's transport caps.
-    # Derive it from the actual endpoint (works for deployer-hosted agents
-    # that aren't in the registry); fall back to the registry card route.
-    from agent.a2a.client import resolve_card_url
-    card_url = resolve_card_url(peer_a2a_url) or f"{config.ZYND_REGISTRY_URL}/v1/entities/{eid}/card"
+    threading.Thread(
+        target=_dispatch_agent_call_bg,
+        args=(eid, text, data if has_data else None, user_id),
+        daemon=True,
+    ).start()
 
-    # Resolve the caller's persona identity (the signer).
-    signer = _persona_signer(user_id)
-    if signer is None:
-        return {
-            "status": "error",
-            "entity_id": eid,
-            "error": "No active persona for the calling user — cannot sign the request.",
-        }
-    sender_agent_id = signer[1]
-
-    from agent.a2a.transport import Intent
-
-    delivery = _signed_a2a_send(
-        sender_agent_id=sender_agent_id,
-        sender_user_id=user_id,
-        target_agent_id=eid,
-        peer_a2a_url=peer_a2a_url,
-        peer_card_url=card_url,
-        context_id=str(uuid.uuid4()),  # standalone agents are stateless to us
-        text=text,
-        data=data if has_data else None,
-        intent=Intent.AGENT_TO_AGENT,
-        origin_kind="mcp_tool",
-        origin_ref={"tool": "call_zynd_agent", "entity_id": eid},
-    )
-
-    # Pre-flight failure (no persona keypair) — surface verbatim.
-    if "error" in delivery and "task" not in delivery:
-        delivery.setdefault("status", "error")
-        delivery["entity_id"] = eid
-        return delivery
-    # A2A reject / transport failure — pass through with entity tag.
-    if delivery.get("status") == "delivery_failed":
-        delivery["entity_id"] = eid
-        return delivery
-
-    task = delivery.get("task") or {}
-    task_state = delivery.get("task_state") or "unknown"
-
-    if delivery.get("transport") == "push":
-        # Async path: the agent acked and will push its reply back later.
-        return {
-            "status": "dispatched",
-            "entity_id": eid,
-            "task_id": task.get("id"),
-            "task_state": task_state,
-            "callback_id": delivery.get("callback_id"),
-            "hint": (
-                "Agent is running; its reply arrives asynchronously and appears in the chat "
-                "when ready. Tell the user you've dispatched it — do NOT wait or re-poll."
-            ),
-        }
-
-    # Inline (SEND) result — agent doesn't support push, answered now.
-    # Classify it with the same vocabulary as a service reply.
-    reply_text, structured = _extract_reply_from_task(task)
-    status, hint = classify_task_result(task_state, reply_text, structured)
     return {
-        "status": status,
-        "hint": hint,
+        "status": "dispatched",
+        "pending": True,
         "entity_id": eid,
-        "task_id": task.get("id"),
-        "task_state": task_state,
-        "reply_text": reply_text,
-        "structured_output": structured,
+        "hint": (
+            "Request sent to the agent in the background. Tell the user you've dispatched it "
+            "and their answer will appear here automatically when it's ready — do NOT wait, "
+            "re-poll, or call the agent again."
+        ),
     }
+
+
+def _dispatch_agent_call_bg(entity_id: str, text: str, data: "Any", user_id: str) -> None:
+    """Background worker for ``call_zynd_agent``: resolve the agent card,
+    sign, and dispatch via PUSH off the chat turn so nothing blocks the user.
+    The reply returns asynchronously through the push callback path."""
+    try:
+        from agent.a2a.client import resolve_card_url
+        from agent.a2a.transport import Intent, Transport, TransportHints
+        from mcp.tools.zynd_services import get_zynd_service_card
+
+        card = get_zynd_service_card(entity_id)
+        if card.get("status") != "success":
+            logger.warning(
+                "call_zynd_agent[bg] card load failed for %s: %s",
+                entity_id, card.get("status"),
+            )
+            return
+        peer_a2a_url = card.get("url") or ""
+        if not peer_a2a_url:
+            logger.warning("call_zynd_agent[bg] agent card has no url: %s", entity_id)
+            return
+        # The card may resolve a canonical entity_id different from the slug.
+        eid = card.get("entity_id") or entity_id
+        card_url = resolve_card_url(peer_a2a_url) or f"{config.ZYND_REGISTRY_URL}/v1/entities/{eid}/card"
+
+        signer = _persona_signer(user_id)
+        if signer is None:
+            logger.warning("call_zynd_agent[bg] no active persona for user=%s", user_id)
+            return
+        sender_agent_id = signer[1]
+
+        delivery = _signed_a2a_send(
+            sender_agent_id=sender_agent_id,
+            sender_user_id=user_id,
+            target_agent_id=eid,
+            peer_a2a_url=peer_a2a_url,
+            peer_card_url=card_url,
+            context_id=str(uuid.uuid4()),  # standalone agents are stateless to us
+            text=text,
+            data=data,
+            intent=Intent.AGENT_TO_AGENT,
+            # Agents run async; PUSH registers a callback and the reply comes
+            # back through the push handler. Cards don't reliably advertise
+            # pushNotifications, so force it rather than sniff capabilities.
+            hints=TransportHints(force=Transport.PUSH),
+            origin_kind="mcp_tool",
+            origin_ref={"tool": "call_zynd_agent", "entity_id": eid},
+        )
+        # Record the agent's immediate send-ack (task id + acceptance) on the
+        # call row so the Agent Calls card is built from the response.
+        cb_id = delivery.get("callback_id")
+        task = delivery.get("task")
+        if cb_id and isinstance(task, dict):
+            from services import callbacks as cb_service
+            cb_service.record_dispatch_ack(cb_id, task)
+
+        logger.info(
+            "call_zynd_agent[bg] dispatched eid=%s transport=%s state=%s cb=%s task=%s",
+            eid, delivery.get("transport"), delivery.get("task_state"),
+            cb_id, (task or {}).get("id") if isinstance(task, dict) else None,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("call_zynd_agent[bg] dispatch failed for %s: %s", entity_id, e)
 
 
 def read_agent_channel(user_id: str, thread_id: str, limit: int = 20) -> dict:

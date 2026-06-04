@@ -5942,6 +5942,147 @@ textarea.input { resize: vertical; min-height: 88px; }
   text-align: center;
 }
 
+/* Agent calls — outbound A2A calls with pending → completed state. Each is a
+   card-button that opens a detail modal. */
+.app-shell-v2 .app-rail .rail-call {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--v2-surface);
+  border: 1px solid var(--v2-border-subtle);
+  border-radius: 12px;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  transition: border-color var(--t-micro), box-shadow var(--t-micro), transform var(--t-micro);
+}
+.app-shell-v2 .app-rail .rail-call:hover {
+  border-color: var(--v2-border-default);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.04);
+  transform: translateY(-1px);
+}
+.app-shell-v2 .app-rail .rail-call-body { flex: 1; min-width: 0; }
+.app-shell-v2 .app-rail .rail-call-status {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  font-family: var(--font-geist), system-ui, sans-serif;
+}
+.app-shell-v2 .app-rail .rail-call-status.pending { background: rgba(234, 179, 8, 0.14); color: #a16207; }
+.app-shell-v2 .app-rail .rail-call-status.done { background: rgba(22, 163, 74, 0.14); color: #15803d; }
+.app-shell-v2 .app-rail .rail-call-status.warn { background: rgba(220, 38, 38, 0.12); color: #b91c1c; }
+.app-shell-v2 .app-rail .rail-call-detail {
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--v2-border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.app-shell-v2 .app-rail .rail-call-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--v2-ink-muted);
+}
+.app-shell-v2 .app-rail .rail-call-pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-geist-mono, ui-monospace), monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--v2-ink-secondary);
+  background: var(--v2-surface-raised);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+}
+.app-shell-v2 .app-rail .rail-call-muted {
+  font-size: 13px;
+  color: var(--v2-ink-muted);
+  font-family: var(--font-geist), system-ui, sans-serif;
+}
+
+/* Agent call detail modal (opens from a rail card). Reuses .modal-scrim. */
+.agent-call-modal {
+  width: 580px;
+  max-width: 95vw;
+  max-height: 88vh;
+  background: var(--v2-surface, var(--surface));
+  border: 1px solid var(--v2-border-default, var(--border-default));
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-overlay);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.agent-call-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--v2-border-subtle, var(--border-subtle));
+}
+.agent-call-modal-title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-chakra-petch), system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--v2-ink, var(--ink));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agent-call-modal-close {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+  padding: 0 4px;
+  color: var(--v2-ink-muted, var(--ink-muted));
+}
+.agent-call-modal-close:hover { color: var(--v2-ink, var(--ink)); }
+.agent-call-modal-body {
+  padding: 16px 20px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.agent-call-row {
+  display: flex;
+  gap: 10px;
+  font-size: 13px;
+  font-family: var(--font-geist), system-ui, sans-serif;
+}
+.agent-call-row .k {
+  flex: 0 0 92px;
+  color: var(--v2-ink-muted, var(--ink-muted));
+  font-weight: 600;
+}
+.agent-call-row .v {
+  flex: 1;
+  min-width: 0;
+  color: var(--v2-ink, var(--ink));
+  word-break: break-word;
+  font-family: var(--font-geist-mono, ui-monospace), monospace;
+}
+.agent-call-modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
 .welcome-hero {
   flex: 1;
   display: flex;

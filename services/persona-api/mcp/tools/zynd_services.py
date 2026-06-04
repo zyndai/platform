@@ -31,6 +31,7 @@ endpoints documented at ``{registry}/swagger/index.html``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
@@ -655,17 +656,56 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None, user_id
         except Exception as e:  # noqa: BLE001 — never block the call on signing
             logger.warning("call_zynd_service: signing failed, sending unsigned: %s", e)
 
+    # Deferred-push services accept the task immediately, run async, and push
+    # status-only callbacks; the real result is pulled later via tasks/get in
+    # the inbound push handler. Trigger when the caller asks for it
+    # (`defer_to_push` in the payload) or the card advertises push. Falls back
+    # to the blocking call when there's no persona to register a callback for.
+    defer_to_push = bool(
+        (isinstance(data, dict) and data.get("defer_to_push"))
+        or (card.get("capabilities") or {}).get("pushNotifications") is True
+    )
+    push_cfg: dict | None = None
+    callback_id: str | None = None
+    if defer_to_push and (user_id or "").strip():
+        from services import callbacks as cb_service
+        try:
+            callback_id, push_url, push_token = asyncio.run(
+                cb_service.register(
+                    user_id=user_id,
+                    thread_id=message["contextId"],
+                    peer_agent_id=eid,
+                    our_message_id=message["messageId"],
+                    origin_kind="mcp_tool",
+                    origin_ref={"tool": "call_zynd_service", "entity_id": eid},
+                    peer_a2a_url=url,
+                )
+            )
+            push_cfg = {"url": push_url, "token": push_token}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("call_zynd_service: callback register failed, using blocking: %s", e)
+            callback_id = None
+            push_cfg = None
+
     body = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
         "method": "message/send",
         # blocking: hold the response until the task is terminal rather than
-        # acking early with state="working" — services are synchronous.
-        "params": {"message": message, "configuration": {"blocking": True}},
+        # acking early with state="working" — for synchronous services. For
+        # deferred-push services we instead register a callback URL and let
+        # the result arrive asynchronously.
+        "params": {
+            "message": message,
+            "configuration": (
+                {"pushNotificationConfig": push_cfg} if push_cfg else {"blocking": True}
+            ),
+        },
     }
+    timeout = 30.0 if push_cfg else 90.0
 
     try:
-        with httpx.Client(timeout=90.0) as h:
+        with httpx.Client(timeout=timeout) as h:
             resp = h.post(url, json=body)
             resp.raise_for_status()
             envelope = resp.json()
@@ -674,7 +714,7 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None, user_id
             "status": "error",
             "entity_id": eid,
             "url": url,
-            "error": "Service call timed out (90s).",
+            "error": f"Service call timed out ({int(timeout)}s).",
             "hint": "Tell the user the service didn't respond in time and offer to retry.",
         }
     except Exception as e:
@@ -725,6 +765,26 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None, user_id
             "entity_id": eid,
             "url": url,
             "error": "Service returned an unexpected result shape.",
+        }
+
+    if push_cfg and callback_id:
+        from services import callbacks as cb_service
+        try:
+            cb_service.record_dispatch_ack(callback_id, task)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("call_zynd_service: record_dispatch_ack failed: %s", e)
+        return {
+            "status": "dispatched",
+            "pending": True,
+            "entity_id": eid,
+            "url": url,
+            "task_id": task.get("id"),
+            "callback_id": callback_id,
+            "hint": (
+                "Service is running asynchronously; its result will appear in "
+                "the chat when ready. Tell the user you've dispatched it — do "
+                "NOT wait or re-poll."
+            ),
         }
 
     task_state = ((task.get("status") or {}).get("state")) or "unknown"

@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import logging
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import config
@@ -75,12 +76,17 @@ async def register(
     our_message_id: str,
     origin_kind: str,
     origin_ref: dict[str, Any],
+    peer_a2a_url: Optional[str] = None,
 ) -> tuple[str, str, str]:
     """Create a pending callback row. Returns
     ``(callback_id, push_url, push_token)``. The dispatcher passes
     push_url + push_token into the peer's ``pushNotificationConfig``;
     the peer echoes the token in ``Authorization: Bearer …`` on the
     push back.
+
+    ``peer_a2a_url`` is the exact endpoint we dispatched to — stored so
+    the inbound push handler can pull the real result with ``tasks/get``
+    without re-resolving the peer from the registry.
 
     The supabase client is sync; we run inserts on the event loop
     directly because the per-call cost is small and the dispatcher
@@ -92,6 +98,7 @@ async def register(
         "user_id": user_id,
         "thread_id": thread_id,
         "peer_agent_id": peer_agent_id,
+        "peer_a2a_url": peer_a2a_url,
         "our_message_id": our_message_id,
         "origin_kind": origin_kind,
         "origin_ref": origin_ref or {},
@@ -136,6 +143,88 @@ def lookup_by_token(push_token: str) -> Optional[dict[str, Any]]:
     return None
 
 
+def record_dispatch_ack(callback_id: str, task: dict[str, Any]) -> None:
+    """Store the agent's immediate send-ack on the call row: the Task id it
+    assigned plus its acceptance payload. The Agent Calls card is created
+    from this (it only shows once peer_task_id is set), so the card reflects
+    the response we actually got back, not the bare pre-send row."""
+    if not callback_id or not isinstance(task, dict):
+        return
+    state = ((task.get("status") or {}).get("state")) or "submitted"
+    sb = _supabase()
+    try:
+        sb.table(_TABLE_OUTBOUND).update({
+            "peer_task_id": task.get("id"),
+            "last_state": state,
+            "last_event": {
+                "kind": "acceptance",
+                "taskId": task.get("id"),
+                "status": task.get("status"),
+                "artifacts": task.get("artifacts"),
+            },
+            "last_event_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", callback_id).execute()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("services.callbacks.record_dispatch_ack failed cb=%s: %s", callback_id, e)
+
+
+def record_push_event(callback_id: str, state: str, event: dict[str, Any]) -> None:
+    """Stash the latest raw push from the peer on the outbound_callbacks row
+    so the Agent Calls panel can show "last response from the agent" even
+    before (or without) a final answer. Best-effort — failures just mean the
+    panel shows slightly staler state."""
+    if not callback_id:
+        return
+    sb = _supabase()
+    try:
+        sb.table(_TABLE_OUTBOUND).update({
+            "last_state": state,
+            "last_event": event,
+            "last_event_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", callback_id).execute()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("services.callbacks.record_push_event failed cb=%s: %s", callback_id, e)
+
+
+def list_pending(max_age_hours: int = 48, limit: int = 100) -> list[dict[str, Any]]:
+    """Pending outbound callbacks recent enough to still be worth polling.
+    The fallback poller uses this to pull results the peer never pushed.
+    Old rows age out of the window (and the GC sweeper flips them to
+    'expired'), so polling stays bounded."""
+    sb = _supabase()
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
+    res = (
+        sb.table(_TABLE_OUTBOUND)
+        .select("*")
+        .eq("status", "pending")
+        .gte("created_at", cutoff)
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return res.data or []
+
+
+def lookup_by_peer_task(peer_task_id: str) -> Optional[dict[str, Any]]:
+    """Fallback correlation for the inbound push handler when the bearer
+    token is missing or unknown: match the peer's Task.id we linked at
+    dispatch (``mark_peer_task``). Returns the most recently created row."""
+    if not peer_task_id:
+        return None
+    sb = _supabase()
+    res = (
+        sb.table(_TABLE_OUTBOUND)
+        .select("*")
+        .eq("peer_task_id", peer_task_id)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if res.data:
+        return res.data[0]
+    return None
+
+
 def record_result(
     *,
     callback: dict[str, Any],
@@ -150,9 +239,23 @@ def record_result(
     whole row in (not just an id) because the caller already has it and
     we'd rather avoid a re-read.
 
-    Returns the new ``callback_results.id``.
+    Returns the new ``callback_results.id`` (or the existing one if this
+    callback was already recorded).
     """
     sb = _supabase()
+
+    # Idempotency: one recorded result per callback. The push handler, the
+    # fallback poller, and the inline path can all race to record the same
+    # answer — first writer wins, the rest no-op.
+    existing = (
+        sb.table(_TABLE_RESULTS)
+        .select("id")
+        .eq("callback_id", callback["id"])
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        return existing.data[0]["id"]
 
     res_row = {
         "callback_id": callback["id"],
@@ -172,9 +275,9 @@ def record_result(
     # (input-required, auth-required) leave it pending so the next push
     # — when the peer's user finally types something — can land too.
     if task_state in ("completed", "canceled", "failed", "rejected"):
-        sb.table(_TABLE_OUTBOUND).update({"status": "received"}).eq(
-            "id", callback["id"]
-        ).execute()
+        sb.table(_TABLE_OUTBOUND).update(
+            {"status": "received", "answer_text": reply_text}
+        ).eq("id", callback["id"]).execute()
 
     return result_id
 
@@ -210,6 +313,7 @@ class _ServiceRegistrar:
         our_message_id: str,
         origin_kind: str,
         origin_ref: dict[str, Any],
+        peer_a2a_url: Optional[str] = None,
     ) -> tuple[str, str, str]:
         return await register(
             user_id=user_id,
@@ -218,6 +322,7 @@ class _ServiceRegistrar:
             our_message_id=our_message_id,
             origin_kind=origin_kind,
             origin_ref=origin_ref,
+            peer_a2a_url=peer_a2a_url,
         )
 
     async def mark_peer_task(self, callback_id: str, peer_task_id: str) -> None:

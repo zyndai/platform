@@ -120,12 +120,24 @@ class A2AClient:
             "params": params,
         }
 
+        logger.info(
+            "[a2a client] POST %s body=%s",
+            a2a_url,
+            json.dumps(body)[:1000],
+        )
         async with httpx.AsyncClient(timeout=self._timeout) as h:
             resp = await h.post(a2a_url, json=body)
             resp.raise_for_status()
             envelope = resp.json()
 
-        return self._unwrap(envelope)
+        result = self._unwrap(envelope)
+        logger.info(
+            "[a2a client] response from %s task_id=%s state=%s",
+            a2a_url,
+            (result.get("id") if isinstance(result, dict) else None),
+            ((result.get("status") or {}).get("state") if isinstance(result, dict) else None),
+        )
+        return result
 
     async def stream(
         self,

@@ -123,6 +123,23 @@ async def _fetch_peer_card_cached(client: A2AClient, card_url: str) -> Optional[
     return card
 
 
+def _is_deferred_push_ack(task: dict[str, Any]) -> bool:
+    """True when the immediate response is a push-deferral ack rather than
+    the real result. Indicators: any artifact part has delivery='push', or
+    all artifact data parts have a null/empty shortlist alongside a taskId."""
+    for art in task.get("artifacts") or []:
+        for part in art.get("parts") or []:
+            if not isinstance(part, dict):
+                continue
+            if part.get("kind") == "data":
+                data = part.get("data") or {}
+                if data.get("delivery") == "push":
+                    return True
+                if data.get("taskId") and not data.get("shortlist"):
+                    return True
+    return False
+
+
 def _extract_reply_text_from_task(task: dict[str, Any]) -> Optional[str]:
     """Best-effort: pull readable reply text from an A2A Task — first
     `status.message.parts`, then the first artifact's parts. Returns
@@ -223,6 +240,7 @@ class CallbackRegistrar(Protocol):
         our_message_id: str,
         origin_kind: str,
         origin_ref: dict[str, Any],
+        peer_a2a_url: Optional[str] = None,
     ) -> tuple[str, str, str]:
         """Returns ``(callback_id, push_url, push_token)``."""
         ...
@@ -336,6 +354,7 @@ async def dispatch(
                 our_message_id=our_message_id,
                 origin_kind=origin_kind,
                 origin_ref=origin_ref or {},
+                peer_a2a_url=peer_a2a_url,
             )
             task = await client.send(
                 peer_a2a_url,
@@ -359,25 +378,35 @@ async def dispatch(
                         callback_id, peer_task_id, e,
                     )
 
-            # If the peer answered inline (terminal state with a reply
-            # in the immediate response), no push will ever come — we'd
-            # leave the callback row pending forever. Synthesize the
-            # result now so the frontend sees it via realtime exactly
-            # as if a push had arrived.
+            # If the peer answered inline (terminal state with a real reply
+            # in the immediate response), no push will ever come — synthesize
+            # the result now so the frontend sees it via realtime.
+            # Skip when the response is a deferred push ack: the agent sets
+            # state=completed but shortlist=null and delivery="push", meaning
+            # the real result is still coming via push/poll. Recording it now
+            # would mark the callback "received" with null answer and the
+            # poller would never run.
             inline_state = ((task.get("status") or {}).get("state")) if isinstance(task, dict) else None
             if inline_state in ("completed", "failed", "rejected", "canceled"):
-                reply_text = _extract_reply_text_from_task(task)
-                try:
-                    await _callback_registrar.record_inline_result(
-                        callback_id,
-                        task=task,
-                        reply_text=reply_text,
+                is_deferred = _is_deferred_push_ack(task)
+                if is_deferred:
+                    logger.info(
+                        "transport.dispatch: cb=%s state=%s but deferred push ack — skipping inline record, waiting for push/poll",
+                        callback_id, inline_state,
                     )
-                except Exception as e:  # noqa: BLE001
-                    logger.warning(
-                        "transport.dispatch: record_inline_result failed cb=%s: %s",
-                        callback_id, e,
-                    )
+                else:
+                    reply_text = _extract_reply_text_from_task(task)
+                    try:
+                        await _callback_registrar.record_inline_result(
+                            callback_id,
+                            task=task,
+                            reply_text=reply_text,
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "transport.dispatch: record_inline_result failed cb=%s: %s",
+                            callback_id, e,
+                        )
 
             return DispatchResult(
                 transport=Transport.PUSH,

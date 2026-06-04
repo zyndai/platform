@@ -270,11 +270,12 @@ def _patch_agent_deps(monkeypatch, signed_result):
     return net
 
 
-def test_call_agent_push_returns_dispatched(monkeypatch):
+def test_call_agent_returns_dispatched_immediately(monkeypatch):
+    # call_zynd_agent is fire-and-forget: it returns "dispatched" right away
+    # and does the real work on a background thread; the reply comes via push.
     net = _patch_agent_deps(monkeypatch, {
         "task": {"id": "task-1", "status": {"state": "submitted"}},
         "task_state": "submitted",
-        "reply_text": "",
         "transport": "push",
         "callback_id": "cb-1",
         "pending": True,
@@ -282,38 +283,30 @@ def test_call_agent_push_returns_dispatched(monkeypatch):
 
     out = net.call_zynd_agent("zns:agent", text="run it", user_id="user-1")
     assert out["status"] == "dispatched"
-    assert out["callback_id"] == "cb-1"
-    assert out["task_id"] == "task-1"
-
-
-def test_call_agent_inline_send_is_classified(monkeypatch):
-    reply = json.dumps({"result": 42})
-    net = _patch_agent_deps(monkeypatch, {
-        "task": {
-            "id": "task-2",
-            "status": {"state": "completed", "message": {"parts": [{"kind": "text", "text": reply}]}},
-        },
-        "task_state": "completed",
-        "reply_text": reply,
-        "transport": "send",
-    })
-
-    out = net.call_zynd_agent("zns:agent", text="run it", user_id="user-1")
-    assert out["status"] == "success"
-    assert out["structured_output"] == {"result": 42}
-
-
-def test_call_agent_delivery_failure_passthrough(monkeypatch):
-    net = _patch_agent_deps(monkeypatch, {
-        "status": "delivery_failed",
-        "reply_status": "rejected",
-        "error_code": -32100,
-        "message": "rejected",
-    })
-
-    out = net.call_zynd_agent("zns:agent", text="run it", user_id="user-1")
-    assert out["status"] == "delivery_failed"
+    assert out["pending"] is True
     assert out["entity_id"] == "zns:agent"
+
+
+def test_dispatch_agent_call_bg_forces_push(monkeypatch):
+    # The background worker must dispatch with PUSH forced (don't block).
+    from agent.a2a.transport import Transport
+
+    captured: dict = {}
+
+    def _capture_send(**kw):
+        captured.update(kw)
+        return {"task": {"id": "t"}, "task_state": "submitted", "transport": "push", "callback_id": "cb"}
+
+    net = _patch_agent_deps(monkeypatch, {})
+    monkeypatch.setattr(net, "_signed_a2a_send", _capture_send)
+
+    from services import callbacks as cb_service
+    monkeypatch.setattr(cb_service, "record_dispatch_ack", lambda *a, **k: None)
+
+    net._dispatch_agent_call_bg("zns:agent", "run it", None, "user-1")
+
+    assert captured["target_agent_id"] == "zns:agent"
+    assert captured["hints"].force == Transport.PUSH
 
 
 def test_call_agent_requires_user():

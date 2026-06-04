@@ -1457,9 +1457,11 @@ async def a2a_agent_card(user_id: str):
 
 _DEFAULT_IDLE_TTL_MS = 3_600_000   # 1 hour, matches the design default
 _SWEEPER_INTERVAL_S = 60           # how often we scan for timed-out tasks
+_POLLER_INTERVAL_S = 30            # how often we poll pending callbacks via tasks/get
 
 
 _sweeper_task: asyncio.Task | None = None
+_poller_task: asyncio.Task | None = None
 
 
 async def reconcile_orphan_tasks() -> int:
@@ -1580,24 +1582,74 @@ async def _sweeper_loop():
         raise
 
 
+async def _poll_pending_callbacks() -> int:
+    """Fallback for the push path: pull the result of still-pending agent
+    calls with tasks/get, in case the peer never pushed (or its push was
+    dropped). Reuses the exact push-recording logic, just driven by the DB
+    rather than an inbound webhook. Once a result records, the row flips to
+    'received' and drops out of this scan.
+    """
+    from services import callbacks as cb_service
+
+    try:
+        pending = cb_service.list_pending()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[a2a poll] list_pending failed: %s", e)
+        return 0
+
+    polled = 0
+    for cb in pending:
+        task_id = cb.get("peer_task_id")
+        if not task_id:
+            continue  # never linked a peer task — nothing to fetch by
+        try:
+            await _fetch_and_record_push_result(cb, {"taskId": task_id}, {})
+            polled += 1
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[a2a poll] fetch failed cb=%s: %s", cb.get("id"), e)
+    if polled:
+        logger.info("[a2a poll] checked %d pending call(s)", polled)
+    return polled
+
+
+async def _poller_loop():
+    """Background loop that polls pending callbacks every _POLLER_INTERVAL_S."""
+    logger.info(f"[a2a poll] loop started (interval={_POLLER_INTERVAL_S}s)")
+    try:
+        while True:
+            await asyncio.sleep(_POLLER_INTERVAL_S)
+            try:
+                await _poll_pending_callbacks()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[a2a poll] iteration error: {e}")
+    except asyncio.CancelledError:
+        logger.info("[a2a poll] loop stopped")
+        raise
+
+
 async def start_a2a_lifecycle() -> None:
-    """Hook into the FastAPI lifespan startup: reconcile orphans + start sweeper."""
-    global _sweeper_task
+    """Hook into the FastAPI lifespan startup: reconcile orphans + start
+    the idle-task sweeper and the pending-callback poller."""
+    global _sweeper_task, _poller_task
     await reconcile_orphan_tasks()
     if _sweeper_task is None:
         _sweeper_task = asyncio.create_task(_sweeper_loop())
+    if _poller_task is None:
+        _poller_task = asyncio.create_task(_poller_loop())
 
 
 async def stop_a2a_lifecycle() -> None:
-    """Lifespan shutdown: stop sweeper + drain any in-flight push deliveries."""
-    global _sweeper_task
-    if _sweeper_task is not None:
-        _sweeper_task.cancel()
-        try:
-            await _sweeper_task
-        except asyncio.CancelledError:
-            pass
-        _sweeper_task = None
+    """Lifespan shutdown: stop sweeper + poller + drain in-flight pushes."""
+    global _sweeper_task, _poller_task
+    for attr in ("_sweeper_task", "_poller_task"):
+        t = globals().get(attr)
+        if t is not None:
+            t.cancel()
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+            globals()[attr] = None
     if _push_tasks:
         # Wait briefly for in-flight push deliveries to settle so we
         # don't lose them at process exit.
@@ -1639,122 +1691,348 @@ async def a2a_push_inbound(user_id: str, request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Body is not valid JSON.")
 
-    if not isinstance(wrapper, dict) or wrapper.get("kind") != "message":
-        raise HTTPException(status_code=400, detail="Body is not an A2A Message wrapper.")
+    if not isinstance(wrapper, dict):
+        raise HTTPException(status_code=400, detail="Push body is not a JSON object.")
 
+    auth_header_preview = (request.headers.get("authorization") or "")[:30]
+    logger.info(
+        "[a2a push-inbound] received push user=%s from=%s auth=%s body_keys=%s",
+        user_id[:8],
+        request.client.host if request.client else "unknown",
+        auth_header_preview or "(none)",
+        list(wrapper.keys()),
+    )
+
+    # MVP posture: accept and route the push on a best-effort basis. zynd
+    # peers push bearer-only and sometimes unsigned, so identity checks
+    # (signature, token↔user, token↔peer) degrade to warnings instead of
+    # rejecting. The only fatal cases are "can't parse" and "can't correlate
+    # to any callback we issued" — without a callback row there's nowhere to
+    # route the result.
     try:
         ctx = verify_message(
             wrapper,
-            mode="strict",
+            mode="permissive",
             replay_cache=_replay_cache,
             verify_developer_proof=True,
         )
+        sender_entity_id = ctx["entity_id"]
     except ZyndAuthError as e:
-        raise HTTPException(status_code=401, detail=f"x-zynd-auth verification failed: {e.reason}")
+        logger.warning("[a2a push-inbound] signature present but invalid (accepting, MVP): %s", e.reason)
+        sender_entity_id = None
 
-    sender_entity_id = ctx["entity_id"]
+    event = _extract_push_event(wrapper)
+    task_id = (event.get("taskId") if event else None) or wrapper.get("taskId")
 
-    # Pull the TaskStatusUpdateEvent out of the wrapper's first DataPart.
-    event: dict | None = None
-    for part in wrapper.get("parts") or []:
-        if isinstance(part, dict) and part.get("kind") == "data":
-            d = part.get("data")
-            if isinstance(d, dict) and d.get("kind") == "status-update":
-                event = d
-                break
-    if event is None:
-        raise HTTPException(status_code=400, detail="Push wrapper has no status-update DataPart.")
-
-    # ── Bearer token correlation ────────────────────────────────────
-    # Mandatory: a push that doesn't claim a token we issued is
-    # rejected outright. The peer learned this token from our original
-    # message/send pushNotificationConfig.
     auth_header = request.headers.get("authorization") or ""
-    bearer = ""
-    if auth_header.lower().startswith("bearer "):
-        bearer = auth_header[7:].strip()
-    if not bearer:
-        raise HTTPException(
-            status_code=401,
-            detail="Push requires Authorization: Bearer <push_token> we issued.",
-        )
+    bearer = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
 
     from services import callbacks as cb_service
 
-    callback = cb_service.lookup_by_token(bearer)
+    callback = cb_service.lookup_by_token(bearer) if bearer else None
+    if callback is None and task_id:
+        # Fallback: correlate by the peer Task.id we linked at dispatch.
+        callback = cb_service.lookup_by_peer_task(task_id)
     if callback is None:
-        raise HTTPException(status_code=401, detail="Unknown push token.")
+        logger.warning(
+            "[a2a push-inbound user=%s] uncorrelated push (bearer=%s task=%s from=%s) — acking & dropping",
+            user_id[:8], bool(bearer), str(task_id or "")[:8], (sender_entity_id or "")[:12],
+        )
+        return {"status": "ack_uncorrelated", "task_id": task_id}
 
     if callback.get("user_id") != user_id:
-        # Token issued to a different persona — refuse.
-        raise HTTPException(
-            status_code=403,
-            detail="Push token does not belong to this persona.",
+        logger.warning(
+            "[a2a push-inbound] token user %s != path user %s — proceeding (MVP)",
+            str(callback.get("user_id"))[:8], user_id[:8],
+        )
+    if sender_entity_id and callback.get("peer_agent_id") != sender_entity_id:
+        logger.warning(
+            "[a2a push-inbound] signed sender %s != token peer %s — proceeding (MVP)",
+            sender_entity_id[:12], str(callback.get("peer_agent_id"))[:12],
         )
 
-    if callback.get("peer_agent_id") != sender_entity_id:
-        # Token was meant for a different peer — refuse.
-        raise HTTPException(
-            status_code=403,
-            detail="Push sender does not match the peer the token was issued for.",
-        )
+    if event is None:
+        event = {"taskId": task_id, "status": wrapper.get("status") or {}}
 
-    # Extract a readable reply text from the event's status.message
-    # (A2A v0.3: TaskStatusUpdateEvent.status is a TaskStatus with an
-    # optional Message). Concatenate all TextParts; ignore DataParts
-    # for the readable summary (they're available in raw_event).
+    # zynd push callbacks are status-only and arrive many times per task;
+    # status.state can read "completed" while the payload is still a
+    # deferral ack. So we don't trust the event — ack now and, in the
+    # background, pull the real Task with tasks/get and record it only
+    # once the result is actually present.
     task_state = (event.get("status") or {}).get("state") or "unknown"
-    reply_text = _extract_reply_text(event)
-
     try:
-        result_id = cb_service.record_result(
-            callback=callback,
-            task_state=task_state,
-            reply_text=reply_text,
-            raw_event=event,
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.exception(
-            "[a2a push-inbound] record_result failed cb=%s: %s",
-            callback.get("id"), e,
-        )
-        # If the DB write fails we still ack so the peer doesn't retry
-        # in a tight loop. The result is lost — log loudly instead.
-        return {
-            "status": "ack_no_persistence",
-            "task_id": event.get("taskId"),
-            "task_state": task_state,
-            "from": sender_entity_id,
-        }
+        logger.info("[a2a push-inbound] raw body cb=%s: %s",
+                    callback.get("id"), json.dumps(wrapper)[:2000])
+    except Exception:  # noqa: BLE001
+        pass
+    # Stash this raw push on the call row so the Agent Calls panel can show
+    # the latest webhook response immediately, regardless of readiness.
+    cb_service.record_push_event(callback.get("id"), task_state, event)
+    _track_push_task(_fetch_and_record_push_result(callback, event, wrapper))
 
     logger.info(
-        f"[a2a push-inbound user={user_id[:8]}] cb={result_id[:8]} "
-        f"from={sender_entity_id[:12]} task={event.get('taskId','')[:8]} "
-        f"state={task_state} final={event.get('final')}"
+        "[a2a push-inbound user=%s] cb=%s from=%s task=%s state=%s final=%s correlated_by=%s (fetch scheduled)",
+        user_id[:8],
+        str(callback.get("id", ""))[:8],
+        (sender_entity_id or "unsigned")[:16],
+        str(event.get("taskId") or "")[:8],
+        task_state,
+        event.get("final"),
+        "token" if bearer else "peer_task_id",
     )
 
     return {
         "status": "received",
-        "callback_result_id": result_id,
         "task_id": event.get("taskId"),
         "task_state": task_state,
         "from": sender_entity_id,
     }
 
 
-def _extract_reply_text(event: dict[str, Any]) -> Optional[str]:
-    """Pull a flat string from a TaskStatusUpdateEvent's status.message.
-    Returns None when the event carries no message at all (e.g.
-    intermediate state transitions with no narration)."""
-    status = event.get("status") or {}
-    msg = status.get("message")
-    if not isinstance(msg, dict):
+def _extract_push_event(wrapper: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Pull the status-update event out of a push wrapper's DataParts.
+    Lenient: accepts the canonical ``kind=="status-update"`` part, but also
+    any DataPart that carries a taskId/status so we don't drop pushes whose
+    wrapper shape differs slightly. Returns None when there's nothing usable
+    (the handler then synthesizes a minimal event from the wrapper)."""
+    for part in wrapper.get("parts") or []:
+        if isinstance(part, dict) and part.get("kind") == "data":
+            d = part.get("data")
+            if isinstance(d, dict) and (
+                d.get("kind") == "status-update" or d.get("taskId") or d.get("status")
+            ):
+                return d
+    return None
+
+
+async def _fetch_and_record_push_result(
+    callback: dict[str, Any], event: dict[str, Any], wrapper: dict[str, Any]
+) -> None:
+    """Surface the peer's real result, once it's actually present.
+
+    Two delivery styles, handled in order:
+      1. In the push body — services that "POST the shortlist to the
+         callback URL when ready" put the payload right in the push. We
+         check the wrapper/event first.
+      2. Via tasks/get — status-only notifiers. We pull the Task and judge
+         readiness from its content (status.state is unreliable: a peer can
+         report "completed" while the payload is still a deferral ack).
+
+    When neither is ready we record nothing and leave the callback pending so
+    the next push re-checks. A genuine terminal failure is surfaced so the
+    user isn't left waiting forever.
+    """
+    from services import callbacks as cb_service
+
+    cb_id = callback.get("id")
+
+    # 1. Result delivered inside the push body?
+    body_ready, b_reply, b_structured = _push_result_ready(_push_body_as_task(event, wrapper))
+    if body_ready:
+        _record_push_result(
+            cb_service, callback, cb_id,
+            task_state="completed",
+            reply=b_reply, structured=b_structured,
+            raw_event={**event, "structured": b_structured, "source": "push-body"},
+        )
+        return
+
+    # 2. Fall back to tasks/get.
+    task_id = event.get("taskId") or callback.get("peer_task_id")
+    if not task_id:
+        logger.info("[a2a push-fetch] push body not ready and no task id; cb=%s", cb_id)
+        return
+
+    a2a_url = callback.get("peer_a2a_url") or _resolve_peer_a2a_url(
+        callback.get("peer_agent_id")
+    )
+    if not a2a_url:
+        logger.warning("[a2a push-fetch] no peer a2a url; cb=%s", cb_id)
+        return
+
+    kp = _persona_keypair(callback.get("user_id"))
+    if kp is None:
+        logger.warning("[a2a push-fetch] no persona keypair; cb=%s", cb_id)
+        return
+    keypair, agent_id = kp
+
+    from agent.a2a.client import A2AClient, A2AError
+
+    client = A2AClient(keypair, agent_id, timeout=30.0)
+    try:
+        task = await client.get_task(a2a_url, task_id)
+    except A2AError as e:
+        logger.info("[a2a push-fetch] tasks/get rejected cb=%s: %s", cb_id, e)
+        return
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[a2a push-fetch] tasks/get failed cb=%s: %s", cb_id, e)
+        return
+
+    state = ((task.get("status") or {}).get("state")) or "unknown"
+    ready, reply, structured = _push_result_ready(task)
+    is_failure = state in ("failed", "rejected", "canceled")
+    if not ready and not is_failure:
+        logger.info(
+            "[a2a push-fetch] task %s not ready (state=%s) cb=%s",
+            str(task_id)[:8], state, cb_id,
+        )
+        return
+
+    # A real terminal failure is surfaced under its own state; a ready
+    # result lands as "completed" regardless of the (possibly premature)
+    # state the peer reported.
+    _record_push_result(
+        cb_service, callback, cb_id,
+        task_state=state if is_failure else "completed",
+        reply=reply, structured=structured,
+        raw_event={**event, "fetched_task": task, "structured": structured},
+    )
+
+
+def _record_push_result(cb_service, callback, cb_id, *, task_state, reply, structured, raw_event) -> None:
+    # The frontend renders reply_text; a structured-only result (no text part)
+    # would otherwise show as an empty "processing" row, so serialize the
+    # payload. The raw structured form stays in raw_event for rich UI.
+    reply_text = reply
+    if reply_text is None and structured is not None:
+        try:
+            reply_text = json.dumps(structured, ensure_ascii=False)
+        except Exception:  # noqa: BLE001
+            reply_text = str(structured)
+    try:
+        result_id = cb_service.record_result(
+            callback=callback,
+            task_state=task_state,
+            reply_text=reply_text,
+            raw_event=raw_event,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[a2a push-fetch] record_result failed cb=%s: %s", cb_id, e)
+        return
+    logger.info(
+        "[a2a push-fetch] recorded cb=%s result=%s state=%s source=%s",
+        cb_id, str(result_id)[:8], task_state, raw_event.get("source", "tasks/get"),
+    )
+
+
+def _push_body_as_task(event: dict[str, Any], wrapper: dict[str, Any]) -> dict[str, Any]:
+    """Assemble a Task-like view of a result that may be delivered INSIDE the
+    push body (the "shortlist will be POSTed to the callback URL" style).
+    Gathers the status message plus any DataParts/artifacts on the event and
+    on the wrapper (excluding the status-update envelope itself) so
+    _push_result_ready can judge them."""
+    event = event or {}
+    wrapper = wrapper or {}
+    artifacts = list(event.get("artifacts") or [])
+    extra_parts = [
+        p for p in (wrapper.get("parts") or [])
+        if isinstance(p, dict)
+        and p.get("kind") == "data"
+        and isinstance(p.get("data"), dict)
+        and p["data"].get("kind") != "status-update"
+    ]
+    if extra_parts:
+        artifacts.append({"parts": extra_parts})
+    return {"status": event.get("status") or {}, "artifacts": artifacts}
+
+
+def _resolve_peer_a2a_url(peer_agent_id: Optional[str]) -> Optional[str]:
+    """Fallback for legacy callbacks with no stored peer_a2a_url: resolve
+    the peer's A2A endpoint from its registry card."""
+    if not peer_agent_id:
         return None
-    parts = msg.get("parts") or []
-    chunks: list[str] = []
-    for p in parts:
-        if isinstance(p, dict) and p.get("kind") == "text":
-            t = p.get("text")
-            if isinstance(t, str) and t:
-                chunks.append(t)
-    return "\n".join(chunks) if chunks else None
+    try:
+        from agent.a2a.client import resolve_a2a_url
+        from mcp.tools.zynd_network import _agent_url_from_card, _fetch_agent_card
+
+        return resolve_a2a_url(_agent_url_from_card(_fetch_agent_card(peer_agent_id)))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[a2a push-fetch] peer url resolve failed for %s: %s", peer_agent_id, e)
+        return None
+
+
+# Keys in a result DataPart that are narration/metadata rather than payload —
+# their presence doesn't make a Task "ready".
+_ACK_NARRATION_KEYS = frozenset({
+    "delivery", "mode", "taskid", "task_id", "contextid", "context_id",
+    "status", "state", "response", "message", "note", "detail",
+})
+_ACK_PHRASES = ("when ready", "task accepted", "will be posted", "will be pushed")
+
+
+def _push_result_ready(task: dict[str, Any]) -> tuple[bool, Optional[str], Any]:
+    """Decide whether a fetched Task carries the real result vs. a deferral
+    ack. Returns ``(ready, reply_text, structured_payload)``.
+
+    Generic by design (no service-specific field names): a Task is ready
+    when it has readable reply text or a structured DataPart payload that
+    is more than an acceptance ack. See :func:`_is_acceptance_ack`."""
+    if not isinstance(task, dict):
+        return False, None, None
+
+    from agent.a2a.client import extract_reply_text
+
+    reply = extract_reply_text(task) or None
+    structured = _first_data_payload(task)
+
+    if _is_acceptance_ack(reply, structured):
+        return False, None, None
+    if reply or structured:
+        return True, reply, structured
+    return False, None, None
+
+
+def _first_data_payload(task: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """First non-empty DataPart payload from status.message or artifacts."""
+
+    def _scan(parts: Any) -> Optional[dict[str, Any]]:
+        for p in parts or []:
+            if isinstance(p, dict) and p.get("kind") == "data":
+                d = p.get("data")
+                if isinstance(d, dict) and d:
+                    return d
+        return None
+
+    msg = (task.get("status") or {}).get("message")
+    if isinstance(msg, dict):
+        hit = _scan(msg.get("parts"))
+        if hit is not None:
+            return hit
+    for art in task.get("artifacts") or []:
+        if isinstance(art, dict):
+            hit = _scan(art.get("parts"))
+            if hit is not None:
+                return hit
+    return None
+
+
+def _nonempty(v: Any) -> bool:
+    if v is None:
+        return False
+    if isinstance(v, (str, list, dict, tuple, set)) and len(v) == 0:
+        return False
+    return True
+
+
+def _is_acceptance_ack(reply: Optional[str], structured: Any) -> bool:
+    """True when the Task is just an 'accepted; result will be pushed later'
+    placeholder — a structured DataPart with ``delivery=="push"`` and no
+    populated payload field, or an accepted/when-ready narration alongside no
+    payload. A plain text reply (no structured part) is never treated as an
+    ack — that's the real answer on the agent path."""
+    if not isinstance(structured, dict):
+        return False
+
+    narration = reply or ""
+    resp = structured.get("response") or structured.get("message")
+    if isinstance(resp, str):
+        narration = f"{narration}\n{resp}"
+    has_payload = any(
+        k.lower() not in _ACK_NARRATION_KEYS and _nonempty(v)
+        for k, v in structured.items()
+    )
+    if has_payload:
+        return False
+    if structured.get("delivery") == "push":
+        return True
+    return any(p in narration.lower() for p in _ACK_PHRASES)

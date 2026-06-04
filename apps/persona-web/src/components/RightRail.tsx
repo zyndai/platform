@@ -1,139 +1,218 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { MoreHorizontal } from "lucide-react";
 import { getSupabase } from "@/lib/supabase";
 import { useDashboard } from "@/contexts/DashboardContext";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-interface RailThread {
+interface AgentCall {
   id: string;
-  initiator_id: string;
-  receiver_id: string;
-  initiator_name: string;
-  receiver_name: string;
-  updated_at: string;
+  peer_agent_id: string;
+  peer_task_id: string | null;
+  status: string;
+  last_state: string | null;
+  answer_text: string | null;
+  last_event: unknown;
+  created_at: string;
+  origin_ref: { tool?: string; entity_id?: string } | null;
 }
 
-interface RailMessage {
-  thread_id: string;
-  content: string;
-  created_at: string;
-}
+const callPeerLabel = (c: AgentCall) => {
+  const id = c.peer_agent_id || "";
+  const short = id.includes(":") ? id.split(":").pop()!.slice(0, 10) : id.slice(0, 10);
+  return short || "agent";
+};
+
+// pending → waiting on the peer; received → answer (or terminal) is in.
+const callStatusLabel = (c: AgentCall): { text: string; tone: string } => {
+  if (c.status === "received") return { text: "✓ done", tone: "done" };
+  if (c.status === "failed" || c.status === "expired") return { text: c.status, tone: "warn" };
+  return { text: "⏳ pending", tone: "pending" };
+};
 
 export default function RightRail() {
   const { user } = useDashboard();
-  const [threads, setThreads] = useState<RailThread[]>([]);
-  const [previews, setPreviews] = useState<Record<string, string>>({});
-  const [agentId, setAgentId] = useState<string | null>(null);
-  // False until the threads query resolves, so we show skeletons instead of an
-  // immediate "No threads yet." flash on first load.
-  const [loaded, setLoaded] = useState(false);
+  const [calls, setCalls] = useState<AgentCall[]>([]);
+  const [selected, setSelected] = useState<AgentCall | null>(null);
 
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`${API}/api/persona/${user.id}/status`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled && data?.agent_id) setAgentId(data.agent_id);
-      } catch {
-        /* best effort */
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [user]);
-
+  // Agent/service calls our persona made. The row lands "pending" the moment
+  // we dispatch and flips to "received" (with an answer) when the peer's push
+  // arrives — both via realtime.
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
     const sb = getSupabase();
-    (async () => {
-      let queryStr = `initiator_id.eq.${user.id},receiver_id.eq.${user.id}`;
-      if (agentId) {
-        queryStr = `${queryStr},initiator_id.eq.${agentId},receiver_id.eq.${agentId}`;
-      }
-      const { data: threadRows } = await sb
-        .from("dm_threads")
-        .select("id,initiator_id,receiver_id,initiator_name,receiver_name,updated_at")
-        .or(queryStr)
-        .order("updated_at", { ascending: false })
-        .limit(8);
-      if (cancelled) return;
-      setLoaded(true);
-      if (!threadRows) return;
-      setThreads(threadRows as RailThread[]);
 
-      const ids = threadRows.map((t) => t.id);
-      if (ids.length === 0) return;
-      const { data: msgRows } = await sb
-        .from("dm_messages")
-        .select("thread_id,content,created_at")
-        .in("thread_id", ids)
-        .order("created_at", { ascending: false });
-      if (cancelled || !msgRows) return;
-      const seen: Record<string, string> = {};
-      for (const m of msgRows as RailMessage[]) {
-        if (!seen[m.thread_id]) seen[m.thread_id] = m.content;
-      }
-      setPreviews(seen);
-    })();
-    return () => { cancelled = true; };
-  }, [user, agentId]);
+    const upsert = (row: AgentCall) =>
+      setCalls((prev) => {
+        const idx = prev.findIndex((c) => c.id === row.id);
+        if (idx === -1) return [row, ...prev].slice(0, 20);
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...row };
+        return next;
+      });
 
-  const peerOf = (t: RailThread) => {
-    if (!agentId && !user) return "Thread";
-    if (agentId && t.initiator_id === agentId) return t.receiver_name || "Network agent";
-    if (agentId && t.receiver_id === agentId) return t.initiator_name || "Network agent";
-    if (user && t.initiator_id === user.id) return t.receiver_name || "Network agent";
-    if (user && t.receiver_id === user.id) return t.initiator_name || "Network agent";
-    return t.receiver_name || t.initiator_name || "Thread";
-  };
+    // Authoritative load. We also poll on an interval so the panel works even
+    // if realtime isn't enabled for the table — a just-dispatched call shows
+    // up within a few seconds either way.
+    const fetchCalls = async () => {
+      const { data } = await sb
+        .from("outbound_callbacks")
+        .select("id,peer_agent_id,peer_task_id,status,last_state,answer_text,last_event,created_at,origin_ref")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (!cancelled && data) setCalls(data as AgentCall[]);
+    };
+
+    fetchCalls();
+    const interval = setInterval(fetchCalls, 8000);
+
+    const channel = sb
+      .channel(`rail-agent-calls-${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "outbound_callbacks", filter: `user_id=eq.${user.id}` },
+        (payload) => upsert(payload.new as AgentCall),
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "outbound_callbacks", filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const row = payload.new as AgentCall;
+          upsert(row);
+          // Keep an open modal in sync if its call just resolved.
+          setSelected((sel) => (sel && sel.id === row.id ? { ...sel, ...row } : sel));
+        },
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      sb.removeChannel(channel);
+    };
+  }, [user]);
+
+  // Close the modal on Escape.
+  useEffect(() => {
+    if (!selected) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelected(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected]);
 
   return (
     <aside className="app-rail">
       <div className="rail-head">
         <div>
-          <span className="rail-title">Threads</span>
-          <span className="rail-count">({threads.length})</span>
+          <span className="rail-title">Agent calls</span>
+          <span className="rail-count">({calls.length})</span>
         </div>
-        <Link href="/dashboard/messages" aria-label="See all threads" className="rail-more">
-          <MoreHorizontal />
-        </Link>
       </div>
 
-      {!loaded ? (
-        <div className="rail-skeleton" aria-hidden="true">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="rail-skel-card">
-              <span className="rail-skel-line rail-skel-title" />
-              <span className="rail-skel-line rail-skel-sub" />
-            </div>
-          ))}
-        </div>
-      ) : threads.length === 0 ? (
-        <div className="rail-empty">No threads yet.</div>
+      {calls.length === 0 ? (
+        <div className="rail-empty">No agent calls yet.</div>
       ) : (
-        threads.map((t) => {
-          const preview = previews[t.id] || "Awaiting first message…";
+        calls.map((c) => {
+          const status = callStatusLabel(c);
           return (
-            <Link
-              key={t.id}
-              href={`/dashboard/messages?thread=${t.id}`}
-              className="rail-card"
+            <button
+              type="button"
+              key={c.id}
+              className="rail-call"
+              onClick={() => setSelected(c)}
             >
-              <div className="rail-card-body">
-                <div className="rail-card-title">{peerOf(t)}</div>
-                <div className="rail-card-sub">{preview}</div>
+              <div className="rail-call-body">
+                <div className="rail-card-title">Agent · {callPeerLabel(c)}</div>
+                <div className="rail-card-sub">
+                  {c.answer_text
+                    ? c.answer_text.slice(0, 80)
+                    : c.last_state
+                    ? `Last update: ${c.last_state}`
+                    : "Waiting for the agent…"}
+                </div>
               </div>
-              <div className="rail-card-mark" />
-            </Link>
+              <span className={`rail-call-status ${status.tone}`}>{status.text}</span>
+            </button>
           );
         })
+      )}
+
+      {selected && (
+        <div className="modal-scrim" onClick={() => setSelected(null)}>
+          <div
+            className="agent-call-modal"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="agent-call-modal-header">
+              <div className="agent-call-modal-title">Agent · {callPeerLabel(selected)}</div>
+              <span className={`rail-call-status ${callStatusLabel(selected).tone}`}>
+                {callStatusLabel(selected).text}
+              </span>
+              <button
+                type="button"
+                className="agent-call-modal-close"
+                onClick={() => setSelected(null)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="agent-call-modal-body">
+              <div className="agent-call-row">
+                <span className="k">Task ID</span>
+                <span className="v">{selected.peer_task_id || "—"}</span>
+              </div>
+              <div className="agent-call-row">
+                <span className="k">Peer agent</span>
+                <span className="v">{selected.peer_agent_id}</span>
+              </div>
+              {selected.origin_ref?.tool && (
+                <div className="agent-call-row">
+                  <span className="k">Via</span>
+                  <span className="v">{selected.origin_ref.tool}</span>
+                </div>
+              )}
+              <div className="agent-call-row">
+                <span className="k">Status</span>
+                <span className="v">{selected.status}</span>
+              </div>
+              <div className="agent-call-row">
+                <span className="k">Last state</span>
+                <span className="v">{selected.last_state || "—"}</span>
+              </div>
+              <div className="agent-call-row">
+                <span className="k">Dispatched</span>
+                <span className="v">{new Date(selected.created_at).toLocaleString()}</span>
+              </div>
+
+              <div className="agent-call-modal-section">
+                <div className="rail-call-label">Answer</div>
+                {selected.answer_text ? (
+                  <pre className="rail-call-pre">{selected.answer_text}</pre>
+                ) : (
+                  <div className="rail-call-muted">
+                    No answer yet — last status: {selected.last_state || "working"}.
+                  </div>
+                )}
+              </div>
+
+              {selected.last_event != null && (
+                <div className="agent-call-modal-section">
+                  <div className="rail-call-label">Last webhook</div>
+                  <pre className="rail-call-pre">
+                    {JSON.stringify(selected.last_event, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </aside>
   );

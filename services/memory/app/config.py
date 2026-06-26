@@ -1,0 +1,51 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Runtime config, loaded from environment / .env."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    database_url: str = "postgresql://zynd:zynd@localhost:5433/zynd"
+    redis_url: str = "redis://localhost:6380"
+
+    # Offline mock embed/extract for local dev (no API keys, no spend).
+    mock_llm: bool = False
+
+    # Embeddings — OpenAI text-embedding-3-small, 1536 dims (brief: matches vector(1536)).
+    openai_api_key: str = ""
+    embedding_model: str = "text-embedding-3-small"
+
+    # Extraction — DeepSeek V3 via its OpenAI-compatible endpoint.
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    extraction_model: str = "deepseek-chat"
+
+    # Dev auth — a shared bearer that maps to the dev user. Kept alongside the
+    # M2 JWT path for local testing; never enable in production.
+    dev_bearer_token: str = "dev-secret"
+    dev_user_email: str = "dev@zynd.local"
+
+    # M2 — JWT + OAuth (dev-grade; see docs/CHATGPT_PLUGIN.md security notes).
+    jwt_secret: str = "dev-jwt-secret-change-me-in-production-0123456789"
+    jwt_issuer: str = "zynd"
+    access_token_ttl_seconds: int = 3600
+    refresh_token_ttl_seconds: int = 30 * 24 * 3600
+    oauth_client_id: str = "zynd-chatgpt"
+    oauth_client_secret: str = "zynd-oauth-secret"
+    # Comma-separated allowlist of redirect_uri prefixes (prevents open redirect).
+    oauth_allowed_redirect_prefixes: str = (
+        "https://chat.openai.com/aip/,https://chatgpt.com/aip/,http://localhost"
+    )
+    public_base_url: str = "http://localhost:8000"
+
+    # M5 matching gates (brief §6.1).
+    match_min_assertions: int = 5   # data-quality floor: skip thin profiles
+    match_default_limit: int = 10
+
+    @property
+    def allowed_redirect_prefixes(self) -> list[str]:
+        return [p.strip() for p in self.oauth_allowed_redirect_prefixes.split(",") if p.strip()]
+
+
+settings = Settings()

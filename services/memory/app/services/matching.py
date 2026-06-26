@@ -95,10 +95,11 @@ async def match_users(
         return []  # this user has no vector for that cluster yet
 
     rows = await pool.fetch(
-        """SELECT ue.user_id,
+        """SELECT ue.user_id, u.display_name,
                   1 - (ue.embedding <=> $1::vector) AS similarity,
                   ue.assertion_count
              FROM user_embeddings ue
+             JOIN users u ON u.id = ue.user_id
             WHERE ue.cluster_type = $2
               AND ue.user_id <> $3
               AND ue.assertion_count >= $4
@@ -106,15 +107,22 @@ async def match_users(
             LIMIT $5""",
         self_vector, cluster_type, user_id, settings.match_min_assertions, limit,
     )
-    # SECURITY: never return display_name — every signup path stores the user's email
-    # there, so surfacing it to a matched user would leak PII. Expose only an opaque,
-    # non-reversible handle derived from the (already non-secret) user_id.
     return [
         {
             "user_id": str(r["user_id"]),
-            "display_name": f"zynd-{str(r['user_id'])[:8]}",
+            "display_name": _match_label(r["display_name"], str(r["user_id"])),
             "similarity": round(float(r["similarity"]), 4),
             "assertion_count": r["assertion_count"],
         }
         for r in rows
     ]
+
+
+def _match_label(display_name: str | None, user_id: str) -> str:
+    """Human label shown for a matched user (human matching is the product, brief §6).
+    SECURITY: legacy rows stored the raw email in display_name; strip to the local-part
+    so the full address (a contact/spam vector) is never leaked. Real Google names pass
+    through; unknown names fall back to an opaque handle."""
+    if not display_name:
+        return f"zynd-{user_id[:8]}"
+    return display_name.split("@", 1)[0]

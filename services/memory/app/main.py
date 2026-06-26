@@ -137,15 +137,16 @@ async def token_exchange(authorization: str = Header(default="")) -> dict:
     Called by the dashboard after Google sign-in. Identity is verified by Supabase,
     so creating the user password-less here is safe (not an unauthenticated form)."""
     supabase_token = authorization.removeprefix("Bearer ").strip()
-    from app.supabase_auth import supabase_email
-    email = await supabase_email(supabase_token)
-    if not email:
+    from app.supabase_auth import supabase_identity
+    identity = await supabase_identity(supabase_token)
+    if not identity:
         raise HTTPException(status_code=401, detail="invalid or expired Google session")
+    email, display_name = identity
 
     user_id = await get_pool().fetchval(
-        """INSERT INTO users (email, display_name) VALUES ($1, $1)
-           ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email RETURNING id""",
-        email,
+        """INSERT INTO users (email, display_name) VALUES ($1, $2)
+           ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name RETURNING id""",
+        email, display_name,
     )
     base = settings.public_base_url.rstrip("/")
     return {

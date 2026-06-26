@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from app.auth import issue_access_token, issue_refresh_token, verify_refresh_token
 from app.config import settings
 from app.db import get_pool
-from app.supabase_auth import supabase_email
+from app.supabase_auth import supabase_identity
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
 
@@ -109,14 +109,15 @@ async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
     state = payload.get("state", "")
     _check_redirect_uri(redirect_uri)  # re-validate the signed value before redirecting
 
-    email = await supabase_email(body.supabase_token)
-    if not email:
+    identity = await supabase_identity(body.supabase_token)
+    if not identity:
         raise HTTPException(status_code=401, detail="Google sign-in could not be verified")
+    email, display_name = identity
 
     user_id = await get_pool().fetchval(
-        """INSERT INTO users (email, display_name) VALUES ($1, $1)
-           ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email RETURNING id""",
-        email,
+        """INSERT INTO users (email, display_name) VALUES ($1, $2)
+           ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name RETURNING id""",
+        email, display_name,
     )
     code = secrets.token_urlsafe(32)
     await request.app.state.arq.set(f"{_CODE_PREFIX}{code}", str(user_id), ex=_CODE_TTL_SECONDS)

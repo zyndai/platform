@@ -21,10 +21,11 @@ from app.config import settings
 TRUSTED_PROVIDERS = frozenset({"google", "github"})
 
 
-def _verified_email(user: dict) -> str | None:
-    """Extract a trusted email from a Supabase user object, or None if it fails checks.
-
-    Pure (no I/O) so the security gate is unit-testable without a live token."""
+def _verified_identity(user: dict) -> tuple[str, str] | None:
+    """Extract (email, display_name) from a Supabase user object, or None if it fails
+    the security checks. display_name is the provider-supplied name (Google full_name)
+    — the human label shown in matches; it falls back to the email local-part, never
+    the full email. Pure (no I/O) so the gate is unit-testable without a live token."""
     email = user.get("email")
     if not email:
         return None
@@ -36,10 +37,13 @@ def _verified_email(user: dict) -> str | None:
     provider = user.get("app_metadata", {}).get("provider")
     if not email_verified or provider not in TRUSTED_PROVIDERS:
         return None
-    return email.strip().lower()
+    email = email.strip().lower()
+    meta = user.get("user_metadata", {})
+    name = (meta.get("full_name") or meta.get("name") or "").strip()
+    return email, (name or email.split("@", 1)[0])
 
 
-async def supabase_email(access_token: str) -> str | None:
+async def _fetch_user(access_token: str) -> dict | None:
     if not access_token or not (settings.supabase_url and settings.supabase_anon_key):
         return None
     url = settings.supabase_url.rstrip("/") + "/auth/v1/user"
@@ -53,4 +57,15 @@ async def supabase_email(access_token: str) -> str | None:
         return None
     if resp.status_code != 200:
         return None
-    return _verified_email(resp.json())
+    return resp.json()
+
+
+async def supabase_identity(access_token: str) -> tuple[str, str] | None:
+    """Verified (email, display_name) for a Supabase Google/GitHub session, or None."""
+    user = await _fetch_user(access_token)
+    return _verified_identity(user) if user else None
+
+
+async def supabase_email(access_token: str) -> str | None:
+    identity = await supabase_identity(access_token)
+    return identity[0] if identity else None

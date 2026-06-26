@@ -10,6 +10,7 @@ from app.auth import verify_access_token
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool
 from app.models import AssertionView, ContextRequest, FactRef, IngestRequest, IngestResponse
+from app.connect import router as connect_router
 from app.oauth import router as oauth_router
 
 MIN_CHUNK_CHARS = 40  # brief §7.2 — single-word turns carry no signal
@@ -27,6 +28,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ZYND", version="0.1.0", lifespan=lifespan)
 app.include_router(oauth_router)
+app.include_router(connect_router)
 
 _PRIVACY_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">

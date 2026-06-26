@@ -47,6 +47,11 @@ def issue_refresh_token(user_id: str) -> str:
     return _encode(user_id, "refresh", settings.refresh_token_ttl_seconds)
 
 
+def issue_personal_token(user_id: str) -> str:
+    """Long-lived access token a user pastes into an MCP client (Claude/Cursor)."""
+    return _encode(user_id, "access", settings.mcp_token_ttl_seconds)
+
+
 def verify_access_token(token: str) -> str:
     """Return the user_id (sub). Raises ValueError if invalid/expired/wrong type."""
     return _decode(token, "access")

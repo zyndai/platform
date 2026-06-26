@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     jwt_issuer: str = "zynd"
     access_token_ttl_seconds: int = 3600
     refresh_token_ttl_seconds: int = 30 * 24 * 3600
+    mcp_token_ttl_seconds: int = 90 * 24 * 3600   # long-lived token pasted into MCP clients
     oauth_client_id: str = "zynd-chatgpt"
     oauth_client_secret: str = "zynd-oauth-secret"
     # Comma-separated allowlist of redirect_uri prefixes (prevents open redirect).

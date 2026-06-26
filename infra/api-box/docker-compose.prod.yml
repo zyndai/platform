@@ -1,0 +1,62 @@
+# Production: one box runs everything. Caddy terminates HTTPS for api.zynd.ai and
+# proxies to the API. Postgres/Redis are internal only (not exposed to the internet).
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: zynd
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zynd}
+      POSTGRES_DB: zynd
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zynd -d zynd"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    env_file: .env.prod
+    command: sh -c "python -m app.schema_apply && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  worker:
+    build: .
+    env_file: .env.prod
+    command: arq app.worker.WorkerSettings
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

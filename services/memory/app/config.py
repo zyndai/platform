@@ -40,6 +40,17 @@ class Settings(BaseSettings):
     )
     public_base_url: str = "http://localhost:8000"
 
+    # Supabase (for Google sign-in via the dashboard). Used to verify a user's
+    # Supabase access token server-side before issuing a ZYND token.
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+    # Browser origins allowed to call the API (the dashboard) — comma-separated.
+    cors_origins: str = "https://zynd.ai,https://www.zynd.ai,http://localhost:3000"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
     # M5 matching gates (brief §6.1).
     match_min_assertions: int = 5   # data-quality floor: skip thin profiles
     match_default_limit: int = 10

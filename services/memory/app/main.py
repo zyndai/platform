@@ -4,9 +4,10 @@ from contextlib import asynccontextmanager
 from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from app.auth import verify_access_token
+from app.auth import issue_personal_token, verify_access_token
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool
 from app.models import AssertionView, ContextRequest, FactRef, IngestRequest, IngestResponse
@@ -27,6 +28,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="ZYND", version="0.1.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origin_list,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 app.include_router(oauth_router)
 app.include_router(connect_router)
 
@@ -119,6 +126,31 @@ async def action_schema() -> dict:
 async def privacy() -> HTMLResponse:
     """Privacy policy — required to publish the ChatGPT GPT publicly."""
     return HTMLResponse(_PRIVACY_HTML)
+
+
+@app.post("/token/exchange")
+async def token_exchange(authorization: str = Header(default="")) -> dict:
+    """Exchange a Supabase (Google) access token for a ZYND personal token.
+
+    Called by the dashboard after Google sign-in. Identity is verified by Supabase,
+    so creating the user password-less here is safe (not an unauthenticated form)."""
+    supabase_token = authorization.removeprefix("Bearer ").strip()
+    from app.supabase_auth import supabase_email
+    email = await supabase_email(supabase_token)
+    if not email:
+        raise HTTPException(status_code=401, detail="invalid or expired Google session")
+
+    user_id = await get_pool().fetchval(
+        """INSERT INTO users (email, display_name) VALUES ($1, $1)
+           ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email RETURNING id""",
+        email,
+    )
+    base = settings.public_base_url.rstrip("/")
+    return {
+        "token": issue_personal_token(str(user_id)),
+        "mcp_url": f"{base}/mcp",
+        "email": email,
+    }
 
 
 @app.post("/ingest", response_model=IngestResponse)

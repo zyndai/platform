@@ -20,3 +20,9 @@ async def test_connect_issues_token_and_config(client):
 async def test_connect_rejects_short_password(client):
     r = await client.post("/connect", data={"email": "x@example.com", "password": "ab"})
     assert r.status_code == 400
+
+
+async def test_token_exchange_rejects_invalid_session(client):
+    # No Supabase configured in tests -> any token is rejected (401), never issues.
+    r = await client.post("/token/exchange", headers={"Authorization": "Bearer whatever"})
+    assert r.status_code == 401

@@ -104,6 +104,15 @@ def test_mock_embed_is_unit_length():
     assert math.isclose(math.sqrt(sum(x * x for x in vec)), 1.0, abs_tol=1e-9)
 
 
+def test_mcp_server_exposes_all_tools():
+    import asyncio
+
+    from app.mcp_server import mcp
+    names = {t.name for t in asyncio.run(mcp.list_tools())}
+    assert {"get_user_context", "export_user_context", "find_similar_users",
+            "confirm_user_fact", "forget_user_fact"} <= names
+
+
 def test_mock_embed_cosine_reflects_word_overlap():
     def cos(a, b):
         return sum(x * y for x, y in zip(a, b))

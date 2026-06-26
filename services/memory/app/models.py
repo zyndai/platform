@@ -64,6 +64,11 @@ class ContextRequest(BaseModel):
     k: int = Field(default=20, ge=1, le=50)
 
 
+class FactRef(BaseModel):
+    predicate: str = Field(min_length=1)
+    object: str = Field(min_length=1)
+
+
 class AssertionView(BaseModel):
     predicate: str
     object: str | None

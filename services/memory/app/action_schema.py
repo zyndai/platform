@@ -65,6 +65,50 @@ def build_action_schema() -> dict:
                     },
                 }
             },
+            "/me/matches": {
+                "get": {
+                    "operationId": "findMatches",
+                    "summary": "Find people whose active context overlaps the user's.",
+                    "description": "Call when the user asks who else is building/working on/learning "
+                                   "something similar. cluster_type is one of intent_cluster, "
+                                   "skill_cluster, belief_cluster, concept_cluster, full_context "
+                                   "(default intent_cluster). Returns similar users, most similar first.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "parameters": [
+                        {"name": "cluster_type", "in": "query", "required": False,
+                         "schema": {"type": "string", "default": "intent_cluster"}},
+                        {"name": "limit", "in": "query", "required": False,
+                         "schema": {"type": "integer"}},
+                    ],
+                    "responses": {"200": {"description": "Similar users",
+                        "content": {"application/json": {"schema": {
+                            "type": "array", "items": {"$ref": "#/components/schemas/Match"}}}}}},
+                }
+            },
+            "/me/confirm": {
+                "post": {
+                    "operationId": "confirmFact",
+                    "summary": "User confirms a fact is true (boosts its confidence).",
+                    "description": "Call when the user confirms/affirms one of their facts. Pass the "
+                                   "exact predicate and object from getMyContext.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "requestBody": {"required": True, "content": {"application/json": {
+                        "schema": {"$ref": "#/components/schemas/FactRef"}}}},
+                    "responses": {"200": {"description": "Confirmed"}},
+                }
+            },
+            "/me/forget": {
+                "post": {
+                    "operationId": "forgetFact",
+                    "summary": "User asks to forget/remove a fact about them.",
+                    "description": "Call when the user says something is wrong or asks you to forget it. "
+                                   "Pass the exact predicate and object from getMyContext.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "requestBody": {"required": True, "content": {"application/json": {
+                        "schema": {"$ref": "#/components/schemas/FactRef"}}}},
+                    "responses": {"200": {"description": "Forgotten"}},
+                }
+            },
         },
         "components": {
             "securitySchemes": {
@@ -113,6 +157,23 @@ def build_action_schema() -> dict:
                         "object": {"type": "string"},
                         "object_type": {"type": "string"},
                         "confidence": {"type": "number"},
+                    },
+                },
+                "FactRef": {
+                    "type": "object",
+                    "required": ["predicate", "object"],
+                    "properties": {
+                        "predicate": {"type": "string"},
+                        "object": {"type": "string"},
+                    },
+                },
+                "Match": {
+                    "type": "object",
+                    "properties": {
+                        "user_id": {"type": "string"},
+                        "display_name": {"type": "string"},
+                        "similarity": {"type": "number"},
+                        "assertion_count": {"type": "integer"},
                     },
                 },
             },

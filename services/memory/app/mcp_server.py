@@ -11,7 +11,9 @@ from contextlib import asynccontextmanager
 from mcp.server.fastmcp import FastMCP
 
 from app.db import close_pool, get_pool, init_pool
+from app.services.control import confirm_fact, forget_fact
 from app.services.export import build_jsonld_export, context_slice
+from app.services.matching import match_users
 
 
 @asynccontextmanager
@@ -63,6 +65,35 @@ async def export_user_context(user_id: str) -> dict:
     assertions[]}.
     """
     return await build_jsonld_export(get_pool(), user_id)
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+async def find_similar_users(user_id: str, cluster_type: str = "intent_cluster", k: int = 10) -> list[dict]:
+    """Find people whose active context overlaps this user's — the matching layer.
+
+    Use when the user wants to discover others working on / learning / believing
+    similar things. `cluster_type` is one of: intent_cluster, skill_cluster,
+    belief_cluster, concept_cluster, full_context. Returns users most-similar-first
+    with a cosine `similarity` (0-1). Empty if the user (or candidates) have fewer
+    than 5 facts in that cluster.
+    """
+    return await match_users(get_pool(), user_id, cluster_type, k)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+async def confirm_user_fact(user_id: str, predicate: str, object: str) -> dict:
+    """Confirm a fact is true → raises its confidence to the max (0.97). Pass the
+    exact predicate and object as returned by get_user_context."""
+    ok = await confirm_fact(get_pool(), user_id, predicate, object)
+    return {"confirmed": ok}
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False})
+async def forget_user_fact(user_id: str, predicate: str, object: str) -> dict:
+    """Forget a fact about the user → soft-deleted (kept for audit, no longer
+    active or matched). Pass the exact predicate and object from get_user_context."""
+    ok = await forget_fact(get_pool(), user_id, predicate, object)
+    return {"forgotten": ok}
 
 
 if __name__ == "__main__":

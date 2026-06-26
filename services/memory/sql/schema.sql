@@ -52,8 +52,9 @@ CREATE TABLE IF NOT EXISTS assertions (
   predicate         text NOT NULL,                  -- allowed list, brief §4
   object_entity_id  uuid REFERENCES entities(id),   -- use this OR object_literal
   object_literal    text,
-  -- confidence capped at 0.97: the system must never treat any assertion as certain (§14)
-  confidence        real NOT NULL CHECK (confidence >= 0.0 AND confidence <= 0.97),
+  -- confidence capped at 0.97: the system must never treat any assertion as certain (§14).
+  -- double precision (not real): float4 rounds 0.97 up past the check bound.
+  confidence        double precision NOT NULL CHECK (confidence >= 0.0 AND confidence <= 0.97),
   source_system     text NOT NULL,                  -- chatgpt | claude | user_confirmed | import
   trace_chunk_id    uuid REFERENCES trace_chunks(id),
   decay_fn          text NOT NULL DEFAULT 'none',    -- e.g. exponential(halflife=30d) | none
@@ -67,8 +68,8 @@ CREATE TABLE IF NOT EXISTS assertions (
 CREATE TABLE IF NOT EXISTS assertion_history (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   assertion_id    uuid NOT NULL REFERENCES assertions(id),
-  prev_confidence real,
-  new_confidence  real,
+  prev_confidence double precision,
+  new_confidence  double precision,
   change_reason   text NOT NULL,   -- new_evidence | decay | contradiction | user_confirmed | user_deleted
   changed_at      timestamptz NOT NULL DEFAULT now()
 );
@@ -109,3 +110,8 @@ CREATE INDEX IF NOT EXISTS entities_user_type_name
 -- Matching layer unique constraint
 CREATE UNIQUE INDEX IF NOT EXISTS user_embeddings_user_cluster
   ON user_embeddings (user_id, cluster_type);
+
+-- Idempotent migration: float4 -> float8 for confidence (no-op if already double).
+ALTER TABLE assertions        ALTER COLUMN confidence     TYPE double precision;
+ALTER TABLE assertion_history ALTER COLUMN prev_confidence TYPE double precision;
+ALTER TABLE assertion_history ALTER COLUMN new_confidence  TYPE double precision;

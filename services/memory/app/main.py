@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse
 from app.auth import verify_access_token
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool
-from app.models import AssertionView, ContextRequest, IngestRequest, IngestResponse
+from app.models import AssertionView, ContextRequest, FactRef, IngestRequest, IngestResponse
 from app.oauth import router as oauth_router
 
 MIN_CHUNK_CHARS = 40  # brief §7.2 — single-word turns carry no signal
@@ -191,6 +191,41 @@ async def get_graph(user_id: str, auth_user: str = Depends(current_user)) -> lis
     if user_id != auth_user:
         raise HTTPException(status_code=403, detail="can only read your own graph")
     return await _active_graph(user_id)
+
+
+@app.get("/me/matches")
+async def my_matches(
+    cluster_type: str = "intent_cluster",
+    limit: int | None = None,
+    user_id: str = Depends(current_user),
+) -> list[dict]:
+    """People most similar to the caller in a cluster (brief §6.1). The GPT/MCP
+    calls this for 'who else is building/working on what I am?'."""
+    from app.services.matching import match_users
+    try:
+        return await match_users(get_pool(), user_id, cluster_type, limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/me/confirm")
+async def confirm_my_fact(ref: FactRef, user_id: str = Depends(current_user)) -> dict:
+    """User confirms a fact → confidence 0.97, source=user_confirmed (brief §6)."""
+    from app.services.control import confirm_fact
+    ok = await confirm_fact(get_pool(), user_id, ref.predicate, ref.object)
+    if not ok:
+        raise HTTPException(status_code=404, detail="no active fact matches that predicate/object")
+    return {"status": "confirmed", "predicate": ref.predicate, "object": ref.object}
+
+
+@app.post("/me/forget")
+async def forget_my_fact(ref: FactRef, user_id: str = Depends(current_user)) -> dict:
+    """User forgets a fact → soft-deleted (valid_until set, never hard-deleted; §14.1)."""
+    from app.services.control import forget_fact
+    ok = await forget_fact(get_pool(), user_id, ref.predicate, ref.object)
+    if not ok:
+        raise HTTPException(status_code=404, detail="no active fact matches that predicate/object")
+    return {"status": "forgotten", "predicate": ref.predicate, "object": ref.object}
 
 
 @app.get("/match/{user_id}")

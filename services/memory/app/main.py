@@ -13,6 +13,7 @@ from app.db import close_pool, get_pool, init_pool
 from app.models import AssertionView, ContextRequest, FactRef, IngestRequest, IngestResponse
 from app.services.ingest import ingest_turns
 from app.connect import router as connect_router
+from app.docs import router as docs_router
 from app.oauth import router as oauth_router
 
 
@@ -35,6 +36,7 @@ app.add_middleware(
 )
 app.include_router(oauth_router)
 app.include_router(connect_router)
+app.include_router(docs_router)
 
 _PRIVACY_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">

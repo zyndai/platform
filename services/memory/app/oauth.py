@@ -1,33 +1,35 @@
-"""Minimal OAuth2 authorization-code server for the ChatGPT Action.
+"""OAuth2 authorization-code server for the ChatGPT Action.
 
-Flow: ChatGPT opens /oauth/authorize -> user submits email on the consent page
--> /oauth/login issues a single-use code and redirects back to ChatGPT ->
-ChatGPT exchanges the code at /oauth/token for a JWT access token -> the Action
-sends that token as Bearer to /ingest.
+Flow: ChatGPT opens /oauth/authorize -> we redirect to the dashboard's Google
+(Supabase) login (the same identity as the dashboard and MCP) -> after sign-in the
+dashboard calls /oauth/complete with the verified Google session -> we mint a
+single-use code and hand it back to ChatGPT -> ChatGPT exchanges it at /oauth/token
+for a JWT -> the Action sends that token as Bearer to /ingest.
 
-DEV-GRADE — see docs/CHATGPT_PLUGIN.md:
-  * Login is email-only (no password). Replace with password/magic-link auth.
-  * No PKCE. Single confidential client. HTTPS assumed in production.
-The OAuth plumbing (codes, redirect allowlist, single client, JWT issuance) is
-real and production-shaped; only the user-authentication step is a stub.
+The OAuth plumbing (codes, redirect allowlist, single confidential client, JWT
+issuance) is production-shaped. User authentication is delegated to Supabase Google,
+so a user has ONE identity across GPT, MCP, and the dashboard (keyed by email).
 """
 import hmac
-import html
 import secrets
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urlsplit
 
+import jwt
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel
 
 from app.auth import issue_access_token, issue_refresh_token, verify_refresh_token
 from app.config import settings
 from app.db import get_pool
-from app.passwords import MIN_PASSWORD_LENGTH, hash_password, verify_password
+from app.supabase_auth import supabase_email
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 _CODE_PREFIX = "oauth:code:"
 _CODE_TTL_SECONDS = 600
+_OAUTH_REQ_TTL = 600  # the signed authorize request is valid for 10 minutes
 
 
 def _allowed_origins() -> set[tuple[str, str | None]]:
@@ -51,137 +53,76 @@ def _check_client(client_id: str, client_secret: str) -> None:
         raise HTTPException(status_code=401, detail="invalid client credentials")
 
 
-@router.get("/authorize", response_class=HTMLResponse)
+def _sign_oauth_request(redirect_uri: str, state: str, scope: str) -> str:
+    """Sign the ChatGPT authorize params so they survive the round-trip through the
+    dashboard Google login without trusting client-supplied state in between."""
+    return jwt.encode(
+        {"typ": "oauth_req", "redirect_uri": redirect_uri, "state": state, "scope": scope,
+         "exp": datetime.now(timezone.utc) + timedelta(seconds=_OAUTH_REQ_TTL)},
+        settings.jwt_secret, algorithm="HS256",
+    )
+
+
+def _verify_oauth_request(req: str) -> dict:
+    try:
+        payload = jwt.decode(req, settings.jwt_secret, algorithms=["HS256"])
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=400, detail="invalid or expired authorize request") from exc
+    if payload.get("typ") != "oauth_req":
+        raise HTTPException(status_code=400, detail="invalid authorize request")
+    return payload
+
+
+@router.get("/authorize")
 async def authorize(
-    request: Request,
     response_type: str = "code",
     client_id: str = "",
     redirect_uri: str = "",
     state: str = "",
     scope: str = "ingest",
-) -> HTMLResponse:
+) -> RedirectResponse:
+    """Hand the user off to the dashboard's Google (Supabase) login. The signed `req`
+    carries the ChatGPT authorize params so the dashboard can complete the flow."""
     if response_type != "code":
         raise HTTPException(status_code=400, detail="response_type must be 'code'")
     if not hmac.compare_digest(client_id, settings.oauth_client_id):
         raise HTTPException(status_code=400, detail="unknown client_id")
     _check_redirect_uri(redirect_uri)
 
-    return HTMLResponse(_consent_page(redirect_uri, state, scope))
+    req = _sign_oauth_request(redirect_uri, state, scope)
+    dest = settings.dashboard_url.rstrip("/") + "/authorize?" + urlencode({"req": req})
+    return RedirectResponse(dest, status_code=302)
 
 
-@router.post("/login")
-async def login(
-    request: Request,
-    email: str = Form(...),
-    password: str = Form(...),
-    redirect_uri: str = Form(...),
-    state: str = Form(""),
-    scope: str = Form("ingest"),
-):
-    """Email + password sign-in / sign-up. New email creates an account; an
-    existing one is verified. On bad input the consent page is re-rendered with
-    an error (no redirect)."""
-    _check_redirect_uri(redirect_uri)
-    email = email.strip().lower()
+class _CompleteRequest(BaseModel):
+    req: str
+    supabase_token: str
 
-    if len(password) < MIN_PASSWORD_LENGTH:
-        return HTMLResponse(_consent_page(
-            redirect_uri, state, scope, email=email,
-            error=f"Password must be at least {MIN_PASSWORD_LENGTH} characters."), status_code=400)
 
-    pool = get_pool()
-    row = await pool.fetchrow("SELECT id, password_hash FROM users WHERE email = $1", email)
-    if row is None:
-        # New account.
-        user_id = await pool.fetchval(
-            "INSERT INTO users (email, display_name, password_hash) VALUES ($1, $1, $2) RETURNING id",
-            email, hash_password(password))
-    elif row["password_hash"] and verify_password(password, row["password_hash"]):
-        user_id = row["id"]
-    else:
-        # Wrong password, OR a password-less existing row (self-heal/legacy). We never
-        # let an unauthenticated request set a password on an existing account
-        # (account-takeover vector) — such accounts cannot be claimed via this form.
-        return HTMLResponse(_consent_page(
-            redirect_uri, state, scope, email=email, error="Incorrect password."), status_code=401)
+@router.post("/complete")
+async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
+    """Called by the dashboard authorize page after Google sign-in: verify the Google
+    identity, resolve the ZYND user by email, and mint the single-use authorization
+    code ChatGPT will exchange at /token. Returns the URL to send the browser back to."""
+    payload = _verify_oauth_request(body.req)
+    redirect_uri = payload["redirect_uri"]
+    state = payload.get("state", "")
+    _check_redirect_uri(redirect_uri)  # re-validate the signed value before redirecting
 
+    email = await supabase_email(body.supabase_token)
+    if not email:
+        raise HTTPException(status_code=401, detail="Google sign-in could not be verified")
+
+    user_id = await get_pool().fetchval(
+        """INSERT INTO users (email, display_name) VALUES ($1, $1)
+           ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email RETURNING id""",
+        email,
+    )
     code = secrets.token_urlsafe(32)
     await request.app.state.arq.set(f"{_CODE_PREFIX}{code}", str(user_id), ex=_CODE_TTL_SECONDS)
     separator = "&" if "?" in redirect_uri else "?"
     location = f"{redirect_uri}{separator}{urlencode({'code': code, 'state': state})}"
-    return RedirectResponse(location, status_code=302)
-
-
-def _consent_page(redirect_uri: str, state: str, scope: str, error: str = "", email: str = "") -> str:
-    # HTML-escape every reflected value to prevent reflected XSS. Browsers decode the
-    # entities back when the form posts, so the original values still round-trip.
-    redirect_uri = html.escape(redirect_uri, quote=True)
-    state = html.escape(state, quote=True)
-    scope = html.escape(scope, quote=True)
-    email = html.escape(email, quote=True)
-    error_html = f'<p class="err">{html.escape(error)}</p>' if error else ""
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Connect to ZYND</title>
-<style>
-  * {{ box-sizing: border-box; }}
-  body {{
-    margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    background:radial-gradient(1200px 600px at 50% -10%, #2a2350, #0d0b1f 60%);
-    color:#e7e6f0; padding:24px;
-  }}
-  .card {{
-    width:100%; max-width:420px; background:rgba(255,255,255,0.04);
-    border:1px solid rgba(255,255,255,0.08); border-radius:18px; padding:36px 32px;
-    box-shadow:0 30px 80px rgba(0,0,0,0.45);
-  }}
-  .brand {{ display:flex; align-items:center; gap:10px; margin-bottom:22px; }}
-  .logo {{ width:34px; height:34px; border-radius:9px;
-    background:linear-gradient(135deg,#7c5cff,#4d8cff); display:flex; align-items:center;
-    justify-content:center; font-weight:700; color:#fff; font-size:18px; }}
-  .brand b {{ font-size:18px; letter-spacing:1px; }}
-  h1 {{ font-size:22px; margin:0 0 8px; }}
-  p.sub {{ margin:0 0 22px; color:#a7a4c0; font-size:14.5px; line-height:1.5; }}
-  label {{ display:block; font-size:13px; color:#b9b6d4; margin:14px 0 8px; }}
-  input {{
-    width:100%; padding:13px 14px; border-radius:11px; font-size:15px;
-    background:#15132b; border:1px solid rgba(255,255,255,0.12); color:#fff; outline:none;
-  }}
-  input:focus {{ border-color:#7c5cff; box-shadow:0 0 0 3px rgba(124,92,255,0.25); }}
-  button {{
-    margin-top:22px; width:100%; padding:13px; border:0; border-radius:11px; cursor:pointer;
-    font-size:15px; font-weight:600; color:#fff; background:linear-gradient(135deg,#7c5cff,#4d8cff);
-  }}
-  button:hover {{ filter:brightness(1.08); }}
-  .err {{ margin:14px 0 0; padding:10px 12px; border-radius:9px; font-size:13px;
-    background:rgba(255,80,80,0.12); border:1px solid rgba(255,80,80,0.3); color:#ffb4b4; }}
-  .foot {{ margin-top:18px; font-size:12px; color:#7d7a98; line-height:1.5; }}
-</style>
-</head>
-<body>
-  <div class="card">
-    <div class="brand"><div class="logo">Z</div><b>ZYND</b></div>
-    <h1>Connect ChatGPT to ZYND</h1>
-    <p class="sub">Sign in or create an account. Your conversations become a private,
-      evolving context graph &mdash; owned by you, usable by any AI you allow.</p>
-    {error_html}
-    <form method="post" action="/oauth/login">
-      <input type="hidden" name="redirect_uri" value="{redirect_uri}">
-      <input type="hidden" name="state" value="{state}">
-      <input type="hidden" name="scope" value="{scope}">
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" required placeholder="you@example.com" value="{email}" autofocus>
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" required minlength="8" placeholder="At least 8 characters">
-      <button type="submit">Continue</button>
-    </form>
-    <p class="foot">New here? Just pick a password to create your account. You can revoke access anytime.</p>
-  </div>
-</body></html>"""
+    return JSONResponse({"redirect_url": location})
 
 
 @router.post("/token")

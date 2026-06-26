@@ -42,6 +42,9 @@ class Settings(BaseSettings):
         "https://chat.openai.com/aip/,https://chatgpt.com/aip/,http://localhost"
     )
     public_base_url: str = "http://localhost:8000"
+    # Dashboard origin that hosts the shared Google (Supabase) login. The ChatGPT
+    # OAuth flow hands users here so GPT, MCP, and dashboard share one identity.
+    dashboard_url: str = "https://www.zynd.ai"
 
     # Supabase (for Google sign-in via the dashboard). Used to verify a user's
     # Supabase access token server-side before issuing a ZYND token.

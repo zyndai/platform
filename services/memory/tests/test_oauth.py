@@ -37,6 +37,25 @@ async def test_authorize_rejects_unlisted_redirect(client):
     assert r.status_code == 400
 
 
+async def test_redirect_uri_host_spoofing_rejected(client):
+    # http://localhost.evil.com must NOT pass the http://localhost prefix.
+    r = await client.get("/oauth/authorize", params={
+        "response_type": "code", "client_id": settings.oauth_client_id,
+        "redirect_uri": "http://localhost.evil.com/cb",
+    })
+    assert r.status_code == 400
+
+
+async def test_authorize_escapes_reflected_params_no_xss(client):
+    r = await client.get("/oauth/authorize", params={
+        "response_type": "code", "client_id": settings.oauth_client_id,
+        "redirect_uri": REDIRECT, "state": '"><script>alert(1)</script>',
+    })
+    assert r.status_code == 200
+    assert "<script>alert(1)" not in r.text       # not reflected raw
+    assert "&lt;script&gt;" in r.text             # escaped instead
+
+
 async def _get_code(client, email="alice@example.com", password="supersecret") -> str:
     r = await client.post("/oauth/login", data={
         "email": email, "password": password, "redirect_uri": REDIRECT, "state": "s1",

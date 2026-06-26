@@ -12,8 +12,9 @@ The OAuth plumbing (codes, redirect allowlist, single client, JWT issuance) is
 real and production-shaped; only the user-authentication step is a stub.
 """
 import hmac
+import html
 import secrets
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -29,7 +30,16 @@ _CODE_PREFIX = "oauth:code:"
 _CODE_TTL_SECONDS = 600
 
 
+def _allowed_origins() -> set[tuple[str, str | None]]:
+    return {(u.scheme, u.hostname) for u in map(urlsplit, settings.allowed_redirect_prefixes)}
+
+
 def _check_redirect_uri(redirect_uri: str) -> None:
+    # Host-origin allowlist (not bare startswith) so "http://localhost.evil.com"
+    # can't spoof the "http://localhost" prefix → prevents open-redirect / code theft.
+    parsed = urlsplit(redirect_uri)
+    if (parsed.scheme, parsed.hostname) not in _allowed_origins():
+        raise HTTPException(status_code=400, detail="redirect_uri not allowed")
     if not any(redirect_uri.startswith(p) for p in settings.allowed_redirect_prefixes):
         raise HTTPException(status_code=400, detail="redirect_uri not allowed")
 
@@ -104,7 +114,13 @@ async def login(
 
 
 def _consent_page(redirect_uri: str, state: str, scope: str, error: str = "", email: str = "") -> str:
-    error_html = f'<p class="err">{error}</p>' if error else ""
+    # HTML-escape every reflected value to prevent reflected XSS. Browsers decode the
+    # entities back when the form posts, so the original values still round-trip.
+    redirect_uri = html.escape(redirect_uri, quote=True)
+    state = html.escape(state, quote=True)
+    scope = html.escape(scope, quote=True)
+    email = html.escape(email, quote=True)
+    error_html = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f"""<!doctype html>
 <html lang="en">
 <head>

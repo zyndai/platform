@@ -34,7 +34,10 @@ def _decode(token: str, expected_type: str) -> str:
         raise ValueError(f"invalid token: {exc}") from exc
     if payload.get("typ") != expected_type:
         raise ValueError(f"expected {expected_type} token, got {payload.get('typ')!r}")
-    return payload["sub"]
+    sub = payload.get("sub")
+    if not sub:  # signed but malformed -> ValueError (401), never a KeyError (500)
+        raise ValueError("token missing sub claim")
+    return sub
 
 
 def issue_access_token(user_id: str) -> tuple[str, int]:

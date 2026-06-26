@@ -1,3 +1,4 @@
+import hmac
 from contextlib import asynccontextmanager
 
 from arq import create_pool
@@ -95,14 +96,15 @@ async def current_user(authorization: str = Header(default="")) -> str:
     Two accepted tokens: the per-user OAuth JWT (M2, what ChatGPT sends) and the
     shared dev token (local testing only). JWT is tried first.
     """
-    token = authorization.removeprefix("Bearer ").strip()
+    scheme, _, value = authorization.partition(" ")  # RFC 6750: scheme is case-insensitive
+    token = value.strip() if scheme.lower() == "bearer" else ""
     if not token:
         raise HTTPException(status_code=401, detail="missing bearer token")
     try:
         return verify_access_token(token)
     except ValueError:
         pass
-    if token == settings.dev_bearer_token:
+    if settings.enable_dev_bearer and hmac.compare_digest(token, settings.dev_bearer_token):
         return app.state.dev_user_id
     raise HTTPException(status_code=401, detail="invalid bearer token")
 

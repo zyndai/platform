@@ -7,6 +7,7 @@ user_id parameter, so one user can never read or change another's data.
 
 Run:  uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
 """
+import asyncio
 import contextvars
 from datetime import datetime, timezone
 
@@ -21,15 +22,18 @@ from app.config import settings
 from app.models import Turn
 from app.services.control import confirm_fact, forget_fact
 from app.services.export import active_context, build_jsonld_export, context_slice
-from app.services.ingest import ingest_turns
+from app.services.ingest import clean_text, ingest_turns
 from app.services.matching import match_users
 
 # Set by the auth ASGI wrapper per request; read by the tools.
 _current_user: contextvars.ContextVar[str | None] = contextvars.ContextVar("mcp_user", default=None)
 
 # Process-lifetime pools, independent of the MCP session lifespan (which cycles).
+# Locks make lazy init safe under concurrent first requests (no leaked pool).
 _pool: asyncpg.Pool | None = None
 _arq = None
+_pool_lock = asyncio.Lock()
+_arq_lock = asyncio.Lock()
 
 # Minimum length for an intentional `remember` write. Lower than the §7.2 chat-noise
 # floor (40) because these are deliberate single facts, but still guards empty/junk.
@@ -39,14 +43,18 @@ _REMEMBER_MIN_CHARS = 8
 async def _get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
-        _pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=10)
+        async with _pool_lock:
+            if _pool is None:
+                _pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=10)
     return _pool
 
 
 async def _get_arq():
     global _arq
     if _arq is None:
-        _arq = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        async with _arq_lock:
+            if _arq is None:
+                _arq = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     return _arq
 
 
@@ -76,7 +84,7 @@ async def remember(text: str) -> dict:
     then appear in get_my_context and power find_similar_users. This is how the user's
     context graph gets built from a conversation — without it, their profile stays empty.
     """
-    text = (text or "").strip()
+    text = clean_text(text or "").strip()
     if len(text) < _REMEMBER_MIN_CHARS:
         return {"saved": False, "reason": f"too short — pass a full sentence (min {_REMEMBER_MIN_CHARS} chars)"}
     turn = Turn(role="user", content=text, timestamp=datetime.now(timezone.utc))
@@ -113,7 +121,7 @@ async def export_my_context() -> dict:
 async def find_similar_users(cluster_type: str = "intent_cluster", k: int = 10) -> list[dict]:
     """Find people whose active context overlaps the signed-in user's. cluster_type:
     intent_cluster, skill_cluster, belief_cluster, concept_cluster, full_context."""
-    return await match_users(await _get_pool(), _uid(), cluster_type, k)
+    return await match_users(await _get_pool(), _uid(), cluster_type, max(1, min(k, 50)))
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
@@ -139,7 +147,8 @@ async def app(scope, receive, send):
         return
 
     headers = dict(scope.get("headers") or [])
-    token = headers.get(b"authorization", b"").decode().removeprefix("Bearer ").strip()
+    scheme, _, value = headers.get(b"authorization", b"").decode().partition(" ")
+    token = value.strip() if scheme.lower() == "bearer" else ""  # RFC 6750: case-insensitive
     try:
         user_id = verify_access_token(token)
     except ValueError:

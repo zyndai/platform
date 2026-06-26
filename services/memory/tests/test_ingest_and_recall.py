@@ -57,3 +57,15 @@ async def test_ingest_turns_skips_assistant_and_short(client):
 async def test_active_context_empty_profile_returns_empty_list(client):
     from app.db import get_pool
     assert await active_context(get_pool(), EMPTY_UID, 10) == []
+
+
+async def test_ingest_strips_nul_bytes_no_crash(client):
+    from app.db import get_pool
+    pool = get_pool()
+    arq = FakeArq()
+    turns = [Turn(role="user", content="I use Rust\x00 for systems work and async tokio runtimes",
+                  timestamp=datetime.now(timezone.utc))]
+    inserted, _ = await ingest_turns(pool, arq, UID, "claude", turns, min_chars=8)
+    assert inserted == 1
+    raw = await pool.fetchval("SELECT raw_text FROM trace_chunks WHERE user_id=$1 LIMIT 1", UID)
+    assert "\x00" not in raw

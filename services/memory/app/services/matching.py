@@ -82,7 +82,10 @@ async def match_users(
     """Top-N users most similar to `user_id` within `cluster_type` (brief §6.1)."""
     if cluster_type not in CLUSTER_PREDICATES:
         raise ValueError(f"unknown cluster_type: {cluster_type}")
-    limit = limit or settings.match_default_limit
+    # Clamp: a non-positive limit falls back to the default; cap to 50 so a caller
+    # can't push a negative/huge value into SQL LIMIT (DB error) or scrape the graph.
+    limit = limit if (limit and limit > 0) else settings.match_default_limit
+    limit = min(limit, 50)
 
     self_vector = await pool.fetchval(
         "SELECT embedding FROM user_embeddings WHERE user_id = $1 AND cluster_type = $2",
@@ -92,11 +95,10 @@ async def match_users(
         return []  # this user has no vector for that cluster yet
 
     rows = await pool.fetch(
-        """SELECT ue.user_id, u.display_name,
+        """SELECT ue.user_id,
                   1 - (ue.embedding <=> $1::vector) AS similarity,
                   ue.assertion_count
              FROM user_embeddings ue
-             JOIN users u ON u.id = ue.user_id
             WHERE ue.cluster_type = $2
               AND ue.user_id <> $3
               AND ue.assertion_count >= $4
@@ -104,10 +106,13 @@ async def match_users(
             LIMIT $5""",
         self_vector, cluster_type, user_id, settings.match_min_assertions, limit,
     )
+    # SECURITY: never return display_name — every signup path stores the user's email
+    # there, so surfacing it to a matched user would leak PII. Expose only an opaque,
+    # non-reversible handle derived from the (already non-secret) user_id.
     return [
         {
             "user_id": str(r["user_id"]),
-            "display_name": r["display_name"],
+            "display_name": f"zynd-{str(r['user_id'])[:8]}",
             "similarity": round(float(r["similarity"]), 4),
             "assertion_count": r["assertion_count"],
         }

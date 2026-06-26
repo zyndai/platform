@@ -12,6 +12,7 @@ import pathlib
 
 os.environ["MOCK_LLM"] = "true"   # hermetic: ignore .env LLM settings
 os.environ["DATABASE_URL"] = "postgresql://zynd:zynd@localhost:5433/zynd_test"
+os.environ["ENABLE_DEV_BEARER"] = "true"   # tests authenticate with the dev token
 
 import asyncpg
 import httpx

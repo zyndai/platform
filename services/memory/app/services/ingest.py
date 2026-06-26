@@ -6,6 +6,7 @@ Used by both the HTTP /ingest endpoint (ChatGPT plugin, brief §7) and the MCP
 the same way. Stays fast: auth + dedup + INSERT + enqueue only — no heavy work here.
 """
 import hashlib
+import re
 
 import asyncpg
 
@@ -14,6 +15,15 @@ from app.models import Turn
 # brief §7.2 — turns shorter than this carry no extractable signal. The MCP `remember`
 # tool lowers it because those writes are intentional single facts, not chat noise.
 MIN_CHUNK_CHARS = 40
+
+# C0 control chars except tab/newline/CR. Postgres text columns reject NUL outright
+# (raises at INSERT), and other controls are noise — strip before storing/embedding.
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def clean_text(text: str) -> str:
+    """Strip text-illegal control characters (incl. NUL) so ingestion can't 500."""
+    return _CONTROL_RE.sub("", text or "")
 
 
 async def ingest_turns(
@@ -43,7 +53,7 @@ async def ingest_turns(
     for index, turn in enumerate(turns):
         if turn.role != "user":  # only user content carries signal (§14.6)
             continue
-        text = turn.content.strip()
+        text = clean_text(turn.content).strip()
         if len(text) < min_chars:
             skipped += 1
             continue
@@ -63,8 +73,15 @@ async def ingest_turns(
             skipped += 1
             continue
 
+        # Durability: the chunk is committed, but if the enqueue fails (e.g. Redis
+        # down) it would never be processed AND its content_hash would block re-ingest
+        # forever. Roll the chunk back and surface the error so the caller can retry.
+        try:
+            await arq.enqueue_job("chunk_processor", str(row["id"]))
+        except Exception:
+            await pool.execute("DELETE FROM trace_chunks WHERE id = $1", row["id"])
+            raise
         inserted += 1
-        await arq.enqueue_job("chunk_processor", str(row["id"]))
 
     await pool.execute("UPDATE users SET last_active_at = now() WHERE id = $1", user_id)
     return inserted, skipped

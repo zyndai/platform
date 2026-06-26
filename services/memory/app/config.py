@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # M2 JWT path for local testing; never enable in production.
     dev_bearer_token: str = "dev-secret"
     dev_user_email: str = "dev@zynd.local"
+    # Off by default so the shared dev backdoor token is NEVER honored in production.
+    # Enable only in local/test envs (ENABLE_DEV_BEARER=true).
+    enable_dev_bearer: bool = False
 
     # M2 — JWT + OAuth (dev-grade; see docs/CHATGPT_PLUGIN.md security notes).
     jwt_secret: str = "dev-jwt-secret-change-me-in-production-0123456789"

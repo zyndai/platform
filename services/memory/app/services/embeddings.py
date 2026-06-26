@@ -4,6 +4,11 @@ from app.config import settings
 
 _client: AsyncOpenAI | None = None
 
+# text-embedding-3-small accepts ~8191 tokens. Cap input chars well under that so an
+# oversized chunk can't exceed the limit and create a permanently-failing worker job.
+# The full raw_text is still stored in trace_chunks; only the embedding input is bounded.
+EMBED_MAX_CHARS = 8000
+
 
 def _get_client() -> AsyncOpenAI:
     """Lazy init so importing the app (and the LLM-free /ingest path) works
@@ -22,7 +27,7 @@ async def embed(text: str) -> list[float]:
     Raises on API/network failure so the caller (worker) can retry — we never
     want to silently store a missing or zero embedding.
     """
-    cleaned = text.replace("\n", " ").strip()
+    cleaned = text.replace("\n", " ").strip()[:EMBED_MAX_CHARS]
     if not cleaned:
         raise ValueError("cannot embed empty text")
     if settings.mock_llm:

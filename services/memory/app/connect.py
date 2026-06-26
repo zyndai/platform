@@ -96,12 +96,12 @@ async def connect(email: str = Form(...), password: str = Form(...)) -> HTMLResp
         user_id = await pool.fetchval(
             "INSERT INTO users (email, display_name, password_hash) VALUES ($1,$1,$2) RETURNING id",
             email, hash_password(password))
-    elif row["password_hash"] is None:
-        user_id = row["id"]
-        await pool.execute("UPDATE users SET password_hash = $1 WHERE id = $2", hash_password(password), user_id)
-    elif verify_password(password, row["password_hash"]):
+    elif row["password_hash"] and verify_password(password, row["password_hash"]):
         user_id = row["id"]
     else:
+        # Wrong password, or a password-less existing account (self-heal/legacy). Never
+        # set a password on an existing account from this unauthenticated endpoint
+        # (account-takeover vector).
         return HTMLResponse(_form("Incorrect password.", email), status_code=401)
 
     return HTMLResponse(_success(issue_personal_token(str(user_id))))

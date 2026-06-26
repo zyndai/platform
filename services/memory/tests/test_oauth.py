@@ -121,6 +121,17 @@ async def test_authorization_code_is_single_use(client):
     assert second.status_code == 400  # invalid_grant
 
 
+async def test_passwordless_account_cannot_be_claimed(client):
+    # The dev user exists with no password_hash. An unauthenticated request must NOT
+    # be able to set a password and take it over (account-takeover guard).
+    r = await client.post("/oauth/login", data={
+        "email": settings.dev_user_email, "password": "attacker-guess-123",
+        "redirect_uri": REDIRECT, "state": "s1"})
+    assert r.status_code == 401
+    h = await get_pool().fetchval("SELECT password_hash FROM users WHERE email=$1", settings.dev_user_email)
+    assert h is None  # password was NOT set
+
+
 async def test_token_rejects_bad_client_secret(client):
     code = await _get_code(client)
     r = await client.post("/oauth/token", data={

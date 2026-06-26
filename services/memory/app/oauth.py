@@ -96,13 +96,12 @@ async def login(
         user_id = await pool.fetchval(
             "INSERT INTO users (email, display_name, password_hash) VALUES ($1, $1, $2) RETURNING id",
             email, hash_password(password))
-    elif row["password_hash"] is None:
-        # Legacy/OAuth-only row with no password yet — set it on first sign-in.
-        user_id = row["id"]
-        await pool.execute("UPDATE users SET password_hash = $1 WHERE id = $2", hash_password(password), user_id)
-    elif verify_password(password, row["password_hash"]):
+    elif row["password_hash"] and verify_password(password, row["password_hash"]):
         user_id = row["id"]
     else:
+        # Wrong password, OR a password-less existing row (self-heal/legacy). We never
+        # let an unauthenticated request set a password on an existing account
+        # (account-takeover vector) — such accounts cannot be claimed via this form.
         return HTMLResponse(_consent_page(
             redirect_uri, state, scope, email=email, error="Incorrect password."), status_code=401)
 

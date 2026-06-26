@@ -1,4 +1,3 @@
-import hashlib
 from contextlib import asynccontextmanager
 
 from arq import create_pool
@@ -11,10 +10,9 @@ from app.auth import issue_personal_token, verify_access_token
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool
 from app.models import AssertionView, ContextRequest, FactRef, IngestRequest, IngestResponse
+from app.services.ingest import ingest_turns
 from app.connect import router as connect_router
 from app.oauth import router as oauth_router
-
-MIN_CHUNK_CHARS = 40  # brief §7.2 — single-word turns carry no signal
 
 
 @asynccontextmanager
@@ -157,46 +155,9 @@ async def token_exchange(authorization: str = Header(default="")) -> dict:
 async def ingest(req: IngestRequest, user_id: str = Depends(current_user)) -> IngestResponse:
     """Synchronous, must stay <200ms: auth + dedup + INSERT + enqueue only.
     Embedding/extraction happen in the worker (brief §7.2)."""
-    pool = get_pool()
-
-    # Self-heal: a validly-signed token whose user row was removed (manual delete
-    # or right-to-erasure) is re-provisioned so ingestion never 500s on a missing FK.
-    await pool.execute(
-        "INSERT INTO users (id, email) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
-        user_id, f"user-{user_id}@zynd.local",
+    inserted, skipped = await ingest_turns(
+        get_pool(), app.state.arq, user_id, req.source_system, req.turns, req.conversation_id,
     )
-
-    inserted = 0
-    skipped = 0
-
-    for index, turn in enumerate(req.turns):
-        # Strip assistant turns — only user content carries signal (§14.6).
-        if turn.role != "user":
-            continue
-        text = turn.content.strip()
-        if len(text) < MIN_CHUNK_CHARS:
-            skipped += 1
-            continue
-
-        content_hash = hashlib.sha256(f"{user_id}:{text}".encode()).hexdigest()
-        row = await pool.fetchrow(
-            """INSERT INTO trace_chunks
-                 (user_id, source_system, raw_text, conversation_id,
-                  turn_start, turn_end, content_hash, observed_at)
-               VALUES ($1, $2, $3, $4, $5, $5, $6, $7)
-               ON CONFLICT (user_id, content_hash) DO NOTHING
-               RETURNING id""",
-            user_id, req.source_system, text, req.conversation_id,
-            index, content_hash, turn.timestamp,
-        )
-        if row is None:
-            skipped += 1
-            continue
-
-        inserted += 1
-        await app.state.arq.enqueue_job("chunk_processor", str(row["id"]))
-
-    await pool.execute("UPDATE users SET last_active_at = now() WHERE id = $1", user_id)
     return IngestResponse(chunks_inserted=inserted, chunks_skipped=skipped)
 
 

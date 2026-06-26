@@ -55,6 +55,32 @@ def _sign(assertions: list[dict]) -> str:
     return hmac.new(settings.jwt_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
 
 
+async def active_context(pool: asyncpg.Pool, user_id: str, k: int = 20) -> list[dict]:
+    """Top-K active facts by confidence, no topic filter — answers 'what do you know
+    about me?'. The topic-less counterpart of context_slice (used by MCP get_my_context
+    when no topic is supplied)."""
+    rows = await pool.fetch(
+        """SELECT a.predicate, e.canonical_name AS object, e.entity_type AS object_type,
+                  a.confidence, a.observed_at
+             FROM assertions a
+             LEFT JOIN entities e ON e.id = a.object_entity_id
+            WHERE a.user_id = $1 AND a.valid_until IS NULL
+            ORDER BY a.confidence DESC
+            LIMIT $2""",
+        user_id, k,
+    )
+    return [
+        {
+            "predicate": r["predicate"],
+            "object": r["object"],
+            "object_type": r["object_type"],
+            "confidence": round(float(r["confidence"]), 4),
+            "observed_at": r["observed_at"].isoformat() if r["observed_at"] else None,
+        }
+        for r in rows
+    ]
+
+
 async def context_slice(pool: asyncpg.Pool, user_id: str, topic: str, k: int = 20) -> list[dict]:
     """Top-K assertions most relevant to `topic` (brief §11.2).
 

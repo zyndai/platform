@@ -8,22 +8,32 @@ user_id parameter, so one user can never read or change another's data.
 Run:  uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
 """
 import contextvars
+from datetime import datetime, timezone
 
 import asyncpg
+from arq import create_pool
+from arq.connections import RedisSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from app.auth import verify_access_token
 from app.config import settings
+from app.models import Turn
 from app.services.control import confirm_fact, forget_fact
-from app.services.export import build_jsonld_export, context_slice
+from app.services.export import active_context, build_jsonld_export, context_slice
+from app.services.ingest import ingest_turns
 from app.services.matching import match_users
 
 # Set by the auth ASGI wrapper per request; read by the tools.
 _current_user: contextvars.ContextVar[str | None] = contextvars.ContextVar("mcp_user", default=None)
 
-# Process-lifetime pool, independent of the MCP session lifespan (which cycles).
+# Process-lifetime pools, independent of the MCP session lifespan (which cycles).
 _pool: asyncpg.Pool | None = None
+_arq = None
+
+# Minimum length for an intentional `remember` write. Lower than the §7.2 chat-noise
+# floor (40) because these are deliberate single facts, but still guards empty/junk.
+_REMEMBER_MIN_CHARS = 8
 
 
 async def _get_pool() -> asyncpg.Pool:
@@ -31,6 +41,13 @@ async def _get_pool() -> asyncpg.Pool:
     if _pool is None:
         _pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=10)
     return _pool
+
+
+async def _get_arq():
+    global _arq
+    if _arq is None:
+        _arq = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    return _arq
 
 
 def _uid() -> str:
@@ -48,11 +65,42 @@ mcp = FastMCP(
 )
 
 
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
+async def remember(text: str) -> dict:
+    """Save something the user just told you about themselves into their ZYND memory.
+
+    Call this whenever the user shares a durable fact about themselves — what they are
+    building, learning, using, believing, intending, their role, skills, or goals
+    (e.g. "I'm learning Rust", "I'm building an AI agent marketplace"). Pass a complete
+    sentence in the user's voice. ZYND extracts structured facts in the background; they
+    then appear in get_my_context and power find_similar_users. This is how the user's
+    context graph gets built from a conversation — without it, their profile stays empty.
+    """
+    text = (text or "").strip()
+    if len(text) < _REMEMBER_MIN_CHARS:
+        return {"saved": False, "reason": f"too short — pass a full sentence (min {_REMEMBER_MIN_CHARS} chars)"}
+    turn = Turn(role="user", content=text, timestamp=datetime.now(timezone.utc))
+    inserted, skipped = await ingest_turns(
+        await _get_pool(), await _get_arq(), _uid(), "claude", [turn],
+        min_chars=_REMEMBER_MIN_CHARS,
+    )
+    if inserted == 0:
+        return {"saved": False, "reason": "already remembered (duplicate)"}
+    return {"saved": True, "note": "Saved. Facts are extracted in the background; "
+            "recall with get_my_context in a few seconds."}
+
+
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def get_my_context(topic: str, k: int = 20) -> list[dict]:
-    """Top-K facts about the signed-in user most relevant to `topic`. Use to ground
-    a reply in their context without loading their whole graph."""
-    return await context_slice(await _get_pool(), _uid(), topic, max(1, min(k, 50)))
+async def get_my_context(topic: str | None = None, k: int = 20) -> list[dict]:
+    """Facts about the signed-in user. With `topic`, returns the K facts most relevant
+    to it; with no topic, returns their top active facts overall — use the topic-less
+    form to answer "what do you know about me?". Returns [] if the profile is empty
+    (the user hasn't fed ZYND anything yet — see the `remember` tool)."""
+    pool = await _get_pool()
+    k = max(1, min(k, 50))
+    if topic and topic.strip():
+        return await context_slice(pool, _uid(), topic.strip(), k)
+    return await active_context(pool, _uid(), k)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})

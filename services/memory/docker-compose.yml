@@ -1,0 +1,33 @@
+# Local infra for ZYND MVP. Host ports are non-default to avoid colliding
+# with a local Homebrew Postgres (5432) or Redis (6379).
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: zynd
+      POSTGRES_PASSWORD: zynd
+      POSTGRES_DB: zynd
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs ONLY on first init (empty volume). For re-apply use scripts/apply_schema.sh.
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zynd -d zynd"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

@@ -1,0 +1,230 @@
+import hashlib
+from contextlib import asynccontextmanager
+
+from arq import create_pool
+from arq.connections import RedisSettings
+from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import HTMLResponse
+
+from app.auth import verify_access_token
+from app.config import settings
+from app.db import close_pool, get_pool, init_pool
+from app.models import AssertionView, ContextRequest, IngestRequest, IngestResponse
+from app.oauth import router as oauth_router
+
+MIN_CHUNK_CHARS = 40  # brief §7.2 — single-word turns carry no signal
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_pool()
+    app.state.arq = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    app.state.dev_user_id = await _ensure_dev_user()
+    yield
+    await app.state.arq.aclose()
+    await close_pool()
+
+
+app = FastAPI(title="ZYND", version="0.1.0", lifespan=lifespan)
+app.include_router(oauth_router)
+
+_PRIVACY_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZYND — Privacy Policy</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    max-width:720px;margin:48px auto;padding:0 20px;line-height:1.6;color:#222}
+  h1{font-size:26px} h2{font-size:18px;margin-top:28px} a{color:#5b46e0}
+  .muted{color:#666;font-size:14px}
+</style></head>
+<body>
+  <h1>ZYND Privacy Policy</h1>
+  <p class="muted">Last updated: 2026-06-26</p>
+
+  <p>ZYND turns the messages you choose to send into a private, evolving context
+  graph that you own. This policy explains what we collect and how we handle it.</p>
+
+  <h2>What we collect</h2>
+  <ul>
+    <li><b>Your messages</b> — only the user-turn text you send through the ZYND
+      connection. We do not collect the AI assistant's replies.</li>
+    <li><b>Your email</b> — used to identify your account.</li>
+  </ul>
+
+  <h2>How we use it</h2>
+  <p>We extract structured facts (what you're building, learning, intending) to
+  build your context graph, and to surface relevant context to AI tools you
+  authorize. We do not sell your data or use it for advertising.</p>
+
+  <h2>Storage &amp; retention</h2>
+  <p>Data is stored in our database. Facts decay over time and inactive raw
+  messages are pruned on a rolling retention window.</p>
+
+  <h2>Your control</h2>
+  <p>You can disconnect ZYND from ChatGPT at any time. You may request deletion of
+  your data by contacting us; account deletion removes your facts and raw messages.</p>
+
+  <h2>Contact</h2>
+  <p>Questions or deletion requests: <a href="mailto:privacy@zynd.ai">privacy@zynd.ai</a></p>
+</body></html>"""
+
+
+async def _ensure_dev_user() -> str:
+    pool = get_pool()
+    row = await pool.fetchrow(
+        """INSERT INTO users (email, display_name)
+           VALUES ($1, 'Dev User')
+           ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+           RETURNING id""",
+        settings.dev_user_email,
+    )
+    return str(row["id"])
+
+
+async def current_user(authorization: str = Header(default="")) -> str:
+    """Resolve the caller's user_id from the bearer token.
+
+    Two accepted tokens: the per-user OAuth JWT (M2, what ChatGPT sends) and the
+    shared dev token (local testing only). JWT is tried first.
+    """
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    try:
+        return verify_access_token(token)
+    except ValueError:
+        pass
+    if token == settings.dev_bearer_token:
+        return app.state.dev_user_id
+    raise HTTPException(status_code=401, detail="invalid bearer token")
+
+
+@app.get("/health")
+async def health() -> dict:
+    await get_pool().execute("SELECT 1")
+    return {"status": "ok"}
+
+
+@app.get("/.well-known/openapi.json", include_in_schema=False)
+async def action_schema() -> dict:
+    """OpenAPI schema to import into the Custom GPT builder."""
+    from app.action_schema import build_action_schema
+    return build_action_schema()
+
+
+@app.get("/privacy", include_in_schema=False)
+async def privacy() -> HTMLResponse:
+    """Privacy policy — required to publish the ChatGPT GPT publicly."""
+    return HTMLResponse(_PRIVACY_HTML)
+
+
+@app.post("/ingest", response_model=IngestResponse)
+async def ingest(req: IngestRequest, user_id: str = Depends(current_user)) -> IngestResponse:
+    """Synchronous, must stay <200ms: auth + dedup + INSERT + enqueue only.
+    Embedding/extraction happen in the worker (brief §7.2)."""
+    pool = get_pool()
+
+    # Self-heal: a validly-signed token whose user row was removed (manual delete
+    # or right-to-erasure) is re-provisioned so ingestion never 500s on a missing FK.
+    await pool.execute(
+        "INSERT INTO users (id, email) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+        user_id, f"user-{user_id}@zynd.local",
+    )
+
+    inserted = 0
+    skipped = 0
+
+    for index, turn in enumerate(req.turns):
+        # Strip assistant turns — only user content carries signal (§14.6).
+        if turn.role != "user":
+            continue
+        text = turn.content.strip()
+        if len(text) < MIN_CHUNK_CHARS:
+            skipped += 1
+            continue
+
+        content_hash = hashlib.sha256(f"{user_id}:{text}".encode()).hexdigest()
+        row = await pool.fetchrow(
+            """INSERT INTO trace_chunks
+                 (user_id, source_system, raw_text, conversation_id,
+                  turn_start, turn_end, content_hash, observed_at)
+               VALUES ($1, $2, $3, $4, $5, $5, $6, $7)
+               ON CONFLICT (user_id, content_hash) DO NOTHING
+               RETURNING id""",
+            user_id, req.source_system, text, req.conversation_id,
+            index, content_hash, turn.timestamp,
+        )
+        if row is None:
+            skipped += 1
+            continue
+
+        inserted += 1
+        await app.state.arq.enqueue_job("chunk_processor", str(row["id"]))
+
+    await pool.execute("UPDATE users SET last_active_at = now() WHERE id = $1", user_id)
+    return IngestResponse(chunks_inserted=inserted, chunks_skipped=skipped)
+
+
+async def _active_graph(user_id: str) -> list[AssertionView]:
+    rows = await get_pool().fetch(
+        """SELECT a.predicate, e.canonical_name AS object, e.entity_type AS object_type,
+                  a.confidence, a.source_system, a.decay_fn, a.version, a.observed_at
+             FROM assertions a
+             LEFT JOIN entities e ON e.id = a.object_entity_id
+            WHERE a.user_id = $1 AND a.valid_until IS NULL
+            ORDER BY a.confidence DESC""",
+        user_id,
+    )
+    return [AssertionView(**dict(row)) for row in rows]
+
+
+@app.get("/me/graph", response_model=list[AssertionView])
+async def my_graph(user_id: str = Depends(current_user)) -> list[AssertionView]:
+    """The authenticated user's own active facts. The GPT calls this to answer
+    'what do you know about me?'."""
+    return await _active_graph(user_id)
+
+
+@app.get("/users/{user_id}/graph", response_model=list[AssertionView])
+async def get_graph(user_id: str, auth_user: str = Depends(current_user)) -> list[AssertionView]:
+    if user_id != auth_user:
+        raise HTTPException(status_code=403, detail="can only read your own graph")
+    return await _active_graph(user_id)
+
+
+@app.get("/match/{user_id}")
+async def get_match(
+    user_id: str,
+    cluster_type: str = "intent_cluster",
+    limit: int | None = None,
+    auth_user: str = Depends(current_user),
+) -> list[dict]:
+    """Top-N users whose `cluster_type` vector is nearest to this user's."""
+    if user_id != auth_user:
+        raise HTTPException(status_code=403, detail="can only query your own matches")
+    from app.services.matching import match_users
+    try:
+        return await match_users(get_pool(), user_id, cluster_type, limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/export/{user_id}")
+async def export_context(user_id: str, auth_user: str = Depends(current_user)) -> dict:
+    """Full active context as a portable JSON-LD packet (brief §11.1)."""
+    if user_id != auth_user:
+        raise HTTPException(status_code=403, detail="can only export your own context")
+    from app.services.export import build_jsonld_export
+    return await build_jsonld_export(get_pool(), user_id)
+
+
+@app.post("/context/{user_id}")
+async def context_packet(
+    user_id: str, req: ContextRequest, auth_user: str = Depends(current_user)
+) -> list[dict]:
+    """Top-K assertions relevant to a topic — the MCP slice over HTTP (brief §11.2)."""
+    if user_id != auth_user:
+        raise HTTPException(status_code=403, detail="can only query your own context")
+    from app.services.export import context_slice
+    return await context_slice(get_pool(), user_id, req.topic, req.k)

@@ -4,27 +4,61 @@ Brief §14.8: a new predicate requires a migration + prompt update + decay_fn.
 Adding one here (and to the extraction prompt) is that change in one place.
 """
 
-# Predicate -> decay half-life in days. None = no decay. (Brief §4.)
+# Predicate -> decay half-life in days. None = no decay. (v2 predicate reference, 35 total.)
 PREDICATE_HALFLIFE_DAYS: dict[str, int | None] = {
-    "is_learning": 30,
-    "has_expertise_in": 540,        # 18 months
+    # 1. Building & creating
     "is_building": 60,
     "is_working_on": 14,
+    "is_creating": 60,
+    "wants_to_preserve": 365,
+    # 2. Learning & skills
+    "is_learning": 30,
+    "has_expertise_in": 540,         # 18 months
+    "has_skill": 730,                # 2 years
+    # 3. Goals & intent
     "intends_to": 21,
+    "is_seeking": 7,
+    "is_preparing_for": 14,
+    "fears": 30,
+    "open_to": None,                 # declared availability — no decay
+    # 4. Beliefs & values
     "believes": 90,
     "values": 365,
+    "recently_changed_stance_on": 30,
+    "has_aesthetic": 365,
+    # 5. Navigation & constraints
+    "is_navigating": 60,
+    "is_constrained_by": 45,
+    "is_frustrated_by": 45,
+    "has_been_wronged": 180,         # 6 months
+    "is_resolved": 180,              # system-emitted only
+    # 6. Life stage & experience
+    "is_transitioning": 180,
+    "is_experiencing": 90,
+    "is_processing": 45,
+    "is_rediscovering": 365,
+    "has_unsolved_problem": None,
+    # 7. Relationships & responsibilities
+    "has_collaborator": None,
+    "is_responsible_for": None,
+    "is_advocating_for": 180,
+    "is_in_conflict_with": 90,
+    "is_inspired_by": 180,
+    # 8. Place & affiliation
     "is_located_in": None,
     "is_affiliated_with": None,
-    "is_frustrated_by": 45,
-    "is_inspired_by": 180,           # 6 months
-    "has_skill": 730,                # 2 years
-    "recently_changed_stance_on": 30,
-    "is_seeking": 7,
-    "has_collaborator": None,
-    "open_to": None,                 # declared availability (coffee, collab, mentoring) — no decay
+    "has_language_context": None,
+    # 9. Motivation
+    "is_motivated_by": 365,
 }
 
 ALLOWED_PREDICATES: frozenset[str] = frozenset(PREDICATE_HALFLIFE_DAYS)
+
+# System-emitted (never extracted or declared) + declared-only predicates.
+SYSTEM_PREDICATES: frozenset[str] = frozenset({"is_resolved"})
+DECLARED_ONLY: frozenset[str] = frozenset({"open_to"})
+# What the LLM extractor is allowed to emit (v2 source = inferred|both).
+INFERRABLE_PREDICATES: frozenset[str] = ALLOWED_PREDICATES - SYSTEM_PREDICATES - DECLARED_ONLY
 
 # v2 — the ONLY predicates used for matching / public discovery (the "findability card").
 # Everything else (beliefs, frustrations, life-stage, etc.) is private memory, never matched.

@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.taxonomy import ALLOWED_PREDICATES, ENTITY_TYPES
+from app.taxonomy import ENTITY_TYPES, INFERRABLE_PREDICATES
 
 
 # ---- Inbound: what the ChatGPT plugin (or any source) POSTs to /ingest ----
@@ -37,7 +37,7 @@ class ExtractedAssertion(BaseModel):
     @field_validator("predicate")
     @classmethod
     def _known_predicate(cls, v: str) -> str:
-        if v not in ALLOWED_PREDICATES:
+        if v not in INFERRABLE_PREDICATES:  # system/declared-only predicates can't be extracted
             raise ValueError(f"unknown predicate: {v}")
         return v
 

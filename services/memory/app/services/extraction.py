@@ -28,10 +28,16 @@ Schema:
 {"assertions": [{"predicate": string, "object_name": string,
   "object_type": string, "confidence": float}]}
 
-Allowed predicates: is_learning, has_expertise_in, is_building,
-  is_working_on, intends_to, believes, values, is_located_in,
-  is_affiliated_with, is_frustrated_by, is_inspired_by, has_skill,
-  recently_changed_stance_on, is_seeking, has_collaborator
+Allowed predicates (pick the most specific that fits):
+  Building: is_building, is_working_on, is_creating, wants_to_preserve
+  Learning: is_learning, has_expertise_in, has_skill
+  Intent: intends_to, is_seeking, is_preparing_for, fears
+  Beliefs: believes, values, recently_changed_stance_on, has_aesthetic
+  Navigation: is_navigating, is_constrained_by, is_frustrated_by, has_been_wronged
+  Life: is_transitioning, is_experiencing, is_processing, is_rediscovering, has_unsolved_problem
+  People: has_collaborator, is_responsible_for, is_advocating_for, is_in_conflict_with, is_inspired_by
+  Place: is_located_in, is_affiliated_with, has_language_context
+  Motivation: is_motivated_by
 
 object_type is one of the taxonomy entity types, e.g. skill_technical,
   concept_topic, project_venture, belief_opinion, intent_project,

@@ -102,6 +102,13 @@ async def recompute_all_cron(ctx: dict) -> dict:
     return result
 
 
+async def resolution_cron(ctx: dict) -> dict:
+    from app.services.resolution import run_resolution_detector
+    result = await run_resolution_detector(get_pool())
+    logger.info("resolution_detector: %s", result)
+    return result
+
+
 async def on_startup(ctx: dict) -> None:
     await init_pool()
 
@@ -116,6 +123,7 @@ class WorkerSettings:
     # Brief §9: decay nightly 00:30 UTC; recompute + orphan cleanup nightly/weekly.
     cron_jobs = [
         cron(decay_cron, hour=0, minute=30),
+        cron(resolution_cron, hour=1, minute=30),   # v2: emit is_resolved after decay settles
         cron(recompute_all_cron, hour=2, minute=0),
         cron(orphan_cron, weekday="sun", hour=1, minute=0),
     ]

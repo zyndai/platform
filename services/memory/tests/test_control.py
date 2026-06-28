@@ -68,6 +68,8 @@ async def test_my_matches_returns_list(client):
     assert isinstance(r.json(), list)
 
 
-async def test_my_matches_rejects_bad_cluster(client):
+async def test_my_matches_unknown_cluster_falls_back(client):
+    # v2: an unknown cluster_type falls back to the full findability card, not a 400.
     r = await client.get("/me/matches?cluster_type=bogus", headers=AUTH)
-    assert r.status_code == 400
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)

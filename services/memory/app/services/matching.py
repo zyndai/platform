@@ -44,6 +44,7 @@ async def recompute_user_embeddings(pool: asyncpg.Pool, user_id: str) -> dict:
                   AND a.predicate = ANY($2::text[])
                   AND a.confidence > $3
                   AND a.valid_until IS NULL
+                  AND a.is_public = true
                   AND e.embedding IS NOT NULL
                 ORDER BY a.confidence DESC
                 LIMIT $4""",
@@ -80,8 +81,10 @@ async def match_users(
     limit: int | None = None,
 ) -> list[dict]:
     """Top-N users most similar to `user_id` within `cluster_type` (brief §6.1)."""
+    # Legacy/removed cluster names (e.g. belief_cluster) fall back to the full
+    # findability card rather than erroring — matching is findability-only now.
     if cluster_type not in CLUSTER_PREDICATES:
-        raise ValueError(f"unknown cluster_type: {cluster_type}")
+        cluster_type = "full_context"
     # Clamp: a non-positive limit falls back to the default; cap to 50 so a caller
     # can't push a negative/huge value into SQL LIMIT (DB error) or scrape the graph.
     limit = limit if (limit and limit > 0) else settings.match_default_limit

@@ -11,20 +11,21 @@ pytestmark = pytest.mark.integration
 
 AUTH = {"Authorization": f"Bearer {settings.dev_bearer_token}"}
 
-# Five intent-cluster assertions (predicate, object_name, entity_type).
+# Five intent-cluster assertions — all FINDABILITY predicates so they survive the
+# v2 matching restriction (predicate, object_name, entity_type).
 SHARED_INTENT = [
     ("is_building", "machine learning engineer marketplace", "project_venture"),
-    ("is_working_on", "API rate limit fix", "project_assignment"),
-    ("intends_to", "raise seed round", "intent_project"),
-    ("is_seeking", "backend cofounder engineer", "collaborator"),
     ("is_building", "developer hiring platform india", "project_venture"),
+    ("is_seeking", "backend cofounder engineer", "collaborator"),
+    ("is_seeking", "early adopter users for marketplace", "collaborator"),
+    ("open_to", "co founder collaboration", "collaborator"),
 ]
 DISJOINT_INTENT = [
     ("is_building", "sourdough bread bakery", "project_venture"),
-    ("is_working_on", "garden vegetable patch", "project_assignment"),
-    ("intends_to", "run marathon race", "intent_project"),
-    ("is_seeking", "yoga teacher class", "collaborator"),
     ("is_building", "watercolor painting studio", "project_venture"),
+    ("is_seeking", "yoga teacher class", "collaborator"),
+    ("is_seeking", "pottery studio members", "collaborator"),
+    ("open_to", "coffee chat gardening", "collaborator"),
 ]
 
 
@@ -43,9 +44,11 @@ async def _seed(uid: str, predicate: str, name: str, etype: str, confidence: flo
         "INSERT INTO entities (user_id, canonical_name, entity_type, embedding) VALUES ($1,$2,$3,$4::vector) RETURNING id",
         uid, name, etype, to_pgvector(mock_embed(name)),
     )
+    # is_public=true: these are seeded findability facts so matching (which only reads
+    # the public card) can use them.
     await pool.execute(
-        """INSERT INTO assertions (user_id, predicate, object_entity_id, confidence, source_system, decay_fn)
-           VALUES ($1,$2,$3,$4,'chatgpt','none')""",
+        """INSERT INTO assertions (user_id, predicate, object_entity_id, confidence, source_system, decay_fn, is_public)
+           VALUES ($1,$2,$3,$4,'chatgpt','none', true)""",
         uid, predicate, eid, confidence,
     )
 
@@ -128,4 +131,4 @@ async def test_match_endpoint_auth_and_validation(client):
     assert forbidden.status_code == 403
 
     bad_cluster = await client.get(f"/match/{dev_id}?cluster_type=bogus", headers=AUTH)
-    assert bad_cluster.status_code == 400
+    assert bad_cluster.status_code == 200   # v2: unknown cluster falls back to full findability card

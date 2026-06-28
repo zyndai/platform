@@ -21,9 +21,17 @@ PREDICATE_HALFLIFE_DAYS: dict[str, int | None] = {
     "recently_changed_stance_on": 30,
     "is_seeking": 7,
     "has_collaborator": None,
+    "open_to": None,                 # declared availability (coffee, collab, mentoring) — no decay
 }
 
 ALLOWED_PREDICATES: frozenset[str] = frozenset(PREDICATE_HALFLIFE_DAYS)
+
+# v2 — the ONLY predicates used for matching / public discovery (the "findability card").
+# Everything else (beliefs, frustrations, life-stage, etc.) is private memory, never matched.
+FINDABILITY_PREDICATES: frozenset[str] = frozenset({
+    "is_building", "is_learning", "has_expertise_in",
+    "is_seeking", "open_to", "is_affiliated_with", "is_located_in",
+})
 
 # Entity subtypes by family (brief §2). Flattened to a validation set.
 ENTITY_TYPES: frozenset[str] = frozenset({
@@ -37,13 +45,13 @@ ENTITY_TYPES: frozenset[str] = frozenset({
     "artifact_document", "artifact_code", "artifact_creative",
 })
 
-# Cluster -> predicates it is built from (brief §10.1). Used in M5 matching.
+# Cluster -> predicates it is built from. v2: every match cluster draws ONLY from
+# FINDABILITY_PREDICATES — beliefs, frustrations, and life-stage are never matched on.
 CLUSTER_PREDICATES: dict[str, frozenset[str]] = {
-    "intent_cluster": frozenset({"is_building", "is_working_on", "intends_to", "is_seeking"}),
-    "belief_cluster": frozenset({"believes", "values", "recently_changed_stance_on"}),
-    "skill_cluster": frozenset({"has_skill", "has_expertise_in", "is_learning"}),
-    "concept_cluster": frozenset({"is_frustrated_by", "is_inspired_by", "is_affiliated_with"}),
-    "full_context": ALLOWED_PREDICATES,
+    "intent_cluster": frozenset({"is_building", "is_seeking", "open_to"}),
+    "skill_cluster": frozenset({"has_expertise_in", "is_learning"}),
+    "place_cluster": frozenset({"is_affiliated_with", "is_located_in"}),
+    "full_context": FINDABILITY_PREDICATES,
 }
 
 # Reliability weight per source, used in the Bayesian update (brief §5.4).

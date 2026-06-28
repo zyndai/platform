@@ -54,9 +54,13 @@ async def extract_assertions(chunk_text: str) -> list[ExtractedAssertion]:
     schema. Invalid rows (unknown predicate/type, confidence < 0.5) are dropped,
     not stored. Raises on network or JSON-parse failure so the worker retries.
     """
+    from app.services.gates import detect_gates, is_gated
+    tripped = detect_gates(chunk_text)
+
     if settings.mock_llm:
         from app.services.mock_llm import mock_extract
-        return mock_extract(chunk_text[:MAX_CHUNK_CHARS])
+        valid = mock_extract(chunk_text[:MAX_CHUNK_CHARS])
+        return [a for a in valid if not is_gated(a.predicate, tripped)]
     try:
         resp = await _get_client().chat.completions.create(
             model=settings.extraction_model,
@@ -83,4 +87,6 @@ async def extract_assertions(chunk_text: str) -> list[ExtractedAssertion]:
         except ValidationError:
             # Drop malformed/out-of-taxonomy assertion; keep the rest.
             continue
-    return valid
+    # Sensitive gate: withhold gated predicates (e.g. `believes` when politics signals
+    # are present) so ZYND never auto-stores sensitive inferences.
+    return [a for a in valid if not is_gated(a.predicate, tripped)]

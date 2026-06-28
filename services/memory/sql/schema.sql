@@ -64,6 +64,13 @@ CREATE TABLE IF NOT EXISTS assertions (
   valid_until       timestamptz                     -- set by decay job when confidence < 0.1
 );
 
+-- v2 — memory vs findability split. Private memory is automatic (all predicates);
+-- only is_public=true rows in FINDABILITY_PREDICATES are used for matching/discovery.
+ALTER TABLE assertions ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'inferred';  -- inferred | declared | system
+ALTER TABLE assertions ADD COLUMN IF NOT EXISTS is_public boolean NOT NULL DEFAULT false; -- approved onto the public findability card
+ALTER TABLE assertions ADD COLUMN IF NOT EXISTS approved_at timestamptz;
+ALTER TABLE assertions ADD COLUMN IF NOT EXISTS gate text;                                -- health | politics | immigration | null
+
 -- §3.5 assertion_history — append-only audit log.
 CREATE TABLE IF NOT EXISTS assertion_history (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),

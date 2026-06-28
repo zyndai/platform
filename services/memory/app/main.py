@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from app.auth import issue_personal_token, verify_access_token
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool
-from app.models import AssertionView, ContextRequest, FactRef, IngestRequest, IngestResponse
+from app.models import AssertionView, ContextRequest, DeclareRequest, FactRef, IngestRequest, IngestResponse
 from app.services.ingest import ingest_turns
 from app.connect import router as connect_router
 from app.docs import router as docs_router
@@ -243,6 +243,49 @@ async def get_match(
         return await match_users(get_pool(), user_id, cluster_type, limit)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/me/findability")
+async def my_findability_card(user_id: str = Depends(current_user)) -> list[dict]:
+    """The user's public findability card — the only facts used for matching (v2)."""
+    from app.services.findability import get_card
+    return await get_card(get_pool(), user_id)
+
+
+@app.get("/me/findability/suggestions")
+async def my_findability_suggestions(user_id: str = Depends(current_user)) -> list[dict]:
+    """Inferred findability-eligible facts not yet public — 'ZYND noticed this. Keep it?'."""
+    from app.services.findability import get_suggestions
+    return await get_suggestions(get_pool(), user_id)
+
+
+@app.post("/me/findability/approve")
+async def approve_findability(ref: FactRef, user_id: str = Depends(current_user)) -> dict:
+    """Publish an inferred fact onto the card so it becomes matchable."""
+    from app.services.findability import approve
+    if not await approve(get_pool(), user_id, ref.predicate, ref.object):
+        raise HTTPException(status_code=404, detail="no matching private findability fact")
+    return {"status": "approved", "predicate": ref.predicate, "object": ref.object}
+
+
+@app.post("/me/findability/revoke")
+async def revoke_findability(ref: FactRef, user_id: str = Depends(current_user)) -> dict:
+    """Take a fact off the public card (it stays in private memory)."""
+    from app.services.findability import revoke
+    if not await revoke(get_pool(), user_id, ref.predicate, ref.object):
+        raise HTTPException(status_code=404, detail="no matching public fact")
+    return {"status": "revoked", "predicate": ref.predicate, "object": ref.object}
+
+
+@app.post("/me/findability/declare")
+async def declare_findability(req: DeclareRequest, user_id: str = Depends(current_user)) -> dict:
+    """User explicitly adds a public findability fact (building/learning/seeking/…)."""
+    from app.services.findability import declare
+    try:
+        await declare(get_pool(), user_id, req.predicate, req.value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "declared", "predicate": req.predicate, "value": req.value}
 
 
 @app.get("/export/{user_id}")

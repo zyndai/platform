@@ -69,6 +69,11 @@ class FactRef(BaseModel):
     object: str = Field(min_length=1)
 
 
+class DeclareRequest(BaseModel):
+    predicate: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+
+
 class AssertionView(BaseModel):
     predicate: str
     object: str | None

@@ -58,8 +58,10 @@ def test_cluster_predicates_are_all_allowed():
         assert predicates <= ALLOWED_PREDICATES, f"{cluster} has unknown predicates"
 
 
-def test_full_context_covers_all_predicates():
-    assert CLUSTER_PREDICATES["full_context"] == ALLOWED_PREDICATES
+def test_full_context_covers_findability_predicates():
+    from app.taxonomy import FINDABILITY_PREDICATES
+    # v2: matching's full_context is the findability card, not every predicate.
+    assert CLUSTER_PREDICATES["full_context"] == FINDABILITY_PREDICATES
 
 
 # ---- LLM-output validation (brief §14.3) ----

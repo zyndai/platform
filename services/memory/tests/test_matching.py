@@ -235,3 +235,31 @@ async def test_publish_persona_findability_makes_user_findable(client):
 
     # idempotent: already has a card -> re-publish is a no-op
     assert await publish_persona_findability(pool, str(uid), status) == 0
+
+
+async def test_findability_facts_are_public_by_default(client):
+    from datetime import datetime, timezone
+
+    from app.models import Turn
+    from app.services.ingest import ingest_turns
+    from app.worker import chunk_processor
+
+    class _Arq:  # ingest only needs enqueue_job; we run chunk_processor by hand
+        async def enqueue_job(self, *a, **k):
+            return None
+
+    pool = get_pool()
+    uid = await _make_user("pub_default@example.com")
+    turn = Turn(role="user",
+                content="I am building a developer hiring marketplace and I believe remote work wins.",
+                timestamp=datetime.now(timezone.utc))
+    await ingest_turns(pool, _Arq(), str(uid), "chatgpt", [turn], min_chars=8)
+    chunk_id = await pool.fetchval(
+        "SELECT id FROM trace_chunks WHERE user_id=$1 ORDER BY observed_at DESC LIMIT 1", uid)
+    await chunk_processor({}, str(chunk_id))   # ctx has no redis -> recompute skipped (fine)
+
+    rows = await pool.fetch(
+        "SELECT predicate, is_public FROM assertions WHERE user_id=$1 AND valid_until IS NULL", uid)
+    by_pred = {r["predicate"]: r["is_public"] for r in rows}
+    assert by_pred.get("is_building") is True    # findability predicate -> public by default
+    assert by_pred.get("believes") is False      # everything else -> stays private

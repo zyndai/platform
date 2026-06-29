@@ -1,7 +1,12 @@
 import asyncpg
 
 from app.models import ExtractedAssertion
-from app.taxonomy import DEFAULT_SOURCE_RELIABILITY, SOURCE_RELIABILITY, decay_fn_for
+from app.taxonomy import (
+    DEFAULT_SOURCE_RELIABILITY,
+    FINDABILITY_PREDICATES,
+    SOURCE_RELIABILITY,
+    decay_fn_for,
+)
 
 CONFIDENCE_CAP = 0.97  # brief §14.4 — never reach certainty
 
@@ -43,14 +48,22 @@ async def upsert_assertion(
 
     if existing is None:
         confidence = bayesian_update(0.0, extracted.confidence, reliability)
+        # Findability-eligible facts are public by default so the matching pool is
+        # always populated (matching reads only is_public=true). Every other predicate
+        # — beliefs, frustrations, health/life-stage, etc. — stays PRIVATE. Users can
+        # still revoke a public fact via /me/revoke.
+        is_public = extracted.predicate in FINDABILITY_PREDICATES
         row = await conn.fetchrow(
             """INSERT INTO assertions
                  (user_id, predicate, object_entity_id, confidence,
-                  source_system, trace_chunk_id, decay_fn, observed_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                  source_system, trace_chunk_id, decay_fn, observed_at,
+                  is_public, approved_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                       CASE WHEN $9 THEN now() ELSE NULL END)
                RETURNING id""",
             user_id, extracted.predicate, object_entity_id, confidence,
             source_system, trace_chunk_id, decay_fn_for(extracted.predicate), observed_at,
+            is_public,
         )
         assertion_id = str(row["id"])
         await _log_history(conn, assertion_id, None, confidence, "new_evidence")

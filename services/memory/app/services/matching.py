@@ -12,6 +12,7 @@ import asyncpg
 
 from app.config import settings
 from app.db import from_pgvector, to_pgvector
+from app.services.embeddings import embed
 from app.taxonomy import CLUSTER_PREDICATES
 
 CONFIDENCE_FLOOR = 0.3   # brief §10.2
@@ -109,6 +110,51 @@ async def match_users(
             ORDER BY ue.embedding <=> $1::vector
             LIMIT $5""",
         self_vector, cluster_type, user_id, settings.match_min_assertions, limit,
+    )
+    return [
+        {
+            "user_id": str(r["user_id"]),
+            "display_name": _match_label(r["display_name"], str(r["user_id"])),
+            "similarity": round(float(r["similarity"]), 4),
+            "assertion_count": r["assertion_count"],
+        }
+        for r in rows
+    ]
+
+
+async def search_by_query(
+    pool: asyncpg.Pool,
+    caller_id: str,
+    query_text: str,
+    cluster_type: str = "full_context",
+    limit: int | None = None,
+) -> list[dict]:
+    """Complementary search (powers find_people): top-N PUBLIC users whose
+    `cluster_type` vector is nearest to the embedded `query_text` — a described
+    TARGET profile, NOT the caller's own vector. The agent translates a need
+    (founder→investor, SaaS→distribution) into the target description; this just
+    retrieves. Same public-only pool, min-assertion gate, and shape as match_users."""
+    query_text = (query_text or "").strip()
+    if not query_text:
+        return []  # empty/whitespace target → no results (and avoids embed()'s ValueError)
+    if cluster_type not in CLUSTER_PREDICATES:
+        cluster_type = "full_context"
+    limit = limit if (limit and limit > 0) else settings.match_default_limit
+    limit = min(limit, 50)
+
+    query_vector = to_pgvector(await embed(query_text))
+    rows = await pool.fetch(
+        """SELECT ue.user_id, u.display_name,
+                  1 - (ue.embedding <=> $1::vector) AS similarity,
+                  ue.assertion_count
+             FROM user_embeddings ue
+             JOIN users u ON u.id = ue.user_id
+            WHERE ue.cluster_type = $2
+              AND ue.user_id <> $3
+              AND ue.assertion_count >= $4
+            ORDER BY ue.embedding <=> $1::vector
+            LIMIT $5""",
+        query_vector, cluster_type, caller_id, settings.match_min_assertions, limit,
     )
     return [
         {

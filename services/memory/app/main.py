@@ -214,6 +214,22 @@ async def my_matches(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/me/find-people")
+async def my_find_people(
+    target: str,
+    limit: int | None = None,
+    user_id: str = Depends(current_user),
+) -> list[dict]:
+    """People whose PUBLIC findability profile matches a described TARGET profile
+    (complementary search). The GPT calls this for 'find me an X' (investor, hire,
+    partner). Use /me/matches for 'who is like me'."""
+    from app.services.matching import search_by_query
+    try:
+        return await search_by_query(get_pool(), user_id, target, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/me/confirm")
 async def confirm_my_fact(ref: FactRef, user_id: str = Depends(current_user)) -> dict:
     """User confirms a fact → confidence 0.97, source=user_confirmed (brief §6)."""

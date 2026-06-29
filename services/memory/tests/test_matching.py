@@ -5,7 +5,7 @@ import pytest
 
 from app.config import settings
 from app.db import get_pool, to_pgvector
-from app.services.matching import match_users, recompute_user_embeddings
+from app.services.matching import match_users, recompute_user_embeddings, search_by_query
 
 pytestmark = pytest.mark.integration
 
@@ -132,3 +132,106 @@ async def test_match_endpoint_auth_and_validation(client):
 
     bad_cluster = await client.get(f"/match/{dev_id}?cluster_type=bogus", headers=AUTH)
     assert bad_cluster.status_code == 200   # v2: unknown cluster falls back to full findability card
+
+
+# ---- complementary search (find_people / search_by_query) ----
+
+# Words shared with SHARED_INTENT entity names so the lexical MOCK_LLM embedding of
+# this target query ranks a SHARED_INTENT user above a DISJOINT_INTENT one.
+_TARGET_QUERY = "machine learning engineer marketplace developer hiring backend cofounder"
+
+
+async def test_search_by_query_ranks_matching_target_first(client):
+    pool = get_pool()
+    caller = await _make_user("q_caller@example.com")   # no vector — pure searcher
+    bob = await _make_user("q_bob@example.com")
+    carol = await _make_user("q_carol@example.com")
+    await _seed_many(bob, SHARED_INTENT)
+    await _seed_many(carol, DISJOINT_INTENT)
+    for uid in (bob, carol):
+        await recompute_user_embeddings(pool, str(uid))
+
+    results = await search_by_query(pool, str(caller), _TARGET_QUERY, "full_context")
+    ids = [r["user_id"] for r in results]
+
+    assert ids and ids[0] == str(bob)                    # target-matching user ranks first
+    bob_r = next(r for r in results if r["user_id"] == str(bob))
+    carol_r = next((r for r in results if r["user_id"] == str(carol)), None)
+    assert carol_r is None or bob_r["similarity"] > carol_r["similarity"]
+
+
+async def test_search_by_query_excludes_caller(client):
+    pool = get_pool()
+    caller = await _make_user("q_self@example.com")
+    await _seed_many(caller, SHARED_INTENT)              # caller's own profile matches the query
+    await recompute_user_embeddings(pool, str(caller))
+
+    results = await search_by_query(pool, str(caller), _TARGET_QUERY, "full_context")
+    assert str(caller) not in [r["user_id"] for r in results]   # never return the searcher
+
+
+async def test_search_by_query_respects_min_assertion_gate(client):
+    pool = get_pool()
+    caller = await _make_user("q_g_caller@example.com")
+    thin = await _make_user("q_thin@example.com")
+    # only 2 public assertions -> below the default gate of 5
+    await _seed(thin, "is_building", "machine learning engineer marketplace", "project_venture")
+    await _seed(thin, "is_seeking", "backend cofounder engineer", "collaborator")
+    await recompute_user_embeddings(pool, str(thin))
+
+    results = await search_by_query(pool, str(caller), _TARGET_QUERY, "full_context")
+    assert str(thin) not in [r["user_id"] for r in results]
+
+
+async def test_search_by_query_empty_query_returns_empty(client):
+    pool = get_pool()
+    caller = await _make_user("q_empty@example.com")
+    assert await search_by_query(pool, str(caller), "") == []
+    assert await search_by_query(pool, str(caller), "   ") == []
+
+
+async def test_search_by_query_empty_pool_returns_empty(client):
+    # client fixture truncates user_embeddings, so the pool is empty here.
+    pool = get_pool()
+    caller = await _make_user("q_pool@example.com")
+    assert await search_by_query(pool, str(caller), "anyone who can help with growth") == []
+
+
+async def test_find_people_endpoint(client):
+    bob = await _make_user("q_ep_bob@example.com")
+    await _seed_many(bob, SHARED_INTENT)
+    await recompute_user_embeddings(get_pool(), str(bob))
+
+    ok = await client.get(f"/me/find-people?target={_TARGET_QUERY.replace(' ', '+')}", headers=AUTH)
+    assert ok.status_code == 200
+    assert isinstance(ok.json(), list)
+
+    missing = await client.get("/me/find-people", headers=AUTH)
+    assert missing.status_code == 422   # `target` is required
+
+
+async def test_publish_persona_findability_makes_user_findable(client):
+    from app.services.findability import get_card
+    from app.services.persona_ingest import publish_persona_findability
+
+    pool = get_pool()
+    uid = await _make_user("persona_pub@example.com")
+    status = {
+        "deployed": True, "agent_id": "zns:abc",
+        "capabilities": ["distribution marketing", "growth experiments", "paid acquisition"],
+        "profile": {"organization": "Acme Labs", "location": "Berlin", "interests": ["seo"]},
+    }
+    published = await publish_persona_findability(pool, str(uid), status)
+    assert published >= 5   # 3 expertise + interest + org + location (>= the 5-assertion gate)
+
+    preds = {c["predicate"] for c in await get_card(pool, str(uid))}
+    assert {"has_expertise_in", "is_affiliated_with", "is_located_in"} <= preds
+
+    # declare rebuilds the match vector, so the user is immediately in the searchable pool
+    found = await search_by_query(
+        pool, str(await _make_user("pub_caller@example.com")),
+        "growth marketing distribution expert", "full_context")
+    assert str(uid) in [r["user_id"] for r in found]
+
+    # idempotent: already has a card -> re-publish is a no-op
+    assert await publish_persona_findability(pool, str(uid), status) == 0

@@ -23,7 +23,7 @@ from app.models import Turn
 from app.services.control import confirm_fact, forget_fact
 from app.services.export import active_context, build_jsonld_export, context_slice
 from app.services.ingest import clean_text, ingest_turns
-from app.services.matching import match_users
+from app.services.matching import match_users, search_by_query
 
 # Set by the auth ASGI wrapper per request; read by the tools.
 _current_user: contextvars.ContextVar[str | None] = contextvars.ContextVar("mcp_user", default=None)
@@ -122,6 +122,22 @@ async def find_similar_users(cluster_type: str = "intent_cluster", k: int = 10) 
     """Find people whose active context overlaps the signed-in user's. cluster_type:
     intent_cluster, skill_cluster, belief_cluster, concept_cluster, full_context."""
     return await match_users(await _get_pool(), _uid(), cluster_type, max(1, min(k, 50)))
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+async def find_people(target: str, k: int = 10) -> list[dict]:
+    """Find FINDABLE ZYND users who match a DESCRIBED TARGET PROFILE — the kind of
+    person the signed-in user is looking FOR (complementary), NOT people like them.
+
+    Pass a natural-language description of the target's role / expertise / what they
+    offer (e.g. "seed-stage investor who backs dev-tools", "growth marketer who can
+    help a micro-SaaS with distribution"). YOU do the role reasoning
+    (founder→investor, SaaS→distribution); ZYND returns users whose PUBLIC findability
+    profile is nearest to that description. Returns [] if no one matches.
+
+    Use find_similar_users instead when the user wants "people like me" / "who is
+    building what I am". The returned user_id can be passed to connect_with."""
+    return await search_by_query(await _get_pool(), _uid(), target, limit=max(1, min(k, 50)))
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})

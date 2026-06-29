@@ -85,6 +85,28 @@ def build_action_schema() -> dict:
                             "type": "array", "items": {"$ref": "#/components/schemas/Match"}}}}}},
                 }
             },
+            "/me/find-people": {
+                "get": {
+                    "operationId": "findPeople",
+                    "summary": "Find people matching a DESCRIBED target profile (complementary).",
+                    "description": "Call when the user wants to FIND someone complementary — an "
+                                   "investor, a hire, a partner, an advisor. Pass `target` as a "
+                                   "natural-language description of who they want (e.g. 'seed-stage "
+                                   "investor for a dev-tools startup'). YOU do the role reasoning. "
+                                   "This returns people who MATCH that description, NOT people like "
+                                   "the user — use findMatches for 'who is like me'.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "parameters": [
+                        {"name": "target", "in": "query", "required": True,
+                         "schema": {"type": "string"}},
+                        {"name": "limit", "in": "query", "required": False,
+                         "schema": {"type": "integer"}},
+                    ],
+                    "responses": {"200": {"description": "Matching people",
+                        "content": {"application/json": {"schema": {
+                            "type": "array", "items": {"$ref": "#/components/schemas/Match"}}}}}},
+                }
+            },
             "/me/confirm": {
                 "post": {
                     "operationId": "confirmFact",

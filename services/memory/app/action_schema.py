@@ -46,12 +46,10 @@ def build_action_schema() -> dict:
                 "get": {
                     "operationId": "getMyContext",
                     "summary": "Return everything ZYND currently knows about the user.",
-                    "description": "Call this when the user asks what you know/remember about "
-                                   "them, or to ground a reply in their context. Each fact has a "
-                                   "`statement` — a natural-language sentence (e.g. \"You're "
-                                   "building a micro-SaaS\"). When answering the user, present the "
-                                   "`statement` text in plain language; do NOT show the raw "
-                                   "predicate, object_type, or confidence number.",
+                    "description": "What ZYND knows about the user — call when they ask what you "
+                                   "remember, or to ground a reply. Each fact has a `statement` "
+                                   "(a natural sentence like 'You're building a micro-SaaS'); show "
+                                   "that in plain language, never the predicate or confidence.",
                     "security": [{"OAuth2": ["ingest"]}],
                     "responses": {
                         "200": {
@@ -92,12 +90,11 @@ def build_action_schema() -> dict:
                 "get": {
                     "operationId": "findPeople",
                     "summary": "Find people matching a DESCRIBED target profile (complementary).",
-                    "description": "Call when the user wants to FIND someone complementary — an "
-                                   "investor, a hire, a partner, an advisor. Pass `target` as a "
-                                   "natural-language description of who they want (e.g. 'seed-stage "
-                                   "investor for a dev-tools startup'). YOU do the role reasoning. "
-                                   "This returns people who MATCH that description, NOT people like "
-                                   "the user — use findMatches for 'who is like me'.",
+                    "description": "Find people matching a DESCRIBED target profile (complementary) "
+                                   "— investor, hire, partner, advisor. Pass `target` as a "
+                                   "description of who they want (e.g. 'seed-stage investor for dev "
+                                   "tools'). Returns people matching that, NOT people like the user "
+                                   "(use findMatches for 'who is like me').",
                     "security": [{"OAuth2": ["ingest"]}],
                     "parameters": [
                         {"name": "target", "in": "query", "required": True,

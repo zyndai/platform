@@ -11,6 +11,7 @@ issuance) is production-shaped. User authentication is delegated to Supabase Goo
 so a user has ONE identity across GPT, MCP, and the dashboard (keyed by email).
 """
 import hmac
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urlsplit
@@ -25,7 +26,26 @@ from app.config import settings
 from app.db import get_pool
 from app.supabase_auth import supabase_identity
 
+logger = logging.getLogger("zynd.oauth")
+
 router = APIRouter(prefix="/oauth", tags=["oauth"])
+
+
+def _log_token_diag(token: str) -> None:
+    """Diagnostic for a failed /oauth/complete: decode the Supabase JWT WITHOUT
+    verifying (read-only) to surface why identity failed — chiefly an expired token,
+    the common case when a returning browser session sends a stale access token."""
+    try:
+        claims = jwt.decode(token, options={"verify_signature": False, "verify_aud": False})
+        exp = claims.get("exp")
+        now = int(datetime.now(timezone.utc).timestamp())
+        logger.warning(
+            "oauth/complete identity failed: expired=%s exp=%s now=%s provider=%s has_email=%s",
+            (exp is not None and exp < now), exp, now,
+            (claims.get("app_metadata") or {}).get("provider"), claims.get("email") is not None,
+        )
+    except Exception as exc:
+        logger.warning("oauth/complete identity failed; token undecodable: %s", exc)
 
 _CODE_PREFIX = "oauth:code:"
 _CODE_TTL_SECONDS = 600
@@ -112,6 +132,7 @@ async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
 
     identity = await supabase_identity(body.supabase_token)
     if not identity:
+        _log_token_diag(body.supabase_token)
         raise HTTPException(status_code=401, detail="Google sign-in could not be verified")
     email, display_name, sub = identity
 

@@ -136,6 +136,62 @@ async def forget_fact_tool(predicate: str, object: str) -> dict:
     return {"forgotten": await forget_fact(await _get_pool(), _uid(), predicate, object)}
 
 
+# ---- persona network: connect / message / meet (gated by persona_enabled) ----
+
+async def _social(op, *args) -> dict:
+    """Run a social/persona op, turning the gate + identity + network errors into a
+    friendly result instead of a tool exception."""
+    from app.services.social import SocialDisabled
+    from app.services.persona import PersonaError
+    try:
+        result = await op(await _get_pool(), _uid(), *args)
+        return {"ok": True, "result": result}
+    except SocialDisabled as exc:
+        return {"ok": False, "reason": str(exc), "hint": "persona connect/message is coming soon"}
+    except (ValueError, PersonaError) as exc:
+        return {"ok": False, "reason": str(exc)}
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
+async def set_social_links(linkedin: str = "", instagram: str = "", x: str = "", github: str = "") -> dict:
+    """Save your public social links (LinkedIn / Instagram / X / GitHub) — shown to people you match with."""
+    from app.services import social
+    return await _social(social.set_social, {"linkedin": linkedin, "instagram": instagram, "twitter": x, "github": github})
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
+async def connect_with(user_id: str, message: str = "Hi — we matched on ZYND, would love to connect.") -> dict:
+    """Send a connection request to a matched person, by their user_id from find_similar_users.
+    Routed through their persona (works even if they are offline)."""
+    from app.services import social
+    return await _social(social.connect, user_id, message)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
+async def send_persona_message(thread_id: str, content: str) -> dict:
+    """Send a message in an existing connection thread (thread_id from connect_with / my_connections)."""
+    from app.services import social
+    return await _social(social.send_message, thread_id, content)
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
+async def my_connections() -> dict:
+    """List the people you are connected with on the persona network."""
+    from app.services import social
+    return await _social(social.connections)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
+async def book_meeting(thread_id: str, title: str, start_time: str, end_time: str,
+                       location: str = "", description: str = "") -> dict:
+    """Propose a meeting with a connection (thread_id from my_connections). Times are ISO-8601.
+    Accepting auto-books on both Google Calendars via persona."""
+    from app.services import social
+    payload = {"title": title, "start_time": start_time, "end_time": end_time,
+               "location": location, "description": description}
+    return await _social(social.book_meeting, thread_id, payload)
+
+
 _mcp_app = mcp.streamable_http_app()  # Starlette app (handles its own session lifespan)
 
 

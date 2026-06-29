@@ -22,6 +22,12 @@ def test_github_verified_via_user_metadata_is_trusted():
     assert _verified_identity(user) == ("dev@example.com", "Dev", "g-1")
 
 
+def test_linkedin_oidc_verified_is_trusted():
+    user = {"id": "li-1", "email": "Pro@Work.com", "email_confirmed_at": "2026-01-01T00:00:00Z",
+            "app_metadata": {"provider": "linkedin_oidc"}, "user_metadata": {"name": "Pro User"}}
+    assert _verified_identity(user) == ("pro@work.com", "Pro User", "li-1")
+
+
 def test_unconfirmed_email_is_rejected():
     assert _verified_identity({"email": "victim@gmail.com", "app_metadata": {"provider": "google"}}) is None
 

@@ -81,8 +81,9 @@ async def authorize(
     state: str = "",
     scope: str = "ingest",
 ) -> RedirectResponse:
-    """Hand the user off to the dashboard's Google (Supabase) login. The signed `req`
-    carries the ChatGPT authorize params so the dashboard can complete the flow."""
+    """Hand the user off to persona's hosted login + onboarding (persona.zynd.ai).
+    The signed `req` carries the ChatGPT authorize params; after sign-in and persona
+    setup, persona POSTs the verified session to /oauth/complete to finish the flow."""
     if response_type != "code":
         raise HTTPException(status_code=400, detail="response_type must be 'code'")
     if not hmac.compare_digest(client_id, settings.oauth_client_id):
@@ -90,7 +91,7 @@ async def authorize(
     _check_redirect_uri(redirect_uri)
 
     req = _sign_oauth_request(redirect_uri, state, scope)
-    dest = settings.dashboard_url.rstrip("/") + "/authorize?" + urlencode({"req": req})
+    dest = settings.persona_login_url.rstrip("/") + "/?" + urlencode({"zynd_oauth": req})
     return RedirectResponse(dest, status_code=302)
 
 
@@ -121,7 +122,10 @@ async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
         email, display_name, sub,
     )
     from app.services.persona import link_user
-    await link_user(get_pool(), user_id, sub, display_name, email)  # gated; no-op unless persona_enabled
+    agent_id = await link_user(get_pool(), user_id, sub, display_name, email)  # gated; no-op unless persona_enabled
+    if agent_id:  # persona resolved → seed their ZYND memory from the persona profile
+        from app.services.persona_ingest import seed_persona_profile
+        await seed_persona_profile(get_pool(), request.app.state.arq, user_id, sub)
     code = secrets.token_urlsafe(32)
     await request.app.state.arq.set(f"{_CODE_PREFIX}{code}", str(user_id), ex=_CODE_TTL_SECONDS)
     separator = "&" if "?" in redirect_uri else "?"

@@ -17,8 +17,11 @@ import httpx
 from app.config import settings
 
 # OAuth providers that verify the user owns the email before issuing identity.
-# These are the only providers the dashboard offers for the connect flow.
-TRUSTED_PROVIDERS = frozenset({"google", "github"})
+# Persona auth offers Google and LinkedIn (linkedin_oidc); GitHub remains trusted
+# for the legacy connect flow. All three verify email ownership at the IdP, and we
+# still require the verified-email check below — so a provider here is necessary but
+# not sufficient.
+TRUSTED_PROVIDERS = frozenset({"google", "github", "linkedin_oidc"})
 
 
 def _verified_identity(user: dict) -> tuple[str, str, str] | None:

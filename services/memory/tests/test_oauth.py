@@ -35,12 +35,12 @@ async def _make_code(user_id) -> str:
     return code
 
 
-async def test_authorize_redirects_to_dashboard_google(client):
+async def test_authorize_redirects_to_persona_login(client):
     r = await client.get("/oauth/authorize", params=AUTHORIZE_PARAMS)
     assert r.status_code == 302
     loc = r.headers["location"]
-    assert loc.startswith(settings.dashboard_url.rstrip("/") + "/authorize?")
-    req = parse_qs(urlparse(loc).query)["req"][0]
+    assert loc.startswith(settings.persona_login_url.rstrip("/") + "/?")
+    req = parse_qs(urlparse(loc).query)["zynd_oauth"][0]
     payload = jwt.decode(req, settings.jwt_secret, algorithms=["HS256"])
     assert payload["typ"] == "oauth_req"
     assert payload["redirect_uri"] == REDIRECT and payload["state"] == "s1"
@@ -72,7 +72,7 @@ async def test_complete_rejects_tampered_req(client):
 async def test_complete_rejects_unverified_google_session(client):
     # Valid signed req, but Supabase is not configured in tests -> token can't verify -> 401.
     authorize = await client.get("/oauth/authorize", params=AUTHORIZE_PARAMS)
-    req = parse_qs(urlparse(authorize.headers["location"]).query)["req"][0]
+    req = parse_qs(urlparse(authorize.headers["location"]).query)["zynd_oauth"][0]
     r = await client.post("/oauth/complete", json={"req": req, "supabase_token": "bogus"})
     assert r.status_code == 401
 

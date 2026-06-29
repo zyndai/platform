@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # Dashboard origin that hosts the shared Google (Supabase) login. The ChatGPT
     # OAuth flow hands users here so GPT, MCP, and dashboard share one identity.
     dashboard_url: str = "https://www.zynd.ai"
+    # Persona's hosted login + onboarding (front-door). The ChatGPT/MCP OAuth flow
+    # redirects users here to sign in and set up their persona; persona then calls
+    # /oauth/complete with the verified session and bounces the browser back.
+    persona_login_url: str = "https://persona.zynd.ai"
 
     # Supabase (for Google sign-in via the dashboard). Used to verify a user's
     # Supabase access token server-side before issuing a ZYND token.
@@ -57,8 +61,11 @@ class Settings(BaseSettings):
     # Gate for the persona cutover. OFF until Supabase is switched to the persona
     # project + verified — keeps persona resolution dormant in normal deploys.
     persona_enabled: bool = False
-    # Browser origins allowed to call the API (the dashboard) — comma-separated.
-    cors_origins: str = "https://zynd.ai,https://www.zynd.ai,http://localhost:3000"
+    # Browser origins allowed to call the API (dashboard + persona front-door, which
+    # POSTs the session to /oauth/complete from the browser) — comma-separated.
+    cors_origins: str = (
+        "https://zynd.ai,https://www.zynd.ai,https://persona.zynd.ai,http://localhost:3000"
+    )
 
     @property
     def cors_origin_list(self) -> list[str]:

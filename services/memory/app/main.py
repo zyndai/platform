@@ -150,7 +150,10 @@ async def token_exchange(authorization: str = Header(default="")) -> dict:
         email, display_name, sub,
     )
     from app.services.persona import link_user
-    await link_user(get_pool(), user_id, sub, display_name, email)  # gated; no-op unless persona_enabled
+    agent_id = await link_user(get_pool(), user_id, sub, display_name, email)  # gated; no-op unless persona_enabled
+    if agent_id:  # persona resolved → seed their ZYND memory from the persona profile
+        from app.services.persona_ingest import seed_persona_profile
+        await seed_persona_profile(get_pool(), app.state.arq, user_id, sub)
     base = settings.public_base_url.rstrip("/")
     return {
         "token": issue_personal_token(str(user_id)),

@@ -1,0 +1,55 @@
+name: Deploy to AWS
+
+# Push to main -> deploy the backend to the EC2 box. Manual run also allowed.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod      # never run two deploys at once
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}   # trusted (owner-set secret), passed via env
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy.pem
+          chmod 600 ~/.ssh/deploy.pem
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Rsync code to EC2
+        run: |
+          SSH="ssh -i ~/.ssh/deploy.pem -o StrictHostKeyChecking=no"
+          rsync -az -e "$SSH" \
+            --exclude .git --exclude __pycache__ --exclude .venv --exclude .env \
+            app/ "ubuntu@${EC2_HOST}:/home/ubuntu/zynd/app/"
+          rsync -az -e "$SSH" sql/ "ubuntu@${EC2_HOST}:/home/ubuntu/zynd/sql/"
+
+      - name: Apply schema (idempotent) + rebuild containers
+        run: |
+          ssh -i ~/.ssh/deploy.pem -o StrictHostKeyChecking=no "ubuntu@${EC2_HOST}" bash -s <<'REMOTE'
+          set -e
+          cd ~/zynd
+          # schema.sql is fully idempotent (CREATE/ALTER ... IF NOT EXISTS, no data ops)
+          sudo docker compose -f docker-compose.prod.yml exec -T postgres \
+            psql -U zynd -d zynd -v ON_ERROR_STOP=1 < sql/schema.sql
+          sudo docker compose -f docker-compose.prod.yml up -d --build api worker mcp
+          REMOTE
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 15); do
+            if curl -fsS --max-time 5 https://api.zynd.ai/health; then echo " OK"; exit 0; fi
+            sleep 4
+          done
+          echo "health check failed"; exit 1

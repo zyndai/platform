@@ -28,10 +28,12 @@ export default function PersonaSavePage() {
     name,
     bio,
     tags,
+    socials,
   }: {
     name: string;
     bio: string;
     tags: string[];
+    socials?: { linkedin: string; instagram: string; telegram: string };
   }) => {
     if (!user) return;
     const res = await fetch(`${API_BASE}/api/persona/register`, {
@@ -47,6 +49,23 @@ export default function PersonaSavePage() {
     });
     if (!res.ok) {
       throw new Error((await res.text()) || "Couldn't save that.");
+    }
+    // Persona profile stores socials as a free JSONB dict — best-effort, never block
+    // onboarding if it fails (the persona itself is already created above).
+    if (socials && (socials.linkedin || socials.instagram || socials.telegram)) {
+      const profile: Record<string, string> = {};
+      if (socials.linkedin) profile.linkedin = socials.linkedin;
+      if (socials.instagram) profile.instagram = socials.instagram;
+      if (socials.telegram) profile.telegram = socials.telegram;
+      try {
+        await fetch(`${API_BASE}/api/persona/${user.id}/profile`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ profile }),
+        });
+      } catch (e) {
+        console.warn("[onboarding] saving social links failed:", e);
+      }
     }
     await refreshOnboarding();
     router.replace("/onboarding/brief");
@@ -65,6 +84,7 @@ export default function PersonaSavePage() {
         initialName={defaultName}
         initialBio=""
         initialTags={[]}
+        showSocials
         onSave={handleSave}
         saveLabel="This is me →"
       />

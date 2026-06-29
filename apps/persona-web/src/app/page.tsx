@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Zap, X } from "lucide-react";
 import { getSupabase } from "@/lib/supabase";
+import { captureZyndOAuthReq } from "@/lib/zynd-oauth";
 import { Monogram, ThinkingDot } from "@/components/ui";
 
 type OAuthProvider = "linkedin_oidc" | "google";
@@ -32,6 +33,7 @@ export default function LandingPage() {
   }, [loginOpen]);
 
   useEffect(() => {
+    captureZyndOAuthReq();
     const search = new URLSearchParams(window.location.search);
     const hash = window.location.hash;
     if (search.get("error") || hash.includes("error=")) {

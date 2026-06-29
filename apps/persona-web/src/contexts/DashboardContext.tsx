@@ -17,6 +17,7 @@ import {
   readOnboardingMeta,
   type OnboardingStep,
 } from "@/lib/onboarding";
+import { completeZyndOAuth } from "@/lib/zynd-oauth";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -139,6 +140,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         else window.localStorage.removeItem(onboardedKey(currentUser.id));
       } catch {
         /* localStorage unavailable */
+      }
+
+      if (step === "done") {
+        // Front-door: if the user arrived via Zynd's OAuth, finish the hand-off now
+        // (redirects back to the originating client) instead of dropping into the app.
+        await completeZyndOAuth(jwt);
       }
     },
     [],

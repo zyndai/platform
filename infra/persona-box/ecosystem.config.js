@@ -60,6 +60,7 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         NEXT_PUBLIC_API_URL: "https://persona.zynd.ai",
+        NEXT_PUBLIC_ZYND_API_URL: "https://api.zynd.ai",
         PORT: "3001",
         HOSTNAME: "127.0.0.1",
       },

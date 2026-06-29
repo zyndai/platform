@@ -12,11 +12,19 @@ interface PersonaCardFormProps {
   initialTags: string[];
   bioPlaceholder?: string;
   italicPlaceholder?: boolean;
-  onSave: (data: { name: string; bio: string; tags: string[] }) => Promise<void>;
+  onSave: (data: {
+    name: string;
+    bio: string;
+    tags: string[];
+    socials?: { linkedin: string; instagram: string; telegram: string };
+  }) => Promise<void>;
   saveLabel: string;
   savingLabel?: string;
   /** Show inline `Saved` confirmation under the card on success. */
   showSaved?: boolean;
+  /** Show LinkedIn / Instagram / Telegram inputs (used in onboarding). */
+  showSocials?: boolean;
+  initialSocials?: { linkedin?: string; instagram?: string; telegram?: string };
 }
 
 /**
@@ -34,6 +42,8 @@ export default function PersonaCardForm({
   saveLabel,
   savingLabel = "Saving…",
   showSaved = false,
+  showSocials = false,
+  initialSocials,
 }: PersonaCardFormProps) {
   const [name, setName] = useState(initialName);
   const [bio, setBio] = useState(initialBio);
@@ -42,6 +52,9 @@ export default function PersonaCardForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [linkedin, setLinkedin] = useState(initialSocials?.linkedin ?? "");
+  const [instagram, setInstagram] = useState(initialSocials?.instagram ?? "");
+  const [telegram, setTelegram] = useState(initialSocials?.telegram ?? "");
 
   // Re-seed when the parent's initials change (e.g., after a fresh fetch).
   useEffect(() => setName(initialName), [initialName]);
@@ -70,7 +83,14 @@ export default function PersonaCardForm({
     setError(null);
     setSaved(false);
     try {
-      await onSave({ name: name.trim(), bio: bio.trim(), tags });
+      await onSave({
+        name: name.trim(),
+        bio: bio.trim(),
+        tags,
+        ...(showSocials
+          ? { socials: { linkedin: linkedin.trim(), instagram: instagram.trim(), telegram: telegram.trim() } }
+          : {}),
+      });
       if (showSaved) {
         setSaved(true);
         setTimeout(() => setSaved(false), 2200);
@@ -154,6 +174,25 @@ export default function PersonaCardForm({
             />
           </div>
         </div>
+        {showSocials && (
+          <>
+            <div className="field-row">
+              <span className="row-label">LinkedIn</span>
+              <Input value={linkedin} onChange={(e) => setLinkedin(e.target.value)}
+                placeholder="linkedin.com/in/you" disabled={saving} />
+            </div>
+            <div className="field-row">
+              <span className="row-label">Instagram</span>
+              <Input value={instagram} onChange={(e) => setInstagram(e.target.value)}
+                placeholder="@yourhandle" disabled={saving} />
+            </div>
+            <div className="field-row">
+              <span className="row-label">Telegram</span>
+              <Input value={telegram} onChange={(e) => setTelegram(e.target.value)}
+                placeholder="@yourhandle" disabled={saving} />
+            </div>
+          </>
+        )}
       </div>
 
       {error && (

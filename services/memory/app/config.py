@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     # Supabase access token server-side before issuing a ZYND token.
     supabase_url: str = ""
     supabase_anon_key: str = ""
+    # Persona network integration (agent-persona backend). service_key authenticates
+    # service-to-service calls + Supabase PostgREST reads of dm_threads (D3).
+    persona_base_url: str = "https://persona.zynd.ai"
+    supabase_service_key: str = ""
     # Browser origins allowed to call the API (the dashboard) — comma-separated.
     cors_origins: str = "https://zynd.ai,https://www.zynd.ai,http://localhost:3000"
 

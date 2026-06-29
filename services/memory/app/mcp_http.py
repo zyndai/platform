@@ -103,7 +103,10 @@ async def get_my_context(topic: str | None = None, k: int = 20) -> list[dict]:
     """Facts about the signed-in user. With `topic`, returns the K facts most relevant
     to it; with no topic, returns their top active facts overall — use the topic-less
     form to answer "what do you know about me?". Returns [] if the profile is empty
-    (the user hasn't fed ZYND anything yet — see the `remember` tool)."""
+    (the user hasn't fed ZYND anything yet — see the `remember` tool).
+
+    Each fact carries a natural-language `statement` (e.g. "You're building a micro-SaaS").
+    Show the `statement` text to the user; do NOT surface the raw predicate or confidence."""
     pool = await _get_pool()
     k = max(1, min(k, 50))
     if topic and topic.strip():

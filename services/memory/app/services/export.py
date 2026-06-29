@@ -9,6 +9,7 @@ import asyncpg
 from app.config import settings
 from app.db import to_pgvector
 from app.services.embeddings import embed
+from app.taxonomy import humanize
 
 EXPORT_CONFIDENCE_FLOOR = 0.0   # full active graph in the portable export
 CONTEXT_CONFIDENCE_FLOOR = 0.4  # brief §11.2 — only reasonably-held beliefs in a slice
@@ -71,6 +72,7 @@ async def active_context(pool: asyncpg.Pool, user_id: str, k: int = 20) -> list[
     )
     return [
         {
+            "statement": humanize(r["predicate"], r["object"]),
             "predicate": r["predicate"],
             "object": r["object"],
             "object_type": r["object_type"],
@@ -103,6 +105,7 @@ async def context_slice(pool: asyncpg.Pool, user_id: str, topic: str, k: int = 2
     )
     return [
         {
+            "statement": humanize(r["predicate"], r["object"]),
             "predicate": r["predicate"],
             "object": r["object"],
             "object_type": r["object_type"],

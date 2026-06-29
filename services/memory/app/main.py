@@ -182,7 +182,11 @@ async def _active_graph(user_id: str) -> list[AssertionView]:
             ORDER BY a.confidence DESC""",
         user_id,
     )
-    return [AssertionView(**dict(row)) for row in rows]
+    from app.taxonomy import humanize
+    return [
+        AssertionView(statement=humanize(row["predicate"], row["object"]), **dict(row))
+        for row in rows
+    ]
 
 
 @app.get("/me/graph", response_model=list[AssertionView])

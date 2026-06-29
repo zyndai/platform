@@ -75,6 +75,7 @@ class DeclareRequest(BaseModel):
 
 
 class AssertionView(BaseModel):
+    statement: str = ""        # natural-language rendering for display (humanize)
     predicate: str
     object: str | None
     object_type: str | None

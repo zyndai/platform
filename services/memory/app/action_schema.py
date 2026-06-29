@@ -47,8 +47,11 @@ def build_action_schema() -> dict:
                     "operationId": "getMyContext",
                     "summary": "Return everything ZYND currently knows about the user.",
                     "description": "Call this when the user asks what you know/remember about "
-                                   "them, or to ground a reply in their context. Returns their "
-                                   "active facts (predicate, object, confidence).",
+                                   "them, or to ground a reply in their context. Each fact has a "
+                                   "`statement` — a natural-language sentence (e.g. \"You're "
+                                   "building a micro-SaaS\"). When answering the user, present the "
+                                   "`statement` text in plain language; do NOT show the raw "
+                                   "predicate, object_type, or confidence number.",
                     "security": [{"OAuth2": ["ingest"]}],
                     "responses": {
                         "200": {
@@ -175,6 +178,8 @@ def build_action_schema() -> dict:
                 "Fact": {
                     "type": "object",
                     "properties": {
+                        "statement": {"type": "string",
+                                      "description": "Natural-language rendering — show THIS to the user."},
                         "predicate": {"type": "string"},
                         "object": {"type": "string"},
                         "object_type": {"type": "string"},

@@ -38,3 +38,13 @@ def test_interests_accepts_list_or_comma_string():
     assert _as_list(["a", " b ", ""]) == ["a", "b"]
     assert _as_list("a, b ,c") == ["a", "b", "c"]
     assert _as_list(None) == []
+
+
+def test_humanize_renders_natural_statements():
+    from app.taxonomy import humanize
+    assert humanize("has_expertise_in", "AI") == "You have expertise in AI"
+    assert humanize("is_building", "a micro-SaaS") == "You're building a micro-SaaS"
+    assert humanize("is_located_in", "Berlin") == "You're based in Berlin"
+    # unknown predicate -> readable fallback, never a raw underscore key
+    assert humanize("some_new_thing", "x") == "You some new thing x"
+    assert "_" not in humanize("has_expertise_in", "micro saas products")

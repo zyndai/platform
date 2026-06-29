@@ -112,13 +112,16 @@ async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
     identity = await supabase_identity(body.supabase_token)
     if not identity:
         raise HTTPException(status_code=401, detail="Google sign-in could not be verified")
-    email, display_name = identity
+    email, display_name, sub = identity
 
     user_id = await get_pool().fetchval(
-        """INSERT INTO users (email, display_name) VALUES ($1, $2)
-           ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name RETURNING id""",
-        email, display_name,
+        """INSERT INTO users (email, display_name, supabase_user_id) VALUES ($1, $2, $3)
+           ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name,
+                 supabase_user_id = EXCLUDED.supabase_user_id RETURNING id""",
+        email, display_name, sub,
     )
+    from app.services.persona import link_user
+    await link_user(get_pool(), user_id, sub, display_name, email)  # gated; no-op unless persona_enabled
     code = secrets.token_urlsafe(32)
     await request.app.state.arq.set(f"{_CODE_PREFIX}{code}", str(user_id), ex=_CODE_TTL_SECONDS)
     separator = "&" if "?" in redirect_uri else "?"

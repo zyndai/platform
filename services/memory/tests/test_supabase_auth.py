@@ -3,23 +3,23 @@ from app.services.matching import _match_label
 from app.supabase_auth import _verified_identity
 
 
-def test_google_confirmed_returns_email_and_name():
-    user = {"email": "User@Gmail.com", "email_confirmed_at": "2026-01-01T00:00:00Z",
+def test_google_confirmed_returns_email_name_and_sub():
+    user = {"id": "sub-123", "email": "User@Gmail.com", "email_confirmed_at": "2026-01-01T00:00:00Z",
             "app_metadata": {"provider": "google"},
             "user_metadata": {"full_name": "Sahil Yadav"}}
-    assert _verified_identity(user) == ("user@gmail.com", "Sahil Yadav")
+    assert _verified_identity(user) == ("user@gmail.com", "Sahil Yadav", "sub-123")
 
 
 def test_name_falls_back_to_local_part_not_full_email():
     user = {"email": "victim@gmail.com", "email_confirmed_at": "2026-01-01T00:00:00Z",
             "app_metadata": {"provider": "google"}}
-    assert _verified_identity(user) == ("victim@gmail.com", "victim")
+    assert _verified_identity(user) == ("victim@gmail.com", "victim", "")
 
 
 def test_github_verified_via_user_metadata_is_trusted():
-    user = {"email": "dev@example.com", "user_metadata": {"email_verified": True, "name": "Dev"},
+    user = {"id": "g-1", "email": "dev@example.com", "user_metadata": {"email_verified": True, "name": "Dev"},
             "app_metadata": {"provider": "github"}}
-    assert _verified_identity(user) == ("dev@example.com", "Dev")
+    assert _verified_identity(user) == ("dev@example.com", "Dev", "g-1")
 
 
 def test_unconfirmed_email_is_rejected():

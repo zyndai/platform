@@ -37,3 +37,11 @@ async def test_ensure_persona_registers_when_missing(monkeypatch):
     monkeypatch.setattr(P, "_persona", fake)
     assert await P.ensure_persona("u1", email="a@b.com") == "zns:new"
     assert any("register" in p for p in seen)
+
+
+async def test_list_connections_rejects_injection():
+    import pytest as _pt
+    with _pt.raises(P.PersonaError):
+        await P.list_connections("zns:abc,evil.eq.x)")   # malformed -> refused (no PostgREST injection)
+    with _pt.raises(P.PersonaError):
+        await P.list_connections("")

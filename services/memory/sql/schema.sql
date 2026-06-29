@@ -71,6 +71,10 @@ ALTER TABLE assertions ADD COLUMN IF NOT EXISTS is_public boolean NOT NULL DEFAU
 ALTER TABLE assertions ADD COLUMN IF NOT EXISTS approved_at timestamptz;
 ALTER TABLE assertions ADD COLUMN IF NOT EXISTS gate text;                                -- health | politics | immigration | null
 
+-- persona integration: link a ZYND user to their Supabase identity + persona agent.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS supabase_user_id text;   -- Supabase auth.users.id (keys the persona network)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS persona_agent_id text;   -- zns:<hash> from agent-persona
+
 -- §3.5 assertion_history — append-only audit log.
 CREATE TABLE IF NOT EXISTS assertion_history (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),

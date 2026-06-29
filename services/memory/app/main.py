@@ -141,13 +141,16 @@ async def token_exchange(authorization: str = Header(default="")) -> dict:
     identity = await supabase_identity(supabase_token)
     if not identity:
         raise HTTPException(status_code=401, detail="invalid or expired Google session")
-    email, display_name = identity
+    email, display_name, sub = identity
 
     user_id = await get_pool().fetchval(
-        """INSERT INTO users (email, display_name) VALUES ($1, $2)
-           ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name RETURNING id""",
-        email, display_name,
+        """INSERT INTO users (email, display_name, supabase_user_id) VALUES ($1, $2, $3)
+           ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name,
+                 supabase_user_id = EXCLUDED.supabase_user_id RETURNING id""",
+        email, display_name, sub,
     )
+    from app.services.persona import link_user
+    await link_user(get_pool(), user_id, sub, display_name, email)  # gated; no-op unless persona_enabled
     base = settings.public_base_url.rstrip("/")
     return {
         "token": issue_personal_token(str(user_id)),

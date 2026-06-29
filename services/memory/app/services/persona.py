@@ -9,9 +9,18 @@ Contracts are from the API map of agent-persona/backend; verify against the live
 before the auth cutover. Every call is best-effort: network/HTTP errors raise
 PersonaError so callers can degrade gracefully.
 """
+import logging
+import re
+
 import httpx
 
 from app.config import settings
+
+logger = logging.getLogger("zynd.persona")
+
+# persona agent ids are "zns:" + hex. Validate before interpolating into a PostgREST
+# filter (which has no parameterization) to prevent filter injection.
+_AGENT_ID_RE = re.compile(r"^zns:[0-9a-fA-F]+$")
 
 
 class PersonaError(RuntimeError):
@@ -60,6 +69,21 @@ async def ensure_persona(user_id: str, name: str = "", email: str = "") -> str |
     raise PersonaError(f"persona register -> {resp.status_code}: {resp.text[:200]}")
 
 
+async def link_user(pool, user_id: str, sub: str, name: str, email: str) -> str | None:
+    """Resolve+store the persona agent_id for a ZYND user. Gated + best-effort:
+    persona problems must never block login (we log, don't raise)."""
+    if not (settings.persona_enabled and sub):
+        return None
+    try:
+        agent_id = await ensure_persona(sub, name, email)
+    except PersonaError as exc:
+        logger.warning("persona link failed for %s: %s", sub, exc)
+        return None
+    if agent_id:
+        await pool.execute("UPDATE users SET persona_agent_id = $1 WHERE id = $2", agent_id, user_id)
+    return agent_id
+
+
 # ---- social profile (point 2) --------------------------------------------
 
 async def update_social(user_id: str, links: dict) -> None:
@@ -94,6 +118,8 @@ async def send_message(user_id: str, thread_id: str, content: str) -> dict:
 
 async def list_connections(agent_id: str) -> list[dict]:
     """Accepted connection threads for this agent (D3: via Supabase PostgREST + service key)."""
+    if not _AGENT_ID_RE.match(agent_id or ""):
+        raise PersonaError(f"refusing list_connections for malformed agent_id: {agent_id!r}")
     url = settings.supabase_url.rstrip("/") + "/rest/v1/dm_threads"
     params = {"status": "eq.accepted",
               "or": f"(initiator_id.eq.{agent_id},receiver_id.eq.{agent_id})",

@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     # service-to-service calls + Supabase PostgREST reads of dm_threads (D3).
     persona_base_url: str = "https://persona.zynd.ai"
     supabase_service_key: str = ""
+    # Gate for the persona cutover. OFF until Supabase is switched to the persona
+    # project + verified — keeps persona resolution dormant in normal deploys.
+    persona_enabled: bool = False
     # Browser origins allowed to call the API (the dashboard) — comma-separated.
     cors_origins: str = "https://zynd.ai,https://www.zynd.ai,http://localhost:3000"
 

@@ -1,4 +1,21 @@
-.PHONY: up down schema api worker test test-unit logs ps
+.PHONY: up down schema api worker test test-unit logs ps deploy ship
+
+# --- prod deploy (run from an SSH-allowlisted IP). Override host/key via env. ---
+EC2_HOST ?= 54.147.91.20
+SSH_KEY  ?= $(HOME)/.ssh/zynd-deploy.pem
+SSHCMD   := ssh -i $(SSH_KEY) -o StrictHostKeyChecking=no
+
+deploy:             ## rsync app+sql to prod, apply schema (idempotent), rebuild, health-check
+	rsync -az -e "$(SSHCMD)" --exclude .git --exclude __pycache__ --exclude .venv --exclude .env \
+		app/ ubuntu@$(EC2_HOST):/home/ubuntu/zynd/app/
+	rsync -az -e "$(SSHCMD)" sql/ ubuntu@$(EC2_HOST):/home/ubuntu/zynd/sql/
+	$(SSHCMD) ubuntu@$(EC2_HOST) 'cd ~/zynd && \
+		sudo docker compose -f docker-compose.prod.yml exec -T postgres psql -U zynd -d zynd -v ON_ERROR_STOP=1 < sql/schema.sql && \
+		sudo docker compose -f docker-compose.prod.yml up -d --build api worker mcp'
+	@echo "deployed — health:" && sleep 6 && curl -fsS https://api.zynd.ai/health && echo
+
+ship:               ## git push + deploy
+	git push origin main && $(MAKE) deploy
 
 up:                 ## start Postgres + Redis
 	docker compose up -d

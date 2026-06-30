@@ -32,13 +32,13 @@ def _svc_headers() -> dict:
     return {"Authorization": f"Bearer {key}", "apikey": key}
 
 
-async def _persona(method: str, path: str, **kw) -> httpx.Response:
+async def _persona(method: str, path: str, timeout: float = 12, **kw) -> httpx.Response:
     url = settings.persona_base_url.rstrip("/") + path
     try:
-        async with httpx.AsyncClient(timeout=12) as c:
+        async with httpx.AsyncClient(timeout=timeout) as c:
             resp = await c.request(method, url, headers=_svc_headers(), **kw)
     except httpx.HTTPError as exc:
-        raise PersonaError(f"persona {method} {path} failed: {exc}") from exc
+        raise PersonaError(f"persona {method} {path} failed: {exc!r}") from exc
     if resp.status_code >= 500:
         raise PersonaError(f"persona {method} {path} -> {resp.status_code}: {resp.text[:200]}")
     return resp
@@ -114,12 +114,22 @@ async def introduce(user_id: str, target_agent_id: str, target_name: str, messag
     thread_id = thread.get("id")
     if not thread_id:
         raise PersonaError(f"persona returned no thread id: {thread_resp.text[:200]}")
-    send_resp = await _persona(
-        "POST", f"/api/persona/{user_id}/agent-send",
-        json={"thread_id": thread_id, "content": message})
-    if send_resp.status_code not in (200, 201):
-        raise PersonaError(f"agent-send -> {send_resp.status_code}: {send_resp.text[:200]}")
-    return {"status": "sent", "thread_id": thread_id}
+    # agent-send delivers the first message via A2A SYNCHRONOUSLY; when the target's agent
+    # is offline this is slow (10-30s) or fails. persona saves the message BEFORE delivery,
+    # so the connection is recorded regardless — never fail the connect on slow/failed
+    # real-time delivery; just give it a generous timeout and treat the rest as best-effort.
+    try:
+        send_resp = await _persona(
+            "POST", f"/api/persona/{user_id}/agent-send",
+            json={"thread_id": thread_id, "content": message}, timeout=30)
+        delivered = send_resp.status_code in (200, 201)
+        if not delivered:
+            logger.warning("agent-send -> %s: %s (thread %s created)",
+                           send_resp.status_code, send_resp.text[:200], thread_id)
+    except PersonaError as exc:
+        logger.warning("agent-send slow/failed (%s); thread %s created, delivery pending", exc, thread_id)
+        delivered = False
+    return {"status": "sent", "thread_id": thread_id, "delivered": delivered}
 
 
 async def send_message(user_id: str, thread_id: str, content: str) -> dict:

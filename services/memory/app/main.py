@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from app.auth import issue_personal_token, verify_access_token
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool
-from app.models import AssertionView, ContextRequest, DeclareRequest, FactRef, IngestRequest, IngestResponse
+from app.models import AssertionView, ConnectRequest, ContextRequest, DeclareRequest, FactRef, IngestRequest, IngestResponse
 from app.services.ingest import ingest_turns
 from app.connect import router as connect_router
 from app.docs import router as docs_router
@@ -231,6 +231,23 @@ async def my_find_people(
     try:
         return await search_by_query(get_pool(), user_id, target, limit=limit)
     except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/me/connect")
+async def my_connect(body: ConnectRequest, user_id: str = Depends(current_user)) -> dict:
+    """Send a connection request to a matched person (target_user_id from findPeople/
+    findMatches). Routed through persona (agent-to-agent), so it works even if the
+    target is offline."""
+    from app.services import social
+    from app.services.persona import PersonaError
+    from app.services.social import SocialDisabled
+    try:
+        result = await social.connect(get_pool(), user_id, body.target_user_id, body.message)
+        return {"status": "request_sent", "result": result}
+    except SocialDisabled as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (ValueError, PersonaError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

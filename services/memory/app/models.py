@@ -74,6 +74,11 @@ class DeclareRequest(BaseModel):
     value: str = Field(min_length=1)
 
 
+class ConnectRequest(BaseModel):
+    target_user_id: str = Field(min_length=1)   # a user_id from findPeople / findMatches
+    message: str = Field(default="Hi — we matched on ZYND, I'd love to connect.", max_length=2000)
+
+
 class AssertionView(BaseModel):
     statement: str = ""        # natural-language rendering for display (humanize)
     predicate: str

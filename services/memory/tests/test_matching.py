@@ -263,3 +263,11 @@ async def test_findability_facts_are_public_by_default(client):
     by_pred = {r["predicate"]: r["is_public"] for r in rows}
     assert by_pred.get("is_building") is True    # findability predicate -> public by default
     assert by_pred.get("believes") is False      # everything else -> stays private
+
+
+async def test_connect_endpoint_gated_when_persona_disabled(client):
+    # persona_enabled is false in tests -> the connect action degrades cleanly (503),
+    # proving the endpoint is wired and maps the gate to a friendly status (not a 500).
+    r = await client.post("/me/connect", headers=AUTH,
+                          json={"target_user_id": "00000000-0000-0000-0000-000000000000", "message": "hi"})
+    assert r.status_code == 503

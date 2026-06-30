@@ -107,6 +107,21 @@ def build_action_schema() -> dict:
                             "type": "array", "items": {"$ref": "#/components/schemas/Match"}}}}}},
                 }
             },
+            "/me/connect": {
+                "post": {
+                    "operationId": "connectWith",
+                    "summary": "Send a connection request to a matched person (via persona).",
+                    "description": "After findPeople/findMatches, call this to send a connection "
+                                   "request to a person the user chose. Pass their user_id from the "
+                                   "results as target_user_id (+ optional short message). Routes "
+                                   "through persona (agent-to-agent), so it works even if they're "
+                                   "offline.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "requestBody": {"required": True, "content": {"application/json": {
+                        "schema": {"$ref": "#/components/schemas/ConnectRequest"}}}},
+                    "responses": {"200": {"description": "Request sent"}},
+                }
+            },
             "/me/confirm": {
                 "post": {
                     "operationId": "confirmFact",
@@ -189,6 +204,15 @@ def build_action_schema() -> dict:
                     "properties": {
                         "predicate": {"type": "string"},
                         "object": {"type": "string"},
+                    },
+                },
+                "ConnectRequest": {
+                    "type": "object",
+                    "required": ["target_user_id"],
+                    "properties": {
+                        "target_user_id": {"type": "string",
+                                           "description": "user_id from findPeople/findMatches results"},
+                        "message": {"type": "string"},
                     },
                 },
                 "Match": {

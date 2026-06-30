@@ -97,13 +97,29 @@ async def update_social(user_id: str, links: dict) -> None:
 # ---- connect + message (point 3) -----------------------------------------
 
 async def introduce(user_id: str, target_agent_id: str, target_name: str, message: str) -> dict:
-    """Create a connection thread + send an intro message in one call."""
-    resp = await _persona("POST", "/api/people/introductions",
-                          json={"actor_user_id": user_id, "target_agent_id": target_agent_id,
-                                "target_name": target_name, "message": message})
-    if resp.status_code not in (200, 201):
-        raise PersonaError(f"introduction -> {resp.status_code}: {resp.text[:200]}")
-    return resp.json()
+    """Open (or reuse) an agent-mode thread to the target and send the first message.
+
+    Mirrors the persona webapp's intro flow (create thread -> agent-send) over the
+    PATH-keyed persona endpoints, which trust the user_id in the path. We can't use
+    /api/people/introductions: it's end-user-authenticated (Supabase JWT via
+    get_current_user) and ignores an actor in the body, so a service-to-service call
+    with the service key is rejected (401)."""
+    thread_resp = await _persona(
+        "POST", f"/api/persona/{user_id}/threads",
+        json={"target_agent_id": target_agent_id, "target_name": target_name or "ZYND user",
+              "mode": "agent"})
+    if thread_resp.status_code not in (200, 201):
+        raise PersonaError(f"open thread -> {thread_resp.status_code}: {thread_resp.text[:200]}")
+    thread = (thread_resp.json() or {}).get("thread") or {}
+    thread_id = thread.get("id")
+    if not thread_id:
+        raise PersonaError(f"persona returned no thread id: {thread_resp.text[:200]}")
+    send_resp = await _persona(
+        "POST", f"/api/persona/{user_id}/agent-send",
+        json={"thread_id": thread_id, "content": message})
+    if send_resp.status_code not in (200, 201):
+        raise PersonaError(f"agent-send -> {send_resp.status_code}: {send_resp.text[:200]}")
+    return {"status": "sent", "thread_id": thread_id}
 
 
 async def send_message(user_id: str, thread_id: str, content: str) -> dict:

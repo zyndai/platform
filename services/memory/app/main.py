@@ -1,4 +1,5 @@
 import hmac
+import logging
 from contextlib import asynccontextmanager
 
 from arq import create_pool
@@ -251,6 +252,8 @@ async def my_connect(body: ConnectRequest, user_id: str = Depends(current_user))
     except SocialDisabled as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (ValueError, PersonaError) as exc:
+        logging.getLogger("zynd.connect").warning(
+            "connect %s -> %s failed: %s: %s", user_id, body.target_user_id, type(exc).__name__, exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

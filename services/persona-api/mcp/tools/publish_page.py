@@ -48,6 +48,42 @@ def publish_page(
     )
 
 
+def update_page(
+    user_id: str,
+    slug: str,
+    content: str | None = None,
+    title: str | None = None,
+    format: str | None = None,
+    visibility: str | None = None,
+) -> dict[str, Any]:
+    """
+    Update an existing shareable page.
+
+    Use this when the principal asks to edit, change, or update a page they
+    already published. You need the page's `slug` (or the slug at the end of
+    the page URL). Only pass fields that should change.
+
+    Args:
+        user_id: Injected automatically by the orchestrator.
+        slug: The page's unique slug, e.g. "abc123" from /pages/abc123.
+        content: New HTML or Markdown body (optional).
+        title: New title (optional).
+        format: "html" or "markdown" (optional).
+        visibility: "public", "unlisted", or "private" (optional).
+
+    Returns:
+        {"success": true, "slug", "url", "title", "format", "visibility"}
+    """
+    return page_publisher.update_page(
+        user_id=user_id,
+        slug=slug,
+        content=content,
+        title=title,
+        format=format,
+        visibility=visibility,
+    )
+
+
 def list_my_pages(user_id: str) -> dict[str, Any]:
     """
     List the shareable pages the principal has published.

@@ -210,6 +210,61 @@ def list_pages(user_id: str) -> list[dict[str, Any]]:
         return []
 
 
+def update_page(
+    user_id: str,
+    slug: str,
+    content: str | None = None,
+    title: str | None = None,
+    format: str | None = None,
+    visibility: str | None = None,
+) -> dict[str, Any]:
+    """Update a page if it belongs to the requesting user.
+
+    Only the provided fields are changed; others are left untouched.
+    """
+    if not user_id or not slug:
+        return {"success": False, "error": "user_id and slug are required."}
+
+    updates: dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+
+    if content is not None:
+        if len(content) > MAX_CONTENT_LENGTH:
+            return {
+                "success": False,
+                "error": f"content is too long (max {MAX_CONTENT_LENGTH} characters).",
+            }
+        updates["content"] = content
+    if title is not None:
+        t = title.strip()
+        if len(t) > MAX_TITLE_LENGTH:
+            t = t[:MAX_TITLE_LENGTH].rstrip()
+        updates["title"] = t
+    if format is not None:
+        updates["format"] = _normalize_format(format)
+    if visibility is not None:
+        updates["visibility"] = _normalize_visibility(visibility)
+
+    if len(updates) == 1:
+        return {"success": False, "error": "No fields provided to update."}
+
+    sb = _supabase()
+    try:
+        result = (
+            sb.table(TABLE)
+            .update(updates)
+            .eq("slug", slug)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        row = result.data[0] if result.data else None
+        if not row:
+            return {"success": False, "error": "Page not found or not owned by you."}
+        return {"success": True, **_serialize(row)}
+    except Exception as e:
+        logger.warning(f"[page_publisher] update_page failed for {slug}: {e}")
+        return {"success": False, "error": f"Could not update page: {e}"}
+
+
 def delete_page(user_id: str, slug: str) -> dict[str, Any]:
     """Delete a page if it belongs to the requesting user."""
     if not user_id or not slug:

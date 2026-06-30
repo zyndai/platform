@@ -16,6 +16,7 @@ from services.page_publisher import (
     delete_page,
     get_page_public,
     list_pages,
+    update_page,
 )
 
 router = APIRouter()
@@ -26,6 +27,13 @@ class CreatePageRequest(BaseModel):
     title: str = Field(default="", max_length=200)
     format: str = Field(default="html", pattern=r"^(html|markdown|md|htm)$")
     visibility: str = Field(default="unlisted", pattern=r"^(public|unlisted|private)$")
+
+
+class UpdatePageRequest(BaseModel):
+    content: str | None = Field(default=None, min_length=1)
+    title: str | None = Field(default=None, max_length=200)
+    format: str | None = Field(default=None, pattern=r"^(html|markdown|md|htm)$")
+    visibility: str | None = Field(default=None, pattern=r"^(public|unlisted|private)$")
 
 
 class CreatePageResponse(BaseModel):
@@ -82,6 +90,28 @@ async def list_user_pages(user: dict = Depends(get_current_user)):
     """Return all pages owned by the current user, newest first."""
     pages = list_pages(user_id=user["id"])
     return PageListResponse(pages=pages)
+
+
+@router.patch("/{slug}", response_model=CreatePageResponse)
+async def update_existing_page(
+    slug: str,
+    body: UpdatePageRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Update an existing page owned by the current user."""
+    result = update_page(
+        user_id=user["id"],
+        slug=slug,
+        content=body.content,
+        title=body.title,
+        format=body.format,
+        visibility=body.visibility,
+    )
+
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Bad request"))
+
+    return CreatePageResponse(**result)
 
 
 @router.delete("/{slug}", response_model=DeletePageResponse)

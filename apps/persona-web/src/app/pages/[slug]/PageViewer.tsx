@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ExternalLink, Copy, Check, FileText, Globe } from "lucide-react";
+import { Copy, Check, FileText, Globe } from "lucide-react";
 
 interface PublicPage {
   slug: string;
@@ -14,7 +14,47 @@ interface PublicPage {
   created_at: string | null;
 }
 
-export function PageViewer({ page }: { page: PublicPage }) {
+function CopyLinkButton({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }, [url]);
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="published-page-float-copy"
+      aria-label="Copy page link"
+    >
+      {copied ? <Check size={16} /> : <Copy size={16} />}
+      {copied ? "Copied" : "Copy link"}
+    </button>
+  );
+}
+
+function HtmlPage({ page }: { page: PublicPage }) {
+  return (
+    <>
+      <iframe
+        title={page.title}
+        srcDoc={page.content}
+        sandbox=""
+        className="published-page-frame-full"
+      />
+      <CopyLinkButton url={page.url} />
+    </>
+  );
+}
+
+function MarkdownPage({ page }: { page: PublicPage }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async () => {
@@ -38,15 +78,16 @@ export function PageViewer({ page }: { page: PublicPage }) {
   return (
     <div className="published-page">
       <header className="published-page-header">
-        <div className="published-page-meta">
-          <span className="published-page-format">
-            {page.format === "html" ? <Globe size={14} /> : <FileText size={14} />}
-            {page.format === "html" ? "HTML" : "Markdown"}
-          </span>
-          {formattedDate && <span className="published-page-date">{formattedDate}</span>}
-        </div>
-        <h1 className="published-page-title">{page.title}</h1>
-        <div className="published-page-actions">
+        <div className="published-page-meta-row">
+          <div className="published-page-meta">
+            <span className="published-page-format md">
+              <FileText size={14} />
+              Markdown
+            </span>
+            {formattedDate && (
+              <span className="published-page-date">{formattedDate}</span>
+            )}
+          </div>
           <button
             type="button"
             onClick={handleCopy}
@@ -56,32 +97,22 @@ export function PageViewer({ page }: { page: PublicPage }) {
             {copied ? <Check size={16} /> : <Copy size={16} />}
             {copied ? "Copied" : "Copy link"}
           </button>
-          <a
-            href={page.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="published-page-btn primary"
-          >
-            <ExternalLink size={16} />
-            Open
-          </a>
         </div>
+        <h1 className="published-page-title">{page.title}</h1>
       </header>
 
-      <div className="published-page-body">
-        {page.format === "html" ? (
-          <iframe
-            title={page.title}
-            srcDoc={page.content}
-            sandbox=""
-            className="published-page-frame"
-          />
-        ) : (
-          <article className="published-page-markdown markdown-content">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{page.content}</ReactMarkdown>
-          </article>
-        )}
-      </div>
+      <main className="published-page-body">
+        <article className="published-page-markdown markdown-content">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{page.content}</ReactMarkdown>
+        </article>
+      </main>
     </div>
   );
+}
+
+export function PageViewer({ page }: { page: PublicPage }) {
+  if (page.format === "html") {
+    return <HtmlPage page={page} />;
+  }
+  return <MarkdownPage page={page} />;
 }

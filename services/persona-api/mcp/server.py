@@ -66,7 +66,7 @@ from mcp.tools.scheduling import (
 
 # ── Import Publish Page Tools ──
 # Principal-private; never added to any external allowlist.
-from mcp.tools.publish_page import publish_page, list_my_pages
+from mcp.tools.publish_page import publish_page, update_page, list_my_pages
 
 # ── Import Brief Tools ──
 # Principal-private; never added to any external allowlist.
@@ -167,6 +167,7 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     # Create shareable HTML / Markdown pages and list existing pages.
     # Never exposed to foreign agents.
     mcp.register(publish_page, name="publish_page", description="Publish a shareable HTML or Markdown page for the principal. Returns a public URL like https://<host>/pages/<slug> that they can share with friends. Use when the principal asks you to turn content into a web page, save HTML/Markdown, or create a shareable link.")
+    mcp.register(update_page, name="update_page", description="Edit/update an existing shareable page the principal published. Requires the page slug (the last part of the /pages/<slug> URL). Use when the principal asks to change, edit, or update a page they already made. Only pass the fields that need to change.")
     mcp.register(list_my_pages, name="list_my_pages", description="List the shareable pages the principal has already published. Use when they ask to see their pages, e.g. 'show my pages' or 'what pages have I made'.")
 
     # ── Brief tools (principal-private) ────────────────────────────

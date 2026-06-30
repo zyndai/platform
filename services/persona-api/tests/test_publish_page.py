@@ -11,12 +11,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import config
-from mcp.tools.publish_page import list_my_pages, publish_page
+from mcp.tools.publish_page import list_my_pages, publish_page, update_page as mcp_update_page
 from services.page_publisher import (
     create_page,
     delete_page,
     get_page_public,
     list_pages,
+    update_page,
 )
 
 
@@ -25,7 +26,7 @@ class _Resp:
         self.data = data
 
 
-def _mock_supabase(rows=None, single=None, insert_data=None):
+def _mock_supabase(rows=None, single=None, insert_data=None, update_data=None):
     """Build a minimal fake supabase client."""
     sb = MagicMock()
     chain = sb.table.return_value
@@ -46,6 +47,11 @@ def _mock_supabase(rows=None, single=None, insert_data=None):
     insert_chain = MagicMock()
     insert_chain.execute.return_value = _Resp(insert_data)
     chain.insert.return_value = insert_chain
+
+    update_chain = MagicMock()
+    update_chain.eq.return_value = update_chain
+    update_chain.execute.return_value = _Resp(update_data)
+    chain.update.return_value = update_chain
 
     return sb
 
@@ -154,6 +160,24 @@ class TestPagePublisher:
         sb.table.return_value.delete.return_value.eq.assert_any_call("slug", "abc")
         sb.table.return_value.delete.return_value.eq.assert_any_call("user_id", "u1")
 
+    def test_update_page_changes_title(self):
+        sb = _mock_supabase(update_data=[{
+            "slug": "abc",
+            "title": "New title",
+            "format": "html",
+            "visibility": "unlisted",
+        }])
+        with patch.object(config, "get_supabase", return_value=sb):
+            result = update_page(user_id="u1", slug="abc", title="New title")
+        assert result["success"] is True
+        assert result["title"] == "New title"
+        update_call = sb.table.return_value.update.call_args
+        assert update_call[0][0]["title"] == "New title"
+
+    def test_update_page_refuses_missing_slug(self):
+        result = update_page(user_id="u1", slug="", title="x")
+        assert result["success"] is False
+
 
 class TestPublishPageTool:
     def test_publish_page_delegates_to_service(self):
@@ -179,6 +203,23 @@ class TestPublishPageTool:
         assert result["count"] == 2
         assert len(result["pages"]) == 2
 
+    def test_update_page_tool_delegates_to_service(self):
+        sb = _mock_supabase(update_data=[{
+            "slug": "tool123",
+            "title": "Updated",
+            "format": "markdown",
+            "visibility": "public",
+        }])
+        with patch.object(config, "get_supabase", return_value=sb):
+            result = mcp_update_page(
+                user_id="u1",
+                slug="tool123",
+                content="# Updated",
+                title="Updated",
+            )
+        assert result["success"] is True
+        assert result["title"] == "Updated"
+
 
 class TestPublishedPagesAPI:
     def test_create_page_request_validation(self):
@@ -191,3 +232,9 @@ class TestPublishedPagesAPI:
         from pydantic import ValidationError
         with pytest.raises(ValidationError):
             CreatePageRequest(content="x", format="docx")  # type: ignore[call-arg]
+
+    def test_update_page_request_validation(self):
+        from api.pages import UpdatePageRequest
+        body = UpdatePageRequest(title="New title")
+        assert body.title == "New title"
+        assert body.content is None

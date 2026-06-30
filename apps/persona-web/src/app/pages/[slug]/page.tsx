@@ -64,7 +64,11 @@ export default async function PublishedPage({ params }: PageProps) {
     notFound();
   }
 
-  return (
+  return page.format === "html" ? (
+    <main className="published-page-raw-shell">
+      <PageViewer page={page} />
+    </main>
+  ) : (
     <main className="published-page-shell">
       <PageViewer page={page} />
     </main>

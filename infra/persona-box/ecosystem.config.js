@@ -36,7 +36,7 @@ module.exports = {
       // never flushes to PM2's log buffer until the process exits.
       env: {
         PYTHONUNBUFFERED: "1",
-        OPENROUTER_MODEL: "google/gemini-2.5-flash",
+        OPENROUTER_MODEL: "deepseek/deepseek-v4-flash",
       },
       out_file: "/home/ubuntu/.pm2/logs/api-out.log",
       error_file: "/home/ubuntu/.pm2/logs/api-err.log",

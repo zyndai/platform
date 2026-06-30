@@ -64,6 +64,10 @@ from mcp.tools.scheduling import (
     list_pending_meetings,
 )
 
+# ── Import Publish Page Tools ──
+# Principal-private; never added to any external allowlist.
+from mcp.tools.publish_page import publish_page, list_my_pages
+
 # ── Import Brief Tools ──
 # Principal-private; never added to any external allowlist.
 from mcp.tools.brief import (
@@ -158,6 +162,12 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(propose_group_meeting, name="propose_group_meeting", description="Propose a meeting in a group room. The principal sees an approval card; on accept, the calendar event is created with every other group member as an attendee and a system message is posted to the group chat.")
     mcp.register(respond_to_meeting, name="respond_to_meeting", description="Accept, counter, decline, or cancel an existing meeting ticket.")
     mcp.register(list_pending_meetings, name="list_pending_meetings", description="List the principal's open meeting tickets, split by who needs to act next.")
+
+    # ── Publish Page tools (principal-private) ─────────────────────
+    # Create shareable HTML / Markdown pages and list existing pages.
+    # Never exposed to foreign agents.
+    mcp.register(publish_page, name="publish_page", description="Publish a shareable HTML or Markdown page for the principal. Returns a public URL like https://<host>/pages/<slug> that they can share with friends. Use when the principal asks you to turn content into a web page, save HTML/Markdown, or create a shareable link.")
+    mcp.register(list_my_pages, name="list_my_pages", description="List the shareable pages the principal has already published. Use when they ask to see their pages, e.g. 'show my pages' or 'what pages have I made'.")
 
     # ── Brief tools (principal-private) ────────────────────────────
     # These read/write the user's Brief Google Doc. Auto-init the doc

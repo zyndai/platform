@@ -118,6 +118,10 @@ APIFY_API_TOKEN: str = os.getenv("APIFY_API_TOKEN", "")
 APP_SECRET_KEY: str = os.getenv("APP_SECRET_KEY", "change-me-in-production")
 FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
+# Base URL for shareable pages created by publish_page (e.g. sslip wildcard).
+# Falls back to FRONTEND_URL if not set.
+PUBLIC_PAGE_BASE_URL: str = os.getenv("PUBLIC_PAGE_BASE_URL", "")
+
 # ── Supabase singleton ────────────────────────────────────────────────
 # One client per process — avoids rebuilding the HTTP connection pool
 # on every request (was the main source of slow API responses).

@@ -27,7 +27,9 @@ import type {
 import {
   extractCallResults,
   extractHandoffs,
+  extractPageLists,
   extractPersonaHits,
+  extractPublishedPages,
 } from "./helpers";
 import GenUiResult, { LongResponseCard, isLongResponse } from "./GenUiResult";
 import ChatInput, { type ChatInputHandle } from "./ChatInput";
@@ -36,6 +38,7 @@ import MatchCard from "./MatchCard";
 import IntroPreviewModal from "./IntroPreviewModal";
 import ApprovalCard, { type PendingApproval } from "./ApprovalCard";
 import IncomingRequestCard from "./IncomingRequestCard";
+import PublishedPageCard, { PageListCard } from "./PublishedPageCard";
 import ServicesPanel from "./ServicesPanel";
 import type { CallTarget } from "./ServicesPanel";
 import {
@@ -249,6 +252,8 @@ function MessageRowInner({
   const callResults = isAria
     ? extractCallResults(message.actions, message.toolCalls)
     : [];
+  const publishedPages = isAria ? extractPublishedPages(message.actions) : [];
+  const pageList = isAria ? extractPageLists(message.actions) : null;
   const activeTools = (message.toolCalls || []).length > 0;
   const showTyping = isAria && !!message.streaming && !message.content;
 
@@ -308,6 +313,18 @@ function MessageRowInner({
           busyId={busyId}
           onAct={onActOnHandoff}
         />
+      )}
+      {publishedPages.length > 0 && (
+        <div className="inline-cards">
+          {publishedPages.map((page) => (
+            <PublishedPageCard key={page.slug} result={page} />
+          ))}
+        </div>
+      )}
+      {pageList !== null && (
+        <div className="inline-cards">
+          <PageListCard pages={pageList} />
+        </div>
       )}
     </>
   );

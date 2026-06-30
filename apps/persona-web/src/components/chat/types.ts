@@ -97,3 +97,12 @@ export interface ThreadHandoff {
   partner_agent_id?: string;
   source_tool: string;
 }
+
+export interface PublishedPage {
+  slug: string;
+  url: string;
+  title: string;
+  format: "html" | "markdown";
+  visibility?: string;
+  created_at?: string | null;
+}

@@ -1,4 +1,10 @@
-import type { ActionRecord, PersonaHit, ThreadHandoff, ToolCallState } from "./types";
+import type {
+  ActionRecord,
+  PersonaHit,
+  PublishedPage,
+  ThreadHandoff,
+  ToolCallState,
+} from "./types";
 import type { ServiceCallResult } from "@/lib/services-commands";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -133,4 +139,53 @@ export function toolVerb(name: string, status: "running" | "done" | "error"): st
   if (!v) return status === "done" ? "Done" : "Working on it";
   if (status === "error") return `${v.active} — that didn't work`;
   return status === "done" ? v.done : v.active;
+}
+
+function isPublishedPageValue(v: unknown): v is PublishedPage {
+  if (!isPlainObject(v)) return false;
+  const r = v as Record<string, unknown>;
+  return (
+    typeof r.slug === "string" &&
+    typeof r.url === "string" &&
+    typeof r.title === "string" &&
+    (r.format === "html" || r.format === "markdown")
+  );
+}
+
+/**
+ * Pull `publish_page` results out of the final actions array so the chat can
+ * render a shareable-page card with copy/open buttons.
+ */
+export function extractPublishedPages(
+  actions: ActionRecord[] | undefined,
+): PublishedPage[] {
+  if (!actions) return [];
+  const out: PublishedPage[] = [];
+  const seen = new Set<string>();
+  for (const a of actions) {
+    if (a.tool !== "publish_page") continue;
+    const r = a.result;
+    if (!isPlainObject(r) || !r.success || !isPublishedPageValue(r)) continue;
+    if (seen.has(r.slug)) continue;
+    seen.add(r.slug);
+    out.push(r);
+  }
+  return out;
+}
+
+/**
+ * Pull `list_my_pages` results so the chat can render a compact page list card.
+ */
+export function extractPageLists(
+  actions: ActionRecord[] | undefined,
+): PublishedPage[] | null {
+  if (!actions) return null;
+  for (const a of actions) {
+    if (a.tool !== "list_my_pages") continue;
+    const r = a.result;
+    if (!isPlainObject(r) || !r.success || !Array.isArray(r.pages)) continue;
+    const pages = r.pages.filter(isPublishedPageValue) as PublishedPage[];
+    return pages.length ? pages : [];
+  }
+  return null;
 }

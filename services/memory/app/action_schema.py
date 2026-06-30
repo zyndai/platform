@@ -122,6 +122,17 @@ def build_action_schema() -> dict:
                     "responses": {"200": {"description": "Request sent"}},
                 }
             },
+            "/me/logout": {
+                "post": {
+                    "operationId": "disconnect",
+                    "summary": "Sign the user out of ZYND (revoke all their tokens).",
+                    "description": "Call when the user wants to disconnect / sign out / start "
+                                   "fresh. Revokes all their ZYND tokens; they'll be asked to "
+                                   "sign in again next time. No request body needed.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "responses": {"200": {"description": "Signed out"}},
+                }
+            },
             "/me/confirm": {
                 "post": {
                     "operationId": "confirmFact",

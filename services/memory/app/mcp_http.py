@@ -17,7 +17,7 @@ from arq.connections import RedisSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from app.auth import verify_access_token
+from app.auth import verify_access_claims
 from app.config import settings
 from app.models import Turn
 from app.services.control import confirm_fact, forget_fact
@@ -155,6 +155,15 @@ async def forget_fact_tool(predicate: str, object: str) -> dict:
     return {"forgotten": await forget_fact(await _get_pool(), _uid(), predicate, object)}
 
 
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+async def disconnect() -> dict:
+    """Sign out of ZYND — revokes this token and all your other ZYND tokens (web, GPT,
+    other MCP clients). You'll need to reconnect / sign in again to use ZYND."""
+    from app.services.sessions import revoke_user_tokens
+    await revoke_user_tokens(await _get_pool(), _uid())
+    return {"status": "signed_out", "note": "Reconnect ZYND to sign back in."}
+
+
 # ---- persona network: connect / message / meet (gated by persona_enabled) ----
 
 async def _social(op, *args) -> dict:
@@ -225,8 +234,12 @@ async def app(scope, receive, send):
     scheme, _, value = headers.get(b"authorization", b"").decode().partition(" ")
     token = value.strip() if scheme.lower() == "bearer" else ""  # RFC 6750: case-insensitive
     try:
-        user_id = verify_access_token(token)
+        user_id, issued_at = verify_access_claims(token)
     except ValueError:
+        await _send_401(send)
+        return
+    from app.services.sessions import tokens_revoked
+    if await tokens_revoked(await _get_pool(), user_id, issued_at):
         await _send_401(send)
         return
     _current_user.set(user_id)

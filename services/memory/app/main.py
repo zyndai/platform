@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from app.auth import issue_personal_token, verify_access_token
+from app.auth import issue_personal_token, verify_access_claims, verify_access_token
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool
 from app.models import AssertionView, ConnectRequest, ContextRequest, DeclareRequest, FactRef, IngestRequest, IngestResponse
@@ -103,12 +103,15 @@ async def current_user(authorization: str = Header(default="")) -> str:
     if not token:
         raise HTTPException(status_code=401, detail="missing bearer token")
     try:
-        return verify_access_token(token)
+        user_id, issued_at = verify_access_claims(token)
     except ValueError:
-        pass
-    if settings.enable_dev_bearer and hmac.compare_digest(token, settings.dev_bearer_token):
-        return app.state.dev_user_id
-    raise HTTPException(status_code=401, detail="invalid bearer token")
+        if settings.enable_dev_bearer and hmac.compare_digest(token, settings.dev_bearer_token):
+            return app.state.dev_user_id   # dev backdoor: not a JWT, no revocation check
+        raise HTTPException(status_code=401, detail="invalid bearer token")
+    from app.services.sessions import tokens_revoked
+    if await tokens_revoked(get_pool(), user_id, issued_at):
+        raise HTTPException(status_code=401, detail="session was signed out — please sign in again")
+    return user_id
 
 
 @app.get("/health")
@@ -249,6 +252,15 @@ async def my_connect(body: ConnectRequest, user_id: str = Depends(current_user))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (ValueError, PersonaError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/me/logout")
+async def my_logout(user_id: str = Depends(current_user)) -> dict:
+    """Sign out everywhere: revoke all of the user's tokens (this access token, its
+    refresh token, and any MCP token). The next request prompts a fresh sign-in."""
+    from app.services.sessions import revoke_user_tokens
+    await revoke_user_tokens(get_pool(), user_id)
+    return {"status": "signed_out"}
 
 
 @app.post("/me/confirm")

@@ -21,7 +21,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
-from app.auth import issue_access_token, issue_refresh_token, verify_refresh_token
+from app.auth import issue_access_token, issue_refresh_token, verify_refresh_claims
 from app.config import settings
 from app.db import get_pool
 from app.supabase_auth import supabase_identity
@@ -176,9 +176,12 @@ async def token(
         user_id = raw.decode() if isinstance(raw, bytes) else raw
     elif grant_type == "refresh_token":
         try:
-            user_id = verify_refresh_token(refresh_token)
+            user_id, issued_at = verify_refresh_claims(refresh_token)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="invalid_grant") from exc
+        from app.services.sessions import tokens_revoked
+        if await tokens_revoked(get_pool(), user_id, issued_at):  # signed out -> force re-auth
+            raise HTTPException(status_code=400, detail="invalid_grant")
     else:
         raise HTTPException(status_code=400, detail="unsupported_grant_type")
 

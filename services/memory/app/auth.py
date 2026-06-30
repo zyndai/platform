@@ -25,7 +25,9 @@ def _encode(user_id: str, token_type: str, ttl_seconds: int) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm=_ALGO)
 
 
-def _decode(token: str, expected_type: str) -> str:
+def _decode_full(token: str, expected_type: str) -> tuple[str, int]:
+    """Return (sub, iat) for a valid token. `iat` (issued-at, unix seconds) lets the
+    caller enforce per-user revocation (tokens issued before a sign-out are rejected)."""
     try:
         payload = jwt.decode(
             token, settings.jwt_secret, algorithms=[_ALGO], issuer=settings.jwt_issuer,
@@ -37,7 +39,11 @@ def _decode(token: str, expected_type: str) -> str:
     sub = payload.get("sub")
     if not sub:  # signed but malformed -> ValueError (401), never a KeyError (500)
         raise ValueError("token missing sub claim")
-    return sub
+    return sub, int(payload.get("iat", 0))
+
+
+def _decode(token: str, expected_type: str) -> str:
+    return _decode_full(token, expected_type)[0]
 
 
 def issue_access_token(user_id: str) -> tuple[str, int]:
@@ -60,5 +66,15 @@ def verify_access_token(token: str) -> str:
     return _decode(token, "access")
 
 
+def verify_access_claims(token: str) -> tuple[str, int]:
+    """(user_id, iat) for a valid access token — for revocation-aware auth paths."""
+    return _decode_full(token, "access")
+
+
 def verify_refresh_token(token: str) -> str:
     return _decode(token, "refresh")
+
+
+def verify_refresh_claims(token: str) -> tuple[str, int]:
+    """(user_id, iat) for a valid refresh token — for revocation-aware refresh."""
+    return _decode_full(token, "refresh")

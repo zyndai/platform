@@ -21,6 +21,8 @@ import { useDashboard } from "@/contexts/DashboardContext";
 import { defaultPersonaStyle, generateAvatarDataUri } from "@/lib/dicebear";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// ZYND memory-layer — social links are mirrored here so matches can show them.
+const ZYND_API = (process.env.NEXT_PUBLIC_ZYND_API_URL || "https://api.zynd.ai").replace(/\/$/, "");
 
 interface PersonaProfile {
   avatar_url?: string | null;
@@ -347,6 +349,26 @@ export default function YouPage() {
       });
       if (!res.ok) throw new Error((await res.text()) || "Couldn't save that.");
       setPersona(await res.json());
+      // Mirror the social links into ZYND memory-layer so matches surface them.
+      // Best-effort — the persona profile is already saved above.
+      try {
+        await fetch(`${ZYND_API}/me/social-links`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
+          body: JSON.stringify({
+            linkedin: draft.linkedin.trim(),
+            twitter: draft.twitter.trim(),
+            instagram: draft.instagram.trim(),
+            telegram: draft.telegram.trim(),
+            website: draft.website.trim(),
+          }),
+        });
+      } catch {
+        /* memory-layer sync is best-effort */
+      }
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2200);
     } catch (e) {

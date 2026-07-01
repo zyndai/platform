@@ -1,0 +1,12 @@
+# Caddy auto-provisions a free HTTPS certificate for this domain (Let's Encrypt)
+# and proxies to the API container. Requires the DNS A record api.zynd.ai -> this
+# server's IP, and ports 80/443 open.
+api.zynd.ai {
+	# Remote MCP endpoint (streamable-HTTP) for Claude/Cursor/any MCP client.
+	handle /mcp* {
+		reverse_proxy mcp:8090
+	}
+	handle {
+		reverse_proxy api:8000
+	}
+}

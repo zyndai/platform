@@ -1,0 +1,126 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ZYND Ingest",
+    "description": "Send conversation turns to ZYND to build the user's private context graph.",
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.zynd.ai"
+    }
+  ],
+  "paths": {
+    "/ingest": {
+      "post": {
+        "operationId": "ingestConversation",
+        "summary": "Send conversation turns for context extraction.",
+        "security": [
+          {
+            "OAuth2": [
+              "ingest"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "OAuth2": {
+        "type": "oauth2",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://api.zynd.ai/oauth/authorize",
+            "tokenUrl": "https://api.zynd.ai/oauth/token",
+            "scopes": {
+              "ingest": "Send conversation data to ZYND"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Turn": {
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "IngestRequest": {
+        "type": "object",
+        "required": [
+          "turns"
+        ],
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "source_system": {
+            "type": "string",
+            "default": "chatgpt"
+          },
+          "turns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Turn"
+            }
+          }
+        }
+      },
+      "IngestResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "chunks_inserted": {
+            "type": "integer"
+          },
+          "chunks_skipped": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}

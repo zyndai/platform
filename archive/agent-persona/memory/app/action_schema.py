@@ -1,0 +1,303 @@
+"""OpenAPI 3.1 schema for the ChatGPT Action (the `/ingest` operation only).
+
+Built dynamically so servers + OAuth URLs always match the configured base URL.
+Import this into the Custom GPT builder via /.well-known/openapi.json.
+"""
+from app.config import settings
+
+
+def build_action_schema() -> dict:
+    base = settings.public_base_url.rstrip("/")
+    return {
+        "openapi": "3.1.0",
+        "info": {
+            "title": "ZYND Ingest",
+            "description": "Send conversation turns to ZYND to build the user's private context graph.",
+            "version": "0.1.0",
+        },
+        "servers": [{"url": base}],
+        "paths": {
+            "/ingest": {
+                "post": {
+                    "operationId": "ingestConversation",
+                    "summary": "Send conversation turns for context extraction.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/IngestRequest"}
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Accepted",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/IngestResponse"}
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+            "/me/graph": {
+                "get": {
+                    "operationId": "getMyContext",
+                    "summary": "Return everything ZYND currently knows about the user.",
+                    "description": "What ZYND knows about the user — call when they ask what you "
+                                   "remember, or to ground a reply. Each fact has a `statement` "
+                                   "(a natural sentence like 'You're building a micro-SaaS'); show "
+                                   "that in plain language, never the predicate or confidence.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "responses": {
+                        "200": {
+                            "description": "The user's active facts",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": {"$ref": "#/components/schemas/Fact"},
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+            "/me/matches": {
+                "get": {
+                    "operationId": "findMatches",
+                    "summary": "Find people whose active context overlaps the user's.",
+                    "description": "Who else is building/learning what the user is. Optional "
+                                   "cluster_type (intent_cluster/skill_cluster/place_cluster/"
+                                   "full_context). Each result may have a `contact` line of the "
+                                   "person's links — print it VERBATIM; never paraphrase as "
+                                   "'links available'.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "parameters": [
+                        {"name": "cluster_type", "in": "query", "required": False,
+                         "schema": {"type": "string", "default": "intent_cluster"}},
+                        {"name": "limit", "in": "query", "required": False,
+                         "schema": {"type": "integer"}},
+                    ],
+                    "responses": {"200": {"description": "Similar users",
+                        "content": {"application/json": {"schema": {
+                            "type": "array", "items": {"$ref": "#/components/schemas/Match"}}}}}},
+                }
+            },
+            "/me/find-people": {
+                "get": {
+                    "operationId": "findPeople",
+                    "summary": "Find people matching a DESCRIBED target profile (complementary).",
+                    "description": "Find people matching a DESCRIBED target (investor/hire/partner) "
+                                   "— pass `target`. NOT people like the user (use findMatches). "
+                                   "Each result may have a `contact` line of the person's links — "
+                                   "print it VERBATIM; never paraphrase as 'links available'.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "parameters": [
+                        {"name": "target", "in": "query", "required": True,
+                         "schema": {"type": "string"}},
+                        {"name": "limit", "in": "query", "required": False,
+                         "schema": {"type": "integer"}},
+                    ],
+                    "responses": {"200": {"description": "Matching people",
+                        "content": {"application/json": {"schema": {
+                            "type": "array", "items": {"$ref": "#/components/schemas/Match"}}}}}},
+                }
+            },
+            "/me/connect": {
+                "post": {
+                    "operationId": "connectWith",
+                    "summary": "Send a connection request to a matched person (via persona).",
+                    "description": "After findPeople/findMatches, call this to send a connection "
+                                   "request to a person the user chose. Pass their user_id from the "
+                                   "results as target_user_id (+ optional short message). Routes "
+                                   "through persona (agent-to-agent), so it works even if they're "
+                                   "offline.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "requestBody": {"required": True, "content": {"application/json": {
+                        "schema": {"$ref": "#/components/schemas/ConnectRequest"}}}},
+                    "responses": {"200": {"description": "Request sent"}},
+                }
+            },
+            "/me/logout": {
+                "post": {
+                    "operationId": "disconnect",
+                    "summary": "Sign the user out of ZYND (revoke all their tokens).",
+                    "description": "Call when the user wants to disconnect / sign out / start "
+                                   "fresh. Revokes all their ZYND tokens; they'll be asked to "
+                                   "sign in again next time. No request body needed.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "responses": {"200": {"description": "Signed out"}},
+                }
+            },
+            "/me/confirm": {
+                "post": {
+                    "operationId": "confirmFact",
+                    "summary": "User confirms a fact is true (boosts its confidence).",
+                    "description": "Call when the user confirms/affirms one of their facts. Pass the "
+                                   "exact predicate and object from getMyContext.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "requestBody": {"required": True, "content": {"application/json": {
+                        "schema": {"$ref": "#/components/schemas/FactRef"}}}},
+                    "responses": {"200": {"description": "Confirmed"}},
+                }
+            },
+            "/me/forget": {
+                "post": {
+                    "operationId": "forgetFact",
+                    "summary": "User asks to forget/remove a fact about them.",
+                    "description": "Call when the user says something is wrong or asks you to forget it. "
+                                   "Pass the exact predicate and object from getMyContext.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "requestBody": {"required": True, "content": {"application/json": {
+                        "schema": {"$ref": "#/components/schemas/FactRef"}}}},
+                    "responses": {"200": {"description": "Forgotten"}},
+                }
+            },
+            "/me/pages": {
+                "post": {
+                    "operationId": "publishPage",
+                    "summary": "Host an HTML/Markdown page and get a shareable link.",
+                    "description": "When the user wants something turned into a shareable web page "
+                                   "(HTML or markdown — a doc, resume, landing page, notes), call this "
+                                   "with the FULL content. Returns a public `url` — show that link to "
+                                   "the user. Set format to html or markdown.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "requestBody": {"required": True, "content": {"application/json": {
+                        "schema": {"$ref": "#/components/schemas/PublishPageRequest"}}}},
+                    "responses": {"200": {"description": "Page hosted",
+                        "content": {"application/json": {"schema": {
+                            "$ref": "#/components/schemas/PublishedPage"}}}}},
+                },
+                "get": {
+                    "operationId": "listPages",
+                    "summary": "List pages the user has hosted.",
+                    "description": "Return the user's previously hosted pages (url, title, slug). "
+                                   "Call when they ask to see what they've published.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "responses": {"200": {"description": "User's pages",
+                        "content": {"application/json": {"schema": {
+                            "type": "array", "items": {"$ref": "#/components/schemas/PublishedPage"}}}}}},
+                },
+            },
+        },
+        "components": {
+            "securitySchemes": {
+                "OAuth2": {
+                    "type": "oauth2",
+                    "flows": {
+                        "authorizationCode": {
+                            "authorizationUrl": f"{base}/oauth/authorize",
+                            "tokenUrl": f"{base}/oauth/token",
+                            "scopes": {"ingest": "Send conversation data to ZYND"},
+                        }
+                    },
+                }
+            },
+            "schemas": {
+                "Turn": {
+                    "type": "object",
+                    "required": ["role", "content"],
+                    "properties": {
+                        "role": {"type": "string", "enum": ["user", "assistant"]},
+                        "content": {"type": "string"},
+                        "timestamp": {"type": "string", "format": "date-time"},
+                    },
+                },
+                "IngestRequest": {
+                    "type": "object",
+                    "required": ["turns"],
+                    "properties": {
+                        "conversation_id": {"type": "string"},
+                        "source_system": {"type": "string", "default": "chatgpt"},
+                        "turns": {"type": "array", "items": {"$ref": "#/components/schemas/Turn"}},
+                    },
+                },
+                "IngestResponse": {
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string"},
+                        "chunks_inserted": {"type": "integer"},
+                        "chunks_skipped": {"type": "integer"},
+                    },
+                },
+                "Fact": {
+                    "type": "object",
+                    "properties": {
+                        "statement": {"type": "string",
+                                      "description": "Natural-language rendering — show THIS to the user."},
+                        "predicate": {"type": "string"},
+                        "object": {"type": "string"},
+                        "object_type": {"type": "string"},
+                        "confidence": {"type": "number"},
+                    },
+                },
+                "FactRef": {
+                    "type": "object",
+                    "required": ["predicate", "object"],
+                    "properties": {
+                        "predicate": {"type": "string"},
+                        "object": {"type": "string"},
+                    },
+                },
+                "ConnectRequest": {
+                    "type": "object",
+                    "required": ["target_user_id"],
+                    "properties": {
+                        "target_user_id": {"type": "string",
+                                           "description": "user_id from findPeople/findMatches results"},
+                        "message": {"type": "string"},
+                    },
+                },
+                "Match": {
+                    "type": "object",
+                    "properties": {
+                        "user_id": {"type": "string"},
+                        "display_name": {"type": "string"},
+                        "similarity": {"type": "number"},
+                        "assertion_count": {"type": "integer"},
+                        "contact": {"type": "string",
+                                    "description": "Ready-to-display line of the person's links — "
+                                                   "print it VERBATIM under their name."},
+                        "socials": {
+                            "type": "object",
+                            "description": "The person's public social links (any of linkedin, "
+                                           "twitter, github, website, instagram, telegram). Show "
+                                           "these next to the person so the user can reach them.",
+                            "properties": {
+                                "linkedin": {"type": "string"}, "twitter": {"type": "string"},
+                                "github": {"type": "string"}, "website": {"type": "string"},
+                                "instagram": {"type": "string"}, "telegram": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+                "PublishPageRequest": {
+                    "type": "object",
+                    "required": ["content"],
+                    "properties": {
+                        "content": {"type": "string",
+                                    "description": "Full page body — HTML or Markdown text."},
+                        "title": {"type": "string"},
+                        "format": {"type": "string", "enum": ["html", "markdown"], "default": "html"},
+                        "visibility": {"type": "string",
+                                       "enum": ["public", "unlisted", "private"], "default": "unlisted"},
+                    },
+                },
+                "PublishedPage": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string",
+                                "description": "Public share link — show THIS to the user."},
+                        "slug": {"type": "string"},
+                        "title": {"type": "string"},
+                        "format": {"type": "string"},
+                        "visibility": {"type": "string"},
+                    },
+                },
+            },
+        },
+    }

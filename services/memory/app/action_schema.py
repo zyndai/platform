@@ -70,10 +70,11 @@ def build_action_schema() -> dict:
                 "get": {
                     "operationId": "findMatches",
                     "summary": "Find people whose active context overlaps the user's.",
-                    "description": "Call when the user asks who else is building/working on/learning "
-                                   "something similar. cluster_type is one of intent_cluster, "
-                                   "skill_cluster, belief_cluster, concept_cluster, full_context "
-                                   "(default intent_cluster). Returns similar users, most similar first.",
+                    "description": "Who else is building/learning what the user is. Optional "
+                                   "cluster_type (intent_cluster/skill_cluster/place_cluster/"
+                                   "full_context). Each result may have a `contact` line of the "
+                                   "person's links — print it VERBATIM; never paraphrase as "
+                                   "'links available'.",
                     "security": [{"OAuth2": ["ingest"]}],
                     "parameters": [
                         {"name": "cluster_type", "in": "query", "required": False,
@@ -90,11 +91,10 @@ def build_action_schema() -> dict:
                 "get": {
                     "operationId": "findPeople",
                     "summary": "Find people matching a DESCRIBED target profile (complementary).",
-                    "description": "Find people matching a DESCRIBED target profile (complementary) "
-                                   "— investor, hire, partner, advisor. Pass `target` as a "
-                                   "description of who they want (e.g. 'seed-stage investor for dev "
-                                   "tools'). Returns people matching that, NOT people like the user "
-                                   "(use findMatches for 'who is like me').",
+                    "description": "Find people matching a DESCRIBED target (investor/hire/partner) "
+                                   "— pass `target`. NOT people like the user (use findMatches). "
+                                   "Each result may have a `contact` line of the person's links — "
+                                   "print it VERBATIM; never paraphrase as 'links available'.",
                     "security": [{"OAuth2": ["ingest"]}],
                     "parameters": [
                         {"name": "target", "in": "query", "required": True,
@@ -233,6 +233,9 @@ def build_action_schema() -> dict:
                         "display_name": {"type": "string"},
                         "similarity": {"type": "number"},
                         "assertion_count": {"type": "integer"},
+                        "contact": {"type": "string",
+                                    "description": "Ready-to-display line of the person's links — "
+                                                   "print it VERBATIM under their name."},
                         "socials": {
                             "type": "object",
                             "description": "The person's public social links (any of linkedin, "

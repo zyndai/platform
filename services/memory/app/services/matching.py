@@ -20,6 +20,10 @@ from app.taxonomy import CLUSTER_PREDICATES
 # Social links surfaced with a match (from the person's persona profile) so the caller
 # can reach out. Non-URL/empty values are dropped.
 _SOCIAL_KEYS = ("linkedin", "twitter", "github", "website", "instagram", "telegram")
+_SOCIAL_LABELS = {
+    "linkedin": "LinkedIn", "twitter": "Twitter/X", "github": "GitHub",
+    "website": "Website", "instagram": "Instagram", "telegram": "Telegram",
+}
 
 CONFIDENCE_FLOOR = 0.3   # brief §10.2
 MAX_ASSERTIONS_PER_CLUSTER = 50
@@ -197,5 +201,8 @@ async def _results_with_socials(rows: list[asyncpg.Record]) -> list[dict]:
         }
         if links:
             item["socials"] = links
+            # A ready-to-print line so the agent can show it verbatim without having to
+            # format the object (which it tends to summarize away).
+            item["contact"] = " · ".join(f"{_SOCIAL_LABELS[k]}: {v}" for k, v in links.items())
         out.append(item)
     return out

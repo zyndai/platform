@@ -62,6 +62,17 @@ async def test_unknown_slug_is_404(client):
     assert (await client.get("/pages/does-not-exist")).status_code == 404
 
 
+async def test_served_page_is_sandboxed(client):
+    """Hosted HTML/JS must be served with a sandbox CSP so it can't reach the API origin."""
+    slug = (await client.post("/me/pages", headers=AUTH,
+                              json={"content": "<b>hi</b>", "format": "html"})).json()["slug"]
+    page = await client.get(f"/pages/{slug}")
+    csp = page.headers.get("content-security-policy", "")
+    assert "sandbox" in csp
+    assert page.headers.get("x-content-type-options") == "nosniff"
+    assert page.headers.get("x-frame-options") == "DENY"
+
+
 async def test_list_pages_newest_first(client):
     await client.post("/me/pages", headers=AUTH, json={"content": "one", "title": "One"})
     await client.post("/me/pages", headers=AUTH, json={"content": "two", "title": "Two"})

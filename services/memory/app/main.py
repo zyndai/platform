@@ -438,11 +438,24 @@ color:#55555f;font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,s
 <body><div class="b"><h1>404</h1><p>This page doesn't exist or is private.</p></div></body></html>"""
 
 
+# Hosted pages contain user/GPT-authored HTML+JS. Serving it on the API origin
+# is a stored-XSS surface, so we sandbox every page: the CSP `sandbox` directive
+# forces a unique null origin, so page scripts still run but cannot make
+# same-origin credentialed calls to the API, read its storage, or be framed for
+# clickjacking. (api.zynd.ai sets no cookies, so this is defence-in-depth.)
+_PAGE_SECURITY_HEADERS = {
+    "Content-Security-Policy": "sandbox allow-scripts allow-popups allow-forms",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+}
+
+
 @app.get("/pages/{slug}", include_in_schema=False)
 async def serve_page(slug: str) -> HTMLResponse:
     """Publicly render a hosted page by slug (server-side). No auth."""
     from app.services import pages
     row = await pages.get_page_public(get_pool(), slug)
     if not row:
-        return HTMLResponse(_PAGE_404_HTML, status_code=404)
-    return HTMLResponse(pages.render_page_html(row))
+        return HTMLResponse(_PAGE_404_HTML, status_code=404, headers=_PAGE_SECURITY_HEADERS)
+    return HTMLResponse(pages.render_page_html(row), headers=_PAGE_SECURITY_HEADERS)

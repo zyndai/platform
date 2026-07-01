@@ -21,8 +21,8 @@ import { useDashboard } from "@/contexts/DashboardContext";
 import { defaultPersonaStyle, generateAvatarDataUri } from "@/lib/dicebear";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-// ZYND memory-layer — social links are mirrored here so matches can show them.
-const ZYND_API = (process.env.NEXT_PUBLIC_ZYND_API_URL || "https://api.zynd.ai").replace(/\/$/, "");
+// Memory service — social links are mirrored here so matches can show them.
+const MEMORY_API = (process.env.NEXT_PUBLIC_MEMORY_API_URL || "https://api.zynd.ai").replace(/\/$/, "");
 
 interface PersonaProfile {
   avatar_url?: string | null;
@@ -352,7 +352,7 @@ export default function YouPage() {
       // Mirror the social links into ZYND memory-layer so matches surface them.
       // Best-effort — the persona profile is already saved above.
       try {
-        await fetch(`${ZYND_API}/me/social-links`, {
+        await fetch(`${MEMORY_API}/me/social-links`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

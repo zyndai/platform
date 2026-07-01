@@ -10,7 +10,7 @@
  * origin, same tab) and the multi-step onboarding navigation.
  */
 const KEY = "zynd_oauth_req";
-const ZYND_API = (process.env.NEXT_PUBLIC_ZYND_API_URL || "").replace(/\/$/, "");
+const MEMORY_API = (process.env.NEXT_PUBLIC_MEMORY_API_URL || "").replace(/\/$/, "");
 
 /** Capture `?zynd_oauth` from the current URL into sessionStorage, if present. */
 export function captureZyndOAuthReq(): void {
@@ -33,7 +33,7 @@ export function captureZyndOAuthReq(): void {
  * lands in the persona dashboard instead of being trapped in a redirect loop.
  */
 export async function completeZyndOAuth(accessToken: string | undefined): Promise<boolean> {
-  if (typeof window === "undefined" || !accessToken || !ZYND_API) return false;
+  if (typeof window === "undefined" || !accessToken || !MEMORY_API) return false;
   let req: string | null = null;
   try {
     req = window.sessionStorage.getItem(KEY);
@@ -43,7 +43,7 @@ export async function completeZyndOAuth(accessToken: string | undefined): Promis
   if (!req) return false;
 
   try {
-    const res = await fetch(`${ZYND_API}/oauth/complete`, {
+    const res = await fetch(`${MEMORY_API}/oauth/complete`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ req, supabase_token: accessToken }),

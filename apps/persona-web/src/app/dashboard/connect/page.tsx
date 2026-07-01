@@ -3,9 +3,9 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { getSupabase } from "@/lib/supabase";
 
-// ZYND memory-layer. It validates the persona Supabase session token (same project),
+// Memory service. It validates the persona Supabase session token (same project),
 // so the signed-in user can mint their MCP token straight from here.
-const ZYND_API = (process.env.NEXT_PUBLIC_ZYND_API_URL || "https://api.zynd.ai").replace(/\/$/, "");
+const MEMORY_API = (process.env.NEXT_PUBLIC_MEMORY_API_URL || "https://api.zynd.ai").replace(/\/$/, "");
 
 type Exchange = { token: string; mcp_url: string; email: string };
 type Status = "loading" | "ready" | "error";
@@ -35,7 +35,7 @@ export default function ConnectPage() {
         const { data: { session } } = await getSupabase().auth.getSession();
         const token = session?.access_token;
         if (!token) throw new Error("You're not signed in — reload the page.");
-        const res = await fetch(`${ZYND_API}/token/exchange`, {
+        const res = await fetch(`${MEMORY_API}/token/exchange`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
         });

@@ -1,9 +1,9 @@
 """Hosted, authenticated ZYND MCP server (streamable-HTTP transport).
 
-Remote version of app/mcp_server.py: any MCP client (Claude Desktop, Cursor, …)
-connects to https://<host>/mcp with a ZYND bearer token. The token is verified per
-request and the tools are scoped to that authenticated user — there is no trusted
-user_id parameter, so one user can never read or change another's data.
+Any MCP client (Claude Desktop, Cursor, …) connects to https://<host>/mcp with a
+ZYND bearer token. The token is verified per request and the tools are scoped to
+that authenticated user — there is no trusted user_id parameter, so one user can
+never read or change another's data.
 
 Run:  uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
 """

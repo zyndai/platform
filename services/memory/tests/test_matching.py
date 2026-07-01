@@ -265,6 +265,28 @@ async def test_findability_facts_are_public_by_default(client):
     assert by_pred.get("believes") is False      # everything else -> stays private
 
 
+async def test_match_surfaces_stored_socials(client):
+    pool = get_pool()
+    caller = await _make_user("sc_caller@example.com")
+    target = await _make_user("sc_target@example.com")
+    await _seed_many(target, SHARED_INTENT)
+    await recompute_user_embeddings(pool, str(target))
+    await pool.execute(
+        "UPDATE users SET socials = $2::jsonb WHERE id = $1", target,
+        '{"linkedin":"https://linkedin.com/in/t","telegram":"@t","instagram":""}')
+
+    res = await search_by_query(pool, str(caller), _TARGET_QUERY, "full_context")
+    tgt = next(r for r in res if r["user_id"] == str(target))
+    assert tgt["socials"] == {"linkedin": "https://linkedin.com/in/t", "telegram": "@t"}  # empty dropped
+    assert "LinkedIn:" in tgt["contact"] and "Telegram:" in tgt["contact"]
+
+
+async def test_social_links_endpoint_requires_valid_session(client):
+    # No/invalid Supabase session -> 401 (supabase not configured in tests).
+    r = await client.post("/me/social-links", json={"linkedin": "https://x"})
+    assert r.status_code == 401
+
+
 async def test_connect_endpoint_gated_when_persona_disabled(client):
     # persona_enabled is false in tests -> the connect action degrades cleanly (503),
     # proving the endpoint is wired and maps the gate to a friendly status (not a 500).

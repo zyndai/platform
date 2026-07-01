@@ -1,4 +1,5 @@
 import hmac
+import json
 import logging
 from contextlib import asynccontextmanager
 
@@ -11,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from app.auth import issue_personal_token, verify_access_claims, verify_access_token
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool
-from app.models import AssertionView, ConnectRequest, ContextRequest, DeclareRequest, FactRef, IngestRequest, IngestResponse
+from app.models import AssertionView, ConnectRequest, ContextRequest, DeclareRequest, FactRef, IngestRequest, IngestResponse, SocialLinks
 from app.services.ingest import ingest_turns
 from app.connect import router as connect_router
 from app.docs import router as docs_router
@@ -164,6 +165,23 @@ async def token_exchange(authorization: str = Header(default="")) -> dict:
         "mcp_url": f"{base}/mcp",
         "email": email,
     }
+
+
+@app.post("/me/social-links")
+async def set_my_social_links(body: SocialLinks, authorization: str = Header(default="")) -> dict:
+    """Store the caller's public social links in memory-layer, synced from the persona
+    You page. Authenticated with the persona Supabase session token (same as
+    /token/exchange), so the persona webapp can push without a separate ZYND token."""
+    supabase_token = authorization.removeprefix("Bearer ").strip()
+    from app.supabase_auth import supabase_identity
+    identity = await supabase_identity(supabase_token)
+    if not identity:
+        raise HTTPException(status_code=401, detail="invalid or expired session")
+    email, _display_name, _sub = identity
+    links = {k: v.strip() for k, v in body.model_dump().items() if v and v.strip()}
+    await get_pool().execute(
+        "UPDATE users SET socials = $2::jsonb WHERE email = $1", email, json.dumps(links))
+    return {"status": "saved", "socials": links}
 
 
 @app.post("/ingest", response_model=IngestResponse)

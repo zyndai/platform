@@ -8,7 +8,7 @@ Match (brief §6.1): cosine ANN over user_embeddings — the HNSW index makes th
 a single vector scan. Decayed/archived assertions are excluded upstream, so a
 match reflects what each user is about *now*.
 """
-import asyncio
+import json
 
 import asyncpg
 
@@ -109,7 +109,7 @@ async def match_users(
         return []  # this user has no vector for that cluster yet
 
     rows = await pool.fetch(
-        """SELECT ue.user_id, u.display_name, u.supabase_user_id,
+        """SELECT ue.user_id, u.display_name, u.socials,
                   1 - (ue.embedding <=> $1::vector) AS similarity,
                   ue.assertion_count
              FROM user_embeddings ue
@@ -146,7 +146,7 @@ async def search_by_query(
 
     query_vector = to_pgvector(await embed(query_text))
     rows = await pool.fetch(
-        """SELECT ue.user_id, u.display_name, u.supabase_user_id,
+        """SELECT ue.user_id, u.display_name, u.socials,
                   1 - (ue.embedding <=> $1::vector) AS similarity,
                   ue.assertion_count
              FROM user_embeddings ue
@@ -171,38 +171,33 @@ def _match_label(display_name: str | None, user_id: str) -> str:
     return display_name.split("@", 1)[0]
 
 
-async def _socials_for(supabase_sub: str | None) -> dict:
-    """Best-effort: the person's public social links from their persona profile. Never
-    raises — a match must never fail because persona is slow or the person has none."""
-    if not (settings.persona_enabled and supabase_sub):
+def _parse_socials(raw) -> dict:
+    """Clean the stored users.socials jsonb (str or dict) to known non-empty links."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+    if not isinstance(raw, dict):
         return {}
-    try:
-        from app.services import persona
-        status = await persona.get_status(supabase_sub)
-        profile = (status or {}).get("profile") or {}
-        return {k: profile[k].strip() for k in _SOCIAL_KEYS
-                if isinstance(profile.get(k), str) and profile[k].strip()}
-    except Exception:  # noqa: BLE001 — socials are decorative; never break a match
-        return {}
+    return {k: str(raw[k]).strip() for k in _SOCIAL_KEYS if raw.get(k) and str(raw[k]).strip()}
 
 
 async def _results_with_socials(rows: list[asyncpg.Record]) -> list[dict]:
-    """Shape match rows and enrich each with the person's social links (fetched from
-    persona in parallel). Same base shape as before + an optional `socials` object so
-    the agent can show LinkedIn / Telegram / etc. next to each matched person."""
-    socials = await asyncio.gather(*[_socials_for(r["supabase_user_id"]) for r in rows]) if rows else []
+    """Shape match rows + attach each person's stored social links (users.socials, kept
+    in sync from the persona profile). Adds an optional `socials` object and a ready-to-
+    print `contact` line so the agent can show LinkedIn / Telegram / etc. verbatim."""
     out: list[dict] = []
-    for r, links in zip(rows, socials):
+    for r in rows:
         item = {
             "user_id": str(r["user_id"]),
             "display_name": _match_label(r["display_name"], str(r["user_id"])),
             "similarity": round(float(r["similarity"]), 4),
             "assertion_count": r["assertion_count"],
         }
+        links = _parse_socials(r["socials"])
         if links:
             item["socials"] = links
-            # A ready-to-print line so the agent can show it verbatim without having to
-            # format the object (which it tends to summarize away).
             item["contact"] = " · ".join(f"{_SOCIAL_LABELS[k]}: {v}" for k, v in links.items())
         out.append(item)
     return out

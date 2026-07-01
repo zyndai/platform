@@ -78,6 +78,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS persona_agent_id text;   -- zns:<hash
 -- sign-out / disconnect: tokens issued before this watermark are rejected (see services/sessions).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tokens_revoked_at timestamptz;
 
+-- public social links, synced from the persona profile (shown with matches). {} = none.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS socials jsonb NOT NULL DEFAULT '{}'::jsonb;
+
 -- §3.5 assertion_history — append-only audit log.
 CREATE TABLE IF NOT EXISTS assertion_history (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),

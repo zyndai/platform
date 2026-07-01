@@ -9,6 +9,7 @@ Idempotent by construction: the assembled text is deterministic, so an unchanged
 profile collides on the trace_chunk content hash and is skipped; a changed profile
 re-seeds the delta. Best-effort and never raises — login must not depend on persona.
 """
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -76,6 +77,22 @@ def _profile_text(status: dict) -> str:
     return " ".join(parts)
 
 
+_SOCIAL_KEYS = ("linkedin", "twitter", "github", "website", "instagram", "telegram")
+
+
+async def _store_socials(pool: asyncpg.Pool, user_id: str, status: dict) -> None:
+    """Mirror the persona profile's social links into memory-layer (users.socials) so
+    matches can surface them without a live persona fetch. Best-effort."""
+    profile = status.get("profile") or {}
+    links = {k: profile[k].strip() for k in _SOCIAL_KEYS
+             if isinstance(profile.get(k), str) and profile[k].strip()}
+    try:
+        await pool.execute("UPDATE users SET socials = $2::jsonb WHERE id = $1",
+                           user_id, json.dumps(links))
+    except Exception as exc:  # never block seeding on socials
+        logger.warning("store socials failed for %s: %s", user_id, exc)
+
+
 async def publish_persona_findability(pool: asyncpg.Pool, user_id: str, status: dict) -> int:
     """Auto-publish the safe findability fields from the persona profile as a PUBLIC,
     matchable card — persona is a discovery network, so being findable is the intent.
@@ -128,6 +145,7 @@ async def seed_persona_profile(pool: asyncpg.Pool, arq, user_id: str, supabase_s
         status = await persona.get_status(supabase_sub)
         if not (status and status.get("deployed") and status.get("agent_id")):
             return {"seeded": False, "reason": "no persona profile"}
+        await _store_socials(pool, user_id, status)   # keep social links in sync on login
         published = await publish_persona_findability(pool, user_id, status)
         text = _profile_text(status)
         inserted = 0

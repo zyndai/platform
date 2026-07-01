@@ -79,6 +79,15 @@ class ConnectRequest(BaseModel):
     message: str = Field(default="Hi — we matched on ZYND, I'd love to connect.", max_length=2000)
 
 
+class SocialLinks(BaseModel):
+    linkedin: str = Field(default="", max_length=300)
+    twitter: str = Field(default="", max_length=300)
+    instagram: str = Field(default="", max_length=300)
+    telegram: str = Field(default="", max_length=300)
+    github: str = Field(default="", max_length=300)
+    website: str = Field(default="", max_length=300)
+
+
 class AssertionView(BaseModel):
     statement: str = ""        # natural-language rendering for display (humanize)
     predicate: str

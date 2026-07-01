@@ -88,6 +88,20 @@ class SocialLinks(BaseModel):
     website: str = Field(default="", max_length=300)
 
 
+class PublishPageRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=1_000_000)   # HTML or Markdown body
+    title: str = Field(default="", max_length=200)
+    format: str = Field(default="html", pattern=r"^(html|htm|markdown|md)$")
+    visibility: str = Field(default="unlisted", pattern=r"^(public|unlisted|private)$")
+
+
+class UpdatePageRequest(BaseModel):
+    content: str | None = Field(default=None, min_length=1, max_length=1_000_000)
+    title: str | None = Field(default=None, max_length=200)
+    format: str | None = Field(default=None, pattern=r"^(html|htm|markdown|md)$")
+    visibility: str | None = Field(default=None, pattern=r"^(public|unlisted|private)$")
+
+
 class AssertionView(BaseModel):
     statement: str = ""        # natural-language rendering for display (humanize)
     predicate: str

@@ -132,3 +132,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS user_embeddings_user_cluster
 ALTER TABLE assertions        ALTER COLUMN confidence     TYPE double precision;
 ALTER TABLE assertion_history ALTER COLUMN prev_confidence TYPE double precision;
 ALTER TABLE assertion_history ALTER COLUMN new_confidence  TYPE double precision;
+
+-- Shareable HTML / Markdown pages the GPT/agent hosts on the user's behalf.
+-- Slug is an unguessable token; pages are server-rendered at
+-- {public_base_url}/pages/{slug}. Cascade-deletes with the owning user.
+CREATE TABLE IF NOT EXISTS published_pages (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slug        text NOT NULL UNIQUE,
+  title       text NOT NULL DEFAULT 'Untitled page',
+  format      text NOT NULL DEFAULT 'html' CHECK (format IN ('html','markdown')),
+  content     text NOT NULL,
+  visibility  text NOT NULL DEFAULT 'unlisted' CHECK (visibility IN ('public','unlisted','private')),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS published_pages_slug_idx ON published_pages (slug);
+CREATE INDEX IF NOT EXISTS published_pages_user_idx ON published_pages (user_id, created_at DESC);

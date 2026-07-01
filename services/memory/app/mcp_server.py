@@ -96,5 +96,24 @@ async def forget_user_fact(user_id: str, predicate: str, object: str) -> dict:
     return {"forgotten": ok}
 
 
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+async def publish_page(user_id: str, content: str, title: str = "", format: str = "html",
+                       visibility: str = "unlisted") -> dict:
+    """Host an HTML/Markdown page for the user and return a public share URL.
+
+    Use when the user asks to turn content into a shareable web page. Pass the full body
+    as `content`; `format` is "html" or "markdown". Returns {success, url, slug, title}.
+
+    Args:
+        user_id: The ZYND user id (uuid).
+        content: Full page body — HTML or Markdown.
+        title: Short page title (optional).
+        format: "html" or "markdown".
+        visibility: "unlisted" (default), "public", or "private".
+    """
+    from app.services import pages
+    return await pages.create_page(get_pool(), user_id, content, title, format, visibility)
+
+
 if __name__ == "__main__":
     mcp.run()

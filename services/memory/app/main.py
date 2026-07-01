@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from app.auth import issue_personal_token, verify_access_claims, verify_access_token
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool
-from app.models import AssertionView, ConnectRequest, ContextRequest, DeclareRequest, FactRef, IngestRequest, IngestResponse, SocialLinks
+from app.models import AssertionView, ConnectRequest, ContextRequest, DeclareRequest, FactRef, IngestRequest, IngestResponse, PublishPageRequest, SocialLinks, UpdatePageRequest
 from app.services.ingest import ingest_turns
 from app.connect import router as connect_router
 from app.docs import router as docs_router
@@ -33,7 +33,7 @@ app = FastAPI(title="ZYND", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 app.include_router(oauth_router)
@@ -382,3 +382,67 @@ async def context_packet(
         raise HTTPException(status_code=403, detail="can only query your own context")
     from app.services.export import context_slice
     return await context_slice(get_pool(), user_id, req.topic, req.k)
+
+
+# ── Shareable page hosting ──────────────────────────────────────────────
+# The GPT/agent creates an HTML or Markdown artifact and hosts it at a public
+# link (/pages/{slug}). Authed CRUD lives under /me/pages; the served page is
+# public (unguessable slug).
+
+@app.post("/me/pages")
+async def publish_page(body: PublishPageRequest, user_id: str = Depends(current_user)) -> dict:
+    """Host an HTML/Markdown page and return its public share URL."""
+    from app.services import pages
+    result = await pages.create_page(
+        get_pool(), user_id, body.content, body.title, body.format, body.visibility
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "could not create page"))
+    return result
+
+
+@app.get("/me/pages")
+async def list_my_pages(user_id: str = Depends(current_user)) -> list[dict]:
+    """List the pages the user has hosted, newest first."""
+    from app.services import pages
+    return await pages.list_pages(get_pool(), user_id)
+
+
+@app.patch("/me/pages/{slug}")
+async def edit_page(slug: str, body: UpdatePageRequest, user_id: str = Depends(current_user)) -> dict:
+    """Update one of the user's hosted pages (only provided fields change)."""
+    from app.services import pages
+    result = await pages.update_page(
+        get_pool(), user_id, slug, body.content, body.title, body.format, body.visibility
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "page not found"))
+    return result
+
+
+@app.delete("/me/pages/{slug}")
+async def remove_page(slug: str, user_id: str = Depends(current_user)) -> dict:
+    """Delete one of the user's hosted pages."""
+    from app.services import pages
+    result = await pages.delete_page(get_pool(), user_id, slug)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "page not found"))
+    return result
+
+
+_PAGE_404_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Page not found</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f7f8fa;
+color:#55555f;font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.b{text-align:center}.b h1{font-size:3rem;margin:0;color:#1a1a1e}</style></head>
+<body><div class="b"><h1>404</h1><p>This page doesn't exist or is private.</p></div></body></html>"""
+
+
+@app.get("/pages/{slug}", include_in_schema=False)
+async def serve_page(slug: str) -> HTMLResponse:
+    """Publicly render a hosted page by slug (server-side). No auth."""
+    from app.services import pages
+    row = await pages.get_page_public(get_pool(), slug)
+    if not row:
+        return HTMLResponse(_PAGE_404_HTML, status_code=404)
+    return HTMLResponse(pages.render_page_html(row))

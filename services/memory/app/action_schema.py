@@ -157,6 +157,32 @@ def build_action_schema() -> dict:
                     "responses": {"200": {"description": "Forgotten"}},
                 }
             },
+            "/me/pages": {
+                "post": {
+                    "operationId": "publishPage",
+                    "summary": "Host an HTML/Markdown page and get a shareable link.",
+                    "description": "When the user wants something turned into a shareable web page "
+                                   "(HTML or markdown — a doc, resume, landing page, notes), call this "
+                                   "with the FULL content. Returns a public `url` — show that link to "
+                                   "the user. Set format to html or markdown.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "requestBody": {"required": True, "content": {"application/json": {
+                        "schema": {"$ref": "#/components/schemas/PublishPageRequest"}}}},
+                    "responses": {"200": {"description": "Page hosted",
+                        "content": {"application/json": {"schema": {
+                            "$ref": "#/components/schemas/PublishedPage"}}}}},
+                },
+                "get": {
+                    "operationId": "listPages",
+                    "summary": "List pages the user has hosted.",
+                    "description": "Return the user's previously hosted pages (url, title, slug). "
+                                   "Call when they ask to see what they've published.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "responses": {"200": {"description": "User's pages",
+                        "content": {"application/json": {"schema": {
+                            "type": "array", "items": {"$ref": "#/components/schemas/PublishedPage"}}}}}},
+                },
+            },
         },
         "components": {
             "securitySchemes": {
@@ -247,6 +273,29 @@ def build_action_schema() -> dict:
                                 "instagram": {"type": "string"}, "telegram": {"type": "string"},
                             },
                         },
+                    },
+                },
+                "PublishPageRequest": {
+                    "type": "object",
+                    "required": ["content"],
+                    "properties": {
+                        "content": {"type": "string",
+                                    "description": "Full page body — HTML or Markdown text."},
+                        "title": {"type": "string"},
+                        "format": {"type": "string", "enum": ["html", "markdown"], "default": "html"},
+                        "visibility": {"type": "string",
+                                       "enum": ["public", "unlisted", "private"], "default": "unlisted"},
+                    },
+                },
+                "PublishedPage": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string",
+                                "description": "Public share link — show THIS to the user."},
+                        "slug": {"type": "string"},
+                        "title": {"type": "string"},
+                        "format": {"type": "string"},
+                        "visibility": {"type": "string"},
                     },
                 },
             },

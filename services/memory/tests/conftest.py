@@ -23,7 +23,7 @@ ADMIN_DSN = "postgresql://zynd:zynd@localhost:5433/zynd"
 TEST_DSN = os.environ["DATABASE_URL"]
 SCHEMA_PATH = pathlib.Path(__file__).resolve().parents[1] / "sql" / "schema.sql"
 
-_DERIVED_TABLES = "assertion_history, assertions, user_embeddings, entities, trace_chunks"
+_DERIVED_TABLES = "assertion_history, assertions, user_embeddings, entities, trace_chunks, published_pages"
 
 
 async def _setup_test_db() -> None:

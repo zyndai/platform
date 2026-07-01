@@ -156,6 +156,25 @@ async def forget_fact_tool(predicate: str, object: str) -> dict:
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+async def publish_page(content: str, title: str = "", format: str = "html",
+                       visibility: str = "unlisted") -> dict:
+    """Host an HTML or Markdown page for the signed-in user and return a public share URL.
+
+    Use when the user asks to turn something into a shareable web page ("make this a page I
+    can send", "publish this as HTML"). Pass the full body as `content`; set `format` to
+    "html" or "markdown". Returns {success, url, slug, title}. Show the `url` to the user."""
+    from app.services import pages
+    return await pages.create_page(await _get_pool(), _uid(), content, title, format, visibility)
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+async def list_my_pages() -> list[dict]:
+    """List the shareable pages the signed-in user has hosted (newest first)."""
+    from app.services import pages
+    return await pages.list_pages(await _get_pool(), _uid())
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
 async def disconnect() -> dict:
     """Sign out of ZYND — revokes this token and all your other ZYND tokens (web, GPT,
     other MCP clients). You'll need to reconnect / sign in again to use ZYND."""

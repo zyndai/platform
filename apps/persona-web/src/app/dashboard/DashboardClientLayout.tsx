@@ -21,6 +21,7 @@ import {
   Share2,
   UsersRound,
   Globe,
+  Plug,
 } from "lucide-react";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
 import {
@@ -57,6 +58,7 @@ const ARIA_NAV: NavItem[] = [
 const YOU_NAV: NavItem[] = [
   { href: "/dashboard/brief",    label: "Your brief", icon: FileText,   tone: "amber" },
   { href: "/dashboard/pages",    label: "Pages",      icon: Globe,      tone: "sky"   },
+  { href: "/dashboard/connect",  label: "Connect AI", icon: Plug,       tone: "violet"},
   { href: "/dashboard/todos",    label: "Todos",      icon: ListChecks, tone: "rose"  },
   { href: "/dashboard/settings", label: "Settings",   icon: Settings,   tone: "slate" },
 ];

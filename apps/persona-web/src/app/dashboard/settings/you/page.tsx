@@ -57,7 +57,21 @@ interface DraftProfile {
   organization: string;
   location: string;
   tags: string[];
+  linkedin: string;
+  twitter: string;
+  instagram: string;
+  telegram: string;
+  website: string;
 }
+
+// Social fields shown in the "Links" section; also what ZYND surfaces with a match.
+const SOCIAL_FIELDS: { key: "linkedin" | "twitter" | "instagram" | "telegram" | "website"; label: string; placeholder: string }[] = [
+  { key: "linkedin", label: "LinkedIn", placeholder: "https://linkedin.com/in/you" },
+  { key: "twitter", label: "Twitter / X", placeholder: "@handle or url" },
+  { key: "instagram", label: "Instagram", placeholder: "@handle" },
+  { key: "telegram", label: "Telegram", placeholder: "@handle" },
+  { key: "website", label: "Website", placeholder: "https://…" },
+];
 
 type VisibilityKey = "publicProfile" | "calendar" | "chat" | "contact";
 
@@ -68,6 +82,11 @@ const EMPTY_DRAFT: DraftProfile = {
   organization: "",
   location: "",
   tags: [],
+  linkedin: "",
+  twitter: "",
+  instagram: "",
+  telegram: "",
+  website: "",
 };
 
 // Default visibility — what a brand-new card shows publicly. Stored on
@@ -156,6 +175,11 @@ export default function YouPage() {
       organization: String(profile.organization || ""),
       location: String(profile.location || ""),
       tags: intoTags(profile.interests),
+      linkedin: String(profile.linkedin || ""),
+      twitter: String(profile.twitter || ""),
+      instagram: String(profile.instagram || ""),
+      telegram: String(profile.telegram || ""),
+      website: String(profile.website || ""),
     });
     // Visibility is stored as a small partial object on the profile;
     // missing keys fall back to defaults so older personas (created
@@ -313,6 +337,11 @@ export default function YouPage() {
             location: draft.location.trim(),
             interests: draft.tags,
             visibility,
+            linkedin: draft.linkedin.trim(),
+            twitter: draft.twitter.trim(),
+            instagram: draft.instagram.trim(),
+            telegram: draft.telegram.trim(),
+            website: draft.website.trim(),
           },
         }),
       });
@@ -457,6 +486,28 @@ export default function YouPage() {
               disabled={saving}
               className="persona-bio-input"
             />
+          </div>
+
+          <div className="persona-editor-section">
+            <h2>Links</h2>
+            <p className="persona-section-sub">
+              Shared with people you match with on ZYND so they can reach you.
+            </p>
+            <div className="persona-mini-grid">
+              {SOCIAL_FIELDS.map((f) => (
+                <Input
+                  key={f.key}
+                  value={draft[f.key]}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setDraft((c) => ({ ...c, [f.key]: v }));
+                    setSaved(false);
+                  }}
+                  placeholder={`${f.label} — ${f.placeholder}`}
+                  disabled={saving}
+                />
+              ))}
+            </div>
           </div>
 
           <div className="persona-editor-section">

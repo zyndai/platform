@@ -6,9 +6,14 @@ have stored API tokens (i.e. the user completed the custom
 OAuth flow for that provider).
 """
 
+import logging
+
 from fastapi import APIRouter, Depends
 from api.auth import get_current_user
 from services.token_store import list_connected_providers, delete_tokens
+from services import telegram_store
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -31,15 +36,16 @@ async def list_connections(user: dict = Depends(get_current_user)):
             "scopes": conn_info.get("scopes", "") if conn_info else "",
         }
         
-    # Check manual telegram link database
+    # Telegram link lives in Supabase (telegram_links), written by the
+    # /start webhook handshake — not in api_tokens. Connected iff this
+    # user has a linked chat_id.
     try:
-        from api.telegram import get_mappings
-        tg_mappings = get_mappings()
         connections["telegram"] = {
-            "connected": any(v == user["id"] for v in tg_mappings.values()),
-            "scopes": ""
+            "connected": telegram_store.get_chat_id_for_user(user["id"]) is not None,
+            "scopes": "",
         }
-    except:
+    except Exception as e:
+        logger.warning(f"[connections] telegram status check failed: {e}")
         connections["telegram"] = {"connected": False, "scopes": ""}
 
     return {"connections": connections}
@@ -52,12 +58,9 @@ async def disconnect(provider: str, user: dict = Depends(get_current_user)):
         return {"error": f"Unknown provider: {provider}"}
         
     if provider == "telegram":
-        from api.telegram import get_mappings, MAPPING_FILE
-        import json
-        mappings = get_mappings()
-        mappings = {k: v for k, v in mappings.items() if v != user["id"]}
-        with open(MAPPING_FILE, "w") as f:
-            json.dump(mappings, f)
+        chat_id = telegram_store.get_chat_id_for_user(user["id"])
+        if chat_id:
+            telegram_store.unlink_chat(chat_id)
         return {"status": "disconnected", "provider": provider}
         
     delete_tokens(user_id=user["id"], provider=provider)

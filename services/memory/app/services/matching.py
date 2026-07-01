@@ -8,12 +8,18 @@ Match (brief §6.1): cosine ANN over user_embeddings — the HNSW index makes th
 a single vector scan. Decayed/archived assertions are excluded upstream, so a
 match reflects what each user is about *now*.
 """
+import asyncio
+
 import asyncpg
 
 from app.config import settings
 from app.db import from_pgvector, to_pgvector
 from app.services.embeddings import embed
 from app.taxonomy import CLUSTER_PREDICATES
+
+# Social links surfaced with a match (from the person's persona profile) so the caller
+# can reach out. Non-URL/empty values are dropped.
+_SOCIAL_KEYS = ("linkedin", "twitter", "github", "website", "instagram", "telegram")
 
 CONFIDENCE_FLOOR = 0.3   # brief §10.2
 MAX_ASSERTIONS_PER_CLUSTER = 50
@@ -99,7 +105,7 @@ async def match_users(
         return []  # this user has no vector for that cluster yet
 
     rows = await pool.fetch(
-        """SELECT ue.user_id, u.display_name,
+        """SELECT ue.user_id, u.display_name, u.supabase_user_id,
                   1 - (ue.embedding <=> $1::vector) AS similarity,
                   ue.assertion_count
              FROM user_embeddings ue
@@ -111,15 +117,7 @@ async def match_users(
             LIMIT $5""",
         self_vector, cluster_type, user_id, settings.match_min_assertions, limit,
     )
-    return [
-        {
-            "user_id": str(r["user_id"]),
-            "display_name": _match_label(r["display_name"], str(r["user_id"])),
-            "similarity": round(float(r["similarity"]), 4),
-            "assertion_count": r["assertion_count"],
-        }
-        for r in rows
-    ]
+    return await _results_with_socials(rows)
 
 
 async def search_by_query(
@@ -144,7 +142,7 @@ async def search_by_query(
 
     query_vector = to_pgvector(await embed(query_text))
     rows = await pool.fetch(
-        """SELECT ue.user_id, u.display_name,
+        """SELECT ue.user_id, u.display_name, u.supabase_user_id,
                   1 - (ue.embedding <=> $1::vector) AS similarity,
                   ue.assertion_count
              FROM user_embeddings ue
@@ -156,15 +154,7 @@ async def search_by_query(
             LIMIT $5""",
         query_vector, cluster_type, caller_id, settings.match_min_assertions, limit,
     )
-    return [
-        {
-            "user_id": str(r["user_id"]),
-            "display_name": _match_label(r["display_name"], str(r["user_id"])),
-            "similarity": round(float(r["similarity"]), 4),
-            "assertion_count": r["assertion_count"],
-        }
-        for r in rows
-    ]
+    return await _results_with_socials(rows)
 
 
 def _match_label(display_name: str | None, user_id: str) -> str:
@@ -175,3 +165,37 @@ def _match_label(display_name: str | None, user_id: str) -> str:
     if not display_name:
         return f"zynd-{user_id[:8]}"
     return display_name.split("@", 1)[0]
+
+
+async def _socials_for(supabase_sub: str | None) -> dict:
+    """Best-effort: the person's public social links from their persona profile. Never
+    raises — a match must never fail because persona is slow or the person has none."""
+    if not (settings.persona_enabled and supabase_sub):
+        return {}
+    try:
+        from app.services import persona
+        status = await persona.get_status(supabase_sub)
+        profile = (status or {}).get("profile") or {}
+        return {k: profile[k].strip() for k in _SOCIAL_KEYS
+                if isinstance(profile.get(k), str) and profile[k].strip()}
+    except Exception:  # noqa: BLE001 — socials are decorative; never break a match
+        return {}
+
+
+async def _results_with_socials(rows: list[asyncpg.Record]) -> list[dict]:
+    """Shape match rows and enrich each with the person's social links (fetched from
+    persona in parallel). Same base shape as before + an optional `socials` object so
+    the agent can show LinkedIn / Telegram / etc. next to each matched person."""
+    socials = await asyncio.gather(*[_socials_for(r["supabase_user_id"]) for r in rows]) if rows else []
+    out: list[dict] = []
+    for r, links in zip(rows, socials):
+        item = {
+            "user_id": str(r["user_id"]),
+            "display_name": _match_label(r["display_name"], str(r["user_id"])),
+            "similarity": round(float(r["similarity"]), 4),
+            "assertion_count": r["assertion_count"],
+        }
+        if links:
+            item["socials"] = links
+        out.append(item)
+    return out

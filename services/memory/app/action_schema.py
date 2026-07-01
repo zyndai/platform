@@ -233,6 +233,17 @@ def build_action_schema() -> dict:
                         "display_name": {"type": "string"},
                         "similarity": {"type": "number"},
                         "assertion_count": {"type": "integer"},
+                        "socials": {
+                            "type": "object",
+                            "description": "The person's public social links (any of linkedin, "
+                                           "twitter, github, website, instagram, telegram). Show "
+                                           "these next to the person so the user can reach them.",
+                            "properties": {
+                                "linkedin": {"type": "string"}, "twitter": {"type": "string"},
+                                "github": {"type": "string"}, "website": {"type": "string"},
+                                "instagram": {"type": "string"}, "telegram": {"type": "string"},
+                            },
+                        },
                     },
                 },
             },

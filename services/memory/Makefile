@@ -39,9 +39,6 @@ api:                ## run the API (reload)
 worker:             ## run the async worker (includes decay/orphan cron)
 	uv run arq app.worker.WorkerSettings
 
-mcp:                ## run the MCP server (stdio)
-	uv run python -m app.mcp_server
-
 decay:              ## run the decay job once (manual)
 	uv run python -m app.jobs decay
 

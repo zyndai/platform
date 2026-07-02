@@ -563,7 +563,21 @@ def _merge_deployer_entities(
     return results
 
 
-def search_zynd_network(query: str, top_k: int = 8, kind: str = "any") -> dict:
+def _caller_agent_id(user_id: str) -> str:
+    """Resolve the caller's own persona agent_id so discovery can exclude self —
+    a user must never be recommended their own persona. Best-effort; returns ""
+    if unknown so search never breaks on it."""
+    if not user_id:
+        return ""
+    try:
+        from agent import persona_manager
+        status = persona_manager.get_persona_status(user_id)
+        return (status or {}).get("agent_id") or ""
+    except Exception:
+        return ""
+
+
+def search_zynd_network(query: str, top_k: int = 8, kind: str = "any", user_id: str = "") -> dict:
     """
     Find ANY callable thing on the Zynd Network — personas, services, and
     agents — in one search. Use this FIRST when the user asks to find an
@@ -715,6 +729,11 @@ def search_zynd_network(query: str, top_k: int = 8, kind: str = "any") -> dict:
     if kind != "persona":
         results = _merge_deployer_entities(results, kind, query_used or raw_query)
 
+    # Never surface the caller's own persona back to them (self-match).
+    self_id = _caller_agent_id(user_id)
+    if self_id:
+        results = [r for r in results if r.get("entity_id") != self_id]
+
     # `_call_registry_search` widens the pool past top_k for filtered
     # queries, so `results` may exceed what the caller asked for. Report
     # the real catalog size (total_available) so the model can say "I
@@ -749,7 +768,7 @@ def search_zynd_network(query: str, top_k: int = 8, kind: str = "any") -> dict:
     }
 
 
-def search_zynd_personas(query: str, top_k: int = 5) -> dict:
+def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:
     """
     Search the Zynd AI Network for other people's agent personas.
     Use this as the FIRST tool when the user asks about finding people, companies, or agents.
@@ -758,8 +777,10 @@ def search_zynd_personas(query: str, top_k: int = 5) -> dict:
     Args:
         query: Name, keyword, or topic to search for (e.g., 'Alice', 'ZyndAI', 'machine learning').
         top_k: Max results to return.
+        user_id: Injected automatically by the orchestrator — do not pass it.
     """
     try:
+        self_id = _caller_agent_id(user_id)
         catchall_phrases = {
             "", "*", "all", "any", "anyone", "everybody", "everyone",
             "people", "person", "persons", "personas", "agents", "agent",
@@ -821,6 +842,8 @@ def search_zynd_personas(query: str, top_k: int = 5) -> dict:
 
             if not is_persona:
                 continue
+            if self_id and (a.get("entity_id") or a.get("agent_id")) == self_id:
+                continue  # never recommend the caller their own persona
             matched.append(a)
 
         total_available = len(matched)
@@ -869,6 +892,8 @@ def search_zynd_personas(query: str, top_k: int = 5) -> dict:
         # match against persona descriptions. Fall back to local DB so the
         # user sees real personas instead of an empty-network reply.
         local_personas = _local_persona_fallback(original_query, top_k, avatars)
+        if self_id:
+            local_personas = [p for p in local_personas if p.get("agent_id") != self_id]
         if local_personas:
             return {"status": "degraded", "count": len(local_personas), "results": local_personas, "source": "local_db"}
         return {"status": "success", "count": 0, "results": [], "source": "registry"}
@@ -878,6 +903,8 @@ def search_zynd_personas(query: str, top_k: int = 5) -> dict:
         try:
             avatars = _get_avatar_map()
             local_personas = _local_persona_fallback(query, top_k, avatars)
+            if self_id:
+                local_personas = [p for p in local_personas if p.get("agent_id") != self_id]
             if local_personas:
                 return {"status": "degraded", "count": len(local_personas), "results": local_personas, "source": "local_db", "warning": str(e)}
         except Exception:

@@ -378,6 +378,20 @@ def _format_system_prompt(user: dict | None, persona_status: dict | None, facts:
         elif isinstance(interests, str) and interests.strip():
             lines.append(f"Interests: {interests}")
 
+    social_keys = [
+        ("linkedin", "LinkedIn"), ("instagram", "Instagram"),
+        ("twitter", "X/Twitter"), ("github", "GitHub"),
+        ("website", "Website"),
+    ]
+    social_found = []
+    for key, label in social_keys:
+        url = (profile.get(key) or "").strip()
+        if url:
+            social_found.append(f"{label}: {url}")
+    if social_found:
+        lines.append("\n== SOCIAL LINKS ==")
+        lines.extend([f"- {s}" for s in social_found])
+
     if facts:
         lines.append("\n== WHAT ZYND REMEMBERS ABOUT YOUR PRINCIPAL ==")
         for f in facts:

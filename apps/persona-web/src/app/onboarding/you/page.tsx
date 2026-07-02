@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import PersonaCardForm from "@/components/settings/PersonaCardForm";
 import { useDashboard } from "@/contexts/DashboardContext";
+import { getSupabase } from "@/lib/supabase";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -23,6 +24,40 @@ export default function PersonaSavePage() {
 
   const avatarUrl = (user?.user_metadata as Record<string, string> | null)
     ?.avatar_url as string | undefined;
+
+  // Pre-fill the LinkedIn field from the scrape that ran on the previous
+  // (reading) step, so a user who signed in with LinkedIn isn't asked for it
+  // again. Best-effort; the form still renders if the lookup fails or is empty.
+  const [linkedinUrl, setLinkedinUrl] = useState("");
+  const [prefillLoaded, setPrefillLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: { session } } = await getSupabase().auth.getSession();
+        const jwt = session?.access_token;
+        if (jwt) {
+          const res = await fetch(`${API_BASE}/api/linkedin/me`, {
+            headers: { Authorization: `Bearer ${jwt}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (!cancelled && data?.present && data?.profile_url) {
+              setLinkedinUrl(String(data.profile_url));
+            }
+          }
+        }
+      } catch {
+        // best-effort prefill — never block onboarding
+      } finally {
+        if (!cancelled) setPrefillLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSave = async ({
     name,
@@ -77,17 +112,20 @@ export default function PersonaSavePage() {
         This is how I&apos;ll describe you.
       </h2>
       <p className="stage-subtitle">
-        LinkedIn was a little quiet. Fill this in yourself and I&apos;ll learn from your brief.
+        Here&apos;s what I picked up — add anything I missed.
       </p>
-      <PersonaCardForm
-        avatar={{ src: avatarUrl, name: defaultName || "You" }}
-        initialName={defaultName}
-        initialBio=""
-        initialTags={[]}
-        showSocials
-        onSave={handleSave}
-        saveLabel="This is me →"
-      />
+      {prefillLoaded && (
+        <PersonaCardForm
+          avatar={{ src: avatarUrl, name: defaultName || "You" }}
+          initialName={defaultName}
+          initialBio=""
+          initialTags={[]}
+          initialSocials={{ linkedin: linkedinUrl }}
+          showSocials
+          onSave={handleSave}
+          saveLabel="This is me →"
+        />
+      )}
     </section>
   );
 }

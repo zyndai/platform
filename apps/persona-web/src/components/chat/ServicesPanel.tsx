@@ -439,7 +439,8 @@ function ServiceCardDetail({
           <strong>{card.entity_id}</strong> is registered but its deployment is
           unreachable.
         </p>
-        {card.hint && <p className="services-panel-hint">{card.hint}</p>}
+        {/* card.hint is LLM tool-use guidance (call_zynd_service / A2A schema) —
+            internal, never shown to end users. */}
       </div>
     );
   }
@@ -475,7 +476,11 @@ function ServiceCardDetail({
         <p className="services-card-desc">{card.description}</p>
       )}
 
-      {card.url && (
+      {/* A persona's `url` is its A2A JSON-RPC endpoint (POST-only) — linking it
+          in the chat opens a raw 405. The developer chrome below (raw endpoint,
+          input-field chips, full JSON schema) is meaningful only for callable
+          services, so hide all of it for persona cards. */}
+      {card.url && !isPersona && (
         <a
           href={card.url}
           target="_blank"
@@ -487,7 +492,7 @@ function ServiceCardDetail({
         </a>
       )}
 
-      {fieldKeys.length > 0 && (
+      {fieldKeys.length > 0 && !isPersona && (
         <div className="services-card-fields">
           <div className="services-card-section">Input fields</div>
           <div className="services-card-field-chips">
@@ -500,7 +505,7 @@ function ServiceCardDetail({
         </div>
       )}
 
-      {schema && (
+      {schema && !isPersona && (
         <details
           className="services-card-schema"
           open={schemaOpen}
@@ -530,7 +535,7 @@ function ServiceCardDetail({
         </div>
       )}
 
-      {card.hint && <p className="services-panel-hint">{card.hint}</p>}
+      {/* card.hint is LLM tool-use guidance — internal, never shown to users. */}
     </div>
   );
 }

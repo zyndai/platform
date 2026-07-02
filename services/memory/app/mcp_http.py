@@ -67,6 +67,8 @@ find_people — Use when I ask for a target type of person, complementary person
 
 set_social_links — Use when I ask to save or update public social links: LinkedIn, Instagram, X/Twitter, GitHub.
 
+get_my_socials — Use when I ask to see, show, or view my saved social links. Returns the profile URLs.
+
 connect_with — Use when I ask to connect with a person returned by ZYND. Use their user_id from find_similar_users or find_people. If I haven't provided a message, draft a short friendly one and ask for approval unless the intent is clear.
 
 my_connections — Use when I ask who I am connected with, show my connections, or inspect connection status.
@@ -295,6 +297,22 @@ async def set_social_links(linkedin: str = "", instagram: str = "", x: str = "",
     Use when the user asks to save, update, or add their social profile links."""
     from app.services import social
     return await _social(social.set_social, {"linkedin": linkedin, "instagram": instagram, "twitter": x, "github": github})
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+async def get_my_socials() -> dict:
+    """Return the user's saved social links (LinkedIn, Instagram, X/Twitter, GitHub, Website).
+    Use when the user asks to see, show, or view their social profile links."""
+    pool = await _get_pool()
+    uid = _uid()
+    row = await pool.fetchrow("SELECT supabase_user_id FROM users WHERE id = $1", uid)
+    if not (row and row["supabase_user_id"]):
+        return {"links": {}, "note": "no persona linked — connect your persona first"}
+    status = await persona.get_status(row["supabase_user_id"])
+    profile = (status.get("profile") or {}) if status else {}
+    social_keys = ["linkedin", "instagram", "twitter", "github", "website"]
+    links = {k: profile[k] for k in social_keys if profile.get(k, "").strip()}
+    return {"links": links}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})

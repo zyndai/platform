@@ -34,7 +34,7 @@ Allowed predicates (pick the most specific that fits):
   Intent: intends_to, is_seeking, is_preparing_for, fears
   Beliefs: believes, values, recently_changed_stance_on, has_aesthetic
   Navigation: is_navigating, is_constrained_by, is_frustrated_by, has_been_wronged
-  Life: is_transitioning, is_experiencing, is_processing, is_rediscovering, has_unsolved_problem
+  Life: has_age, is_transitioning, is_experiencing, is_processing, is_rediscovering, has_unsolved_problem
   People: has_collaborator, is_responsible_for, is_advocating_for, is_in_conflict_with, is_inspired_by
   Place: is_located_in, is_affiliated_with, has_language_context
   Motivation: is_motivated_by

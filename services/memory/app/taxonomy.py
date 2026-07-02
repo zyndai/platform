@@ -33,6 +33,7 @@ PREDICATE_HALFLIFE_DAYS: dict[str, int | None] = {
     "has_been_wronged": 180,         # 6 months
     "is_resolved": 180,              # system-emitted only
     # 6. Life stage & experience
+    "has_age": 180,
     "is_transitioning": 180,
     "is_experiencing": 90,
     "is_processing": 45,
@@ -130,6 +131,7 @@ PREDICATE_PHRASE: dict[str, str] = {
     "is_frustrated_by": "You're frustrated by {obj}",
     "has_been_wronged": "You feel wronged over {obj}",
     "is_resolved": "You've resolved {obj}",
+    "has_age": "You are {obj} years old",
     "is_transitioning": "You're in transition: {obj}",
     "is_experiencing": "You're experiencing {obj}",
     "is_processing": "You're processing {obj}",

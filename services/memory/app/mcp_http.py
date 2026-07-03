@@ -1,21 +1,24 @@
 """Hosted, authenticated ZYND MCP server (streamable-HTTP transport).
 
-Any MCP client (Claude Desktop, Cursor, …) connects to https://<host>/mcp with a
-ZYND bearer token. The token is verified per request and the tools are scoped to
-that authenticated user — there is no trusted user_id parameter, so one user can
-never read or change another's data.
+Auth supports two modes simultaneously:
+  1. Bearer JWT (existing clients, Cursor, VS Code, SDKs)
+  2. OAuth 2.1 with PKCE + DCR (Claude Desktop/Web/Mobile connectors)
+
+FastMCP's RemoteAuthProvider advertises OAuth discovery so Claude auto-discovers
+auth. The ZyndTokenVerifier handles both token types transparently.
 
 Run:  uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
 """
 import asyncio
-import contextvars
 from datetime import datetime, timezone
 
 import asyncpg
 from arq import create_pool
 from arq.connections import RedisSettings
-from mcp.server.fastmcp import FastMCP
-from mcp.server.transport_security import TransportSecuritySettings
+from fastmcp import FastMCP
+from fastmcp.dependencies import CurrentAccessToken, Depends
+from fastmcp.server.auth import AccessToken, RemoteAuthProvider, TokenVerifier
+from pydantic import AnyHttpUrl
 
 from app.auth import verify_access_claims
 from app.config import settings
@@ -25,9 +28,6 @@ from app.services.control import confirm_fact, forget_fact
 from app.services.export import active_context, build_jsonld_export, context_slice
 from app.services.ingest import clean_text, ingest_turns
 from app.services.matching import match_users, search_by_query
-
-# Set by the auth ASGI wrapper per request; read by the tools.
-_current_user: contextvars.ContextVar[str | None] = contextvars.ContextVar("mcp_user", default=None)
 
 # Process-lifetime pools, independent of the MCP session lifespan (which cycles).
 # Locks make lazy init safe under concurrent first requests (no leaked pool).
@@ -131,24 +131,69 @@ async def _get_arq():
     return _arq
 
 
-def _uid() -> str:
-    uid = _current_user.get()
-    if uid is None:
-        raise RuntimeError("not authenticated")
-    return uid
+# ── Dependency injection: extract user_id from the authenticated token ──────────
+# Tools use `uid: str = Depends(_uid)` to get the current user. This replaces the
+# old ContextVar pattern. FastMCP injects the AccessToken automatically when auth
+# is configured on the server.
+
+def _uid(token: AccessToken = CurrentAccessToken()) -> str:
+    return token.client_id
 
 
-# DNS-rebinding protection is for browser attacks; our clients aren't browsers and
-# every request needs a bearer token, so we run behind Caddy's HTTPS + our own auth.
-mcp = FastMCP(
-    "zynd", stateless_http=True, json_response=True,
-    instructions=_ZYND_INSTRUCTIONS,
-    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+# ── Auth: custom token verifier ─────────────────────────────────────────────────
+# Validates both ZYND HS256 JWTs (for existing clients) and OAuth opaque tokens
+# stored in the database (for Claude connectors). Also enforces per-user token
+# revocation (tokens_revoked_at watermark).
+
+class ZyndTokenVerifier(TokenVerifier):
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        # 1) ZYND JWT — existing clients (Cursor, VS Code, SDKs)
+        try:
+            user_id, issued_at = verify_access_claims(token)
+        except ValueError:
+            pass
+        else:
+            pool = await _get_pool()
+            from app.services.sessions import tokens_revoked
+            if await tokens_revoked(pool, user_id, issued_at):
+                return None
+            return AccessToken(
+                client_id=user_id,
+                scopes=["user"],
+                claims={"sub": user_id, "iat": issued_at},
+            )
+
+        # 2) OAuth opaque access token — fallback for non-JWT tokens
+        #    (used if the OAuth /token endpoint issues opaque tokens instead of JWTs)
+        pool = await _get_pool()
+        row = await pool.fetchrow(
+            "SELECT user_id, scopes FROM oauth_access_tokens WHERE token = $1 AND expires_at > NOW()",
+            token,
+        )
+        if row:
+            return AccessToken(
+                client_id=str(row["user_id"]),
+                scopes=row["scopes"] if isinstance(row["scopes"], list) else ["user"],
+                claims={"sub": str(row["user_id"])},
+            )
+        return None
+
+
+# ── FastMCP server ──────────────────────────────────────────────────────────────
+
+auth = RemoteAuthProvider(
+    token_verifier=ZyndTokenVerifier(),
+    authorization_servers=[AnyHttpUrl(settings.public_base_url)],
+    base_url=settings.mcp_public_base_url,
+    scopes_supported=["user"],
 )
+
+mcp = FastMCP("zynd", auth=auth, instructions=_ZYND_INSTRUCTIONS)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def remember(text: str) -> dict:
+async def remember(text: str, uid: str = Depends(_uid)) -> dict:
     """THIS IS HOW ZYND FEEDS. Call whenever the user shares a durable fact about
     themselves — role, skills, projects, goals, tools, location, affiliations,
     interests, beliefs, what they are building, learning, seeking, or open to.
@@ -170,7 +215,7 @@ async def remember(text: str) -> dict:
         return {"saved": False, "reason": f"too short — pass a full sentence (min {_REMEMBER_MIN_CHARS} chars)"}
     turn = Turn(role="user", content=text, timestamp=datetime.now(timezone.utc))
     inserted, skipped = await ingest_turns(
-        await _get_pool(), await _get_arq(), _uid(), "claude", [turn],
+        await _get_pool(), await _get_arq(), uid, "claude", [turn],
         min_chars=_REMEMBER_MIN_CHARS,
     )
     if inserted == 0:
@@ -180,7 +225,7 @@ async def remember(text: str) -> dict:
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def get_my_context(topic: str | None = None, k: int = 20) -> list[dict]:
+async def get_my_context(topic: str | None = None, k: int = 20, uid: str = Depends(_uid)) -> list[dict]:
     """YOUR WINDOW INTO WHO THE USER IS. Call this at the START of every
     conversation so you know the user's role, projects, skills, and what
     they are working on. Without this, you are flying blind.
@@ -196,28 +241,28 @@ async def get_my_context(topic: str | None = None, k: int = 20) -> list[dict]:
     pool = await _get_pool()
     k = max(1, min(k, 50))
     if topic and topic.strip():
-        return await context_slice(pool, _uid(), topic.strip(), k)
-    return await active_context(pool, _uid(), k)
+        return await context_slice(pool, uid, topic.strip(), k)
+    return await active_context(pool, uid, k)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def export_my_context() -> dict:
+async def export_my_context(uid: str = Depends(_uid)) -> dict:
     """Export the full active context graph as JSON-LD. Use when the user asks to
     export, download, back up, or inspect their complete ZYND profile."""
-    return await build_jsonld_export(await _get_pool(), _uid())
+    return await build_jsonld_export(await _get_pool(), uid)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def find_similar_users(cluster_type: str = "intent_cluster", k: int = 10) -> list[dict]:
+async def find_similar_users(cluster_type: str = "intent_cluster", k: int = 10, uid: str = Depends(_uid)) -> list[dict]:
     """Find people with overlapping context. Use when the user asks for people
     like them, similar users, or people building/learning/working on similar
     things. cluster_type: intent_cluster, skill_cluster, belief_cluster,
     concept_cluster, full_context."""
-    return await match_users(await _get_pool(), _uid(), cluster_type, max(1, min(k, 50)))
+    return await match_users(await _get_pool(), uid, cluster_type, max(1, min(k, 50)))
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def find_people(target: str, k: int = 10) -> list[dict]:
+async def find_people(target: str, k: int = 10, uid: str = Depends(_uid)) -> list[dict]:
     """Find FINDABLE ZYND users matching a TARGET PROFILE — complementary people,
     not people like the user. Use when the user asks for investors, cofounders,
     designers, engineers, marketers, mentors, customers, domain experts, etc.
@@ -228,62 +273,62 @@ async def find_people(target: str, k: int = 10) -> list[dict]:
 
     Use find_similar_users instead for "people like me" / overlapping context.
     The returned user_id can be passed to connect_with."""
-    return await search_by_query(await _get_pool(), _uid(), target, limit=max(1, min(k, 50)))
+    return await search_by_query(await _get_pool(), uid, target, limit=max(1, min(k, 50)))
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
-async def confirm_fact_tool(predicate: str, object: str) -> dict:
+async def confirm_fact_tool(predicate: str, object: str, uid: str = Depends(_uid)) -> dict:
     """Confirm an existing ZYND fact is correct. Use when the user confirms
     something ZYND remembers about them. Pass the exact predicate and object
     as returned by get_my_context."""
-    return {"confirmed": await confirm_fact(await _get_pool(), _uid(), predicate, object)}
+    return {"confirmed": await confirm_fact(await _get_pool(), uid, predicate, object)}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False})
-async def forget_fact_tool(predicate: str, object: str) -> dict:
+async def forget_fact_tool(predicate: str, object: str, uid: str = Depends(_uid)) -> dict:
     """Remove a ZYND fact. Use when the user says something ZYND remembers is
     wrong, outdated, private, should be removed, or should be forgotten.
     Pass the exact predicate and object as returned by get_my_context."""
-    return {"forgotten": await forget_fact(await _get_pool(), _uid(), predicate, object)}
+    return {"forgotten": await forget_fact(await _get_pool(), uid, predicate, object)}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
 async def publish_page(content: str, title: str = "", format: str = "html",
-                       visibility: str = "unlisted") -> dict:
+                       visibility: str = "unlisted", uid: str = Depends(_uid)) -> dict:
     """Host an HTML or Markdown page and return a public share URL. Use when the
     user asks to turn something into a shareable web page ("make this a page",
     "publish this"). Pass the full body as `content`; set `format` to "html"
     or "markdown". Returns {success, url, slug, title}. Show the `url` to the user."""
     from app.services import pages
-    return await pages.create_page(await _get_pool(), _uid(), content, title, format, visibility)
+    return await pages.create_page(await _get_pool(), uid, content, title, format, visibility)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_my_pages() -> list[dict]:
+async def list_my_pages(uid: str = Depends(_uid)) -> list[dict]:
     """List hosted shareable pages, newest first. Use when the user asks to
     see pages they have published."""
     from app.services import pages
-    return await pages.list_pages(await _get_pool(), _uid())
+    return await pages.list_pages(await _get_pool(), uid)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
-async def disconnect() -> dict:
+async def disconnect(uid: str = Depends(_uid)) -> dict:
     """Sign out of ZYND — revoke all ZYND tokens (web, GPT, MCP clients).
     The user will need to reconnect to use ZYND again."""
     from app.services.sessions import revoke_user_tokens
-    await revoke_user_tokens(await _get_pool(), _uid())
+    await revoke_user_tokens(await _get_pool(), uid)
     return {"status": "signed_out", "note": "Reconnect ZYND to sign back in."}
 
 
 # ---- persona network: connect / message / meet (gated by persona_enabled) ----
 
-async def _social(op, *args) -> dict:
+async def _social(op, uid: str, *args) -> dict:
     """Run a social/persona op, turning the gate + identity + network errors into a
-    friendly result instead of a tool exception."""
+    friendly result instead of a tool exception. uid is injected by the tool."""
     from app.services.social import SocialDisabled
     from app.services.persona import PersonaError
     try:
-        result = await op(await _get_pool(), _uid(), *args)
+        result = await op(await _get_pool(), uid, *args)
         return {"ok": True, "result": result}
     except SocialDisabled as exc:
         return {"ok": False, "reason": str(exc), "hint": "persona connect/message is coming soon"}
@@ -292,19 +337,19 @@ async def _social(op, *args) -> dict:
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def set_social_links(linkedin: str = "", instagram: str = "", x: str = "", github: str = "") -> dict:
+async def set_social_links(linkedin: str = "", instagram: str = "", x: str = "", github: str = "",
+                           uid: str = Depends(_uid)) -> dict:
     """Save or update public social links: LinkedIn, Instagram, X/Twitter, GitHub.
     Use when the user asks to save, update, or add their social profile links."""
     from app.services import social
-    return await _social(social.set_social, {"linkedin": linkedin, "instagram": instagram, "twitter": x, "github": github})
+    return await _social(social.set_social, uid, {"linkedin": linkedin, "instagram": instagram, "twitter": x, "github": github})
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def get_my_socials() -> dict:
+async def get_my_socials(uid: str = Depends(_uid)) -> dict:
     """Return the user's saved social links (LinkedIn, Instagram, X/Twitter, GitHub, Website).
     Use when the user asks to see, show, or view their social profile links."""
     pool = await _get_pool()
-    uid = _uid()
     row = await pool.fetchrow("SELECT supabase_user_id FROM users WHERE id = $1", uid)
     if not (row and row["supabase_user_id"]):
         return {"links": {}, "note": "no persona linked — connect your persona first"}
@@ -316,41 +361,42 @@ async def get_my_socials() -> dict:
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def connect_with(user_id: str, message: str = "Hi — we matched on ZYND, would love to connect.") -> dict:
+async def connect_with(user_id: str, message: str = "Hi — we matched on ZYND, would love to connect.",
+                       uid: str = Depends(_uid)) -> dict:
     """Send a connection request to a matched person by their user_id from
     find_similar_users or find_people. If the user hasn't provided a message,
     draft a short friendly one and ask for approval unless the intent is clear.
     Routed through the persona network (works even if the target is offline)."""
     from app.services import social
-    return await _social(social.connect, user_id, message)
+    return await _social(social.connect, uid, user_id, message)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def send_persona_message(thread_id: str, content: str) -> dict:
+async def send_persona_message(thread_id: str, content: str, uid: str = Depends(_uid)) -> dict:
     """Send a message to an existing connection. Requires thread_id from
     my_connections or connect_with. Ask for missing message content if needed."""
     from app.services import social
-    return await _social(social.send_message, thread_id, content)
+    return await _social(social.send_message, uid, thread_id, content)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
-async def my_connections() -> dict:
+async def my_connections(uid: str = Depends(_uid)) -> dict:
     """List the user's ZYND connections on the persona network. Use when the
     user asks who they are connected with or to inspect connection status."""
     from app.services import social
-    return await _social(social.connections)
+    return await _social(social.connections, uid)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
 async def book_meeting(thread_id: str, title: str, start_time: str, end_time: str,
-                       location: str = "", description: str = "") -> dict:
+                       location: str = "", description: str = "", uid: str = Depends(_uid)) -> dict:
     """Propose a meeting with a connection (thread_id from my_connections).
     Times are ISO-8601. Accepting auto-books on both Google Calendars via persona.
     Ask for missing details: title, start time, end time, timezone, location."""
     from app.services import social
     payload = {"title": title, "start_time": start_time, "end_time": end_time,
                "location": location, "description": description}
-    return await _social(social.book_meeting, thread_id, payload)
+    return await _social(social.book_meeting, uid, thread_id, payload)
 
 
 def _format_system_prompt(user: dict | None, persona_status: dict | None, facts: list[dict]) -> str:
@@ -445,14 +491,13 @@ def _format_system_prompt(user: dict | None, persona_status: dict | None, facts:
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def get_my_system_prompt() -> str:
+async def get_my_system_prompt(uid: str = Depends(_uid)) -> str:
     """Load your personalized ZYND profile so you know exactly who the user is and
     what ZYND remembers about them. Call this at the START of every conversation.
 
     Returns your full instructions plus the user's persona profile and all context
     facts ZYND has stored. After loading, if the user shares ANYTHING new about
     themselves, call `remember` to feed it back into ZYND."""
-    uid = _uid()
     pool = await _get_pool()
 
     user = await pool.fetchrow(
@@ -471,35 +516,8 @@ async def get_my_system_prompt() -> str:
     return _format_system_prompt(dict(user) if user else None, persona_status, facts)
 
 
-_mcp_app = mcp.streamable_http_app()  # Starlette app (handles its own session lifespan)
+# ── ASGI app ────────────────────────────────────────────────────────────────────
+# FastMCP's auth provider handles all authentication — no custom ASGI wrapper needed.
+# The app is what uvicorn runs:  uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
 
-
-async def app(scope, receive, send):
-    """Pure-ASGI auth wrapper. Pure ASGI (not BaseHTTPMiddleware) so the contextvar
-    set here propagates into the tool call. Non-http scopes (lifespan) pass through."""
-    if scope["type"] != "http":
-        await _mcp_app(scope, receive, send)
-        return
-
-    headers = dict(scope.get("headers") or [])
-    scheme, _, value = headers.get(b"authorization", b"").decode().partition(" ")
-    token = value.strip() if scheme.lower() == "bearer" else ""  # RFC 6750: case-insensitive
-    try:
-        user_id, issued_at = verify_access_claims(token)
-    except ValueError:
-        await _send_401(send)
-        return
-    from app.services.sessions import tokens_revoked
-    if await tokens_revoked(await _get_pool(), user_id, issued_at):
-        await _send_401(send)
-        return
-    _current_user.set(user_id)
-    await _mcp_app(scope, receive, send)
-
-
-async def _send_401(send) -> None:
-    body = b'{"error":"unauthorized - supply a valid ZYND bearer token"}'
-    await send({"type": "http.response.start", "status": 401,
-                "headers": [(b"content-type", b"application/json"),
-                            (b"content-length", str(len(body)).encode())]})
-    await send({"type": "http.response.body", "body": body})
+app = mcp.http_app(stateless_http=True, json_response=True)

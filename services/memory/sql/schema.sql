@@ -149,3 +149,42 @@ CREATE TABLE IF NOT EXISTS published_pages (
 );
 CREATE INDEX IF NOT EXISTS published_pages_slug_idx ON published_pages (slug);
 CREATE INDEX IF NOT EXISTS published_pages_user_idx ON published_pages (user_id, created_at DESC);
+
+-- OAuth 2.1 Dynamic Client Registration (DCR) — used by Claude Desktop/Web/Mobile
+-- connectors. Clients register themselves; no manual per-user client setup needed.
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id              text NOT NULL UNIQUE,
+  client_secret          text,                              -- null for public clients (PKCE)
+  allowed_redirect_uris  text[] NOT NULL DEFAULT '{}',
+  created_at             timestamptz NOT NULL DEFAULT now()
+);
+
+-- OAuth 2.1 authorization codes with PKCE support. Single-use, 10-min TTL.
+-- Exchanged by the client at /token for access tokens (ZYND JWTs or opaque tokens).
+CREATE TABLE IF NOT EXISTS oauth_codes (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  code            text NOT NULL UNIQUE,
+  user_id         uuid NOT NULL REFERENCES users(id),
+  client_id       text NOT NULL,
+  redirect_uri    text NOT NULL,
+  code_challenge  text,                                    -- null = no PKCE (legacy ChatGPT flow)
+  code_challenge_method text DEFAULT 'S256',
+  scope           text NOT NULL DEFAULT 'user',
+  expires_at      timestamptz NOT NULL,
+  used_at         timestamptz,                             -- null = not yet used
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- OAuth opaque access tokens — issued when the /token endpoint returns a non-JWT
+-- token (e.g. for providers that require opaque strings). ZYND JWTs are
+-- self-contained and don't use this table; it's a fallback for opaque tokens.
+CREATE TABLE IF NOT EXISTS oauth_access_tokens (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  token           text NOT NULL UNIQUE,
+  user_id         uuid NOT NULL REFERENCES users(id),
+  client_id       text NOT NULL,
+  scopes          text[] NOT NULL DEFAULT '{user}',
+  expires_at      timestamptz NOT NULL,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);

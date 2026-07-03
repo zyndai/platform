@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     access_token_ttl_seconds: int = 3600
     refresh_token_ttl_seconds: int = 30 * 24 * 3600
     mcp_token_ttl_seconds: int = 90 * 24 * 3600   # long-lived token pasted into MCP clients
+    # Public base URL of the MCP server (where clients connect). Used by the
+    # MCP RemoteAuthProvider to advertise OAuth discovery endpoints. If the MCP
+    # server runs on a different host/port than the API, set this explicitly.
+    mcp_public_base_url: str = "http://localhost:8000"
     oauth_client_id: str = "zynd-chatgpt"
     oauth_client_secret: str = "zynd-oauth-secret"
     # Comma-separated allowlist of redirect_uri prefixes (prevents open redirect).

@@ -17,6 +17,7 @@ from app.services.ingest import ingest_turns
 from app.connect import router as connect_router
 from app.docs import router as docs_router
 from app.oauth import router as oauth_router
+from app.oauth import _well_known_router as oauth_well_known_router
 
 
 @asynccontextmanager
@@ -37,6 +38,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 app.include_router(oauth_router)
+app.include_router(oauth_well_known_router)
 app.include_router(connect_router)
 app.include_router(docs_router)
 

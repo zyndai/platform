@@ -82,15 +82,20 @@ def _check_redirect_uri(redirect_uri: str) -> None:
 
 
 def _check_dcr_redirect_uri(redirect_uri: str, allowed_uris: list[str]) -> bool:
-    """Validate that a redirect_uri belongs to a registered DCR client."""
+    """Validate that a redirect_uri belongs to a registered DCR client.
+
+    Per RFC 8252 Section 7.3, any port is allowed for localhost / 127.0.0.1
+    loopback redirect URIs — the authorization server MUST accept any port number
+    for these addresses. This allows Claude Code's ephemeral-port loopback redirect."""
     parsed = urlsplit(redirect_uri)
+    is_loopback = parsed.hostname in ("localhost", "127.0.0.1", "::1")
     for allowed in allowed_uris:
         allowed_parsed = urlsplit(allowed)
         if parsed.scheme != allowed_parsed.scheme:
             continue
         if parsed.hostname != allowed_parsed.hostname:
             continue
-        if parsed.port != allowed_parsed.port:
+        if not is_loopback and parsed.port != allowed_parsed.port:
             continue
         if parsed.path == allowed_parsed.path or parsed.path.startswith(allowed_parsed.path.rstrip("/") + "/"):
             return True
@@ -202,6 +207,7 @@ async def authorization_server_metadata() -> dict:
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
+        "client_id_metadata_document_supported": True,
         "token_endpoint_auth_methods_supported": [
             "client_secret_basic",
             "client_secret_post",

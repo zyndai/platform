@@ -38,12 +38,14 @@ class Settings(BaseSettings):
     # Public base URL of the MCP server (where clients connect). Used by the
     # MCP RemoteAuthProvider to advertise OAuth discovery endpoints. If the MCP
     # server runs on a different host/port than the API, set this explicitly.
-    mcp_public_base_url: str = "http://localhost:8000"
+    mcp_public_base_url: str = "http://localhost:8090"
     oauth_client_id: str = "zynd-chatgpt"
     oauth_client_secret: str = "zynd-oauth-secret"
     # Comma-separated allowlist of redirect_uri prefixes (prevents open redirect).
     oauth_allowed_redirect_prefixes: str = (
-        "https://chat.openai.com/aip/,https://chatgpt.com/aip/,http://localhost"
+        "https://chat.openai.com/aip/,https://chatgpt.com/aip/,"
+        "https://claude.ai/api/mcp/,"
+        "http://localhost,http://127.0.0.1"
     )
     public_base_url: str = "http://localhost:8000"
     # Dashboard origin that hosts the shared Google (Supabase) login. The ChatGPT

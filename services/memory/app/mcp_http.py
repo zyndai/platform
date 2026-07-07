@@ -147,6 +147,9 @@ def _uid(token: AccessToken = CurrentAccessToken()) -> str:
 
 class ZyndTokenVerifier(TokenVerifier):
 
+    def __init__(self, required_scopes: list[str] | None = None):
+        super().__init__(required_scopes=required_scopes)
+
     async def verify_token(self, token: str) -> AccessToken | None:
         # 1) ZYND JWT — existing clients (Cursor, VS Code, SDKs)
         try:
@@ -159,6 +162,7 @@ class ZyndTokenVerifier(TokenVerifier):
             if await tokens_revoked(pool, user_id, issued_at):
                 return None
             return AccessToken(
+                token=token,
                 client_id=user_id,
                 scopes=["user"],
                 claims={"sub": user_id, "iat": issued_at},
@@ -173,6 +177,7 @@ class ZyndTokenVerifier(TokenVerifier):
         )
         if row:
             return AccessToken(
+                token=token,
                 client_id=str(row["user_id"]),
                 scopes=row["scopes"] if isinstance(row["scopes"], list) else ["user"],
                 claims={"sub": str(row["user_id"])},
@@ -183,10 +188,10 @@ class ZyndTokenVerifier(TokenVerifier):
 # ── FastMCP server ──────────────────────────────────────────────────────────────
 
 auth = RemoteAuthProvider(
-    token_verifier=ZyndTokenVerifier(),
+    token_verifier=ZyndTokenVerifier(required_scopes=["user"]),
     authorization_servers=[AnyHttpUrl(settings.public_base_url)],
     base_url=settings.mcp_public_base_url,
-    scopes_supported=["user"],
+    resource_name="ZYND",
 )
 
 mcp = FastMCP("zynd", auth=auth, instructions=_ZYND_INSTRUCTIONS)

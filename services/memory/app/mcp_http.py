@@ -20,6 +20,8 @@ from fastmcp.dependencies import CurrentAccessToken, Depends
 from fastmcp.server.auth import AccessToken, RemoteAuthProvider, TokenVerifier
 from pydantic import AnyHttpUrl
 
+from urllib.parse import urlsplit
+
 from app.auth import verify_access_claims
 from app.config import settings
 from app.models import Turn
@@ -525,4 +527,8 @@ async def get_my_system_prompt(uid: str = Depends(_uid)) -> str:
 # FastMCP's auth provider handles all authentication — no custom ASGI wrapper needed.
 # The app is what uvicorn runs:  uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
 
-app = mcp.http_app(stateless_http=True, json_response=True)
+app = mcp.http_app(
+    stateless_http=True,
+    json_response=True,
+    allowed_hosts=[urlsplit(settings.mcp_public_base_url).hostname],
+)

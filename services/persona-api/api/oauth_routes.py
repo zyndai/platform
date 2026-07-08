@@ -93,7 +93,7 @@ async def linkedin_callback(code: str, state: str):
         )
 
     if resp.status_code != 200:
-        redirect_url = f"{config.FRONTEND_URL}/dashboard?oauth=linkedin&status=error&detail={resp.text}"
+        redirect_url = f"{config.FRONTEND_URL}/dashboard/settings/accounts?oauth=linkedin&status=error&detail={resp.text}"
         return RedirectResponse(redirect_url)
 
     token_data = resp.json()
@@ -104,7 +104,7 @@ async def linkedin_callback(code: str, state: str):
             tokens=token_data,
         )
     except ValueError as e:
-        redirect_url = f"{config.FRONTEND_URL}/dashboard?oauth=linkedin&status=error&detail={str(e)}"
+        redirect_url = f"{config.FRONTEND_URL}/dashboard/settings/accounts?oauth=linkedin&status=error&detail={str(e)}"
         return RedirectResponse(redirect_url)
 
     # Fetch the vanity name to build the exact profile URL for scraping.
@@ -136,7 +136,7 @@ async def linkedin_callback(code: str, state: str):
     except Exception:
         pass
 
-    redirect_url = f"{config.FRONTEND_URL}/dashboard?oauth=linkedin&status=success"
+    redirect_url = f"{config.FRONTEND_URL}/dashboard/settings/accounts?oauth=linkedin&status=success"
     return RedirectResponse(redirect_url)
 
 

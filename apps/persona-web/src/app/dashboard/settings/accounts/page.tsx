@@ -127,14 +127,16 @@ export default function AccountsPage() {
       window.history.replaceState(null, "", "/dashboard/settings/accounts");
       void refresh();
       if (provider === "linkedin" && status === "success") {
-        const sb = getSupabase();
-        const { data: { session } } = await sb.auth.getSession();
-        if (session?.access_token) {
-          fetch(`${API}/api/linkedin/scrape`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${session.access_token}` },
-          }).catch(() => {});
-        }
+        (async () => {
+          const sb = getSupabase();
+          const { data: { session } } = await sb.auth.getSession();
+          if (session?.access_token) {
+            fetch(`${API}/api/linkedin/scrape`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${session.access_token}` },
+            }).catch(() => {});
+          }
+        })();
       }
       const t = setTimeout(() => setOauthFlash(null), 4000);
       return () => clearTimeout(t);

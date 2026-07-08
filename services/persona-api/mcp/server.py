@@ -15,7 +15,7 @@ from ContextAware import ContextAware  # noqa: E402
 
 # ── Import Social Tools ──
 from mcp.tools.twitter import post_tweet, read_timeline, send_dm, read_dms
-from mcp.tools.linkedin import post_to_linkedin, send_linkedin_dm, read_linkedin_dms
+from mcp.tools.linkedin import post_to_linkedin, send_linkedin_dm, read_linkedin_dms, read_linkedin_profile
 
 # ── Import Google Workspace Tools ──
 from mcp.tools.google.calendar import create_event, list_events, delete_event
@@ -98,6 +98,7 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(post_to_linkedin, name="post_to_linkedin", description="Share a post on LinkedIn feed")
     mcp.register(send_linkedin_dm, name="send_linkedin_dm", description="[PLACEHOLDER] Send a LinkedIn DM")
     mcp.register(read_linkedin_dms, name="read_linkedin_dms", description="[PLACEHOLDER] Read LinkedIn DMs")
+    mcp.register(read_linkedin_profile, name="read_linkedin_profile", description="Read the principal's scraped LinkedIn profile — headline, experience, education, skills, and recent posts. Use this when the principal asks about their own LinkedIn background or work history.")
 
     # ── Google Calendar tools ────────────────────────────────────────
     mcp.register(create_event, name="create_calendar_event", description="Create an event on Google Calendar")

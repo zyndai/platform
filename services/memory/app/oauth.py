@@ -33,7 +33,7 @@ from fastapi import APIRouter, Body, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
-from app.auth import issue_access_token, issue_refresh_token, verify_refresh_claims
+from app.auth import issue_access_token, issue_personal_token, issue_refresh_token, verify_refresh_claims
 from app.config import settings
 from app.db import get_pool
 from app.supabase_auth import supabase_identity
@@ -102,10 +102,69 @@ def _check_dcr_redirect_uri(redirect_uri: str, allowed_uris: list[str]) -> bool:
     return False
 
 
+def _oauth_clients() -> dict[str, str]:
+    """Registered confidential clients: {client_id: client_secret}. Two today —
+    the ChatGPT Action and the Hermes Deployer."""
+    return {
+        settings.oauth_client_id: settings.oauth_client_secret,
+        settings.deployer_oauth_client_id: settings.deployer_oauth_client_secret,
+    }
+
+
+def _is_known_client(client_id: str) -> bool:
+    # Compare against every id (no early return) so the check is constant-time
+    # regardless of which client_id was supplied.
+    known = False
+    for cid in _oauth_clients():
+        known |= hmac.compare_digest(client_id, cid)
+    return known
+
+
+def _is_deployer_client(client_id: str) -> bool:
+    return hmac.compare_digest(client_id, settings.deployer_oauth_client_id)
+
+
+def _code_user_id(stored: str) -> str:
+    """Extract the user_id from a stored authorization code. New codes are JSON
+    {user_id, redirect_uri}; legacy/pre-rollout codes are a bare user_id string."""
+    try:
+        parsed = json.loads(stored)
+    except (ValueError, TypeError):
+        parsed = None
+    if isinstance(parsed, dict):
+        return str(parsed["user_id"])
+    return stored
+
+
+def _resolve_code_user(stored: str, redirect_uri: str) -> str:
+    """Like _code_user_id, but also enforces the redirect_uri binding (RFC 6749
+    §4.1.3) for confidential clients (ChatGPT / Hermes Deployer): the code can only
+    be redeemed with the exact redirect_uri it was issued for, so a leaked code
+    cannot be exchanged against a different (attacker) redirect_uri. PKCE clients
+    are bound by code_verifier instead, so they use _code_user_id. Legacy
+    bare-string codes carry no binding. Raises ValueError on mismatch → invalid_grant.
+    """
+    try:
+        parsed = json.loads(stored)
+    except (ValueError, TypeError):
+        parsed = None
+    if isinstance(parsed, dict):
+        if not hmac.compare_digest(redirect_uri, parsed.get("redirect_uri", "")):
+            raise ValueError("redirect_uri does not match the authorization request")
+        return str(parsed["user_id"])
+    return stored
+
+
 def _check_client(client_id: str, client_secret: str) -> None:
-    ok_id = hmac.compare_digest(client_id, settings.oauth_client_id)
-    ok_secret = hmac.compare_digest(client_secret, settings.oauth_client_secret)
-    if not (ok_id and ok_secret):
+    ok = False
+    for cid, csecret in _oauth_clients().items():
+        # Evaluate BOTH comparisons before combining: `and` would short-circuit
+        # the secret check when the id mismatches, leaking (via timing) which
+        # client_ids are registered.
+        id_ok = hmac.compare_digest(client_id, cid)
+        secret_ok = hmac.compare_digest(client_secret, csecret)
+        ok |= id_ok and secret_ok
+    if not ok:
         raise HTTPException(status_code=401, detail="invalid client credentials")
 
 
@@ -283,10 +342,11 @@ async def authorize(
     if response_type != "code":
         raise HTTPException(status_code=400, detail="response_type must be 'code'")
 
-    is_chatgpt = hmac.compare_digest(client_id, settings.oauth_client_id)
-
-    if is_chatgpt:
-        # ── ChatGPT / persona legacy flow ──
+    # ChatGPT and the Hermes Deployer are confidential clients that authenticate
+    # via the persona-hosted login (no PKCE). Everything else is a DCR-registered
+    # client (Claude) that goes straight to Supabase Auth.
+    if _is_known_client(client_id):
+        # ── ChatGPT / Hermes Deployer → persona login (legacy, no PKCE) ──
         _check_redirect_uri(redirect_uri)
         req = _sign_oauth_request(redirect_uri, state, scope)
         dest = settings.persona_login_url.rstrip("/") + "/?" + urlencode({"zynd_oauth": req})
@@ -406,8 +466,14 @@ async def _resolve_user_and_mint_code(
         await seed_persona_profile(get_pool(), redis, user_id, sub)
 
     code = secrets.token_urlsafe(32)
-    await redis.set(f"{_CODE_PREFIX}{code}", str(user_id), ex=_CODE_TTL_SECONDS)
-
+    # Bind the code to the redirect_uri so a confidential client can only redeem it
+    # with the same URI at /token (RFC 6749 §4.1.3). PKCE params (Claude) are stored
+    # alongside and validated independently at /token.
+    await redis.set(
+        f"{_CODE_PREFIX}{code}",
+        json.dumps({"user_id": str(user_id), "redirect_uri": redirect_uri}),
+        ex=_CODE_TTL_SECONDS,
+    )
     if code_challenge:
         await _store_pkce_params(redis, code, code_challenge, code_challenge_method)
 
@@ -509,17 +575,27 @@ async def token(
         if raw is None:
             raise HTTPException(status_code=400, detail="invalid_grant")
         await redis.delete(key)  # single use
-        user_id = raw.decode() if isinstance(raw, bytes) else raw
+        stored = raw.decode() if isinstance(raw, bytes) else raw
 
         pkce = await _get_pkce_params(redis, code)
         if pkce:
+            # PKCE clients (Claude): the code_verifier binds the code, so the
+            # redirect_uri binding is redundant and their loopback URIs vary —
+            # validate PKCE and skip the redirect check.
             challenge, method = pkce
             await _clear_pkce_params(redis, code)
             if not code_verifier:
                 raise HTTPException(status_code=400, detail="code_verifier is required (PKCE)")
             if not _verify_code_challenge(code_verifier, challenge, method):
                 raise HTTPException(status_code=400, detail="invalid code_verifier")
-
+            user_id = _code_user_id(stored)
+        else:
+            # Confidential clients (ChatGPT, Hermes Deployer): enforce the
+            # redirect_uri binding (RFC 6749 §4.1.3).
+            try:
+                user_id = _resolve_code_user(stored, redirect_uri)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="invalid_grant") from exc
     elif grant_type == "refresh_token":
         try:
             user_id, issued_at = verify_refresh_claims(refresh_token)
@@ -531,6 +607,18 @@ async def token(
 
     else:
         raise HTTPException(status_code=400, detail="unsupported_grant_type")
+
+    # The Hermes Deployer stores the token inside a long-lived agent container and
+    # has no refresh loop, so hand it a personal token (mcp_token_ttl_seconds) and
+    # no refresh token — the owner re-connects at expiry. Only on the initial
+    # code exchange; refresh_token grants keep the standard short-lived path.
+    if grant_type == "authorization_code" and _is_deployer_client(client_id):
+        return JSONResponse({
+            "access_token": issue_personal_token(user_id),
+            "token_type": "bearer",
+            "expires_in": settings.mcp_token_ttl_seconds,
+            "scope": "ingest",
+        })
 
     access_token, expires_in = issue_access_token(user_id)
     return JSONResponse({

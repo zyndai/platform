@@ -41,11 +41,24 @@ class Settings(BaseSettings):
     mcp_public_base_url: str = "http://localhost:8090"
     oauth_client_id: str = "zynd-chatgpt"
     oauth_client_secret: str = "zynd-oauth-secret"
+    # Second confidential client: the Hermes Deployer. It runs the same
+    # authorize-code flow as ChatGPT but, at /oauth/token, receives a long-lived
+    # personal token (mcp_token_ttl_seconds) so a deployed agent container can
+    # ingest continuously without refresh plumbing. Secret MUST be overridden in
+    # prod via DEPLOYER_OAUTH_CLIENT_SECRET.
+    deployer_oauth_client_id: str = "hermes-deployer"
+    deployer_oauth_client_secret: str = "change-me-deployer-oauth-secret"
     # Comma-separated allowlist of redirect_uri prefixes (prevents open redirect).
     oauth_allowed_redirect_prefixes: str = (
         "https://chat.openai.com/aip/,https://chatgpt.com/aip/,"
         "https://claude.ai/api/mcp/,"
         "http://localhost,http://127.0.0.1"
+    )
+    # Deployer callback origins allowed as redirect_uri (merged into the allowlist
+    # below). The deployer sends the browser to
+    # https://<deployer>/api/agents/<id>/zynd/callback after sign-in.
+    deployer_allowed_redirect_prefixes: str = (
+        "https://deployer.zynd.ai/,http://localhost:3100/,http://127.0.0.1:3100/"
     )
     public_base_url: str = "http://localhost:8000"
     # Dashboard origin that hosts the shared Google (Supabase) login. The ChatGPT
@@ -101,7 +114,8 @@ class Settings(BaseSettings):
 
     @property
     def allowed_redirect_prefixes(self) -> list[str]:
-        return [p.strip() for p in self.oauth_allowed_redirect_prefixes.split(",") if p.strip()]
+        raw = f"{self.oauth_allowed_redirect_prefixes},{self.deployer_allowed_redirect_prefixes}"
+        return [p.strip() for p in raw.split(",") if p.strip()]
 
 
 settings = Settings()

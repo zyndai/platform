@@ -81,6 +81,24 @@ class Settings(BaseSettings):
     match_min_assertions: int = 5   # data-quality floor: skip thin profiles
     match_default_limit: int = 10
 
+    # ── OAuth provider credentials (for MCP tools: Twitter, LinkedIn, Google, Notion) ──
+    twitter_client_id: str = ""
+    twitter_client_secret: str = ""
+    linkedin_client_id: str = ""
+    linkedin_client_secret: str = ""
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    notion_client_id: str = ""
+    notion_client_secret: str = ""
+
+    # ── Zynd Network ──
+    zynd_registry_url: str = "https://zns01.zynd.ai"
+    zynd_deployer_url: str = "https://deployer.zynd.ai"
+    zynd_developer_keypair_path: str = ""
+
+    # ── Public page base URL (for published pages from the agent) ──
+    public_page_base_url: str = ""
+
     @property
     def allowed_redirect_prefixes(self) -> list[str]:
         return [p.strip() for p in self.oauth_allowed_redirect_prefixes.split(",") if p.strip()]

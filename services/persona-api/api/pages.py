@@ -7,10 +7,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-import config
 from api.auth import get_current_user
 from services.page_publisher import (
     create_page,
@@ -19,7 +18,6 @@ from services.page_publisher import (
     list_pages,
     update_page,
 )
-import httpx
 
 router = APIRouter()
 
@@ -88,35 +86,9 @@ async def create_new_page(
 
 
 @router.get("/", response_model=PageListResponse)
-async def list_user_pages(user: dict = Depends(get_current_user), request: Request = None):
-    """Return all pages owned by the current user, newest first.
-    
-    Merges pages from both our local DB and the ZYND memory service
-    so pages published via either MCP tool appear in the dashboard.
-    """
+async def list_user_pages(user: dict = Depends(get_current_user)):
+    """Return all pages owned by the current user, newest first."""
     pages = list_pages(user_id=user["id"])
-    local_slugs = {p.get("slug") for p in pages if p.get("slug")}
-
-    # Bridge: also fetch pages published via ZYND memory MCP
-    zynd_api = config.MEMORY_API_URL
-    if zynd_api:
-        try:
-            auth_header = request.headers.get("Authorization", "")
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(
-                    f"{zynd_api}/api/pages",
-                    headers={"Authorization": auth_header} if auth_header else {},
-                )
-            if resp.status_code == 200:
-                zynd_data = resp.json()
-                for p in zynd_data.get("pages", []):
-                    slug = p.get("slug")
-                    if slug and slug not in local_slugs:
-                        pages.append(p)
-                        local_slugs.add(slug)
-        except Exception:
-            pass
-
     return PageListResponse(pages=pages)
 
 

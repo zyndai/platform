@@ -5692,6 +5692,27 @@ textarea.input { resize: vertical; min-height: 88px; }
   width: 16px; height: 16px; stroke-width: 1.7;
 }
 
+/* Scrollable nav body: search + Persona + You (except Settings) */
+.app-shell-v2 .app-sidebar .sidebar-body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--v2-border-default) transparent;
+}
+
+/* Sticky bottom: Settings + theme toggle + user card */
+.app-shell-v2 .app-sidebar .sidebar-footer {
+  flex-shrink: 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--v2-border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .app-shell-v2 .app-main {
   display: flex;
   flex-direction: column;

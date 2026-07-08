@@ -196,10 +196,14 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
       <aside className={`app-sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="brand">
-          <span className="brand-left">
+          <Link
+            href="/dashboard/chat"
+            className="brand-left"
+            style={{ textDecoration: "none", color: "inherit", cursor: "pointer" }}
+          >
             <Monogram size="sm" />
             <span className="brand-text">ZyndAI</span>
-          </span>
+          </Link>
           <button
             type="button"
             className="collapse-btn"
@@ -213,38 +217,39 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           </button>
         </div>
 
-        <label
-          className="sidebar-search"
-          aria-label="Search"
-          title={sidebarCollapsed ? "Search" : undefined}
-          onClick={() => {
-            if (sidebarCollapsed) setSidebarCollapsed(false);
-          }}
-        >
-          <Search />
-          <input
-            type="text"
-            placeholder="Search"
+        <div className="sidebar-body">
+          <label
+            className="sidebar-search"
             aria-label="Search"
-          />
-          <span className="kbd">⌘K</span>
-        </label>
+            title={sidebarCollapsed ? "Search" : undefined}
+            onClick={() => {
+              if (sidebarCollapsed) setSidebarCollapsed(false);
+            }}
+          >
+            <Search />
+            <input
+              type="text"
+              placeholder="Search"
+              aria-label="Search"
+            />
+            <span className="kbd">⌘K</span>
+          </label>
 
-        <div className="nav-group-label">Persona</div>
-        <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {ARIA_NAV.map(renderItem)}
-        </nav>
+          <div className="nav-group-label">Persona</div>
+          <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {ARIA_NAV.map(renderItem)}
+          </nav>
 
-        <div className="nav-group-label">You</div>
-        <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {YOU_NAV.map(renderItem)}
-        </nav>
+          <div className="nav-group-label">You</div>
+          <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {YOU_NAV.filter(i => i.label !== "Settings").map(renderItem)}
+          </nav>
+        </div>
 
-        <div style={{ flex: 1 }} />
-
-        <ThemeToggle />
-
-        <div className="user-card">
+        <div className="sidebar-footer">
+          {renderItem(YOU_NAV.find(i => i.label === "Settings")!)}
+          <ThemeToggle />
+          <div className="user-card">
           <Link
             href="/dashboard/settings/you"
             className="user-card-link"
@@ -277,6 +282,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           >
             <LogOut size={14} strokeWidth={1.5} />
           </button>
+        </div>
         </div>
       </aside>
 

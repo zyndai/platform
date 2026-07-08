@@ -209,7 +209,7 @@ export default function LandingPage() {
             </div>
             <h3 className="zfeature-title">Finds people worth meeting</h3>
             <p className="zfeature-body">
-              Reads your posts, scans the network, surfaces three humans worth a coffee.
+              Reads your posts, scans the network, surfaces few people worth a coffee.
             </p>
           </article>
           <article className="zfeature">
@@ -218,7 +218,7 @@ export default function LandingPage() {
             </div>
             <h3 className="zfeature-title">Reaches out so you don&apos;t have to</h3>
             <p className="zfeature-body">
-              No cold DMs. Her agent talks to their agent first.
+              No cold DMs. Your agent talks to their agent first.
             </p>
           </article>
           <article className="zfeature">

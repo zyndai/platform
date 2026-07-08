@@ -113,24 +113,28 @@ async def scrape_recent_posts(profile_url: str, max_posts: int = 10) -> list[dic
     )
 
 
-async def scrape_user(user_id: str, full_name: str) -> dict:
+async def scrape_user(user_id: str, full_name: str, profile_url: str | None = None) -> dict:
     """
-    End-to-end scrape: find the profile URL, fetch profile + posts in
-    parallel, persist to public.linkedin_profiles. Idempotent — calling
-    twice for the same user upserts.
+    End-to-end scrape: find the profile URL (or use the provided one),
+    fetch profile + posts in parallel, persist to linkedin_profiles.
+    Idempotent — calling twice for the same user upserts.
+
+    If profile_url is provided (e.g. from OAuth vanity name resolution),
+    the search-by-name step is skipped entirely.
     """
-    if not full_name:
-        return {"status": "skipped", "reason": "no_name"}
-
-    try:
-        profile_url = await find_profile_url(full_name)
-    except Exception as e:
-        logger.warning(f"[linkedin] search-by-name failed for {user_id}: {e}")
-        return {"status": "error", "stage": "search", "detail": str(e)}
-
     if not profile_url:
-        logger.info(f"[linkedin] no profile match for {user_id} ({full_name!r})")
-        return {"status": "no_match"}
+        if not full_name:
+            return {"status": "skipped", "reason": "no_name"}
+
+        try:
+            profile_url = await find_profile_url(full_name)
+        except Exception as e:
+            logger.warning(f"[linkedin] search-by-name failed for {user_id}: {e}")
+            return {"status": "error", "stage": "search", "detail": str(e)}
+
+        if not profile_url:
+            logger.info(f"[linkedin] no profile match for {user_id} ({full_name!r})")
+            return {"status": "no_match"}
 
     profile_task = scrape_profile(profile_url)
     posts_task = scrape_recent_posts(profile_url)

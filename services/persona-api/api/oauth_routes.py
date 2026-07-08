@@ -24,6 +24,7 @@ from urllib.parse import urlencode
 
 import config
 from services.token_store import save_tokens
+from datetime import datetime, timezone
 
 router = APIRouter()
 
@@ -63,7 +64,7 @@ async def linkedin_authorize(token: str, request: Request):
         "response_type": "code",
         "client_id": config.LINKEDIN_CLIENT_ID,
         "redirect_uri": config.LINKEDIN_REDIRECT_URI,
-        "scope": "openid profile email w_member_social",
+        "scope": "openid profile email w_member_social r_basicprofile",
         "state": state,
     }
     auth_url = f"https://www.linkedin.com/oauth/v2/authorization?{urlencode(params)}"
@@ -105,6 +106,35 @@ async def linkedin_callback(code: str, state: str):
     except ValueError as e:
         redirect_url = f"{config.FRONTEND_URL}/dashboard?oauth=linkedin&status=error&detail={str(e)}"
         return RedirectResponse(redirect_url)
+
+    # Fetch the vanity name to build the exact profile URL for scraping.
+    # This avoids the fragile search-by-name approach in the scraper.
+    try:
+        async with httpx.AsyncClient() as client:
+            me_resp = await client.get(
+                "https://api.linkedin.com/v2/me",
+                headers={
+                    "Authorization": f"Bearer {token_data['access_token']}",
+                    "X-Restli-Protocol-Version": "2.0.0",
+                },
+            )
+        if me_resp.status_code == 200:
+            me_data = me_resp.json()
+            vanity = me_data.get("vanityName")
+            if vanity:
+                profile_url = f"https://www.linkedin.com/in/{vanity}"
+                sb = config.get_supabase()
+                sb.table("linkedin_profiles").upsert(
+                    {
+                        "user_id": user_id,
+                        "profile_url": profile_url,
+                        "scraped_at": datetime.now(timezone.utc).isoformat(),
+                        "raw_profile": {"headline": (me_data.get("headline") or {}).get("localized", {}).get("en_US", "") or ""},
+                    },
+                    on_conflict="user_id",
+                ).execute()
+    except Exception:
+        pass
 
     redirect_url = f"{config.FRONTEND_URL}/dashboard?oauth=linkedin&status=success"
     return RedirectResponse(redirect_url)

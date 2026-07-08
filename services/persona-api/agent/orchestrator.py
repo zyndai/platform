@@ -6,7 +6,7 @@ import uuid
 
 import config
 from mcp.server import mcp_server
-from services.token_store import list_connected_providers
+from services.token_store import list_connected_providers, is_linkedin_scraped
 
 # ── Conversation memory ──────────────────────────────────────────────
 _conversations: dict[str, list[dict]] = {}
@@ -1350,15 +1350,27 @@ def _build_system_prompt(
     time_zone: str | None = None,
     is_group_context: bool = False,
     surface: str = "web",
+    linkedin_scraped: bool = False,
 ) -> str:
     """Build a system prompt that tells the agent what it can do.
 
     `surface` is the channel the reply will render on: "web" (the app, which
     renders service/agent results as rich cards) or anything else (e.g.
     "telegram", plain text — include the answer inline since there's no card).
+
+    `linkedin_scraped` is True when the user has LinkedIn profile data via
+    scraping (linkedin_profiles table), even if they haven't completed the
+    OAuth flow (api_tokens table) for posting access.
     """
     tools_prompt = mcp_server.get_tools_prompt()
-    providers_str = ", ".join(connected_providers) if connected_providers else "none"
+
+    parts: list[str] = []
+    if connected_providers:
+        parts.append(", ".join(connected_providers))
+    has_linkedin_oauth = "linkedin" in connected_providers
+    if linkedin_scraped and not has_linkedin_oauth:
+        parts.append("linkedin (profile reading only)")
+    providers_str = ", ".join(parts) if parts else "none"
 
     from agent.persona_manager import get_persona_status
     persona = get_persona_status(user_id)
@@ -1627,6 +1639,8 @@ If the foreign agent asks for anything outside that list — calendar reads, pos
 ## Connected Accounts
 Your principal has the following accounts connected: {providers_str}.
 
+If "linkedin (profile reading only)" is listed, that means the principal's LinkedIn profile has been scraped and is available in your briefing — you can reference their posts, experience, and professional background. However, you CANNOT call `post_to_linkedin` because the OAuth posting token is not yet connected. If your principal asks you to post, tell them to connect LinkedIn OAuth from their dashboard settings.
+
 ## Current Time Context
 {time_context}
 
@@ -1894,6 +1908,8 @@ summarization, niche lookups. Personas on the network publish these as *services
 ## Connected Accounts
 Your principal currently has these accounts connected: {providers_str}
 
+When "linkedin (profile reading only)" appears, it means their LinkedIn profile data is available for reference but you do NOT have API posting access. You can discuss their LinkedIn activity but must not claim you can post to LinkedIn.
+
 ## Current Time Context
 {time_context}
 
@@ -1970,6 +1986,7 @@ async def handle_user_message(
     # Determine connected providers
     user_conns = list_connected_providers(user_id)
     connected = [c["provider"] for c in user_conns]
+    linkedin_read = is_linkedin_scraped(user_id)
 
     # Build messages
     system_msg = {
@@ -1983,6 +2000,7 @@ async def handle_user_message(
             time_zone=time_zone,
             is_group_context=is_group_context,
             surface=surface,
+            linkedin_scraped=linkedin_read,
         ),
     }
     print("System Prompt: ", system_msg)
@@ -2301,6 +2319,7 @@ async def handle_user_message_stream(
 
     user_conns = list_connected_providers(user_id)
     connected = [c["provider"] for c in user_conns]
+    linkedin_read = is_linkedin_scraped(user_id)
 
     system_msg = {
         "role": "system",
@@ -2312,6 +2331,7 @@ async def handle_user_message_stream(
             external_permissions=external_permissions,
             time_zone=time_zone,
             surface=surface,
+            linkedin_scraped=linkedin_read,
         ),
     }
     user_msg = {"role": "user", "content": message}

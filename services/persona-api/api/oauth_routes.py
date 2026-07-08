@@ -96,11 +96,15 @@ async def linkedin_callback(code: str, state: str):
         return RedirectResponse(redirect_url)
 
     token_data = resp.json()
-    save_tokens(
-        user_id=user_id,
-        provider="linkedin",
-        tokens=token_data,
-    )
+    try:
+        save_tokens(
+            user_id=user_id,
+            provider="linkedin",
+            tokens=token_data,
+        )
+    except ValueError as e:
+        redirect_url = f"{config.FRONTEND_URL}/dashboard?oauth=linkedin&status=error&detail={str(e)}"
+        return RedirectResponse(redirect_url)
 
     redirect_url = f"{config.FRONTEND_URL}/dashboard?oauth=linkedin&status=success"
     return RedirectResponse(redirect_url)

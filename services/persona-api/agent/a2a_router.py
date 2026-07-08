@@ -1964,7 +1964,7 @@ async def _autonomous_chat_reply(
         _persist_chat_message,
         strip_think_tags,
     )
-    from services.token_store import list_connected_providers
+    from services.token_store import list_connected_providers, is_linkedin_scraped
 
     # Reload conversation history from DB if this server process lost it.
     if not _conversations.get(conversation_id):
@@ -2021,7 +2021,8 @@ async def _autonomous_chat_reply(
     try:
         user_conns = list_connected_providers(user_id)
         connected = [c["provider"] for c in user_conns]
-        system_msg = {"role": "system", "content": _build_system_prompt(user_id, connected)}
+        linkedin_read = is_linkedin_scraped(user_id)
+        system_msg = {"role": "system", "content": _build_system_prompt(user_id, connected, linkedin_scraped=linkedin_read)}
         messages = [system_msg] + history
 
         provider = _get_provider()

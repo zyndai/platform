@@ -29,14 +29,14 @@ const TELEGRAM_BOT = "zynd_brief_bot";
 type ConnId = "linkedin" | "brief" | "calendar" | "telegram";
 
 interface ConnState {
-  linkedin: { connected: boolean; lastReadIso?: string };
+  linkedin: { read: boolean; write: boolean; lastReadIso?: string };
   brief: { connected: boolean };
   calendar: { connected: boolean };
   telegram: { connected: boolean };
 }
 
 const EMPTY: ConnState = {
-  linkedin: { connected: false },
+  linkedin: { read: false, write: false },
   brief: { connected: false },
   calendar: { connected: false },
   telegram: { connected: false },
@@ -80,24 +80,28 @@ export default function AccountsPage() {
     ]);
 
     let google = { connected: false, scopes: "" };
+    let linkedinOauth = false;
     let telegram = { connected: false };
     if (connRes.ok) {
       const data = await connRes.json();
       google = data.connections?.google ?? google;
+      linkedinOauth = data.connections?.linkedin?.connected ?? false;
       telegram = data.connections?.telegram ?? telegram;
     }
 
-    let linkedin = { connected: false, lastReadIso: undefined as string | undefined };
+    let linkedinRead = false;
+    let linkedinLastReadIso: string | undefined;
     if (linkedinRes.ok) {
       const data = await linkedinRes.json();
       if (data.present) {
-        linkedin = { connected: true, lastReadIso: data.scraped_at };
+        linkedinRead = true;
+        linkedinLastReadIso = data.scraped_at;
       }
     }
 
     const scopes = google.scopes || "";
     setConn({
-      linkedin,
+      linkedin: { read: linkedinRead, write: linkedinOauth, lastReadIso: linkedinLastReadIso },
       brief: { connected: google.connected && (scopes.includes("documents") || scopes.includes("drive")) },
       calendar: { connected: google.connected && scopes.includes("calendar") },
       telegram,
@@ -149,11 +153,19 @@ export default function AccountsPage() {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
-      // Scrape runs in background; surface optimistic state then re-poll.
       setTimeout(() => void refresh(), 1500);
     } finally {
       setWorking(null);
     }
+  };
+
+  const oauthLinkedIn = () => {
+    setWorking("linkedin");
+    const sb = getSupabase();
+    sb.auth.getSession().then(({ data: { session } }) => {
+      if (!session?.access_token) return;
+      window.location.href = `${API}/api/oauth/linkedin/authorize?token=${session.access_token}`;
+    }).catch(() => setWorking(null));
   };
 
   const disconnect = async (which: ConnId) => {
@@ -166,6 +178,10 @@ export default function AccountsPage() {
 
       if (which === "linkedin") {
         await fetch(`${API}/api/linkedin/me`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${jwt}` },
+        });
+        await fetch(`${API}/api/connections/linkedin`, {
           method: "DELETE",
           headers: { Authorization: `Bearer ${jwt}` },
         });
@@ -191,6 +207,10 @@ export default function AccountsPage() {
 
   const handleConnect = async (id: ConnId) => {
     if (id === "linkedin") {
+      if (conn.linkedin.read && !conn.linkedin.write) {
+        oauthLinkedIn();
+        return;
+      }
       await connectLinkedIn();
       return;
     }
@@ -227,13 +247,25 @@ export default function AccountsPage() {
           id="linkedin"
           icon={<LinkedinIcon size={22} />}
           name="LinkedIn"
-          connected={conn.linkedin.connected}
+          connected={conn.linkedin.read}
           loading={loading}
           working={working === "linkedin"}
           confirming={confirming === "linkedin"}
-          description="Your Persona reads your posts and profile every few hours to keep up with what you're into. It never posts anything."
-          meta={conn.linkedin.connected ? `Last read ${timeAgo(conn.linkedin.lastReadIso) || "recently"}` : undefined}
-          connectLabel="Let my Persona read my LinkedIn"
+          description={
+            conn.linkedin.write
+              ? "Your Persona reads your posts and profile. It also has permission to post on your behalf."
+              : "Your Persona reads your posts and profile every few hours to keep up with what you're into."
+          }
+          meta={
+            conn.linkedin.read
+              ? `${conn.linkedin.write ? "Read + Post" : "Read only"} · Last read ${timeAgo(conn.linkedin.lastReadIso) || "recently"}`
+              : undefined
+          }
+          connectLabel={
+            conn.linkedin.read && !conn.linkedin.write
+              ? "Allow my Persona to post"
+              : "Let my Persona read my LinkedIn"
+          }
           confirmNote=""
           onConnect={() => handleConnect("linkedin")}
           onAskDisconnect={() => setConfirming("linkedin")}

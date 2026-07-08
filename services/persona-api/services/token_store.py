@@ -8,8 +8,7 @@ from Supabase auth tokens which only handle login identity.
 The table schema is in db/schema.sql.
 """
 
-import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import config
 
 TABLE = "api_tokens"
@@ -33,13 +32,13 @@ def save_tokens(
         tokens: dict with at least 'access_token', optionally
                 'refresh_token', 'expires_in', 'scope', etc.
     """
+    if "access_token" not in tokens:
+        raise ValueError(f"Missing access_token in {provider} token response: {tokens}")
+
     sb = _sb()
 
-    # Calculate expiry if provided
     expires_at = None
     if "expires_in" in tokens:
-        expires_at = datetime.now(timezone.utc).isoformat()
-        from datetime import timedelta
         expires_at = (
             datetime.now(timezone.utc) + timedelta(seconds=tokens["expires_in"])
         ).isoformat()
@@ -52,7 +51,7 @@ def save_tokens(
             "refresh_token": tokens.get("refresh_token"),
             "expires_at": expires_at,
             "scopes": tokens.get("scope", ""),
-            "raw_data": json.dumps(tokens),
+            "raw_data": tokens,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         },
         on_conflict="user_id,provider",
@@ -104,3 +103,15 @@ def list_connected_providers(user_id: str) -> list[dict]:
         .execute()
     )
     return result.data or []
+
+
+def is_linkedin_scraped(user_id: str) -> bool:
+    """Check if the user has LinkedIn profile data from scraping."""
+    sb = _sb()
+    result = (
+        sb.table("linkedin_profiles")
+        .select("scraped_at")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    return bool(result.data)

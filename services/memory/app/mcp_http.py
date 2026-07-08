@@ -322,16 +322,16 @@ async def publish_page(content: str, title: str = "", format: str = "html",
     user asks to turn something into a shareable web page ("make this a page",
     "publish this"). Pass the full body as `content`; set `format` to "html"
     or "markdown". Returns {success, url, slug, title}. Show the `url` to the user."""
-    from app.services import pages
-    return await pages.create_page(await _get_pool(), uid, content, title, format, visibility)
+    from app.services import pages_agent
+    return await pages_agent.create_page(uid, content, title, format, visibility)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
 async def list_my_pages(uid: str = Depends(_uid)) -> list[dict]:
     """List hosted shareable pages, newest first. Use when the user asks to
     see pages they have published."""
-    from app.services import pages
-    return await pages.list_pages(await _get_pool(), uid)
+    from app.services import pages_agent
+    return await pages_agent.list_pages(uid)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})

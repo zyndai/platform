@@ -122,6 +122,10 @@ FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
 # Falls back to FRONTEND_URL if not set.
 PUBLIC_PAGE_BASE_URL: str = os.getenv("PUBLIC_PAGE_BASE_URL", "")
 
+# ZYND memory service API — used to bridge pages published via ZYND MCP
+# into the dashboard's pages list.
+MEMORY_API_URL: str = os.getenv("MEMORY_API_URL", "https://api.zynd.ai").rstrip("/")
+
 # ── Supabase singleton ────────────────────────────────────────────────
 # One client per process — avoids rebuilding the HTTP connection pool
 # on every request (was the main source of slow API responses).

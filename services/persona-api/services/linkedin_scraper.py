@@ -146,6 +146,33 @@ async def scrape_user(user_id: str, full_name: str) -> dict:
         posts = []
 
     sb = _get_supabase()
+
+    # Don't overwrite existing good data with an empty scrape.
+    # An empty profile dict means the Apify actor returned nothing — usually
+    # because of rate limits, wrong profile URL, or a restricted profile.
+    profile_empty = not profile or not any(
+        key in (profile or {})
+        for key in ("headline", "experience", "education", "skills", "summary")
+    )
+    if profile_empty:
+        existing = (
+            sb.table("linkedin_profiles")
+            .select("raw_profile")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if existing.data and existing.data[0].get("raw_profile"):
+            existing_profile = existing.data[0]["raw_profile"]
+            if existing_profile and any(
+                key in (existing_profile or {})
+                for key in ("headline", "experience", "education", "skills", "summary")
+            ):
+                logger.warning(
+                    f"[linkedin] skipping upsert for {user_id} — new scrape returned empty, "
+                    f"and existing data is still good (profile_url={profile_url})"
+                )
+                return {"status": "skipped", "reason": "empty_scrape_preserved_existing"}
+
     sb.table("linkedin_profiles").upsert(
         {
             "user_id": user_id,

@@ -221,6 +221,9 @@ def read_linkedin_profile(user_id: str) -> dict:
     profile["profile_url"] = row.get("profile_url", "")
     profile["scraped_at"] = row.get("scraped_at", "")
 
+    fields_found = [k for k in ("headline", "experience", "education", "skills", "summary") if profile.get(k)]
+    profile_empty = len(fields_found) == 0
+
     recent_posts = []
     for post in raw_posts[:10]:
         text = post.get("text") or post.get("body") or ""
@@ -233,5 +236,13 @@ def read_linkedin_profile(user_id: str) -> dict:
             "reaction_count": post.get("reactionCount") or post.get("reactions_count") or 0,
         })
     profile["recent_posts"] = recent_posts
+
+    if profile_empty:
+        profile["warning"] = (
+            "The last scrape returned no profile details (headline, experience, education, skills). "
+            "The Apify actor may need a fresh run — ask the principal to disconnect and reconnect "
+            "LinkedIn in their dashboard's Accounts page to trigger a new scrape. "
+            "Also verify the profile URL is correct: " + (profile["profile_url"] or "unknown")
+        )
 
     return {"success": True, **profile}

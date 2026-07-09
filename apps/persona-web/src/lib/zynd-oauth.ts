@@ -10,7 +10,11 @@
  * origin, same tab) and the multi-step onboarding navigation.
  */
 const KEY = "zynd_oauth_req";
-const MEMORY_API = (process.env.NEXT_PUBLIC_MEMORY_API_URL || "").replace(/\/$/, "");
+// Default to the prod API when NEXT_PUBLIC_MEMORY_API_URL is unset — matches
+// dashboard/connect and settings/you. Without this, an empty base made
+// completeZyndOAuth() silently no-op, trapping already-signed-in users on the
+// persona dashboard instead of bouncing back to the OAuth client.
+const MEMORY_API = (process.env.NEXT_PUBLIC_MEMORY_API_URL || "https://api.zynd.ai").replace(/\/$/, "");
 
 /** Capture `?zynd_oauth` from the current URL into sessionStorage, if present. */
 export function captureZyndOAuthReq(): void {

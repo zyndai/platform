@@ -456,8 +456,15 @@ _PAGE_SECURITY_HEADERS = {
 @app.get("/pages/{slug}", include_in_schema=False)
 async def serve_page(slug: str) -> HTMLResponse:
     """Publicly render a hosted page by slug (server-side). No auth."""
-    from app.services import pages
-    row = await pages.get_page_public(get_pool(), slug)
+    from app.services import pages, pages_agent
+    # The MCP/agent publish_page tool writes to Supabase (pages_agent); older
+    # pages may still live in the local table. Try Supabase first, then fall back
+    # — otherwise agent-published pages 404 despite existing.
+    row = None
+    if settings.supabase_url and settings.supabase_service_key:
+        row = await pages_agent.get_page_public(slug)
+    if not row:
+        row = await pages.get_page_public(get_pool(), slug)
     if not row:
         return HTMLResponse(_PAGE_404_HTML, status_code=404, headers=_PAGE_SECURITY_HEADERS)
     return HTMLResponse(pages.render_page_html(row), headers=_PAGE_SECURITY_HEADERS)

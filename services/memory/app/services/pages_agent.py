@@ -122,6 +122,27 @@ def cleanup_expired_pages() -> int:
         return 0
 
 
+async def get_page_public(slug: str) -> dict[str, Any] | None:
+    """Fetch a page for public serving from Supabase — only if public/unlisted.
+    This is the read side of create_page (the MCP publish_page tool writes here),
+    so GET /pages/{slug} must consult it or agent-published pages 404."""
+    if not slug:
+        return None
+    sb = _supabase()
+    try:
+        result = sb.table(TABLE).select("*").eq("slug", slug).limit(1).execute()
+    except Exception as e:
+        logger.warning(f"[pages_agent] get_page_public failed for {slug}: {e}")
+        return None
+    rows = result.data or []
+    if not rows:
+        return None
+    row = rows[0]
+    if row.get("visibility") not in PUBLIC_VISIBILITIES:
+        return None
+    return row
+
+
 async def list_pages(user_id: str) -> list[dict[str, Any]]:
     if not user_id:
         return []

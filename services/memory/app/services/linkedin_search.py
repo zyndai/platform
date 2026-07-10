@@ -290,10 +290,20 @@ def build_query_from_context(facts: list[dict]) -> str:
 
     terms: list[str] = []
     for s in statements:
-        s = s.removeprefix("You are ").removeprefix("You're ").removeprefix("Your ")
-        s = s.replace("building a ", "").replace("working on ", "").replace("interested in ", "")
-        s = s.replace("learning ", "").replace("seeking ", "").replace("open to ", "")
-        terms.append(s.strip(",."))
+        s = (s.removeprefix("You are ")
+              .removeprefix("You're ")
+              .removeprefix("You have ")
+              .removeprefix("Your "))
+        s = (s.replace("building a ", "")
+              .replace("working on ", "")
+              .replace("interested in ", "")
+              .replace("learning ", "")
+              .replace("seeking ", "")
+              .replace("open to ", "")
+              .replace("experience in ", ""))
+        s = s.strip(",.").strip()
+        if s:
+            terms.append(s)
 
     seen: set[str] = set()
     unique: list[str] = []

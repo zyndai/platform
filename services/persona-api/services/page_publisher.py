@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import config
@@ -71,6 +71,7 @@ def create_page(
     title: str = "",
     format: str = "html",
     visibility: str = "unlisted",
+    expires_in_hours: int | None = None,
 ) -> dict[str, Any]:
     """
     Create a new published page and return its public metadata.
@@ -81,6 +82,7 @@ def create_page(
         title: Optional page title.
         format: "html" or "markdown" (aliases like "md" are accepted).
         visibility: "unlisted" (default), "public", or "private".
+        expires_in_hours: If set, page auto-expires after N hours (NULL = permanent).
 
     Returns:
         {"success": True, "slug", "url", "title", "format", "visibility"}
@@ -104,9 +106,13 @@ def create_page(
     if len(title) > MAX_TITLE_LENGTH:
         title = title[:MAX_TITLE_LENGTH].rstrip()
 
+    now = datetime.now(timezone.utc)
+    expires_at = None
+    if expires_in_hours and expires_in_hours > 0:
+        expires_at = (now + timedelta(hours=expires_in_hours)).isoformat()
+
     sb = _supabase()
 
-    # Retry a few times on the astronomically unlikely slug collision.
     for _ in range(5):
         slug = _generate_slug()
         try:
@@ -120,14 +126,15 @@ def create_page(
                         "format": fmt,
                         "content": content,
                         "visibility": vis,
-                        "created_at": datetime.now(timezone.utc).isoformat(),
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "created_at": now.isoformat(),
+                        "updated_at": now.isoformat(),
+                        "expires_at": expires_at,
                     }
                 )
                 .execute()
             )
             if row.data:
-                return {
+                result: dict[str, Any] = {
                     "success": True,
                     "slug": slug,
                     "url": _page_url(slug),
@@ -135,6 +142,10 @@ def create_page(
                     "format": fmt,
                     "visibility": vis,
                 }
+                if expires_at:
+                    result["expires_at"] = expires_at
+                    result["note"] = f"Page expires in {expires_in_hours} hours."
+                return result
         except Exception as e:
             err = str(e).lower()
             if "unique" in err or "duplicate" in err:
@@ -150,6 +161,7 @@ def get_page_public(slug: str) -> dict[str, Any] | None:
     Fetch a page for public viewing (used by the Next.js page renderer).
 
     Only pages whose visibility is public or unlisted are returned.
+    Expired pages (expires_at < now) are treated as not found.
     """
     if not slug:
         return None
@@ -162,6 +174,14 @@ def get_page_public(slug: str) -> dict[str, Any] | None:
             return None
         if row.get("visibility") not in PUBLIC_VISIBILITIES:
             return None
+        expires_at = row.get("expires_at")
+        if expires_at:
+            from datetime import datetime as dt
+            try:
+                if dt.fromisoformat(expires_at) < datetime.now(timezone.utc):
+                    return None  # expired
+            except (ValueError, TypeError):
+                pass  # malformed timestamp → serve anyway
         return _serialize(row)
     except Exception as e:
         logger.warning(f"[page_publisher] get_page_public failed for {slug}: {e}")
@@ -284,7 +304,7 @@ def delete_page(user_id: str, slug: str) -> dict[str, Any]:
 def _serialize(row: dict[str, Any]) -> dict[str, Any]:
     """Convert a DB row into a clean dict for API responses."""
     slug = row["slug"]
-    return {
+    item: dict[str, Any] = {
         "slug": slug,
         "url": _page_url(slug),
         "title": row.get("title", ""),
@@ -294,3 +314,27 @@ def _serialize(row: dict[str, Any]) -> dict[str, Any]:
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
+    if row.get("expires_at"):
+        item["expires_at"] = row["expires_at"]
+    return item
+
+
+def cleanup_expired_pages() -> int:
+    """Delete all pages whose expires_at has passed. Returns count of deletions."""
+    sb = _supabase()
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        result = (
+            sb.table(TABLE)
+            .delete()
+            .not_.is_("expires_at", "null")
+            .lt("expires_at", now)
+            .execute()
+        )
+        count = len(result.data) if result.data else 0
+        if count:
+            logger.info("[page_publisher] cleanup_expired_pages: deleted %d expired pages", count)
+        return count
+    except Exception as e:
+        logger.warning("[page_publisher] cleanup_expired_pages failed: %s", e)
+        return 0

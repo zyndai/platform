@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     notion_client_id: str = ""
     notion_client_secret: str = ""
 
+    # ── Exa / Tavily / Firecrawl (LinkedIn people search + profile enrichment) ──
+    exa_api_key: str = ""
+    tavily_api_key: str = ""
+    firecrawl_api_key: str = ""
+
     # ── Zynd Network ──
     zynd_registry_url: str = "https://zns01.zynd.ai"
     zynd_deployer_url: str = "https://deployer.zynd.ai"

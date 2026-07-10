@@ -29,6 +29,7 @@ from app.services import persona
 from app.services.control import confirm_fact, forget_fact
 from app.services.export import active_context, build_jsonld_export, context_slice
 from app.services.ingest import clean_text, ingest_turns
+from app.services.linkedin_search import find_linkedin_people, search_linkedin_profile_urls, enrich_profile_urls
 from app.services.matching import match_users, search_by_query
 
 # ── Agent-persona ported MCP tools ─────────────────────────────────────────────
@@ -82,6 +83,10 @@ forget_fact_tool — Use when I say a remembered fact is wrong, outdated, privat
 find_similar_users — Use when I ask for people like me, similar users, people building/learning/working on similar things, or people with overlapping context.
 
 find_people — Use when I ask for a target type of person, complementary person, or someone who could help: investors, cofounders, designers, engineers, marketers, mentors, customers, early users, reviewers, domain experts. Convert my intent into a clear natural-language target description.
+
+search_linkedin_profiles — Use when I ask to find specific people on LinkedIn: "find CTOs in climate tech on LinkedIn", "search LinkedIn for AI researchers". Exa semantic search (Tavily fallback) with Firecrawl profile enrichment. ZYND users are cross-referenced and ranked first.
+
+find_linkedin_people_for_me — Use when I ask to find people like me on LinkedIn: "who should I connect with", "find my tribe on LinkedIn". Reads my ZYND context graph, auto-builds a search query, returns ZYND users first + enriched LinkedIn profiles.
 
 set_social_links — Use when I ask to save or update public social links: LinkedIn, Instagram, X/Twitter, GitHub.
 
@@ -297,6 +302,48 @@ async def find_people(target: str, k: int = 10, uid: str = Depends(_uid)) -> lis
     Use find_similar_users instead for "people like me" / overlapping context.
     The returned user_id can be passed to connect_with."""
     return await search_by_query(await _get_pool(), uid, target, limit=max(1, min(k, 50)))
+
+
+# ── LinkedIn People Search (Exa + Firecrawl + ZYND cross-reference) ──────────
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
+async def search_linkedin_profiles(query: str, num_results: int = 10, uid: str = Depends(_uid)) -> dict:
+    """Search LinkedIn for people matching a natural-language query via Exa semantic
+    search (Tavily fallback). Returns profile URLs enriched with Firecrawl data
+    (name, headline, about). Use when the user asks to find specific types of people
+    on LinkedIn: "find CTOs in climate tech", "search LinkedIn for product designers".
+
+    Combine with find_people for ZYND-internal matches — ZYND users won't appear
+    in LinkedIn results unless they've also set up findability."""
+    pool = await _get_pool()
+
+    profile_urls = await search_linkedin_profile_urls(query, num_results=num_results)
+    linkedin_profiles = await enrich_profile_urls(profile_urls)
+
+    zynd_users = await search_by_query(pool, uid, query, cluster_type="full_context", limit=num_results)
+
+    return {
+        "query": query,
+        "zynd_users": zynd_users,
+        "linkedin_profiles": linkedin_profiles,
+    }
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+async def find_linkedin_people_for_me(num_results: int = 10, uid: str = Depends(_uid)) -> dict:
+    """Auto-search LinkedIn for people like the user using their ZYND context graph.
+    Reads the user's stored facts, builds a natural-language query, searches ZYND
+    internal users first, then finds matching LinkedIn profiles via Exa + enriches
+    with Firecrawl (name, headline, about). ZYND users are ranked on top.
+
+    Use when the user asks: "find people like me on LinkedIn", "who should I meet
+    on LinkedIn", "find my tribe on LinkedIn"."""
+    return await find_linkedin_people(
+        await _get_pool(),
+        uid,
+        query=None,
+        num_results=num_results,
+    )
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})

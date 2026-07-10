@@ -7,8 +7,13 @@ Flow for MCP tools:
   3. Search ZYND internal users (find_people)   → ranked FIRST
   4. Search LinkedIn externally via Exa/Tavily  → ranked SECOND
   5. Enrich each external LinkedIn URL via Firecrawl (name, headline, about, ...)
+
+Every external API call is wrapped with logging + graceful fallback — if Exa is
+out of credits, Tavily picks up. If Firecrawl is down, profiles come back as
+bare URLs. Warnings are aggregated and surfaced to the caller.
 """
 
+import logging
 import re
 from typing import Any
 
@@ -18,6 +23,8 @@ import httpx
 from app.config import settings
 from app.services.export import active_context
 from app.services.matching import search_by_query
+
+logger = logging.getLogger("zynd.linkedin_search")
 
 _LINKEDIN_PROFILE_RE = re.compile(
     r"^https?://([a-z]{2,3}\.)?linkedin\.com/in/[^/?#]+/?$", re.IGNORECASE
@@ -62,6 +69,23 @@ async def _search_tavily(client: httpx.AsyncClient, query: str, num_results: int
     return [r.get("url", "") for r in resp.json().get("results", [])]
 
 
+def _format_http_error(exc: Exception) -> str:
+    """Human-readable one-liner from an httpx error (network, HTTP 4xx/5xx, timeout)."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        detail = ""
+        try:
+            body = exc.response.text[:300]
+            detail = f" — {body}"
+        except Exception:
+            pass
+        return f"HTTP {exc.response.status_code}{detail}"
+    if isinstance(exc, httpx.TimeoutException):
+        return f"timeout after {exc.request.extensions.get('timeout', {})}s" if exc.request else "timeout"
+    if isinstance(exc, httpx.NetworkError):
+        return f"network error: {exc}"
+    return f"{type(exc).__name__}: {exc}"
+
+
 def _extract_profile_urls(urls: list[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -79,35 +103,45 @@ async def search_linkedin_profile_urls(
     query: str,
     num_results: int = 10,
     timeout: int = 15,
-) -> list[str]:
+) -> tuple[list[str], list[str]]:
     """Semantic search for LinkedIn profile URLs matching `query`.
 
     Primary: Exa neural search (semantic). Fallback: Tavily keyword search.
+
+    Returns (profile_urls, warnings). If every provider fails, urls will be []
+    and warnings explain why.
     """
     if not query or not query.strip():
-        return []
+        return [], ["empty query — nothing to search"]
     query = query.strip()
     num_results = max(1, min(num_results, 50))
 
     if not settings.exa_api_key and not settings.tavily_api_key:
-        return []
+        return [], ["no Exa or Tavily API key configured"]
+
+    warnings: list[str] = []
 
     async with httpx.AsyncClient() as client:
         profiles: list[str] = []
-        last_error: Exception | None = None
 
-        # Try Exa first, then Tavily
         providers: list[tuple[str, Any]] = []
         if settings.exa_api_key:
             providers.append(("exa", _search_exa))
         if settings.tavily_api_key:
             providers.append(("tavily", _search_tavily))
 
-        for _name, fn in providers:
+        for name, fn in providers:
             try:
                 raw_urls = await fn(client, query, num_results, timeout)
+            except httpx.HTTPStatusError as exc:
+                detail = _format_http_error(exc)
+                logger.warning("LinkedIn search — %s failed (%s), trying next provider", name, detail)
+                warnings.append(f"{name} search returned {detail} (likely out of credits or rate-limited)")
+                continue
             except Exception as exc:
-                last_error = exc
+                detail = _format_http_error(exc)
+                logger.warning("LinkedIn search — %s failed (%s), trying next provider", name, detail)
+                warnings.append(f"{name} search failed: {detail}")
                 continue
 
             for url in _extract_profile_urls(raw_urls):
@@ -117,19 +151,20 @@ async def search_linkedin_profile_urls(
             if len(profiles) >= num_results:
                 break
 
-        if not profiles and last_error:
-            return []  # silent degradation — callers handle empty list
+        if not profiles and not warnings:
+            warnings.append("no LinkedIn profiles found for this query")
 
-        return profiles[:num_results]
+        return profiles[:num_results], warnings
 
 
 # ── Firecrawl profile enrichment ─────────────────────────────────────────────
 
 
-async def _scrape_with_firecrawl(client: httpx.AsyncClient, url: str, timeout: int) -> dict | None:
-    """Scrape a single LinkedIn profile page via Firecrawl and extract structured info."""
+async def _scrape_with_firecrawl(client: httpx.AsyncClient, url: str, timeout: int) -> tuple[dict | None, str | None]:
+    """Scrape a single LinkedIn profile page via Firecrawl. Returns (data, warning)."""
     if not settings.firecrawl_api_key:
-        return None
+        return None, "no Firecrawl API key configured"
+
     try:
         resp = await client.post(
             FIRECRAWL_SCRAPE_ENDPOINT,
@@ -145,10 +180,19 @@ async def _scrape_with_firecrawl(client: httpx.AsyncClient, url: str, timeout: i
         data = resp.json().get("data", {})
         markdown_text = (data.get("markdown") or "").strip()
         if not markdown_text:
-            return None
-        return _parse_profile_markdown(markdown_text, url)
-    except Exception:
-        return None
+            return None, f"Firecrawl returned empty content for {url}"
+        return _parse_profile_markdown(markdown_text, url), None
+    except httpx.HTTPStatusError as exc:
+        detail = _format_http_error(exc)
+        if exc.response.status_code == 402:
+            logger.warning("Firecrawl — credits expired for %s", url)
+            return None, f"Firecrawl credits expired (HTTP 402) for {url}"
+        logger.warning("Firecrawl — HTTP %d for %s", exc.response.status_code, url)
+        return None, f"Firecrawl returned {detail}"
+    except Exception as exc:
+        detail = _format_http_error(exc)
+        logger.warning("Firecrawl — %s on %s", detail, url)
+        return None, f"Firecrawl failed: {detail}"
 
 
 def _parse_profile_markdown(md: str, url: str) -> dict:
@@ -157,7 +201,6 @@ def _parse_profile_markdown(md: str, url: str) -> dict:
     result: dict[str, Any] = {"linkedin_url": url}
     name_consumed = False
 
-    # Pass 1: find name from heading or bold
     for i, line in enumerate(lines):
         stripped = line.strip()
         if stripped.startswith("# "):
@@ -169,7 +212,6 @@ def _parse_profile_markdown(md: str, url: str) -> dict:
             name_consumed = True
             break
 
-    # Pass 2: find headline — first meaningful non-name line (skip headings, images, links)
     for i, line in enumerate(lines):
         stripped = line.strip()
         if not stripped:
@@ -181,7 +223,6 @@ def _parse_profile_markdown(md: str, url: str) -> dict:
         result["headline"] = stripped
         break
 
-    # Pass 3: extract "About" section
     in_about = False
     about_lines: list[str] = []
     for line in lines:
@@ -201,33 +242,52 @@ def _parse_profile_markdown(md: str, url: str) -> dict:
     return result
 
 
-async def enrich_profile_urls(urls: list[str], timeout: int = 30) -> list[dict]:
-    """Enrich a list of LinkedIn profile URLs with Firecrawl-scraped profile data."""
-    if not urls or not settings.firecrawl_api_key:
-        return [{"linkedin_url": u} for u in urls]
+async def enrich_profile_urls(urls: list[str], timeout: int = 30) -> tuple[list[dict], list[str]]:
+    """Enrich LinkedIn profile URLs with Firecrawl-scraped data.
+
+    Returns (enriched_profiles, warnings). Degrades gracefully: if Firecrawl
+    is down or out of credits, returns bare URL entries + a warning.
+    """
+    if not urls:
+        return [], []
+
+    warnings: list[str] = []
+
+    if not settings.firecrawl_api_key:
+        logger.info("Firecrawl — no API key configured, returning bare URLs")
+        return [{"linkedin_url": u} for u in urls], ["no Firecrawl API key — profiles returned as bare URLs"]
 
     async with httpx.AsyncClient() as client:
         results: list[dict] = []
-        for url in urls[:15]:  # cap to avoid rate limits
-            enriched = await _scrape_with_firecrawl(client, url, timeout)
-            results.append(enriched if enriched else {"linkedin_url": url})
-        return results
+        firecrawl_ok = False
+
+        for url in urls[:15]:
+            enriched, warn = await _scrape_with_firecrawl(client, url, timeout)
+            if enriched:
+                results.append(enriched)
+                firecrawl_ok = True
+            else:
+                results.append({"linkedin_url": url})
+                if warn:
+                    warnings.append(warn)
+
+        if not firecrawl_ok and results:
+            logger.warning("Firecrawl — all enrichment calls failed, returning bare URLs")
+            if "Firecrawl unavailable — profiles returned as bare URLs" not in warnings:
+                warnings.append("Firecrawl enrichment unavailable — profiles returned as bare URLs")
+
+        return results, warnings
 
 
 # ── Query builder from user context ──────────────────────────────────────────
 
 
 def build_query_from_context(facts: list[dict]) -> str:
-    """Build a natural-language LinkedIn search query from ZYND context facts.
-
-    Combines role, skills, projects, interests into a search phrase like:
-    "backend engineer, AI agents, micro-SaaS, developer tools, San Francisco"
-    """
+    """Build a natural-language LinkedIn search query from ZYND context facts."""
     statements = [f.get("statement", "").strip() for f in facts if f.get("statement", "").strip()]
     if not statements:
         return ""
 
-    # Collect key terms: roles, skills, tools, projects, interests
     terms: list[str] = []
     for s in statements:
         s = s.removeprefix("You are ").removeprefix("You're ").removeprefix("Your ")
@@ -235,7 +295,6 @@ def build_query_from_context(facts: list[dict]) -> str:
         s = s.replace("learning ", "").replace("seeking ", "").replace("open to ", "")
         terms.append(s.strip(",."))
 
-    # Remove duplicates while preserving order
     seen: set[str] = set()
     unique: list[str] = []
     for t in terms:
@@ -244,7 +303,7 @@ def build_query_from_context(facts: list[dict]) -> str:
             seen.add(lower)
             unique.append(t)
 
-    return ", ".join(unique[:12])  # cap for reasonable search query length
+    return ", ".join(unique[:12])
 
 
 # ── Main orchestration: ZYND + Exa + Firecrawl ───────────────────────────────
@@ -256,29 +315,16 @@ async def find_linkedin_people(
     query: str | None = None,
     num_results: int = 10,
 ) -> dict:
-    """Combined LinkedIn people search — ZYND internal first, then external.
-
-    Args:
-        pool: Database pool
-        user_id: ZYND user ID
-        query: Natural-language search query (auto-built from context if None)
-        num_results: Max results per section
-
-    Returns:
-        {"zynd_users": [...], "linkedin_profiles": [...]}
-
-    ZYND users are always ranked first. External LinkedIn profiles (via Exa/Tavily)
-    are enriched with Firecrawl and ranked second.
-    """
+    """Combined LinkedIn people search — ZYND internal first, then external."""
     num_results = max(1, min(num_results, 25))
+    warnings: list[str] = []
 
-    # Build query from user context if not provided
     if not query or not query.strip():
         facts = await active_context(pool, user_id, k=20)
         query = build_query_from_context(facts)
 
     if not query or not query.strip():
-        return {"zynd_users": [], "linkedin_profiles": [], "query": ""}
+        return {"zynd_users": [], "linkedin_profiles": [], "query": "", "warnings": ["no context facts to build a query from"]}
 
     # 1. ZYND internal search
     zynd_users: list[dict] = await search_by_query(
@@ -286,11 +332,15 @@ async def find_linkedin_people(
     )
 
     # 2. External LinkedIn profile search
-    profile_urls = await search_linkedin_profile_urls(query, num_results=num_results)
-    linkedin_profiles = await enrich_profile_urls(profile_urls)
+    profile_urls, search_warnings = await search_linkedin_profile_urls(query, num_results=num_results)
+    warnings.extend(search_warnings)
+
+    linkedin_profiles, enrich_warnings = await enrich_profile_urls(profile_urls)
+    warnings.extend(enrich_warnings)
 
     return {
         "query": query,
         "zynd_users": zynd_users,
         "linkedin_profiles": linkedin_profiles,
+        "warnings": warnings if warnings else None,
     }

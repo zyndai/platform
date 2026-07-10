@@ -7,7 +7,11 @@ from app.services.linkedin_search import (
     _parse_profile_markdown,
     build_query_from_context,
     search_linkedin_profile_urls,
+    enrich_profile_urls,
+    _scrape_with_firecrawl,
 )
+
+import httpx
 
 
 # ── URL extraction ────────────────────────────────────────────────────────────
@@ -104,7 +108,6 @@ def test_build_query_deduplicates():
         {"statement": "You're a backend engineer"},  # duplicate concept
     ]
     query = build_query_from_context(facts)
-    # "backend engineer" appears only once
     assert query.lower().count("backend engineer") == 1
 
 
@@ -113,15 +116,16 @@ def test_build_query_empty():
     assert build_query_from_context([{"statement": ""}]) == ""
 
 
-# ── Exa search (mocked) ───────────────────────────────────────────────────────
+# ── Exa / Tavily search (mocked) ──────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_search_linkedin_exa_requires_api_key(monkeypatch):
+async def test_search_linkedin_no_api_keys(monkeypatch):
     monkeypatch.setattr("app.services.linkedin_search.settings.exa_api_key", "")
     monkeypatch.setattr("app.services.linkedin_search.settings.tavily_api_key", "")
-    result = await search_linkedin_profile_urls("senior engineers fintech", num_results=5)
-    assert result == []
+    urls, warnings = await search_linkedin_profile_urls("senior engineers fintech", num_results=5)
+    assert urls == []
+    assert any("no Exa" in w for w in warnings)
 
 
 @pytest.mark.asyncio
@@ -146,12 +150,13 @@ async def test_search_linkedin_exa_happy_path(monkeypatch):
     mock_client.post = AsyncMock(return_value=mock_resp)
 
     with patch("app.services.linkedin_search.httpx.AsyncClient", return_value=mock_client):
-        result = await search_linkedin_profile_urls("senior engineers fintech", num_results=5)
+        urls, warnings = await search_linkedin_profile_urls("senior engineers fintech", num_results=5)
 
-    assert result == [
+    assert urls == [
         "https://www.linkedin.com/in/jane-doe",
         "https://www.linkedin.com/in/john-smith",
     ]
+    assert warnings == []
 
 
 @pytest.mark.asyncio
@@ -159,22 +164,25 @@ async def test_search_linkedin_fallback_to_tavily(monkeypatch):
     monkeypatch.setattr("app.services.linkedin_search.settings.exa_api_key", "fake-exa")
     monkeypatch.setattr("app.services.linkedin_search.settings.tavily_api_key", "fake-tavily")
 
-    # Exa fails, Tavily succeeds
-    exa_resp = MagicMock()
-    exa_resp.raise_for_status = MagicMock(side_effect=Exception("exa down"))
-
-    tavily_resp = MagicMock()
-    tavily_resp.raise_for_status = MagicMock()
-    tavily_resp.json.return_value = {
-        "results": [{"url": "https://www.linkedin.com/in/carol-t"}]
-    }
-
     call_count = {"count": 0}
 
     async def mock_post(url, **kwargs):
         call_count["count"] += 1
         if "exa.ai" in url:
-            raise Exception("exa down")
+            # Raise httpx.HTTPStatusError to hit the specific 402/credits handler
+            req = MagicMock()
+            req.url = url
+            resp = MagicMock()
+            resp.status_code = 402
+            resp.text = '{"error":"credits_exhausted"}'
+            resp.request = req
+            raise httpx.HTTPStatusError("credits exhausted", request=req, response=resp)
+        # Tavily succeeds
+        tavily_resp = MagicMock()
+        tavily_resp.raise_for_status = MagicMock()
+        tavily_resp.json.return_value = {
+            "results": [{"url": "https://www.linkedin.com/in/carol-t"}]
+        }
         return tavily_resp
 
     mock_client = MagicMock()
@@ -183,7 +191,76 @@ async def test_search_linkedin_fallback_to_tavily(monkeypatch):
     mock_client.post = mock_post
 
     with patch("app.services.linkedin_search.httpx.AsyncClient", return_value=mock_client):
-        result = await search_linkedin_profile_urls("ML researchers", num_results=5)
+        urls, warnings = await search_linkedin_profile_urls("ML researchers", num_results=5)
 
-    assert result == ["https://www.linkedin.com/in/carol-t"]
+    assert urls == ["https://www.linkedin.com/in/carol-t"]
     assert call_count["count"] >= 2  # Exa tried + Tavily tried
+    assert any("exa" in w.lower() for w in warnings)  # exa failure logged as warning
+
+
+@pytest.mark.asyncio
+async def test_search_linkedin_both_providers_fail(monkeypatch):
+    monkeypatch.setattr("app.services.linkedin_search.settings.exa_api_key", "fake-exa")
+    monkeypatch.setattr("app.services.linkedin_search.settings.tavily_api_key", "fake-tavily")
+
+    async def mock_post(url, **kwargs):
+        resp = MagicMock()
+        resp.status_code = 500
+        resp.text = "Internal Server Error"
+        resp.request = MagicMock()
+        raise httpx.HTTPStatusError("server error", request=resp.request, response=resp)
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.post = mock_post
+
+    with patch("app.services.linkedin_search.httpx.AsyncClient", return_value=mock_client):
+        urls, warnings = await search_linkedin_profile_urls("query", num_results=5)
+
+    assert urls == []
+    assert len(warnings) == 2  # both providers logged warnings
+
+
+# ── Firecrawl enrichment (mocked) ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_enrich_no_api_key(monkeypatch):
+    monkeypatch.setattr("app.services.linkedin_search.settings.firecrawl_api_key", "")
+    urls = ["https://www.linkedin.com/in/jane-doe"]
+    profiles, warnings = await enrich_profile_urls(urls)
+    assert profiles == [{"linkedin_url": "https://www.linkedin.com/in/jane-doe"}]
+    assert any("no Firecrawl" in w for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_enrich_empty_urls(monkeypatch):
+    monkeypatch.setattr("app.services.linkedin_search.settings.firecrawl_api_key", "fake-key")
+    profiles, warnings = await enrich_profile_urls([])
+    assert profiles == []
+    assert warnings == []
+
+
+@pytest.mark.asyncio
+async def test_enrich_firecrawl_credits_expired(monkeypatch):
+    monkeypatch.setattr("app.services.linkedin_search.settings.firecrawl_api_key", "fake-key")
+
+    async def mock_post(url, **kwargs):
+        resp = MagicMock()
+        resp.status_code = 402
+        resp.text = '{"error":"credits_exhausted"}'
+        resp.request = MagicMock()
+        raise httpx.HTTPStatusError("credits exhausted", request=resp.request, response=resp)
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.post = mock_post
+
+    with patch("app.services.linkedin_search.httpx.AsyncClient", return_value=mock_client):
+        profiles, warnings = await enrich_profile_urls(["https://www.linkedin.com/in/jane-doe"])
+
+    assert profiles == [{"linkedin_url": "https://www.linkedin.com/in/jane-doe"}]
+    assert any("credits" in w.lower() for w in warnings)
+    assert any("402" in w for w in warnings)

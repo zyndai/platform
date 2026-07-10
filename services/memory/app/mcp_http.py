@@ -316,17 +316,24 @@ async def search_linkedin_profiles(query: str, num_results: int = 10, uid: str =
     Combine with find_people for ZYND-internal matches — ZYND users won't appear
     in LinkedIn results unless they've also set up findability."""
     pool = await _get_pool()
+    warnings: list[str] = []
 
-    profile_urls = await search_linkedin_profile_urls(query, num_results=num_results)
-    linkedin_profiles = await enrich_profile_urls(profile_urls)
+    profile_urls, search_warnings = await search_linkedin_profile_urls(query, num_results=num_results)
+    warnings.extend(search_warnings)
+
+    linkedin_profiles, enrich_warnings = await enrich_profile_urls(profile_urls)
+    warnings.extend(enrich_warnings)
 
     zynd_users = await search_by_query(pool, uid, query, cluster_type="full_context", limit=num_results)
 
-    return {
+    result: dict = {
         "query": query,
         "zynd_users": zynd_users,
         "linkedin_profiles": linkedin_profiles,
     }
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})

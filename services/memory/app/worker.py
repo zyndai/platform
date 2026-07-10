@@ -117,15 +117,27 @@ async def on_shutdown(ctx: dict) -> None:
     await close_pool()
 
 
+async def cleanup_pages_cron(ctx: dict) -> dict:
+    pool = get_pool()
+    from app.services.pages import cleanup_expired_pages as cleanup_pg
+    from app.services.pages_agent import cleanup_expired_pages as cleanup_sb
+    pg_count = await cleanup_pg(pool)
+    sb_count = cleanup_sb()
+    logger.info("cleanup_pages: postgres=%d supabase=%d", pg_count, sb_count)
+    return {"postgres": pg_count, "supabase": sb_count}
+
+
 class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
-    functions = [chunk_processor, recompute_user]
+    functions = [chunk_processor, recompute_user, cleanup_pages_cron]
     # Brief §9: decay nightly 00:30 UTC; recompute + orphan cleanup nightly/weekly.
+    # cleanup_pages: hourly expire of anonymous/ttl pages.
     cron_jobs = [
         cron(decay_cron, hour=0, minute=30),
         cron(resolution_cron, hour=1, minute=30),   # v2: emit is_resolved after decay settles
         cron(recompute_all_cron, hour=2, minute=0),
         cron(orphan_cron, weekday="sun", hour=1, minute=0),
+        cron(cleanup_pages_cron, minute=0),  # hourly: delete expired anonymous pages
     ]
     on_startup = on_startup
     on_shutdown = on_shutdown

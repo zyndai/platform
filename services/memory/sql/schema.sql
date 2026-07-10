@@ -145,10 +145,12 @@ CREATE TABLE IF NOT EXISTS published_pages (
   content     text NOT NULL,
   visibility  text NOT NULL DEFAULT 'unlisted' CHECK (visibility IN ('public','unlisted','private')),
   created_at  timestamptz NOT NULL DEFAULT now(),
-  updated_at  timestamptz NOT NULL DEFAULT now()
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  expires_at  timestamptz  -- NULL = permanent; non-null = auto-expired by cron
 );
 CREATE INDEX IF NOT EXISTS published_pages_slug_idx ON published_pages (slug);
 CREATE INDEX IF NOT EXISTS published_pages_user_idx ON published_pages (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS published_pages_expires_idx ON published_pages (expires_at) WHERE expires_at IS NOT NULL;
 
 -- OAuth 2.1 Dynamic Client Registration (DCR) — used by Claude Desktop/Web/Mobile
 -- connectors. Clients register themselves; no manual per-user client setup needed.

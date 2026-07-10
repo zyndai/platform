@@ -159,7 +159,18 @@ async def _get_arq():
 # old ContextVar pattern. FastMCP injects the AccessToken automatically when auth
 # is configured on the server.
 
+ANONYMOUS_USER_ID = "00000000-0000-0000-0000-000000000000"
+PUBLIC_PAGE_TTL_HOURS = 5
+
+
 def _uid(token: AccessToken = CurrentAccessToken()) -> str:
+    return token.client_id
+
+
+def _uid_opt(token: AccessToken = CurrentAccessToken()) -> str | None:
+    """Returns None for anonymous clients, uid for authenticated users."""
+    if token.client_id == "anonymous":
+        return None
     return token.client_id
 
 
@@ -174,6 +185,15 @@ class ZyndTokenVerifier(TokenVerifier):
         super().__init__(required_scopes=required_scopes)
 
     async def verify_token(self, token: str) -> AccessToken | None:
+        # 0) Anonymous access — no token provided (public publish_page reads)
+        if not token or not token.strip():
+            return AccessToken(
+                token="anonymous",
+                client_id="anonymous",
+                scopes=["anonymous"],
+                claims={"sub": "anonymous"},
+            )
+
         # 1) ZYND JWT — existing clients (Cursor, VS Code, SDKs)
         try:
             user_id, issued_at = verify_access_claims(token)
@@ -371,21 +391,33 @@ async def forget_fact_tool(predicate: str, object: str, uid: str = Depends(_uid)
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
 async def publish_page(content: str, title: str = "", format: str = "html",
-                       visibility: str = "unlisted", uid: str = Depends(_uid)) -> dict:
+                       visibility: str = "unlisted", uid: str | None = Depends(_uid_opt)) -> dict:
     """Host an HTML or Markdown page and return a public share URL. Use when the
     user asks to turn something into a shareable web page ("make this a page",
     "publish this"). Pass the full body as `content`; set `format` to "html"
-    or "markdown". Returns {success, url, slug, title}. Show the `url` to the user."""
+    or "markdown". Returns {success, url, slug, title}. Show the `url` to the user.
+
+    Works without authentication (anonymous): pages expire after 5 hours.
+    Authenticated users get permanent pages."""
     from app.services import pages_agent
+
+    if uid is None:
+        return await pages_agent.create_page(
+            ANONYMOUS_USER_ID, content, title, format, visibility,
+            expires_in_hours=PUBLIC_PAGE_TTL_HOURS,
+        )
+
     row = await (await _get_pool()).fetchrow("SELECT supabase_user_id FROM users WHERE id = $1", uid)
     suid = row["supabase_user_id"] if (row and row["supabase_user_id"]) else uid
     return await pages_agent.create_page(suid, content, title, format, visibility)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_my_pages(uid: str = Depends(_uid)) -> list[dict]:
+async def list_my_pages(uid: str | None = Depends(_uid_opt)) -> list[dict]:
     """List hosted shareable pages, newest first. Use when the user asks to
-    see pages they have published."""
+    see pages they have published. Returns empty list for anonymous users."""
+    if uid is None:
+        return []
     from app.services import pages_agent
     row = await (await _get_pool()).fetchrow("SELECT supabase_user_id FROM users WHERE id = $1", uid)
     suid = row["supabase_user_id"] if (row and row["supabase_user_id"]) else uid

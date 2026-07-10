@@ -14,6 +14,7 @@ from __future__ import annotations
 import html
 import logging
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import asyncpg
@@ -57,6 +58,8 @@ def _serialize(row: asyncpg.Record, include_content: bool = False) -> dict[str, 
         "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
     }
+    if row["expires_at"]:
+        out["expires_at"] = row["expires_at"].isoformat()
     if include_content:
         out["content"] = row["content"]
     return out
@@ -69,6 +72,7 @@ async def create_page(
     title: str = "",
     format: str = "html",
     visibility: str = "unlisted",
+    expires_in_hours: int | None = None,
 ) -> dict[str, Any]:
     """Store a new page and return its public metadata (incl. the share `url`)."""
     if not isinstance(content, str) or not content.strip():
@@ -80,17 +84,24 @@ async def create_page(
     vis = _normalize_visibility(visibility)
     title = (title or "Untitled page").strip()[:MAX_TITLE_LENGTH]
 
+    expires_at = None
+    if expires_in_hours and expires_in_hours > 0:
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
+
     # Retry on the astronomically unlikely slug collision (unique constraint).
     for _ in range(5):
         slug = secrets.token_urlsafe(16)
         try:
             row = await pool.fetchrow(
-                """INSERT INTO published_pages (user_id, slug, title, format, content, visibility)
-                   VALUES ($1, $2, $3, $4, $5, $6)
-                   RETURNING slug, title, format, visibility, created_at, updated_at""",
-                user_id, slug, title, fmt, content, vis,
+                """INSERT INTO published_pages (user_id, slug, title, format, content, visibility, expires_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)
+                   RETURNING slug, title, format, visibility, created_at, updated_at, expires_at""",
+                user_id, slug, title, fmt, content, vis, expires_at,
             )
-            return {"success": True, **_serialize(row)}
+            result = {"success": True, **_serialize(row)}
+            if expires_at:
+                result["note"] = f"Page expires in {expires_in_hours} hours."
+            return result
         except asyncpg.UniqueViolationError:
             continue
         except Exception as exc:
@@ -100,13 +111,15 @@ async def create_page(
 
 
 async def get_page_public(pool: asyncpg.Pool, slug: str) -> asyncpg.Record | None:
-    """Fetch a page for public viewing — only if public or unlisted."""
+    """Fetch a page for public viewing — only if public or unlisted and not expired."""
     if not slug:
         return None
     row = await pool.fetchrow(
         "SELECT * FROM published_pages WHERE slug = $1", slug
     )
     if not row or row["visibility"] not in _PUBLIC_VISIBILITIES:
+        return None
+    if row["expires_at"] and row["expires_at"] < datetime.now(timezone.utc):
         return None
     return row
 
@@ -169,6 +182,17 @@ async def delete_page(pool: asyncpg.Pool, user_id: str, slug: str) -> dict[str, 
     return {"success": deleted, "slug": slug} if deleted else {
         "success": False, "error": "page not found or not owned by you."
     }
+
+
+async def cleanup_expired_pages(pool: asyncpg.Pool) -> int:
+    """Delete pages whose expires_at has passed. Returns count of deletions."""
+    result = await pool.execute(
+        "DELETE FROM published_pages WHERE expires_at IS NOT NULL AND expires_at < NOW()"
+    )
+    count = int(result.split()[-1]) if result else 0
+    if count:
+        logger.info("cleanup_expired_pages: deleted %d expired pages from Postgres", count)
+    return count
 
 
 # ── Server-side rendering ────────────────────────────────────────────────

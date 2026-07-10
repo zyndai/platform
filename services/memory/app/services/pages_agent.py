@@ -7,7 +7,7 @@ Adapted from agent-persona/backend/services/page_publisher.py.
 """
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from supabase import create_client, Client
@@ -56,7 +56,8 @@ def _page_url(slug: str) -> str:
     return f"{_base_url()}/pages/{slug}"
 
 
-async def create_page(user_id: str, content: str, title: str = "", format: str = "html", visibility: str = "unlisted") -> dict[str, Any]:
+async def create_page(user_id: str, content: str, title: str = "", format: str = "html",
+                      visibility: str = "unlisted", expires_in_hours: int | None = None) -> dict[str, Any]:
     if not user_id:
         return {"success": False, "error": "user_id is required."}
 
@@ -72,6 +73,11 @@ async def create_page(user_id: str, content: str, title: str = "", format: str =
     if len(title) > MAX_TITLE_LENGTH:
         title = title[:MAX_TITLE_LENGTH].rstrip()
 
+    now = datetime.now(timezone.utc)
+    expires_at = None
+    if expires_in_hours and expires_in_hours > 0:
+        expires_at = (now + timedelta(hours=expires_in_hours)).isoformat()
+
     sb = _supabase()
     for _ in range(5):
         slug = _generate_slug()
@@ -79,14 +85,19 @@ async def create_page(user_id: str, content: str, title: str = "", format: str =
             row = sb.table(TABLE).insert({
                 "user_id": user_id, "slug": slug, "title": title,
                 "format": fmt, "content": content, "visibility": vis,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+                "expires_at": expires_at,
             }).execute()
             if row.data:
-                return {
+                result: dict[str, Any] = {
                     "success": True, "slug": slug, "url": _page_url(slug),
                     "title": title, "format": fmt, "visibility": vis,
                 }
+                if expires_at:
+                    result["expires_at"] = expires_at
+                    result["note"] = f"Page expires in {expires_in_hours} hours."
+                return result
         except Exception as e:
             err = str(e).lower()
             if "unique" in err or "duplicate" in err:
@@ -94,6 +105,21 @@ async def create_page(user_id: str, content: str, title: str = "", format: str =
             return {"success": False, "error": f"Could not create page: {e}"}
 
     return {"success": False, "error": "Could not allocate a unique page slug — try again."}
+
+
+def cleanup_expired_pages() -> int:
+    """Delete all pages whose expires_at has passed. Returns count of deletions."""
+    sb = _supabase()
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        result = sb.table(TABLE).delete().not_.is_("expires_at", "null").lt("expires_at", now).execute()
+        count = len(result.data) if result.data else 0
+        if count:
+            logger.info("cleanup_expired_pages: deleted %d expired anonymous pages from Supabase", count)
+        return count
+    except Exception as e:
+        logger.warning("cleanup_expired_pages failed: %s", e)
+        return 0
 
 
 async def list_pages(user_id: str) -> list[dict[str, Any]]:
@@ -110,9 +136,12 @@ async def list_pages(user_id: str) -> list[dict[str, Any]]:
 
 def _serialize(row: dict[str, Any]) -> dict[str, Any]:
     slug = row["slug"]
-    return {
+    item: dict[str, Any] = {
         "slug": slug, "url": _page_url(slug),
         "title": row.get("title", ""), "format": row.get("format", "html"),
         "visibility": row.get("visibility", "unlisted"),
         "created_at": row.get("created_at"), "updated_at": row.get("updated_at"),
     }
+    if row.get("expires_at"):
+        item["expires_at"] = row["expires_at"]
+    return item

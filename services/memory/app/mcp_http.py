@@ -164,6 +164,14 @@ PUBLIC_PAGE_TTL_HOURS = 5
 
 
 def _uid(token: AccessToken = CurrentAccessToken()) -> str:
+    # Fail CLOSED for anonymous callers. The verifier synthesizes an "anonymous"
+    # token for unauthenticated requests so the intended anonymous surface
+    # (publish_page / list_my_pages, which use _uid_opt) works — but every other
+    # tool is scoped to a real user and MUST require sign-in. Without this,
+    # unauthenticated callers could invoke costly tools like the LinkedIn/Exa
+    # search (global API keys → financial DoS) or side-effecting social actions.
+    if token.client_id == "anonymous":
+        raise PermissionError("This tool requires signing in to ZYND.")
     return token.client_id
 
 

@@ -64,7 +64,7 @@ async def linkedin_authorize(token: str, request: Request):
         "response_type": "code",
         "client_id": config.LINKEDIN_CLIENT_ID,
         "redirect_uri": config.LINKEDIN_REDIRECT_URI,
-        "scope": "openid profile email w_member_social r_basicprofile",
+        "scope": "openid profile email w_member_social",
         "state": state,
     }
     auth_url = f"https://www.linkedin.com/oauth/v2/authorization?{urlencode(params)}"
@@ -72,8 +72,11 @@ async def linkedin_authorize(token: str, request: Request):
 
 
 @router.get("/linkedin/callback")
-async def linkedin_callback(code: str, state: str):
+async def linkedin_callback(code: str = None, state: str = None, error: str = None, error_description: str = None):
     """Exchange LinkedIn authorization code for tokens."""
+    if error or not code:
+        desc = error_description or error or "authorization_denied"
+        return RedirectResponse(f"{config.FRONTEND_URL}/dashboard/settings/accounts?oauth=linkedin&status=error&detail={desc}")
     pending = _pending_oauth.pop(state, None)
     if not pending or pending["provider"] != "linkedin":
         raise HTTPException(status_code=400, detail="Invalid or expired state")
@@ -107,32 +110,26 @@ async def linkedin_callback(code: str, state: str):
         redirect_url = f"{config.FRONTEND_URL}/dashboard/settings/accounts?oauth=linkedin&status=error&detail={str(e)}"
         return RedirectResponse(redirect_url)
 
-    # Fetch the vanity name to build the exact profile URL for scraping.
-    # This avoids the fragile search-by-name approach in the scraper.
+    # Fetch userinfo via OIDC to pre-populate profile data for the scraper.
     try:
         async with httpx.AsyncClient() as client:
             me_resp = await client.get(
-                "https://api.linkedin.com/v2/me",
-                headers={
-                    "Authorization": f"Bearer {token_data['access_token']}",
-                    "X-Restli-Protocol-Version": "2.0.0",
-                },
+                "https://api.linkedin.com/v2/userinfo",
+                headers={"Authorization": f"Bearer {token_data['access_token']}"},
             )
         if me_resp.status_code == 200:
             me_data = me_resp.json()
-            vanity = me_data.get("vanityName")
-            if vanity:
-                profile_url = f"https://www.linkedin.com/in/{vanity}"
-                sb = config.get_supabase()
-                sb.table("linkedin_profiles").upsert(
-                    {
-                        "user_id": user_id,
-                        "profile_url": profile_url,
-                        "scraped_at": datetime.now(timezone.utc).isoformat(),
-                        "raw_profile": {"headline": (me_data.get("headline") or {}).get("localized", {}).get("en_US", "") or ""},
-                    },
-                    on_conflict="user_id",
-                ).execute()
+            name = me_data.get("name", "")
+            sb = config.get_supabase()
+            sb.table("linkedin_profiles").upsert(
+                {
+                    "user_id": user_id,
+                    "profile_url": "",
+                    "scraped_at": datetime.now(timezone.utc).isoformat(),
+                    "raw_profile": {"full_name": name, "sub": me_data.get("sub", "")},
+                },
+                on_conflict="user_id",
+            ).execute()
     except Exception:
         pass
 
@@ -172,8 +169,11 @@ async def twitter_authorize(token: str):
 
 
 @router.get("/twitter/callback")
-async def twitter_callback(code: str, state: str):
+async def twitter_callback(code: str = None, state: str = None, error: str = None, error_description: str = None):
     """Exchange Twitter authorization code for tokens (with PKCE)."""
+    if error or not code:
+        desc = error_description or error or "authorization_denied"
+        return RedirectResponse(f"{config.FRONTEND_URL}/dashboard?oauth=twitter&status=error&detail={desc}")
     pending = _pending_oauth.pop(state, None)
     if not pending or pending["provider"] != "twitter":
         raise HTTPException(status_code=400, detail="Invalid or expired state")
@@ -291,8 +291,11 @@ async def google_authorize(token: str, features: str = "calendar,docs"):
 
 
 @router.get("/google/callback")
-async def google_callback(code: str, state: str):
+async def google_callback(code: str = None, state: str = None, error: str = None, error_description: str = None):
     """Exchange Google authorization code for tokens."""
+    if error or not code:
+        desc = error_description or error or "authorization_denied"
+        return RedirectResponse(f"{config.FRONTEND_URL}/dashboard?oauth=google&status=error&detail={desc}")
     pending = _pending_oauth.pop(state, None)
     if not pending or pending["provider"] != "google":
         raise HTTPException(status_code=400, detail="Invalid or expired state")
@@ -357,8 +360,11 @@ async def notion_authorize(token: str):
 
 
 @router.get("/notion/callback")
-async def notion_callback(code: str, state: str):
+async def notion_callback(code: str = None, state: str = None, error: str = None, error_description: str = None):
     """Exchange Notion authorization code for tokens."""
+    if error or not code:
+        desc = error_description or error or "authorization_denied"
+        return RedirectResponse(f"{config.FRONTEND_URL}/dashboard?oauth=notion&status=error&detail={desc}")
     pending = _pending_oauth.pop(state, None)
     if not pending or pending["provider"] != "notion":
         raise HTTPException(status_code=400, detail="Invalid or expired state")

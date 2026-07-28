@@ -1093,7 +1093,7 @@ def request_connection(user_id: str, target_agent_id: str, target_name: str = "N
         "initiator_name": my_name,
         "receiver_name": target_name,
         "status": "pending",
-        "mode": "agent",
+        "initiator_mode": "agent",
     }).execute()
 
     if result.data:

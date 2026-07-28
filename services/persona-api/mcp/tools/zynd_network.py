@@ -1082,7 +1082,7 @@ def request_connection(user_id: str, target_agent_id: str, target_name: str = "N
             "status": "already_exists",
             "thread_id": t["id"],
             "connection_status": t["status"],
-            "message": f"You already have a {t['status']} connection with {target_name}.",
+            "message": f"You already have a {t['status']} Zynd Network connection with {target_name}.",
         }
 
     # Create new thread in 'agent' mode — the AI initiated it, so the AI
@@ -1117,7 +1117,7 @@ def request_connection(user_id: str, target_agent_id: str, target_name: str = "N
             "thread_mode": "agent",
             "partner_name": target_name,
             "partner_agent_id": target_agent_id,
-            "message": f"Connection request sent to {target_name}. They will need to accept it.",
+            "message": f"Zynd Network connection request sent to {target_name}. They'll need to accept it on the Zynd Network — note this is a Zynd connection, not a LinkedIn invitation.",
         }
 
     return {"error": "Failed to create connection thread."}

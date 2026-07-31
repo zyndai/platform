@@ -1341,6 +1341,27 @@ def _format_user_brief(
     return "\n".join(lines) if lines else "(no profile details set yet)"
 
 
+def _get_user_email(user_id: str) -> str | None:
+    """Fetch the user's email from Supabase auth.users via admin API."""
+    try:
+        import requests
+        headers = {
+            "apikey": config.SUPABASE_SERVICE_KEY,
+            "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
+        }
+        r = requests.get(
+            f"{config.SUPABASE_URL.rstrip('/')}/auth/v1/admin/users/{user_id}",
+            headers=headers,
+            timeout=4,
+        )
+        if not r.ok:
+            return None
+        data = r.json()
+        return data.get("email") or (data.get("user_metadata") or {}).get("email")
+    except Exception:
+        return None
+
+
 def _build_system_prompt(
     user_id: str,
     connected_providers: list[str],
@@ -1401,6 +1422,13 @@ def _build_system_prompt(
         redact_brief=redact_brief,
         user_id=user_id,
     )
+
+    # Fetch the principal's email — only for internal mode (principal chatting
+    # with their own persona). Never expose it to external agents.
+    if is_external:
+        user_email = "(not shared in external mode)"
+    else:
+        user_email = _get_user_email(user_id) or "(not available)"
 
     # Time context — the LLM uses this to translate "let's meet at 2pm" into
     # the right wall-clock time for `create_calendar_event` etc. Internal-mode
@@ -1470,6 +1498,8 @@ Hi! I'm {agent_handle or ("the AI agent representing " + principal_name)}, here 
 The following is a briefing your principal ('{principal_name}') wrote about themselves so you can represent them accurately:
 
 {user_brief}
+
+Your principal's email address is: {user_email}
 
 Use this as factual background about the human you serve. Do not adopt their identity, do not claim to be them, do not speak in their voice as if you are them. You are their agent, not them."""
 

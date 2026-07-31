@@ -22,6 +22,7 @@ import {
   UsersRound,
   Globe,
   Plug,
+  Compass,
 } from "lucide-react";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
 import {
@@ -32,9 +33,11 @@ import { ChatProvider } from "@/contexts/ChatContext";
 import TaskToasts from "@/components/TaskToasts";
 import { Monogram, Avatar, BootLoader, type BootStage } from "@/components/ui";
 import { stepToPath } from "@/lib/onboarding";
+import { startGuidedTour } from "@/lib/tour";
 import AppTopBar from "@/components/AppTopBar";
 import RightRail from "@/components/RightRail";
 import ThemeToggle from "@/components/ThemeToggle";
+import GuidedTour from "@/components/GuidedTour";
 
 type NavTone = "indigo" | "violet" | "sky" | "emerald" | "amber" | "rose" | "slate";
 
@@ -44,15 +47,16 @@ type NavItem = {
   icon: typeof Home;
   tone: NavTone;
   badge?: "inbox" | "meetings";
+  tourId?: string;
 };
 
 const ARIA_NAV: NavItem[] = [
-  { href: "/dashboard/chat",     label: "Home",     icon: LayoutDashboard, tone: "indigo"  },
-  { href: "/dashboard/inbox",    label: "Inbox",    icon: Inbox,           tone: "sky",     badge: "inbox"    },
-  { href: "/dashboard/messages", label: "Threads",  icon: MessagesSquare,  tone: "violet"  },
-  { href: "/dashboard/meetings", label: "Meetings", icon: CalendarDays,    tone: "amber",   badge: "meetings" },
-  { href: "/dashboard/people",   label: "People",   icon: Users,           tone: "emerald" },
-  { href: "/dashboard/groups",   label: "Groups",   icon: UsersRound,      tone: "rose"    },
+  { href: "/dashboard/chat",     label: "Home",     icon: LayoutDashboard, tone: "indigo",  tourId: "tour-nav-chat"     },
+  { href: "/dashboard/inbox",    label: "Inbox",    icon: Inbox,           tone: "sky",     badge: "inbox",    tourId: "tour-nav-inbox"    },
+  { href: "/dashboard/messages", label: "Threads",  icon: MessagesSquare,  tone: "violet",  tourId: "tour-nav-messages" },
+  { href: "/dashboard/meetings", label: "Meetings", icon: CalendarDays,    tone: "amber",   badge: "meetings", tourId: "tour-nav-meetings" },
+  { href: "/dashboard/people",   label: "People",   icon: Users,           tone: "emerald", tourId: "tour-nav-people"   },
+  { href: "/dashboard/groups",   label: "Groups",   icon: UsersRound,      tone: "rose",    tourId: "tour-nav-groups"   },
 ];
 
 const YOU_NAV: NavItem[] = [
@@ -60,7 +64,7 @@ const YOU_NAV: NavItem[] = [
   { href: "/dashboard/pages",    label: "Pages",      icon: Globe,      tone: "sky"   },
   { href: "/dashboard/connect",  label: "MCP",        icon: Plug,       tone: "violet"},
   { href: "/dashboard/todos",    label: "Todos",      icon: ListChecks, tone: "rose"  },
-  { href: "/dashboard/settings", label: "Settings",   icon: Settings,   tone: "slate" },
+  { href: "/dashboard/settings", label: "Settings",   icon: Settings,   tone: "slate", tourId: "tour-you-settings" },
 ];
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
@@ -151,6 +155,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         onClick={() => setSidebarOpen(false)}
         className={`nav-item ${isActive ? "active" : ""}`}
         data-tone={item.tone}
+        data-tour={item.tourId}
       >
         <span className="nav-icon"><Icon /></span>
         <span className="nav-label">{item.label}</span>
@@ -222,6 +227,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             className="sidebar-search"
             aria-label="Search"
             title={sidebarCollapsed ? "Search" : undefined}
+            data-tour="tour-search"
             onClick={() => {
               if (sidebarCollapsed) setSidebarCollapsed(false);
             }}
@@ -248,8 +254,19 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
         <div className="sidebar-footer">
           {renderItem(YOU_NAV.find(i => i.label === "Settings")!)}
-          <ThemeToggle />
-          <div className="user-card">
+          <div className="sidebar-footer-row">
+            <ThemeToggle />
+            <button
+              type="button"
+              className="tour-replay-btn"
+              onClick={() => startGuidedTour()}
+              title="Take the tour"
+              aria-label="Replay the guided tour"
+            >
+              <Compass size={14} strokeWidth={1.5} />
+            </button>
+          </div>
+          <div className="user-card" data-tour="tour-user-card">
           <Link
             href="/dashboard/settings/you"
             className="user-card-link"
@@ -294,6 +311,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       {showRail && <RightRail />}
 
       <TaskToasts />
+      <GuidedTour
+        sidebarCollapsed={sidebarCollapsed}
+        onExpandSidebar={() => setSidebarCollapsed(false)}
+      />
     </div>
   );
 }

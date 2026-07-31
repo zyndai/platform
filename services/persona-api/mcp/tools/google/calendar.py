@@ -54,6 +54,11 @@ def create_event(
     description: str = "",
     location: str = "",
     time_zone: str = "UTC",
+    # Bare `list[str]`, not `list[str] | None` — ContextAware._generate_schema
+    # reads `annotation.__name__` for the JSON-schema type, and a `| None`
+    # union has no `__name__`, so it'd silently fall back to "string" and
+    # break the LLM's tool call.
+    attendees: list[str] = None,
 ) -> dict:
     """
     Create a Google Calendar event.
@@ -69,6 +74,8 @@ def create_event(
         time_zone (str): IANA timezone name (e.g. "America/Los_Angeles").
             Defaults to UTC. The orchestrator passes the user's browser
             timezone so events land at the wall-clock time they meant.
+        attendees (list[str]): Guest email addresses to invite. Google sends
+            each one a calendar invite automatically.
 
     Returns:
         dict: Created event data or error
@@ -99,15 +106,22 @@ def create_event(
                 "timeZone": time_zone,
             },
         }
+        if attendees:
+            event_body["attendees"] = [{"email": e} for e in attendees if e]
 
         print(f"[calendar] Sending request to Google for user {user_id}...")
-        event = service.events().insert(calendarId="primary", body=event_body).execute()
+        # sendUpdates="all" is what actually triggers Google to email the
+        # invite — without it, attendees are added to the event silently.
+        event = service.events().insert(
+            calendarId="primary", body=event_body, sendUpdates="all"
+        ).execute()
         print(f"[calendar] Event created! ID: {event['id']}")
         return {
             "success": True,
             "event_id": event["id"],
             "link": event.get("htmlLink"),
             "summary": summary,
+            "attendees": [a["email"] for a in event.get("attendees", [])],
         }
     except Exception as e:
         print(f"[calendar] EXCEPTION in create_event: {str(e)}")

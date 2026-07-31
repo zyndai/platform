@@ -101,7 +101,7 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(read_linkedin_profile, name="read_linkedin_profile", description="Read the principal's scraped LinkedIn profile — headline, experience, education, skills, and recent posts. Use this when the principal asks about their own LinkedIn background or work history.")
 
     # ── Google Calendar tools ────────────────────────────────────────
-    mcp.register(create_event, name="create_calendar_event", description="Create an event on Google Calendar")
+    mcp.register(create_event, name="create_calendar_event", description="Create an event on Google Calendar. Pass `attendees` (a list of email addresses) to invite guests — Google emails them the invite automatically.")
     mcp.register(list_events, name="list_calendar_events", description="List upcoming Google Calendar events")
     mcp.register(delete_event, name="delete_calendar_event", description="Delete a Google Calendar event")
 

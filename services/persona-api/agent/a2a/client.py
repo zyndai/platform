@@ -82,12 +82,17 @@ class A2AClient:
         task_id: Optional[str] = None,
         push_url: Optional[str] = None,
         push_token: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> dict[str, Any]:
         """Sync (blocking) message/send. Returns the receiver's Task dict.
 
         text and/or data may be supplied. If both are present, the
         DataPart precedes the TextPart in the parts array (matches the
         adapter's part-ordering convention from the SDK).
+
+        timeout overrides the client's default budget for this call only —
+        used by the transport dispatcher to cap how long a blocking SEND
+        (no push support on the peer) can hold a live chat turn.
 
         Raises:
             A2AError on a JSON-RPC error envelope from the receiver.
@@ -134,7 +139,7 @@ class A2AClient:
         print(f"[a2a client] → POST {a2a_url}")
         print(f"[a2a client]   body: {body_str[:2000]}")
         logger.info("[a2a client] POST %s body=%s", a2a_url, body_str[:1000])
-        async with httpx.AsyncClient(timeout=self._timeout) as h:
+        async with httpx.AsyncClient(timeout=timeout if timeout is not None else self._timeout) as h:
             resp = await h.post(a2a_url, json=body)
             print(f"[a2a client]   HTTP {resp.status_code} from {a2a_url}")
             print(f"[a2a client]   response: {resp.text[:2000]}")

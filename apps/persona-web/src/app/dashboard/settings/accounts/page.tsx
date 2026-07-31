@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { FileText, Calendar, Send } from "lucide-react";
+import { FileText, Calendar, Send, Mail } from "lucide-react";
 
 // Lucide dropped brand glyphs in v0.452 (trademark concerns), so the
 // LinkedIn mark is inlined here. Sized + stroked to match other icons.
@@ -26,12 +26,13 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 // Bot swapped 2026-05-20: was @zynd_persona_telegram_bot — now @zynd_brief_bot.
 const TELEGRAM_BOT = "zynd_brief_bot";
 
-type ConnId = "linkedin" | "brief" | "calendar" | "telegram";
+type ConnId = "linkedin" | "brief" | "calendar" | "email" | "telegram";
 
 interface ConnState {
   linkedin: { read: boolean; write: boolean; lastReadIso?: string };
   brief: { connected: boolean };
   calendar: { connected: boolean };
+  email: { connected: boolean };
   telegram: { connected: boolean };
 }
 
@@ -39,8 +40,23 @@ const EMPTY: ConnState = {
   linkedin: { read: false, write: false },
   brief: { connected: false },
   calendar: { connected: false },
+  email: { connected: false },
   telegram: { connected: false },
 };
+
+/** Google features share one token; disconnecting one drops all of them. */
+function googleSiblingsNote(conn: ConnState, self: "brief" | "calendar" | "email"): string {
+  const label: Record<"brief" | "calendar" | "email", string> = {
+    brief: "brief",
+    calendar: "calendar",
+    email: "email access",
+  };
+  const others = (["brief", "calendar", "email"] as const)
+    .filter((k) => k !== self && conn[k].connected)
+    .map((k) => label[k]);
+  if (!others.length) return "";
+  return `This will also disconnect your ${others.join(" and ")} — they share the same Google account.`;
+}
 
 function timeAgo(iso: string | undefined): string {
   if (!iso) return "";
@@ -104,6 +120,7 @@ export default function AccountsPage() {
       linkedin: { read: linkedinRead, write: linkedinOauth, lastReadIso: linkedinLastReadIso },
       brief: { connected: google.connected && (scopes.includes("documents") || scopes.includes("drive")) },
       calendar: { connected: google.connected && scopes.includes("calendar") },
+      email: { connected: google.connected && scopes.includes("gmail") },
       telegram,
     });
     setLoading(false);
@@ -119,10 +136,19 @@ export default function AccountsPage() {
     const provider = params.get("oauth");
     const status = params.get("status");
     if (provider && status) {
+      const detail = params.get("detail");
+      const reason = detail && detail !== "already-granted"
+        ? detail.length > 200 ? `${detail.slice(0, 200)}…` : detail
+        : "";
       setOauthFlash(
         status === "success"
           ? { tone: "success", msg: `${provider} connected.` }
-          : { tone: "danger",  msg: `${provider} didn't go through. Try again?` },
+          : {
+              tone: "danger",
+              msg: reason
+                ? `${provider} didn't connect: ${reason}`
+                : `${provider} didn't go through. Try again?`,
+            },
       );
       window.history.replaceState(null, "", "/dashboard/settings/accounts");
       void refresh();
@@ -143,16 +169,17 @@ export default function AccountsPage() {
     }
   }, [refresh]);
 
-  const buildGoogleConnect = async (): Promise<string | null> => {
+  const buildGoogleConnect = async (features: string): Promise<string | null> => {
     const sb = getSupabase();
     const { data: { session } } = await sb.auth.getSession();
     if (!session?.access_token) return null;
-    // Always request both Docs + Calendar so the user goes through Google's
-    // consent screen exactly once. Whichever card was clicked, the other
-    // capability is granted alongside — and a follow-up click won't show
-    // a redundant consent (oauth_routes skips re-consent when the scope set
-    // is already covered).
-    return `${API}/api/oauth/google/authorize?features=docs,calendar&token=${session.access_token}`;
+    // Docs + Calendar are bundled behind one click so the user goes through
+    // Google's consent screen exactly once for those. Email is kept as its
+    // own explicit opt-in — like LinkedIn's read-vs-post split — since
+    // sending mail on the user's behalf is a higher-trust action. The
+    // backend unions this request with whatever scopes are already granted,
+    // so connecting one feature never revokes another.
+    return `${API}/api/oauth/google/authorize?features=${features}&token=${session.access_token}`;
   };
 
   const connectLinkedIn = async () => {
@@ -204,9 +231,10 @@ export default function AccountsPage() {
           method: "DELETE",
           headers: { Authorization: `Bearer ${jwt}` },
         });
-      } else if (which === "brief" || which === "calendar") {
-        // Brief and Calendar share the underlying Google token. Dropping
-        // either drops both — we tell the user that in the inline confirm.
+      } else if (which === "brief" || which === "calendar" || which === "email") {
+        // Brief, Calendar, and Email share the underlying Google token.
+        // Dropping any one drops all granted ones — we tell the user that
+        // in the inline confirm (see googleSiblingsNote).
         await fetch(`${API}/api/connections/google`, {
           method: "DELETE",
           headers: { Authorization: `Bearer ${jwt}` },
@@ -240,7 +268,7 @@ export default function AccountsPage() {
       );
       return;
     }
-    const url = await buildGoogleConnect();
+    const url = await buildGoogleConnect(id === "email" ? "gmail" : "docs,calendar");
     if (url) window.location.href = url;
   };
 
@@ -257,7 +285,7 @@ export default function AccountsPage() {
         </div>
       )}
       <div className="settings-header">
-        <p className="body secondary">Four things your Persona can see. Nothing else.</p>
+        <p className="body secondary">Five things your Persona can see. Nothing else.</p>
       </div>
 
       <div className="connectors-grid">
@@ -302,7 +330,7 @@ export default function AccountsPage() {
           description="A doc in your Drive where you tell your Persona what's current. It re-reads whenever it changes."
           meta={conn.brief.connected ? "Connected to Google Drive" : undefined}
           connectLabel="Create my brief"
-          confirmNote={conn.calendar.connected ? "This will also stop your Persona reading your calendar." : ""}
+          confirmNote={googleSiblingsNote(conn, "brief")}
           onConnect={() => handleConnect("brief")}
           onAskDisconnect={() => setConfirming("brief")}
           onCancelConfirm={() => setConfirming(null)}
@@ -320,11 +348,29 @@ export default function AccountsPage() {
           description="Your Persona sees your busy and free blocks so it can offer real meeting times. It never sees what your meetings are about."
           meta={conn.calendar.connected ? "Reading your primary calendar" : undefined}
           connectLabel="Let my Persona see when I'm free"
-          confirmNote={conn.brief.connected ? "This will also stop your Persona reading your brief." : ""}
+          confirmNote={googleSiblingsNote(conn, "calendar")}
           onConnect={() => handleConnect("calendar")}
           onAskDisconnect={() => setConfirming("calendar")}
           onCancelConfirm={() => setConfirming(null)}
           onConfirmDisconnect={() => disconnect("calendar")}
+        />
+
+        <ConnectorCard
+          id="email"
+          icon={<Mail size={22} strokeWidth={1.5} />}
+          name="Email"
+          connected={conn.email.connected}
+          loading={loading}
+          working={working === "email"}
+          confirming={confirming === "email"}
+          description="Your Persona can search your inbox and send emails on your behalf when you ask it to in chat."
+          meta={conn.email.connected ? "Read + send via Gmail" : undefined}
+          connectLabel="Let my Persona send email for me"
+          confirmNote={googleSiblingsNote(conn, "email")}
+          onConnect={() => handleConnect("email")}
+          onAskDisconnect={() => setConfirming("email")}
+          onCancelConfirm={() => setConfirming(null)}
+          onConfirmDisconnect={() => disconnect("email")}
         />
 
         <ConnectorCard

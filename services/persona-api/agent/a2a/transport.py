@@ -67,6 +67,15 @@ class Transport(str, Enum):
     GET = "get"
 
 
+# Blocking SEND is the AGENT_TO_AGENT fallback when the peer's card doesn't
+# declare push support — the caller holds a live chat turn open until the
+# peer's persona finishes replying. The client's general-purpose 90s default
+# is too long to block a user-facing turn on, so this path fails fast
+# instead: a healthy reply finishes well within it, and a genuinely slow or
+# dead peer surfaces sooner rather than freezing the chat for 90s.
+AGENT_TO_AGENT_SEND_TIMEOUT_SEC = 35.0
+
+
 # ── Hints / result types ─────────────────────────────────────────────
 
 
@@ -442,12 +451,16 @@ async def dispatch(
                 push_token=push_token,
             )
 
-    # SEND (default & fallback)
+    # SEND (default & fallback). Only the AGENT_TO_AGENT fallback case gets
+    # the shortened budget — SERVICE_CALL already defaults to SEND as its
+    # fast path and services are expected to answer quickly regardless.
+    send_timeout = AGENT_TO_AGENT_SEND_TIMEOUT_SEC if intent == Intent.AGENT_TO_AGENT else None
     task = await client.send(
         peer_a2a_url,
         context_id=context_id,
         text=text,
         data=data,
         task_id=task_id,
+        timeout=send_timeout,
     )
     return DispatchResult(transport=Transport.SEND, task=task)

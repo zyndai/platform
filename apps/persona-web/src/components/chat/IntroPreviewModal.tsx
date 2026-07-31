@@ -25,12 +25,9 @@ function buildDraft(target: PersonaHit, myName: string): string {
   const t = firstName(target.name);
   const me = myName || "my person";
   return [
-    `Hi ${t} — I'm ${me}'s Persona, the AI agent working with them.`,
-    `They've been reading what you've been up to lately and think there's enough overlap to be worth a chat.`,
+    `Hi ${t}, ${me} came across your profile and wanted to connect.`,
     "",
-    `${me} has some open time this week. Worth a 20-minute call?`,
-    "",
-    `— ${me}'s Persona`,
+    `— sent by ${me}'s Persona`,
   ].join("\n");
 }
 

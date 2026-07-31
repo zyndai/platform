@@ -28,8 +28,59 @@ from datetime import datetime, timezone
 
 router = APIRouter()
 
-# In-memory pending OAuth state store (use Redis in production)
-_pending_oauth: dict[str, dict] = {}
+PENDING_STATE_TABLE = "oauth_pending_state"
+
+
+def _store_pending_state(state: str, user_id: str, provider: str, code_verifier: str = None) -> None:
+    """Persist OAuth state to Supabase so it survives backend restarts.
+
+    A plain in-memory dict here meant any restart between /authorize and
+    /callback (the `api` process restarts often — crashes, deploys, memory
+    limits) silently dropped in-flight OAuth state, and the user got
+    "Invalid or expired state" through no fault of their own.
+    """
+    sb = config.get_supabase()
+    # Opportunistic cleanup so abandoned flows don't accumulate rows forever.
+    sb.table(PENDING_STATE_TABLE).delete().lt("expires_at", datetime.now(timezone.utc).isoformat()).execute()
+    sb.table(PENDING_STATE_TABLE).insert({
+        "state": state,
+        "user_id": user_id,
+        "provider": provider,
+        "code_verifier": code_verifier,
+    }).execute()
+
+
+def _pop_pending_state(state: str, provider: str) -> dict | None:
+    """Fetch-and-delete a pending OAuth state row.
+
+    Returns None if the state is missing, expired, or was issued for a
+    different provider (mirrors the old dict-based check).
+    """
+    if not state:
+        return None
+    sb = config.get_supabase()
+    resp = sb.table(PENDING_STATE_TABLE).select("*").eq("state", state).execute()
+    rows = resp.data
+    sb.table(PENDING_STATE_TABLE).delete().eq("state", state).execute()
+    if not rows:
+        return None
+    row = rows[0]
+    if row["provider"] != provider:
+        return None
+    expires_at = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+    if datetime.now(timezone.utc) > expires_at:
+        return None
+    return {"user_id": row["user_id"], "code_verifier": row.get("code_verifier")}
+
+
+def _frontend_redirect(path: str, **params) -> RedirectResponse:
+    """Redirect to a frontend path with query params safely URL-encoded.
+
+    Provider error descriptions (e.g. LinkedIn's `Scope "..." is not
+    authorized`) contain spaces, quotes and `&`, which would otherwise
+    corrupt the redirect URL and the frontend's query parsing.
+    """
+    return RedirectResponse(f"{config.FRONTEND_URL}{path}?{urlencode(params)}")
 
 
 def _generate_pkce() -> tuple[str, str]:
@@ -55,10 +106,7 @@ async def linkedin_authorize(token: str, request: Request):
     user = await _validate_token(token)
 
     state = secrets.token_urlsafe(32)
-    _pending_oauth[state] = {
-        "user_id": user["id"],
-        "provider": "linkedin",
-    }
+    _store_pending_state(state, user["id"], "linkedin")
 
     params = {
         "response_type": "code",
@@ -76,9 +124,9 @@ async def linkedin_callback(code: str = None, state: str = None, error: str = No
     """Exchange LinkedIn authorization code for tokens."""
     if error or not code:
         desc = error_description or error or "authorization_denied"
-        return RedirectResponse(f"{config.FRONTEND_URL}/dashboard/settings/accounts?oauth=linkedin&status=error&detail={desc}")
-    pending = _pending_oauth.pop(state, None)
-    if not pending or pending["provider"] != "linkedin":
+        return _frontend_redirect("/dashboard/settings/accounts", oauth="linkedin", status="error", detail=desc)
+    pending = _pop_pending_state(state, "linkedin")
+    if not pending:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
 
     user_id = pending["user_id"]
@@ -96,8 +144,7 @@ async def linkedin_callback(code: str = None, state: str = None, error: str = No
         )
 
     if resp.status_code != 200:
-        redirect_url = f"{config.FRONTEND_URL}/dashboard/settings/accounts?oauth=linkedin&status=error&detail={resp.text}"
-        return RedirectResponse(redirect_url)
+        return _frontend_redirect("/dashboard/settings/accounts", oauth="linkedin", status="error", detail=resp.text)
 
     token_data = resp.json()
     try:
@@ -107,8 +154,7 @@ async def linkedin_callback(code: str = None, state: str = None, error: str = No
             tokens=token_data,
         )
     except ValueError as e:
-        redirect_url = f"{config.FRONTEND_URL}/dashboard/settings/accounts?oauth=linkedin&status=error&detail={str(e)}"
-        return RedirectResponse(redirect_url)
+        return _frontend_redirect("/dashboard/settings/accounts", oauth="linkedin", status="error", detail=str(e))
 
     # Fetch userinfo via OIDC to pre-populate profile data for the scraper.
     try:
@@ -133,8 +179,7 @@ async def linkedin_callback(code: str = None, state: str = None, error: str = No
     except Exception:
         pass
 
-    redirect_url = f"{config.FRONTEND_URL}/dashboard/settings/accounts?oauth=linkedin&status=success"
-    return RedirectResponse(redirect_url)
+    return _frontend_redirect("/dashboard/settings/accounts", oauth="linkedin", status="success")
 
 
 # =====================================================================
@@ -149,11 +194,7 @@ async def twitter_authorize(token: str):
     state = secrets.token_urlsafe(32)
     code_verifier, code_challenge = _generate_pkce()
 
-    _pending_oauth[state] = {
-        "user_id": user["id"],
-        "provider": "twitter",
-        "code_verifier": code_verifier,
-    }
+    _store_pending_state(state, user["id"], "twitter", code_verifier=code_verifier)
 
     params = {
         "response_type": "code",
@@ -173,9 +214,9 @@ async def twitter_callback(code: str = None, state: str = None, error: str = Non
     """Exchange Twitter authorization code for tokens (with PKCE)."""
     if error or not code:
         desc = error_description or error or "authorization_denied"
-        return RedirectResponse(f"{config.FRONTEND_URL}/dashboard?oauth=twitter&status=error&detail={desc}")
-    pending = _pending_oauth.pop(state, None)
-    if not pending or pending["provider"] != "twitter":
+        return _frontend_redirect("/dashboard", oauth="twitter", status="error", detail=desc)
+    pending = _pop_pending_state(state, "twitter")
+    if not pending:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
 
     user_id = pending["user_id"]
@@ -195,8 +236,7 @@ async def twitter_callback(code: str = None, state: str = None, error: str = Non
         )
 
     if resp.status_code != 200:
-        redirect_url = f"{config.FRONTEND_URL}/dashboard?oauth=twitter&status=error&detail={resp.text}"
-        return RedirectResponse(redirect_url)
+        return _frontend_redirect("/dashboard", oauth="twitter", status="error", detail=resp.text)
 
     token_data = resp.json()
     save_tokens(
@@ -205,8 +245,7 @@ async def twitter_callback(code: str = None, state: str = None, error: str = Non
         tokens=token_data,
     )
 
-    redirect_url = f"{config.FRONTEND_URL}/dashboard?oauth=twitter&status=success"
-    return RedirectResponse(redirect_url)
+    return _frontend_redirect("/dashboard", oauth="twitter", status="success")
 
 
 # =====================================================================
@@ -239,11 +278,12 @@ async def google_authorize(token: str, features: str = "calendar,docs"):
     # `drive.file` is intentionally the only Drive scope: it limits the agent
     # to files it created (or files the user explicitly opens via a Picker),
     # so connecting Docs does NOT expose the user's entire Drive.
+    # Gmail is split into readonly + send (not gmail.modify/mail.google.com)
+    # so the agent can search/read and send, but can't delete or manage labels.
     feature_map = {
         "calendar": "https://www.googleapis.com/auth/calendar",
         "docs": "https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/drive.file",
-        "gmail": "https://www.googleapis.com/auth/gmail.modify",
-        "sheets": "https://www.googleapis.com/auth/spreadsheets",
+        "gmail": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send",
     }
 
     selected_features = [f.strip() for f in features.split(",") if f.strip() in feature_map]
@@ -267,21 +307,22 @@ async def google_authorize(token: str, features: str = "calendar,docs"):
     # Same-or-narrower request when we already have a token → no Google
     # round-trip needed. The existing refresh_token still works.
     if existing and requested_scope_set.issubset(existing_scope_set):
-        return RedirectResponse(
-            f"{config.FRONTEND_URL}/dashboard?oauth=google&status=success&detail=already-granted"
-        )
+        return _frontend_redirect("/dashboard", oauth="google", status="success", detail="already-granted")
+
+    # Google's re-consent replaces the token's scope set with exactly what's
+    # requested here — it does not merge with what was previously granted.
+    # Carry existing scopes forward so connecting a new feature (e.g. Gmail)
+    # doesn't silently revoke access already granted to another (e.g. Calendar).
+    final_scope_set = requested_scope_set | existing_scope_set
 
     state = secrets.token_urlsafe(32)
-    _pending_oauth[state] = {
-        "user_id": user["id"],
-        "provider": "google",
-    }
+    _store_pending_state(state, user["id"], "google")
 
     params = {
         "response_type": "code",
         "client_id": config.GOOGLE_CLIENT_ID,
         "redirect_uri": config.GOOGLE_REDIRECT_URI,
-        "scope": " ".join(scopes),
+        "scope": " ".join(sorted(final_scope_set)),
         "state": state,
         "access_type": "offline",
         "prompt": "consent",
@@ -295,9 +336,9 @@ async def google_callback(code: str = None, state: str = None, error: str = None
     """Exchange Google authorization code for tokens."""
     if error or not code:
         desc = error_description or error or "authorization_denied"
-        return RedirectResponse(f"{config.FRONTEND_URL}/dashboard?oauth=google&status=error&detail={desc}")
-    pending = _pending_oauth.pop(state, None)
-    if not pending or pending["provider"] != "google":
+        return _frontend_redirect("/dashboard", oauth="google", status="error", detail=desc)
+    pending = _pop_pending_state(state, "google")
+    if not pending:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
 
     user_id = pending["user_id"]
@@ -315,8 +356,7 @@ async def google_callback(code: str = None, state: str = None, error: str = None
         )
 
     if resp.status_code != 200:
-        redirect_url = f"{config.FRONTEND_URL}/dashboard?oauth=google&status=error&detail={resp.text}"
-        return RedirectResponse(redirect_url)
+        return _frontend_redirect("/dashboard", oauth="google", status="error", detail=resp.text)
 
     token_data = resp.json()
     save_tokens(
@@ -325,8 +365,7 @@ async def google_callback(code: str = None, state: str = None, error: str = None
         tokens=token_data,
     )
 
-    redirect_url = f"{config.FRONTEND_URL}/dashboard?oauth=google&status=success"
-    return RedirectResponse(redirect_url)
+    return _frontend_redirect("/dashboard", oauth="google", status="success")
 
 
 # =====================================================================
@@ -343,10 +382,7 @@ async def notion_authorize(token: str):
     user = await _validate_token(token)
 
     state = secrets.token_urlsafe(32)
-    _pending_oauth[state] = {
-        "user_id": user["id"],
-        "provider": "notion",
-    }
+    _store_pending_state(state, user["id"], "notion")
 
     params = {
         "owner": "user",
@@ -364,9 +400,9 @@ async def notion_callback(code: str = None, state: str = None, error: str = None
     """Exchange Notion authorization code for tokens."""
     if error or not code:
         desc = error_description or error or "authorization_denied"
-        return RedirectResponse(f"{config.FRONTEND_URL}/dashboard?oauth=notion&status=error&detail={desc}")
-    pending = _pending_oauth.pop(state, None)
-    if not pending or pending["provider"] != "notion":
+        return _frontend_redirect("/dashboard", oauth="notion", status="error", detail=desc)
+    pending = _pop_pending_state(state, "notion")
+    if not pending:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
 
     user_id = pending["user_id"]
@@ -385,8 +421,7 @@ async def notion_callback(code: str = None, state: str = None, error: str = None
         )
 
     if resp.status_code != 200:
-        redirect_url = f"{config.FRONTEND_URL}/dashboard?oauth=notion&status=error&detail={resp.text}"
-        return RedirectResponse(redirect_url)
+        return _frontend_redirect("/dashboard", oauth="notion", status="error", detail=resp.text)
 
     token_data = resp.json()
     # Save token. Notion tokens don't expire, so we don't worry about refresh_token.
@@ -396,8 +431,7 @@ async def notion_callback(code: str = None, state: str = None, error: str = None
         tokens=token_data,
     )
 
-    redirect_url = f"{config.FRONTEND_URL}/dashboard?oauth=notion&status=success"
-    return RedirectResponse(redirect_url)
+    return _frontend_redirect("/dashboard", oauth="notion", status="success")
 
 
 # =====================================================================

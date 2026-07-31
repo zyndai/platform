@@ -129,17 +129,35 @@ _sb_service = None
 _sb_anon = None
 
 
+def _resilient_httpx_client():
+    """A process-lifetime connection pool eventually has a request land on
+    a connection the server already closed (idle timeout on Supabase's
+    side) — httpx surfaces that as RemoteProtocolError('Server disconnected')
+    on whatever request happened to draw it. `retries=1` makes httpx retry
+    that request once on a fresh connection instead of failing it outright."""
+    import httpx
+    return httpx.Client(transport=httpx.HTTPTransport(retries=1))
+
+
 def get_supabase():
     global _sb_service
     if _sb_service is None:
-        from supabase import create_client
-        _sb_service = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        from supabase import create_client, ClientOptions
+        _sb_service = create_client(
+            SUPABASE_URL,
+            SUPABASE_SERVICE_KEY,
+            options=ClientOptions(httpx_client=_resilient_httpx_client()),
+        )
     return _sb_service
 
 
 def get_supabase_anon():
     global _sb_anon
     if _sb_anon is None:
-        from supabase import create_client
-        _sb_anon = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+        from supabase import create_client, ClientOptions
+        _sb_anon = create_client(
+            SUPABASE_URL,
+            SUPABASE_ANON_KEY,
+            options=ClientOptions(httpx_client=_resilient_httpx_client()),
+        )
     return _sb_anon

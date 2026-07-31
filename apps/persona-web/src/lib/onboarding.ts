@@ -33,6 +33,11 @@ export interface OnboardingMeta {
   /** Set right before redirecting to Google OAuth from the brief step.
    *  When true, the brief page on its next mount auto-creates the doc. */
   pending_brief_create?: boolean;
+  /** True after the in-dashboard guided tour (sidebar spotlight walkthrough)
+   *  has been completed or skipped at least once. Independent of the step
+   *  machine above — the tour runs inside the dashboard shell, not as an
+   *  `/onboarding/*` route. */
+  dashboard_tour_seen?: boolean;
 }
 
 export interface OnboardingInputs {

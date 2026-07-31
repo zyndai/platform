@@ -27,6 +27,11 @@ from agent.persona_manager import (
 
 router = APIRouter()
 
+# Strong reference set for in-flight background A2A dispatches — without
+# this, asyncio can GC the task before it runs since nothing else holds a
+# reference to it once agent_channel_send returns.
+_agent_send_tasks: set[asyncio.Task] = set()
+
 
 # Thread lifecycle values written to dm_threads.lifecycle — read by the
 # frontend to render the top-of-panel pill. The values are still meaningful
@@ -516,48 +521,85 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend):
     # the transport.
     card_url = resolve_card_url(partner_url)
     from agent.a2a.transport import dispatch, Intent
-    delivery_result: dict = {"delivered": False}
-    try:
-        data = None
-        if (t.get("status") or "pending") == "pending":
-            data = _connection_request_data(
-                t,
-                sender_agent_id=my_agent_id,
-                sender_name=persona.get("name") or "Zynd Agent",
-                content=req.content,
+
+    data = None
+    if (t.get("status") or "pending") == "pending":
+        data = _connection_request_data(
+            t,
+            sender_agent_id=my_agent_id,
+            sender_name=persona.get("name") or "Zynd Agent",
+            content=req.content,
+        )
+
+    dispatch_task = asyncio.create_task(dispatch(
+        client,
+        peer_entity_id=partner_agent_id,
+        peer_a2a_url=a2a_url,
+        peer_card_url=card_url,
+        user_id=user_id,
+        thread_id=req.thread_id,
+        context_id=req.thread_id,
+        text=req.content,
+        data=data,
+        intent=Intent.AGENT_TO_AGENT,
+        origin_kind="agent_send",
+        origin_ref={"thread_id": req.thread_id},
+    ))
+
+    def _log_outcome(finished_task: "asyncio.Task"):
+        try:
+            result = finished_task.result()
+            task = result.task or {}
+            print(
+                f"[agent-send] → {a2a_url} via={result.transport.value} "
+                f"task={task.get('id', '')[:8]} state={(task.get('status') or {}).get('state')}"
             )
-        result = await dispatch(
-            client,
-            peer_entity_id=partner_agent_id,
-            peer_a2a_url=a2a_url,
-            peer_card_url=card_url,
-            user_id=user_id,
-            thread_id=req.thread_id,
-            context_id=req.thread_id,
-            text=req.content,
-            data=data,
-            intent=Intent.AGENT_TO_AGENT,
-            origin_kind="agent_send",
-            origin_ref={"thread_id": req.thread_id},
-        )
-        task = result.task or {}
-        delivery_result = {
-            "delivered": True,
-            "transport": result.transport.value,
-            "task_id": task.get("id"),
-            "task_state": (task.get("status") or {}).get("state"),
-            "callback_id": result.callback_id,
-        }
-        print(
-            f"[agent-send] → {a2a_url} via={result.transport.value} "
-            f"task={task.get('id', '')[:8]} state={delivery_result['task_state']}"
-        )
-    except A2AError as e:
-        print(f"[agent-send] ⚠ receiver rejected: {e.code} {e.message} (reason={e.reason})")
-        delivery_result = {"delivered": False, "error_code": e.code, "error_reason": e.reason}
-    except Exception as e:
-        print(f"[agent-send] ⚠ transport error: {type(e).__name__}: {e}")
-        delivery_result = {"delivered": False, "error": f"{type(e).__name__}: {e}"}
+        except A2AError as e:
+            print(f"[agent-send] ⚠ receiver rejected: {e.code} {e.message} (reason={e.reason})")
+        except Exception as e:
+            print(f"[agent-send] ⚠ transport error: {type(e).__name__}: {e}")
+
+    # message/send on the receiver's side runs their persona's full
+    # orchestrator turn (LLM call + tools) before it responds — that can
+    # take tens of seconds, and there's nothing to gain by holding this
+    # HTTP response open for it: the eventual reply lands via the
+    # dm_messages realtime subscription like any other message.
+    #
+    # But rejections (blocked/revoked/awaiting_acceptance) happen at the
+    # receiver's admission gate BEFORE their orchestrator runs — fast,
+    # no LLM call — and the frontend depends on seeing those synchronously
+    # to show "they need to accept first" instead of a false "sent". So
+    # race a short window: resolve inline if it's a fast rejection,
+    # otherwise detach to the background once we're past the point a
+    # rejection would plausibly have landed.
+    done, _pending = await asyncio.wait({dispatch_task}, timeout=1.5)
+    if dispatch_task in done:
+        delivery_result: dict = {"delivered": False}
+        try:
+            result = dispatch_task.result()
+            task = result.task or {}
+            delivery_result = {
+                "delivered": True,
+                "transport": result.transport.value,
+                "task_id": task.get("id"),
+                "task_state": (task.get("status") or {}).get("state"),
+                "callback_id": result.callback_id,
+            }
+            print(
+                f"[agent-send] → {a2a_url} via={result.transport.value} "
+                f"task={task.get('id', '')[:8]} state={delivery_result['task_state']}"
+            )
+        except A2AError as e:
+            print(f"[agent-send] ⚠ receiver rejected: {e.code} {e.message} (reason={e.reason})")
+            delivery_result = {"delivered": False, "error_code": e.code, "error_reason": e.reason}
+        except Exception as e:
+            print(f"[agent-send] ⚠ transport error: {type(e).__name__}: {e}")
+            delivery_result = {"delivered": False, "error": f"{type(e).__name__}: {e}"}
+    else:
+        _agent_send_tasks.add(dispatch_task)
+        dispatch_task.add_done_callback(_agent_send_tasks.discard)
+        dispatch_task.add_done_callback(_log_outcome)
+        delivery_result = {"delivered": None, "status": "sending"}
 
     return {
         "status": "sent",

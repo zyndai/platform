@@ -1988,9 +1988,11 @@ def _create_event_with_attendees(
     attendees: list[dict],
 ) -> dict:
     """
-    Build a Calendar event with attendees. The existing create_event in
-    mcp/tools/google/calendar.py doesn't expose the attendees field, so
-    we use the same _get_service() and emit a slightly richer body.
+    Build a Calendar event with attendees. We use _get_service() from the
+    calendar module and build a slightly richer body than the MCP-level
+    create_event (which exposes `attendees` via a `list[str]` parameter
+    but omits `guestsCanSeeOtherGuests`, `guestsCanInviteOthers`, and
+    `reminders` that group meetings benefit from).
 
     Returns {success, event} or {success: False, error}.
     """

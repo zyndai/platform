@@ -580,9 +580,21 @@ def _caller_agent_id(user_id: str) -> str:
 def search_zynd_network(query: str, top_k: int = 8, kind: str = "any", user_id: str = "") -> dict:
     """
     Find ANY callable thing on the Zynd Network — personas, services, and
-    agents — in one search. Use this FIRST when the user asks to find an
-    agent, service, persona, or "something that can do X" — without
-    knowing whether the target is a human's persona or a standalone agent.
+    agents — in one search. Use this when you don't yet know whether the
+    target is a human's persona or a standalone agent/service, or when
+    the ask explicitly wants a mix ("what's on the network", "show me
+    everything").
+
+    IMPORTANT — when the ask is clearly about PEOPLE (a role, a topic of
+    interest, "founders", "designers", "who should I meet", "someone who
+    does X"), pass ``kind="persona"`` explicitly rather than the "any"
+    default. Leaving `kind` at "any" for a people-only ask lets unrelated
+    internal agents/services leak into the results — the registry's
+    keyword match is shallow (name/tags/category only) and a query like
+    "AI founders" can loosely match an unrelated "AI" service. For
+    topical/role people-search specifically, ``search_zynd_personas`` is
+    an even better first call — it ranks against each persona's actual
+    bio via full-text search, not just name/tag keyword matching.
 
     Each result carries a ``kind`` field so the caller can decide the
     right next step:
@@ -605,17 +617,64 @@ def search_zynd_network(query: str, top_k: int = 8, kind: str = "any", user_id: 
                Empty string returns a broad sample of active entities.
         top_k: Max results (1–25, default 8).
         kind:  Restrict to one kind: ``persona`` | ``service`` | ``agent``
-               | ``any`` (default). Pick ``any`` when in doubt — the
-               result rows are tagged so the caller can branch.
+               | ``any`` (default). Use ``persona`` for any people-seeking
+               ask — see above. Pick ``any`` only for genuinely mixed or
+               unclear asks — the result rows are tagged so the caller
+               can branch.
 
     Returns ``{status, count, results: [{name, entity_id, kind, summary,
-    category, tags, url, status}], source, query_used}``. ``query_used``
-    echoes the actual string sent to the registry (post-normalization
-    or post-broadening) so callers can show the user what was searched.
+    category, tags, url, status, match_reason}], source, query_used}``.
+    ``query_used`` echoes the actual string sent to the registry
+    (post-normalization or post-broadening) so callers can show the user
+    what was searched. ``match_reason`` is a short, grounded note on why
+    a persona result matched (e.g. "matched on: founder, ai") — present
+    it to the principal instead of inventing a reason.
     """
     raw_query = (query or "").strip()
     top_k = max(1, min(int(top_k or 8), 25))
     kind = (kind or "any").lower().strip()
+
+    if kind == "persona":
+        # Delegate straight to search_zynd_personas rather than duplicating
+        # its full-catalog ranking logic here — two independent
+        # implementations of "persona search" is exactly what let this tool
+        # and search_zynd_personas silently drift apart and behave
+        # inconsistently (one bio-aware, one registry-keyword-only) for the
+        # same kind of ask. Delegating makes that impossible by construction.
+        inner = search_zynd_personas(query=raw_query, top_k=top_k, user_id=user_id)
+        if inner.get("status") == "error":
+            return {
+                "status": "error",
+                "error": inner.get("error", "Persona search failed."),
+                "results": [],
+                "count": 0,
+                "query_used": raw_query,
+            }
+        results = [
+            {
+                "name": p.get("name") or "",
+                "entity_id": p.get("agent_id") or "",
+                "kind": "persona",
+                "entity_type": "persona",
+                "summary": p.get("description") or "",
+                "category": "persona",
+                "tags": ["persona"],
+                "url": p.get("webhook_url") or "",
+                "status": "active",
+                "avatar_url": p.get("avatar_url"),
+                "match_reason": p.get("match_reason", ""),
+            }
+            for p in inner.get("results", [])
+        ]
+        return {
+            "status": "success",
+            "count": len(results),
+            "total_available": inner.get("total_available", len(results)),
+            "by_kind": {"persona": inner.get("total_available", len(results))} if results else {},
+            "results": results,
+            "source": inner.get("source", "registry"),
+            "query_used": raw_query,
+        }
 
     # Catch-all asks ("what agents are on the network", "show me everything",
     # "list all agents") carry no real keyword — the registry's keyword search
@@ -708,26 +767,28 @@ def search_zynd_network(query: str, top_k: int = 8, kind: str = "any", user_id: 
         # The card URL is in `url` on the search row (with enrich=True);
         # fall back to the older fields for backward compat.
         endpoint = a.get("url") or _agent_url_from_card(a.get("card")) or a.get("service_endpoint") or a.get("entity_url") or ""
+        name = a.get("name") or ""
+        summary = a.get("summary") or a.get("description") or ""
         results.append({
-            "name": a.get("name") or "",
+            "name": name,
             "entity_id": aid,
             "kind": row_kind,
             "entity_type": entity_type or row_kind,
-            "summary": a.get("summary") or a.get("description") or "",
+            "summary": summary,
             "category": category,
             "tags": tags[:10],
             "url": endpoint,
             "status": a.get("status") or "",
             "avatar_url": avatars.get(aid),
+            "match_reason": _match_reason(query_used or raw_query, name, summary, tags),
         })
 
     # Supplement with the deployer's running entities. The registry's
     # search index misses agents/services that are live on the deployer
     # but never registered (entityId null), so a registry-only result
-    # under-reports the network. Personas don't live on the deployer, so
-    # skip the merge for persona-only asks.
-    if kind != "persona":
-        results = _merge_deployer_entities(results, kind, query_used or raw_query)
+    # under-reports the network. `kind` can never be "persona" here — that
+    # case returns early via the search_zynd_personas delegation above.
+    results = _merge_deployer_entities(results, kind, query_used or raw_query)
 
     # Never surface the caller's own persona back to them (self-match).
     self_id = _caller_agent_id(user_id)
@@ -770,181 +831,315 @@ def search_zynd_network(query: str, top_k: int = 8, kind: str = "any", user_id: 
 
 def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:
     """
-    Search the Zynd AI Network for other people's agent personas.
-    Use this as the FIRST tool when the user asks about finding people, companies, or agents.
-    Only returns agents tagged as "persona" to filter out non-persona agents.
+    Search for other people's personas by topic, role, or interest — e.g.
+    "AI founders", "product designers", "someone into climate tech".
+    Ranked by full-text relevance over each persona's actual bio (title,
+    organization, capabilities, interests), not just their name.
+
+    Ranks against the FULL persona catalog (including personas hosted on
+    other Zynd deployments, not just this one) — not just whatever the
+    registry's own keyword filter happens to surface.
+
+    Use this for topical/role asks about PEOPLE. For a literal name lookup
+    ("find Alice") or when you don't know yet whether the target is a
+    person or a standalone agent/service, `search_zynd_network` is usually
+    the better first call. This tool only ever returns `kind=persona` rows
+    — never internal agents or services.
 
     Args:
-        query: Name, keyword, or topic to search for (e.g., 'Alice', 'ZyndAI', 'machine learning').
+        query: Name, keyword, or topic to search for (e.g., 'Alice', 'ZyndAI', 'AI founders').
         top_k: Max results to return.
         user_id: Injected automatically by the orchestrator — do not pass it.
+
+    Returns ``{status, count, total_available, results: [{name, agent_id,
+    description, webhook_url, avatar_url, match_reason}], source}``.
+    ``match_reason`` is a short, grounded note on why each result matched
+    (e.g. "matched on: founder, ai") — use it when explaining results to
+    the principal instead of inventing a reason. An empty `results` list
+    with `status="success"` means a real, complete search came back with
+    no relevant match — not a broken search.
     """
+    self_id = _caller_agent_id(user_id)
+    catchall_phrases = {
+        "", "*", "all", "any", "anyone", "everybody", "everyone",
+        "people", "person", "persons", "personas", "agents", "agent",
+        "network", "list", "users", "user", "members", "member",
+        "available", "anyone available", "who is available", "who's available",
+    }
+    catchall_tokens = {
+        "people", "person", "persons", "personas", "everyone", "anyone",
+        "everybody", "agents", "users", "members", "network", "available",
+    }
+    original_query = query
+    q_norm = (query or "").lower().strip()
+    is_catchall = q_norm in catchall_phrases or bool(
+        set(re.findall(r"[a-z]+", q_norm)) & catchall_tokens
+    )
+
+    avatars = _get_avatar_map()
+
+    # Local full-text search — the best signal for OUR own locally-hosted
+    # personas' bios (search_personas_fts is weighted over name,
+    # description, title, organization, capabilities, and interests).
     try:
-        self_id = _caller_agent_id(user_id)
-        catchall_phrases = {
-            "", "*", "all", "any", "anyone", "everybody", "everyone",
-            "people", "person", "persons", "personas", "agents", "agent",
-            "network", "list", "users", "user", "members", "member",
-            "available", "anyone available", "who is available", "who's available",
-        }
-        catchall_tokens = {
-            "people", "person", "persons", "personas", "everyone", "anyone",
-            "everybody", "agents", "users", "members", "network", "available",
-        }
-        original_query = query
-        q_norm = (query or "").lower().strip()
-        if q_norm in catchall_phrases:
-            query = "persona"
-        else:
-            tokens = set(re.findall(r"[a-z]+", q_norm))
-            # If the user asked something like "find all people" or "show me
-            # users on the network", drop down to a broad persona search.
-            if tokens & catchall_tokens:
-                query = "persona"
+        local_matches = [] if is_catchall else _local_persona_fallback(original_query, top_k, avatars)
+    except Exception as e:
+        logger.warning(f"[zynd_network] local persona search failed: {e!r}")
+        local_matches = []
+    if self_id:
+        local_matches = [p for p in local_matches if p.get("agent_id") != self_id]
 
-        print(f"[zynd_network] Searching registry with query: '{query}' (original: '{original_query}')")
-
-        # Widen the pool: the registry caps the candidate pool before
-        # applying the persona tag filter, so max_results=top_k starves
-        # broad asks (e.g. top_k=5 → 3 personas when 17 exist). Request
-        # the floor, then trim to top_k after assembly.
+    # Registry pass — ALWAYS fetches the broad/full persona catalog rather
+    # than sending it the topical query. The registry only keyword-matches
+    # name/tags/category (see `_normalize_query`'s docstring); it has no
+    # visibility into bio content, so a filtered query like "AI founders"
+    # silently drops every persona hosted on OTHER Zynd deployments — we
+    # have no local copy of their bio to fall back on the way we do for
+    # our own users. `enrich=True` gives each candidate's `summary`
+    # though, so instead we fetch everyone tagged persona and rank them
+    # ourselves against the query below.
+    registry_matched: list[dict] = []
+    registry_error: str | None = None
+    try:
         resp = requests.post(
             f"{config.ZYND_REGISTRY_URL}/v1/search",
             json={
-                "query": query,
+                "query": "persona",
                 "tags": ["persona"],
                 "max_results": max(int(top_k), _REGISTRY_POOL_FLOOR),
-                "enrich": True,  # include the full AgentCard inline so we get endpoints.invoke
+                "enrich": True,  # include summary + the full AgentCard inline
                 "status": "any",  # don't filter out agents whose heartbeat is mid-cycle
             },
             timeout=10,
         )
         resp.raise_for_status()
-
-        results = resp.json().get("results", [])
-
-        avatars = _get_avatar_map()
-
-        # Pass 1: collect every persona row (cheap — no webhook resolution).
-        matched: list[dict] = []
-        for a in results:
+        for a in resp.json().get("results", []):
             caps = a.get("capability_summary") or a.get("capabilities") or {}
             if isinstance(caps, str):
                 try:
                     caps = json.loads(caps)
                 except Exception:
                     caps = {}
-
             tags = a.get("tags", [])
             is_persona = "persona" in tags
             if not is_persona and isinstance(caps, dict):
                 is_persona = "persona" in caps.get("services", []) or "persona" in caps.get("skills", [])
-
             if not is_persona:
                 continue
-            if self_id and (a.get("entity_id") or a.get("agent_id")) == self_id:
-                continue  # never recommend the caller their own persona
-            matched.append(a)
-
-        total_available = len(matched)
-
-        # Pass 2: resolve webhooks ONLY for the top_k rows we actually
-        # return — webhook resolution does a card fetch + DB lookup per
-        # row (N+1), so we must not run it across the full widened pool.
-        personas = []
-        for a in matched[:top_k]:
-            # Registry switched from `agent_id` to `entity_id` in the new schema;
-            # accept either so this works across versions.
             aid = a.get("entity_id") or a.get("agent_id") or ""
-            # Prefer webhook from search result's inline card (enrich=true), then service_endpoint,
-            # then fall back to a card lookup, then to local DB.
-            webhook = _agent_url_from_card(a.get("card")) or a.get("service_endpoint") or a.get("entity_url") or ""
-            if not webhook:
-                webhook = _agent_url_from_card(_fetch_agent_card(aid))
-            if not webhook:
-                try:
-                    sb = _get_supabase()
-                    local = sb.table("persona_agents").select("webhook_url").eq("agent_id", aid).execute()
-                    if local.data:
-                        webhook = local.data[0].get("webhook_url", "")
-                except Exception:
-                    pass
-
-            personas.append({
-                "name": a.get("name"),
-                "agent_id": aid,
-                "description": a.get("summary") or a.get("description", ""),
-                "webhook_url": webhook,
-                "avatar_url": avatars.get(aid),
-            })
-
-        if personas:
-            return {
-                "status": "success",
-                "count": len(personas),
-                "total_available": total_available,
-                "results": personas,
-                "source": "registry",
-            }
-
-        # Registry returned zero hits. The orchestrator hits this any time it
-        # picks a query like "people" or "*" that the registry's FTS can't
-        # match against persona descriptions. Fall back to local DB so the
-        # user sees real personas instead of an empty-network reply.
-        local_personas = _local_persona_fallback(original_query, top_k, avatars)
-        if self_id:
-            local_personas = [p for p in local_personas if p.get("agent_id") != self_id]
-        if local_personas:
-            return {"status": "degraded", "count": len(local_personas), "results": local_personas, "source": "local_db"}
-        return {"status": "success", "count": 0, "results": [], "source": "registry"}
+            if not aid or (self_id and aid == self_id):
+                continue
+            registry_matched.append(a)
+    except requests.exceptions.Timeout:
+        registry_error = "Registry timed out."
+        logger.warning("[zynd_network] persona registry search timed out")
     except Exception as e:
-        # Last-ditch fallback so a transient registry failure still surfaces
-        # personas we know about locally.
-        try:
-            avatars = _get_avatar_map()
-            local_personas = _local_persona_fallback(query, top_k, avatars)
-            if self_id:
-                local_personas = [p for p in local_personas if p.get("agent_id") != self_id]
-            if local_personas:
-                return {"status": "degraded", "count": len(local_personas), "results": local_personas, "source": "local_db", "warning": str(e)}
-        except Exception:
-            pass
-        return {"error": str(e)}
+        registry_error = f"Registry search failed: {e}"
+        logger.warning(f"[zynd_network] persona registry search failed: {e!r}")
+
+    # Score every candidate (local + registry) against the query with the
+    # same keyword-overlap logic, so ranking is apples-to-apples regardless
+    # of source — the registry's own ordering doesn't apply once we bypass
+    # its keyword filter above. Catchall/broad asks ("show me everyone")
+    # skip scoring entirely: everyone qualifies, order doesn't matter.
+    # scored items: (score, reason, raw_dict, is_already_shaped)
+    scored: list[tuple[int, str, dict, bool]] = []
+    seen_ids: set[str] = set()
+
+    for p in local_matches:
+        aid = p.get("agent_id") or ""
+        if not aid or aid in seen_ids:
+            continue
+        if is_catchall:
+            score, reason = 0, ""
+        else:
+            score, reason = _match_score(original_query, p.get("name", ""), p.get("description", ""))
+        scored.append((score, reason, p, True))
+        seen_ids.add(aid)
+
+    for a in registry_matched:
+        aid = a.get("entity_id") or a.get("agent_id") or ""
+        if not aid or aid in seen_ids:
+            continue
+        name = a.get("name") or ""
+        description = a.get("summary") or a.get("description") or ""
+        if is_catchall:
+            score, reason = 0, ""
+        else:
+            score, reason = _match_score(original_query, name, description, a.get("tags"))
+            if score == 0:
+                continue  # no textual relevance — drop rather than pad with noise
+        scored.append((score, reason, a, False))
+        seen_ids.add(aid)
+
+    if not is_catchall:
+        scored.sort(key=lambda t: t[0], reverse=True)
+
+    # Resolve webhooks only for the rows we're actually about to return.
+    combined: list[dict] = []
+    for score, reason, item, is_local in scored[:top_k]:
+        if is_local:
+            item["match_reason"] = reason
+            combined.append(item)
+            continue
+        a = item
+        aid = a.get("entity_id") or a.get("agent_id") or ""
+        webhook = _agent_url_from_card(a.get("card")) or a.get("service_endpoint") or a.get("entity_url") or ""
+        if not webhook:
+            webhook = _agent_url_from_card(_fetch_agent_card(aid))
+        if not webhook:
+            try:
+                sb = _get_supabase()
+                local_row = sb.table("persona_agents").select("webhook_url").eq("agent_id", aid).execute()
+                if local_row.data:
+                    webhook = local_row.data[0].get("webhook_url", "")
+            except Exception:
+                pass
+        combined.append({
+            "name": a.get("name") or "",
+            "agent_id": aid,
+            "description": a.get("summary") or a.get("description", ""),
+            "webhook_url": webhook,
+            "avatar_url": avatars.get(aid),
+            "match_reason": reason,
+        })
+
+    if not combined:
+        if registry_error and not local_matches:
+            return {"status": "error", "error": registry_error, "results": [], "count": 0}
+        return {"status": "success", "count": 0, "results": [], "source": "none"}
+
+    source = (
+        "local+registry" if local_matches and registry_matched
+        else "local_db" if local_matches
+        else "registry"
+    )
+    return {
+        "status": "success",
+        "count": len(combined),
+        "total_available": len(scored),
+        "results": combined,
+        "source": source,
+    }
 
 
 def _local_persona_fallback(query: str, top_k: int, avatars: dict[str, str]) -> list[dict]:
-    """Read active personas from the local DB, narrowed by ILIKE when the
-    query is specific. Returned shape mirrors search_zynd_personas results
-    (minus webhook resolution — the orchestrator resolves it at thread time).
+    """Read active personas from the local DB. Returned shape mirrors
+    search_zynd_personas results.
+
+    Tries `search_personas_fts` first — the same weighted, ranked
+    full-text search (name/description/title/organization/capabilities/
+    interests/brief_content) that powers the dashboard's People page.
+    This is the ONLY search path that can match topical/role asks like
+    "AI founders" against a bio that says "Co-founder at Lattice Labs" —
+    the registry only keyword-matches name/tags/category (see
+    `_normalize_query`'s docstring), so it can't see bio content at all.
+    Falls back to a plain ILIKE substring match when the RPC errors
+    (e.g. migration not yet applied).
     """
     q = (query or "").strip()
+    catchall = {"", "*", "persona", "people", "person", "all", "any", "everyone", "anyone", "available"}
+    is_specific = bool(q) and q.lower() not in catchall
     try:
         sb = _get_supabase()
-        builder = (
-            sb.table("persona_agents")
-            .select("agent_id,name,description,webhook_url")
-            .eq("active", True)
-            .limit(top_k)
-        )
-        catchall = {"", "*", "persona", "people", "person", "all", "any", "everyone", "anyone", "available"}
-        if q and q.lower() not in catchall:
-            pattern = f"%{q}%"
-            builder = builder.or_(f"name.ilike.{pattern},description.ilike.{pattern}")
-        rows = builder.execute()
+        rows_data: list[dict] = []
+        if is_specific:
+            try:
+                result = sb.rpc(
+                    "search_personas_fts",
+                    {"query_text": q, "result_limit": top_k},
+                ).execute()
+                rows_data = result.data or []
+            except Exception as fts_err:
+                logger.warning(f"[zynd_network] persona FTS RPC failed ({fts_err!r}), falling back to ILIKE")
+
+        if not rows_data:
+            builder = (
+                sb.table("persona_agents")
+                .select("agent_id,name,description")
+                .eq("active", True)
+                .limit(top_k)
+            )
+            if is_specific:
+                pattern = f"%{q}%"
+                builder = builder.or_(f"name.ilike.{pattern},description.ilike.{pattern}")
+            rows_data = builder.execute().data or []
+
+        if not rows_data:
+            return []
+
+        # search_personas_fts doesn't return webhook_url — resolve it with
+        # one follow-up query keyed on the agent_ids we actually matched.
+        agent_ids = [r["agent_id"] for r in rows_data if r.get("agent_id")]
+        webhooks: dict[str, str] = {}
+        if agent_ids:
+            wh_rows = (
+                sb.table("persona_agents")
+                .select("agent_id,webhook_url")
+                .in_("agent_id", agent_ids)
+                .execute()
+            )
+            webhooks = {r["agent_id"]: r.get("webhook_url") or "" for r in (wh_rows.data or [])}
+
         return [
             {
                 "name": r.get("name") or "",
                 "agent_id": r.get("agent_id") or "",
                 "description": r.get("description") or "",
-                "webhook_url": r.get("webhook_url") or "",
+                "webhook_url": webhooks.get(r.get("agent_id") or "", ""),
                 "avatar_url": avatars.get(r.get("agent_id") or ""),
             }
-            for r in (rows.data or [])
+            for r in rows_data
             if r.get("agent_id")
         ]
     except Exception as e:
         logger.warning(f"[zynd_network] local fallback failed: {e}")
         return []
+
+
+def _stem(word: str) -> str:
+    """Naive plural stripping so "founders" matches a bio's "founder"."""
+    return word[:-1] if word.endswith("s") and len(word) > 3 else word
+
+
+def _match_score(query: str, name: str, description: str, tags: list[str] | None = None) -> tuple[int, str]:
+    """Score + explain how well `query` matches a candidate's name/bio/tags.
+
+    Returns (hit_count, reason_string). hit_count is the number of
+    overlapping keyword stems — used to rank a candidate pool we fetched
+    ourselves (e.g. the full persona catalog) when the source we pulled it
+    from (the registry) did no bio-aware ranking of its own. reason_string
+    is "" when nothing textually overlaps — callers should fall back to
+    summarizing the result's own description in that case, not claim a
+    keyword match that didn't happen.
+    """
+    # Filter by the same stopword list used for registry-query normalization
+    # rather than a raw length cutoff — a length filter would drop short but
+    # meaningful domain tokens like "ai" or "vc".
+    q_tokens = {
+        _stem(t) for t in re.findall(r"[a-z]+", (query or "").lower())
+        if t not in _QUERY_STOPWORDS and len(t) >= 2
+    }
+    if not q_tokens:
+        return 0, ""
+    haystack_words = re.findall(r"[a-z]+", f"{name} {description} {' '.join(tags or [])}".lower())
+    stem_to_word: dict[str, str] = {}
+    for w in haystack_words:
+        stem_to_word.setdefault(_stem(w), w)
+    hits: list[str] = []
+    for t in q_tokens:
+        w = stem_to_word.get(t)
+        if w and w not in hits:
+            hits.append(w)
+    if not hits:
+        return 0, ""
+    return len(hits), f"matched on: {', '.join(hits[:3])}"
+
+
+def _match_reason(query: str, name: str, description: str, tags: list[str] | None = None) -> str:
+    """Best-effort, honest one-line explanation of why a result matched
+    `query` — see `_match_score`."""
+    return _match_score(query, name, description, tags)[1]
 
 
 def get_persona_profile(agent_id: str) -> dict:

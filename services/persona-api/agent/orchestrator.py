@@ -1793,12 +1793,13 @@ Do NOT search the network for ordinary conversation. The network is for asks tha
 
 If the message is small talk, an opinion, a question you can answer from general knowledge, or something a built-in tool already covers — **answer directly. Do NOT search the network.**
 
-### Step 1 — Persona FIRST, then agents/services (priority order)
-When external intent IS present, prefer connecting your principal to **a human's persona** over a standalone agent/service whenever a persona is a comparable match — your principal is part of a human network first. Concretely:
+### Step 1 — Route: people-seeking vs. capability-seeking, THEN search
+When external intent IS present, first decide what kind of ask this is — it determines which tool call to make. Getting this wrong (defaulting to a mixed search for a people-only ask) is why internal agents/services used to leak into "find people" results instead of actual users.
 
-1. **Run one broad search** with `search_zynd_network(query=<keywords>, top_k=8, kind="any")`. Every result row carries a `kind` (`persona` | `agent` | `service`) and a relevance ordering (best matches first).
-2. **Pick the target by best match, persona as the tie-breaker.** Scan the top results: if a **persona** matches the ask about as well as any agent/service, choose the persona. Only choose an `agent`/`service` when it is a clearly better fit for the specific capability (e.g. "translate this" → a translation *service* beats a random persona; "who can intro me to a designer" → a *persona* wins). On a genuine tie, persona wins.
-3. Then branch on the chosen row's `kind` (Step 2).
+- **People-seeking** — the ask names a role, profession, topic-of-interest, or otherwise wants a human ("AI founders", "product designers", "who should I meet about fundraising", "find someone into climate tech", "who on the network does design") — this does NOT require the literal word "person"/"people": call `search_zynd_personas(query=<keywords>, top_k=8)`. It ranks against each persona's actual bio (title, org, capabilities, interests), which is what makes topical/role asks like "AI founders" work at all — a plain keyword search only matches names/tags. `search_zynd_network(query=<keywords>, kind="persona")` also filters to persona-only and is fine when you specifically want a literal name lookup. Either way: **do NOT use `kind="any"`** for a people-only ask — it lets unrelated internal agents/services leak into what the principal sees as "people."
+- **Capability-seeking** — the ask wants something DONE (translate, convert, monitor competitors, look something up) and it's genuinely unclear whether a person or a standalone agent/service does it best: **run one broad search** with `search_zynd_network(query=<keywords>, top_k=8, kind="any")`. Every result row carries a `kind` (`persona` | `agent` | `service`) and a relevance ordering (best matches first).
+- When you DID run a mixed `kind="any"` search: **pick the target by best match, persona as the tie-breaker.** Scan the top results: if a **persona** matches the ask about as well as any agent/service, choose the persona. Only choose an `agent`/`service` when it is a clearly better fit for the specific capability (e.g. "translate this" → a translation *service* beats a random persona; "who can intro me to a designer" → a *persona* wins). On a genuine tie, persona wins.
+- Then branch on the chosen row's `kind` (Step 2).
 
 #### Search with KEYWORDS, not the user's full sentence
 The registry's search is keyword-based, not semantic. Pass **1–3 content keywords** extracted from the user's ask, NOT their full sentence.
@@ -1823,7 +1824,7 @@ The network has TWO distinct entity types, exposed via the `kind` parameter and 
 Honor the user's wording when choosing the filter:
 - "what **agents** are on the network" → `kind="agent"` (they asked for agents specifically, not services).
 - "what **services** are there" → `kind="service"`.
-- "who / which **people** / personas" → `kind="persona"`.
+- "who / which **people** / personas", OR any role/topic/profession ask ("AI founders", "designers", "who should I meet") → `kind="persona"` (see Step 1 — prefer `search_zynd_personas` for these).
 - "what's on the network" / "show me everything" → `kind="any"`.
 
 After the search, the UI shows the user clickable result cards (each labeled agent/service/persona) with Call buttons, so keep your text reply short ("Here are the agents on the network — click Call on any to run it") rather than re-listing every result in prose.
@@ -1842,11 +1843,18 @@ After the search, the UI shows the user clickable result cards (each labeled age
 ### Step 3 — Present
 Render the agent's actual output, not a placeholder. Lead with what was found, not "I searched the network and got…".
 
+**When presenting PEOPLE results** (persona rows): give a short, specific one-line reason EACH person matches — never present a bare list of names with no explanation. Ground the reason in the result's own data:
+- If `match_reason` is present (e.g. `"matched on: founder, ai"`), turn it into a natural sentence — *"he's a co-founder building in AI"* — don't paste the raw field verbatim.
+- If `match_reason` is empty (no direct keyword overlap — the match came from the registry's own ranking), base the reason on the persona's `description`/`summary` instead of inventing one, or say plainly that it's a loose match if the description doesn't clearly connect to the ask.
+
 ### Hard rules
 - **Never invent links** to a "details page" or "view details URL." The search result's `url` field is the agent's A2A endpoint, NOT a human-viewable page — do not include it in chat as a clickable link. If the user wants the raw endpoint, mention it as plain text (`zns:abc…`).
 - **Never stop at "found, want me to call it?"** for non-persona kinds. The user already asked you to do the thing. Confirmation turns are only for actions that commit on the user's behalf (sending money, posting to social, etc.), not for read-only agent calls.
-- Use `search_zynd_personas` (persona-only) **only** when the user explicitly asked for a human; otherwise prefer `search_zynd_network`.
-- **On zero hits: RETRY before falling back.** Try a shorter / different keyword from the user's ask (e.g. zero hits on `"competitor monitoring"` → retry with `"competitor"`; zero on `"recruiting agent"` → retry with `"recruit"` or `"resume"`). Only after 2 failed retries should you fall back to `internet_search`, and when you do, tell the user explicitly that no on-network agent was found.
+- For people-seeking asks, use `search_zynd_personas` or `search_zynd_network(kind="persona")` (see Step 1) — never `kind="any"` for a people-only ask, including as a fallback after a weak/empty people search. Falling back to a `kind="any"` catalog browse when the ask was about people is what used to dump unrelated internal agents/services (translators, PDF generators, business-card makers…) into a "find me people" answer — do not do this, no matter how many retries came up empty.
+- **A non-empty result means STOP searching — do not retry looking for a "better" one.** The retry rule below is for ZERO hits only. If a search call returns even one result, that's what you present (with an honest caveat if it's a loose match) — do not fire a second search with rephrased keywords just because the match doesn't feel strong enough. Calling search again for a query that already returned a result is what caused the same person to show up in duplicate result cards — never do this.
+- **On zero hits (and ONLY on zero hits): retry with ONE different keyword, THEN STOP.** One retry only (e.g. zero hits on `"competitor monitoring"` → retry once with `"competitor"`). Two search calls total is the hard ceiling for a single ask, and that ceiling only gets used up when a call returns literally zero results.
+  - **Capability-seeking asks:** if both calls come up empty, fall back to `internet_search` and tell the user explicitly that no on-network agent was found.
+  - **People-seeking asks:** if both calls come up empty, STOP searching and say so plainly: "no strong match on the network right now." Do NOT keep re-querying with more rephrasings hoping for a different answer, and do NOT fall back to `kind="any"` or `internet_search` — neither can produce a persona that doesn't exist on this network.
 
 When your principal asks to connect, message, or interact with a specific persona by name:
 1. First check if they're already connected (`check_connection_status` or `list_my_connections`).

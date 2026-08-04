@@ -46,6 +46,15 @@ async def _run_actor(actor_id: str, payload: dict) -> list:
     )
     async with httpx.AsyncClient(timeout=_ACTOR_TIMEOUT) as client:
         resp = await client.post(url, json=payload)
+        if resp.status_code >= 400:
+            # httpx's raise_for_status() only gives the status line — the
+            # actual reason (e.g. Apify's actors renaming/removing an input
+            # enum value out from under us, like profileScraperMode did) is
+            # in the response body. Losing that meant every past failure
+            # here needed a manual reproduction to diagnose. Log it once,
+            # then still raise so callers' existing except-and-record-failure
+            # behavior is unchanged.
+            logger.error(f"[linkedin] actor {actor_id} returned {resp.status_code}: {resp.text[:500]}")
         resp.raise_for_status()
         return resp.json() or []
 
@@ -93,7 +102,12 @@ async def scrape_profile(profile_url: str) -> dict:
     items = await _run_actor(
         PROFILE_ACTOR,
         {
-            "profileScraperMode": "Profile details",
+            # harvestapi renamed its accepted profileScraperMode values to
+            # be pricing-qualified ("Profile details" alone is no longer
+            # valid) — every scrape was failing with a 400 until this was
+            # updated to match. No email search needed here, so the cheaper
+            # tier is the right one.
+            "profileScraperMode": "Profile details no email ($4 per 1k)",
             "urls": [profile_url],
         },
     )

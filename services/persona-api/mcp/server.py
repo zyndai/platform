@@ -126,8 +126,8 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(read_linkedin_profile, name="read_linkedin_profile", description="Read the principal's scraped LinkedIn profile — headline, experience, education, skills, and recent posts. Use this when the principal asks about their own LinkedIn background or work history.")
 
     # ── Google Calendar tools ────────────────────────────────────────
-    mcp.register(create_event, name="create_calendar_event", description="Create an event on Google Calendar. Pass `attendees` (a list of email addresses) to invite guests — Google emails them the invite automatically.")
-    mcp.register(list_events, name="list_calendar_events", description="List upcoming Google Calendar events")
+    mcp.register(create_event, name="create_calendar_event", description="Create an event on Google Calendar. Pass `attendees` (a list of email addresses) to invite guests — Google emails them the invite automatically. Checks for conflicts with existing events first: if the time overlaps something already on the calendar, it returns {conflict: true, conflicting_events, suggested_times} and does NOT create the event — present the conflict and suggested_times to the principal instead of retrying blindly. Only pass force=true to double-book anyway, and only when the principal explicitly asked for that after seeing the conflict.")
+    mcp.register(list_events, name="list_calendar_events", description="List Google Calendar events. Pass `time_min`/`time_max` (ISO 8601) to check a specific window — e.g. before proposing a time, to see what's already booked — instead of relying on the default 'next N upcoming events'.")
     mcp.register(delete_event, name="delete_calendar_event", description="Delete a Google Calendar event")
 
     # ── Google Docs tools ──────────────────────────────────────────

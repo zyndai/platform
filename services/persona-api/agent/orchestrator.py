@@ -2027,8 +2027,16 @@ at 1pm and invite bob@example.com"). Do NOT go through Zynd negotiation here.
 4. If the principal says "tomorrow at 1pm", compute the exact ISO-8601 UTC start/end
    times. Ask for the timezone if you're unsure, or use a reasonable default (e.g.
    1 hour duration).
-5. When the event is created, confirm it back to your principal and mention that the
-   invite has been emailed to the attendees.
+5. **If the result comes back with `conflict: true`**, the event was NOT created —
+   the requested time overlaps something already on the calendar. Do not retry the
+   same time, and do not silently pick a different one yourself. Tell the principal
+   what it conflicts with (`conflicting_events`) and offer the `suggested_times` as
+   options — e.g. *"That overlaps your 'Team Sync' at 2–3pm. Free slots nearby: 3–4pm
+   or 4:30–5:30pm — want one of those, or should I book it anyway?"* Only call
+   `create_calendar_event` again with `force=true` if they explicitly choose to
+   double-book.
+6. When the event is created (no conflict, or force=true), confirm it back to your
+   principal and mention that the invite has been emailed to the attendees.
 
 ### Zynd-to-Zynd meeting negotiation (no "invite" keyword — just Zynd contacts)
 This path is ONLY for coordinating a meeting between two Zynd users. Do NOT use it

@@ -66,17 +66,102 @@ function TypingIndicator() {
   );
 }
 
-// Friendly progress labels for slow network tools, so a 15-40s find→call
-// flow shows what's happening instead of a silent spinner.
+// Friendly progress labels so a multi-step turn shows what's actually
+// happening ("Searching…", "Ranking matches…", "Sending a connection
+// request…") instead of a silent spinner or a raw tool name like "Running
+// find best intro for me". Each entry lights up live as its tool call
+// starts and clears when the next one does — this is what actually
+// produces a "Searching... Ranking matches... Preparing outreach..."-style
+// sequence for a compound request, driven by the real tool calls as they
+// execute rather than a fabricated fixed script.
 const TOOL_PROGRESS_LABELS: Record<string, string> = {
+  // Zynd network — discovery & connections
   search_zynd_network: "Looking for a matching agent or service",
   search_zynd_personas: "Looking for a matching person",
   search_zynd_services: "Looking for a matching service",
   get_zynd_service_card: "Reading the agent's details",
+  get_persona_profile: "Reading their profile",
   call_zynd_service: "Calling the agent",
   call_zynd_agent: "Calling the agent",
   message_zynd_agent: "Messaging the agent",
   request_connection: "Sending a connection request",
+  list_my_connections: "Checking your connections",
+  check_connection_status: "Checking connection status",
+  read_agent_channel: "Reading the conversation",
+  // Meetings
+  propose_meeting: "Proposing meeting times",
+  propose_group_meeting: "Proposing meeting times",
+  respond_to_meeting: "Responding to the meeting",
+  list_pending_meetings: "Checking pending meetings",
+  smart_group_schedule: "Checking everyone's calendars",
+  // Network intros / matching
+  find_best_intro_for_me: "Searching and ranking matches",
+  check_network_overlap: "Checking what you have in common",
+  // Memory & digital twin
+  what_do_you_know_about_me: "Checking what I remember",
+  remember_this: "Saving that",
+  forget_this: "Forgetting that",
+  answer_like_me: "Thinking it through",
+  delegate_to_my_persona: "Working on it",
+  what_do_i_really_know_about: "Digging through memory",
+  refresh_my_style: "Updating your communication style",
+  // Calendar
+  create_calendar_event: "Creating the calendar event",
+  list_calendar_events: "Checking your calendar",
+  delete_calendar_event: "Removing the event",
+  // Todos & brief
+  add_todo: "Adding to your todos",
+  append_to_my_brief: "Updating your brief",
+  read_my_brief: "Reading your brief",
+  replace_my_brief: "Updating your brief",
+  clear_my_brief: "Clearing your brief",
+  // Pages
+  publish_page: "Publishing your page",
+  update_page: "Updating your page",
+  list_my_pages: "Checking your pages",
+  // Google Docs / Sheets / Drive
+  create_google_doc: "Creating the document",
+  read_google_doc: "Reading the document",
+  append_to_google_doc: "Updating the document",
+  search_google_docs: "Searching your documents",
+  list_google_docs: "Checking your documents",
+  create_google_sheet: "Creating the spreadsheet",
+  read_google_sheet_values: "Reading the spreadsheet",
+  append_to_google_sheet: "Updating the spreadsheet",
+  search_google_spreadsheets: "Searching your spreadsheets",
+  create_google_drive_folder: "Creating the folder",
+  list_google_drive_files: "Checking your files",
+  list_google_drive_folder_contents: "Checking the folder",
+  move_google_drive_file: "Moving the file",
+  // Gmail
+  send_gmail_email: "Sending the email",
+  search_gmail_emails: "Searching your inbox",
+  get_gmail_email_details: "Reading the email",
+  list_recent_gmail_threads: "Checking recent emails",
+  // Notion
+  create_notion_page: "Creating the Notion page",
+  update_notion_page: "Updating the Notion page",
+  get_notion_page_content: "Reading the Notion page",
+  append_notion_blocks: "Updating the Notion page",
+  create_notion_database: "Creating the Notion database",
+  get_notion_database: "Reading the Notion database",
+  query_notion_database: "Searching Notion",
+  search_notion: "Searching Notion",
+  // LinkedIn
+  post_to_linkedin: "Posting to LinkedIn",
+  read_linkedin_profile: "Reading your LinkedIn profile",
+  read_linkedin_dms: "Checking LinkedIn messages",
+  send_linkedin_dm: "Sending a LinkedIn message",
+  // Twitter / X
+  post_tweet: "Posting to X",
+  read_timeline: "Checking your timeline",
+  read_twitter_dms: "Checking your messages",
+  send_twitter_dm: "Sending a message",
+  // General utility
+  internet_search: "Searching the web",
+  webpage_scrape: "Reading the page",
+  get_current_time: "Checking the time",
+  calculate: "Calculating",
 };
 
 function ToolProgress({ toolCalls }: { toolCalls: ToolCallState[] }) {

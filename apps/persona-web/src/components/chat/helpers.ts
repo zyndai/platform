@@ -125,23 +125,6 @@ export function lastLine(text: string | undefined): string {
   return lines.length > 0 ? lines[lines.length - 1] : "";
 }
 
-/** Map orchestrator tool names to first-person verb labels. */
-const TOOL_VERBS: Record<string, { active: string; done: string }> = {
-  search_zynd_personas:  { active: "Searching the network",     done: "Looked through the network" },
-  get_persona_profile:   { active: "Reading a profile",          done: "Read a profile" },
-  request_connection:    { active: "Reaching out",               done: "Reached out" },
-  message_zynd_agent:    { active: "Sending a message",          done: "Sent a message" },
-  propose_meeting:       { active: "Proposing a time",           done: "Proposed a time" },
-  schedule_meeting:      { active: "Booking it",                 done: "Booked it" },
-};
-
-export function toolVerb(name: string, status: "running" | "done" | "error"): string {
-  const v = TOOL_VERBS[name];
-  if (!v) return status === "done" ? "Done" : "Working on it";
-  if (status === "error") return `${v.active} — that didn't work`;
-  return status === "done" ? v.done : v.active;
-}
-
 function isPublishedPageValue(v: unknown): v is PublishedPage {
   if (!isPlainObject(v)) return false;
   const r = v as Record<string, unknown>;

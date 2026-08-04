@@ -22,11 +22,22 @@ const callPeerLabel = (c: AgentCall) => {
   return short || "agent";
 };
 
+// A2A task-lifecycle states (submitted → working → completed/failed) the
+// peer reports via last_state — friendlier labels than a flat "pending"
+// for the whole in-flight window.
+const IN_FLIGHT_STATE_LABELS: Record<string, string> = {
+  working: "🔄 working",
+  submitted: "⏳ queued",
+  "input-required": "❓ needs input",
+  "auth-required": "🔑 needs auth",
+};
+
 // pending → waiting on the peer; received → answer (or terminal) is in.
 const callStatusLabel = (c: AgentCall): { text: string; tone: string } => {
   if (c.status === "received") return { text: "✓ done", tone: "done" };
   if (c.status === "failed" || c.status === "expired") return { text: c.status, tone: "warn" };
-  return { text: "⏳ pending", tone: "pending" };
+  const stateLabel = c.last_state ? IN_FLIGHT_STATE_LABELS[c.last_state] : undefined;
+  return { text: stateLabel || "⏳ pending", tone: "pending" };
 };
 
 export default function RightRail() {

@@ -18,7 +18,7 @@ function LinkedinIcon({ size = 22 }: { size?: number }) {
     </svg>
   );
 }
-import { Banner, Button } from "@/components/ui";
+import { Banner, Button, Input, FieldLabel } from "@/components/ui";
 import { getSupabase } from "@/lib/supabase";
 import { useDashboard } from "@/contexts/DashboardContext";
 
@@ -101,6 +101,14 @@ export default function AccountsPage() {
   // read as "nothing happened."
   const [linkedinScraping, setLinkedinScraping] = useState(false);
   const [linkedinNotice, setLinkedinNotice] = useState<string | null>(null);
+  // LinkedIn OAuth only gives us the user's name (no profile URL — that
+  // needs LinkedIn partner-tier API access we don't have), so the read
+  // path falls back to a name search that can land on the wrong person
+  // for a common name. Letting the user paste their real URL is the only
+  // way to guarantee we're scraping them, not a stranger who shares their
+  // name — this is a correction path, reachable whether or not they're
+  // already "connected".
+  const [linkedinUrlInput, setLinkedinUrlInput] = useState("");
 
   const refresh = useCallback(async () => {
     const sb = getSupabase();
@@ -278,17 +286,28 @@ export default function AccountsPage() {
     return `${API}/api/oauth/google/authorize?features=${features}&token=${session.access_token}`;
   };
 
-  const connectLinkedIn = async (force = false) => {
+  const connectLinkedIn = async (force = false, profileUrl?: string) => {
     setWorking("linkedin");
     const sinceIso = conn.linkedin.lastReadIso;
     try {
       const sb = getSupabase();
       const { data: { session } } = await sb.auth.getSession();
       if (!session?.access_token) return;
-      await fetch(`${API}/api/linkedin/scrape${force ? "?force=1" : ""}`, {
+      const params = new URLSearchParams();
+      if (force) params.set("force", "1");
+      if (profileUrl) params.set("profile_url", profileUrl);
+      const qs = params.toString();
+      const resp = await fetch(`${API}/api/linkedin/scrape${qs ? `?${qs}` : ""}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => null);
+        setLinkedinNotice(
+          (body?.detail as string) || "Couldn't start the scrape — try again in a moment.",
+        );
+        return;
+      }
       void pollLinkedinUntilReady(sinceIso);
     } finally {
       setWorking(null);
@@ -452,6 +471,38 @@ export default function AccountsPage() {
                 ]
               : []
           }
+          footer={
+            <div className="linkedin-url-footer">
+              <FieldLabel htmlFor="linkedin-profile-url-input">
+                {conn.linkedin.read
+                  ? "Wrong profile above? Paste your exact LinkedIn URL to fix it:"
+                  : "Know your profile URL? Paste it for a guaranteed-correct match — LinkedIn's login alone can't tell us which \"you\" you are among people with the same name."}
+              </FieldLabel>
+              <div className="linkedin-url-row">
+                <Input
+                  id="linkedin-profile-url-input"
+                  type="text"
+                  placeholder="https://www.linkedin.com/in/your-name"
+                  value={linkedinUrlInput}
+                  onChange={(e) => setLinkedinUrlInput(e.target.value)}
+                  disabled={working === "linkedin" || linkedinScraping}
+                />
+                <Button
+                  size="sm"
+                  variant="tertiary"
+                  disabled={!linkedinUrlInput.trim() || working === "linkedin" || linkedinScraping}
+                  onClick={() => {
+                    const url = linkedinUrlInput.trim();
+                    if (!url) return;
+                    void connectLinkedIn(true, url);
+                    setLinkedinUrlInput("");
+                  }}
+                >
+                  Use this URL
+                </Button>
+              </div>
+            </div>
+          }
         />
 
         <ConnectorCard
@@ -567,6 +618,12 @@ interface ConnectorCardProps {
    *  except disconnecting, so a stuck or stale connection had no in-place
    *  fix short of a full disconnect + reconnect. */
   secondaryActions?: SecondaryAction[];
+  /** Rendered at the very bottom of the card, in every state (connected,
+   *  pending, not connected) — unlike `extra`, which only shows once
+   *  connected. Used for things that need to work regardless of state,
+   *  e.g. LinkedIn's "paste your profile URL" correction, which has to be
+   *  reachable both before first connecting and after a wrong auto-match. */
+  footer?: React.ReactNode;
 }
 
 function ConnectorCard({
@@ -588,6 +645,7 @@ function ConnectorCard({
   onCancelConfirm,
   onConfirmDisconnect,
   secondaryActions,
+  footer,
 }: ConnectorCardProps) {
   const statusText = loading
     ? "…"
@@ -644,6 +702,7 @@ function ConnectorCard({
           )}
         </div>
       </div>
+      {!confirming && footer}
     </div>
   );
 }

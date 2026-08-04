@@ -4,6 +4,7 @@ stored result for the frontend.
 """
 
 import logging
+import re
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
@@ -13,6 +14,8 @@ from services.linkedin_scraper import scrape_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_LINKEDIN_PROFILE_RE = re.compile(r"^https?://([\w-]+\.)?linkedin\.com/in/[\w\-%]+/?$", re.IGNORECASE)
 
 
 def _get_supabase():
@@ -32,6 +35,7 @@ async def trigger_scrape(
     background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
     force: bool = False,
+    profile_url: str | None = None,
 ):
     """
     Kick off a LinkedIn scrape for the current user. Returns immediately;
@@ -44,11 +48,34 @@ async def trigger_scrape(
     `force=True` (the Accounts page's "Refresh now" button) bypasses the
     cached-data short-circuit below. There's no periodic re-scrape job —
     this is the only way data ever gets refreshed after the first scrape.
+
+    `profile_url`, if provided, is treated as authoritative: stored and
+    scraped directly, skipping the search-by-name guess entirely.
+    LinkedIn's OAuth only gives us a name via OIDC — no profile URL,
+    which requires special partner API access we don't have — so
+    search-by-name is the only option when the user doesn't supply this.
+    For a common name that guess can (and does) land on a stranger's
+    profile; this is the only way to guarantee we scrape the right one.
     """
     metadata = user.get("user_metadata") or {}
     full_name = metadata.get("full_name") or metadata.get("name") or ""
 
     sb = _get_supabase()
+
+    if profile_url:
+        profile_url = profile_url.strip()
+        if not _LINKEDIN_PROFILE_RE.match(profile_url):
+            raise HTTPException(
+                status_code=400,
+                detail="That doesn't look like a LinkedIn profile URL — expected something like https://www.linkedin.com/in/your-name.",
+            )
+        sb.table("linkedin_profiles").upsert(
+            {"user_id": user["id"], "profile_url": profile_url},
+            on_conflict="user_id",
+        ).execute()
+        background_tasks.add_task(_safe_scrape, user["id"], full_name, profile_url)
+        return {"status": "started", "source": "user_provided_url"}
+
     existing = (
         sb.table("linkedin_profiles")
         .select("scraped_at, profile_url, raw_profile")

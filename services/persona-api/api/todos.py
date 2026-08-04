@@ -12,6 +12,7 @@ user_id explicitly so a token mix-up couldn't ever leak another user's
 list.
 """
 
+from typing import Optional
 import asyncio
 from datetime import datetime, timezone
 
@@ -34,8 +35,8 @@ def _is_missing_table(err: APIError) -> bool:
 
 
 class TodoUpdate(BaseModel):
-    done: bool | None = None
-    title: str | None = None
+    done: Optional[bool] = None
+    title: Optional[str] = None
 
 
 @router.get("/")

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -35,7 +35,7 @@ class SearchRequest(BaseModel):
 
 class CallRequest(BaseModel):
     text: str = ""
-    data: dict | None = None
+    data: Optional[dict] = None
 
 
 @router.post("/search")

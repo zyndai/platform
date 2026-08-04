@@ -22,8 +22,10 @@ import pytest
 
 
 class _FakeAsyncResp:
-    def __init__(self, envelope):
+    def __init__(self, envelope, status_code=200):
         self._envelope = envelope
+        self.status_code = status_code
+        self.text = json.dumps(envelope)
 
     def raise_for_status(self):
         return None

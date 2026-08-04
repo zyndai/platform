@@ -12,6 +12,8 @@ Tools:
                        card discoverable at `{base}/.well-known/agent-card.json`)
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -27,7 +29,6 @@ import config
 
 logger = logging.getLogger(__name__)
 
-
 # The registry's /v1/search applies `max_results` to the raw candidate
 # pool BEFORE it applies the `tags`/`entity_type` filter. So a filtered
 # search with max_results=25 can return far fewer than 25 matching rows
@@ -36,7 +37,6 @@ logger = logging.getLogger(__name__)
 # surface the real catalog we widen the pool to this floor whenever a
 # filter is active, then trim to the caller's top_k locally.
 _REGISTRY_POOL_FLOOR = 60
-
 
 # ── In-process cache for the People discovery surface ────────────────
 # The dashboard's People page calls /api/persona/search on every
@@ -49,7 +49,6 @@ _DISCOVER_CACHE: dict[tuple[str, int], tuple[float, dict]] = {}
 _DISCOVER_CACHE_LOCK = threading.Lock()
 _DISCOVER_CACHE_TTL = 30.0  # seconds
 
-
 # Avatar lookup cache. Avatars rarely change, but we hit the Supabase
 # admin API to read auth.users.user_metadata which the python client
 # doesn't expose nicely. We cache the (agent_id → avatar_url) map for
@@ -57,7 +56,6 @@ _DISCOVER_CACHE_TTL = 30.0  # seconds
 _AVATAR_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
 _AVATAR_CACHE_LOCK = threading.Lock()
 _AVATAR_CACHE_TTL = 300.0  # 5 minutes
-
 
 def _build_avatar_map() -> dict[str, str]:
     """
@@ -127,7 +125,6 @@ def _build_avatar_map() -> dict[str, str]:
         logger.warning(f"[discover] avatar map build failed: {e}")
         return {}
 
-
 def _get_avatar_map() -> dict[str, str]:
     """Cached accessor for the avatar map. 5-minute TTL."""
     now = time.time()
@@ -142,7 +139,6 @@ def _get_avatar_map() -> dict[str, str]:
         _AVATAR_CACHE["global"] = (now + _AVATAR_CACHE_TTL, fresh)
     return fresh
 
-
 def _discover_cache_get(key: tuple[str, int]) -> dict | None:
     with _DISCOVER_CACHE_LOCK:
         hit = _DISCOVER_CACHE.get(key)
@@ -154,7 +150,6 @@ def _discover_cache_get(key: tuple[str, int]) -> dict | None:
             return None
         return value
 
-
 def _discover_cache_put(key: tuple[str, int], value: dict) -> None:
     with _DISCOVER_CACHE_LOCK:
         _DISCOVER_CACHE[key] = (time.time() + _DISCOVER_CACHE_TTL, value)
@@ -163,7 +158,6 @@ def _discover_cache_put(key: tuple[str, int], value: dict) -> None:
             oldest = sorted(_DISCOVER_CACHE.items(), key=lambda kv: kv[1][0])[: len(_DISCOVER_CACHE) - 64]
             for k, _ in oldest:
                 _DISCOVER_CACHE.pop(k, None)
-
 
 def _discover_local(q: str, top_k: int, avatars: dict[str, str]) -> list[dict]:
     """
@@ -221,7 +215,6 @@ def _discover_local(q: str, top_k: int, avatars: dict[str, str]) -> list[dict]:
         if r.get("agent_id")
     ]
 
-
 def _discover_registry(q: str, top_k: int, avatars: dict[str, str]) -> list[dict]:
     """
     Query the Zynd registry for personas matching `q`.
@@ -274,7 +267,6 @@ def _discover_registry(q: str, top_k: int, avatars: dict[str, str]) -> list[dict
             "avatar_url": avatars.get(aid),
         })
     return out
-
 
 def discover_personas(query: str, top_k: int = 20) -> dict:
     """
@@ -340,7 +332,6 @@ def discover_personas(query: str, top_k: int = 20) -> dict:
     _discover_cache_put(key, out)
     return out
 
-
 def _fetch_agent_card(agent_id: str) -> dict | None:
     """Fetch an agent's full card from the registry. Card contains endpoints, capabilities, metadata."""
     try:
@@ -353,7 +344,6 @@ def _fetch_agent_card(agent_id: str) -> dict | None:
     except Exception:
         pass
     return None
-
 
 def _agent_url_from_card(card: dict | None) -> str:
     """Extract the persona's A2A endpoint URL from a card.
@@ -370,13 +360,10 @@ def _agent_url_from_card(card: dict | None) -> str:
     endpoints = card.get("endpoints") or {}
     return endpoints.get("invoke") or endpoints.get("websocket") or ""
 
-
 def _get_supabase():
     return config.get_supabase()
 
-
 # ── Discovery Tools ──────────────────────────────────────────────────
-
 
 # Stop-words to strip when broadening a literal user query into something
 # the registry's keyword search can match. The registry indexes agent
@@ -396,7 +383,6 @@ _QUERY_STOPWORDS: set[str] = {
     "agent", "agents", "service", "services", "tool", "tools", "thing", "things",
     "something", "someone", "anyone", "anything",
 }
-
 
 def _normalize_query(q: str) -> str:
     """Strip stop-words and trim verbose user prose into 1–4 keyword tokens.
@@ -422,7 +408,6 @@ def _normalize_query(q: str) -> str:
     # Keep the first 4 content tokens — registry full-text search uses
     # OR semantics, so the first few words drive recall.
     return " ".join(filtered[:4])
-
 
 def _call_registry_search(query: str, kind: str, top_k: int) -> tuple[list[dict], Optional[str]]:
     """Single round-trip to the registry's /v1/search. Returns
@@ -462,7 +447,6 @@ def _call_registry_search(query: str, kind: str, top_k: int) -> tuple[list[dict]
     except Exception as e:
         return [], f"Registry search failed: {e}"
 
-
 # ── Deployer fallback ────────────────────────────────────────────────
 # Agents/services run on the deployer but don't always make it into the
 # registry's search index (entityId stays null). So a registry-only
@@ -472,7 +456,6 @@ def _call_registry_search(query: str, kind: str, top_k: int) -> tuple[list[dict]
 _DEPLOYER_CACHE: dict[str, tuple[float, list[dict]]] = {}
 _DEPLOYER_CACHE_LOCK = threading.Lock()
 _DEPLOYER_CACHE_TTL = 60.0  # seconds
-
 
 def _deployer_running_entities() -> list[dict]:
     """Fetch the deployer's RUNNING agents/services as search-result rows.
@@ -528,7 +511,6 @@ def _deployer_running_entities() -> list[dict]:
         _DEPLOYER_CACHE["running"] = (time.time(), rows)
     return rows
 
-
 def _merge_deployer_entities(
     results: list[dict], kind: str, query: str
 ) -> list[dict]:
@@ -562,7 +544,6 @@ def _merge_deployer_entities(
         seen_names.add(d["name"].lower())
     return results
 
-
 def _caller_agent_id(user_id: str) -> str:
     """Resolve the caller's own persona agent_id so discovery can exclude self —
     a user must never be recommended their own persona. Best-effort; returns ""
@@ -575,7 +556,6 @@ def _caller_agent_id(user_id: str) -> str:
         return (status or {}).get("agent_id") or ""
     except Exception:
         return ""
-
 
 def search_zynd_network(query: str, top_k: int = 8, kind: str = "any", user_id: str = "") -> dict:
     """
@@ -828,7 +808,6 @@ def search_zynd_network(query: str, top_k: int = 8, kind: str = "any", user_id: 
         "query_used": query_used,
     }
 
-
 def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:
     """
     Search for other people's personas by topic, role, or interest — e.g.
@@ -1022,7 +1001,6 @@ def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:
         "source": source,
     }
 
-
 def _local_persona_fallback(query: str, top_k: int, avatars: dict[str, str]) -> list[dict]:
     """Read active personas from the local DB. Returned shape mirrors
     search_zynd_personas results.
@@ -1095,7 +1073,6 @@ def _local_persona_fallback(query: str, top_k: int, avatars: dict[str, str]) -> 
     except Exception as e:
         logger.warning(f"[zynd_network] local fallback failed: {e}")
         return []
-
 
 def _stem(word: str) -> str:
     """Naive plural stripping so "founders" matches a bio's "founder"."""
@@ -1187,7 +1164,6 @@ def get_persona_profile(agent_id: str) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-
 # ── Connection Tools ─────────────────────────────────────────────────
 
 def list_my_connections(user_id: str) -> dict:
@@ -1244,7 +1220,6 @@ def list_my_connections(user_id: str) -> dict:
         "total_accepted": len(accepted),
         "total_pending": len(pending),
     }
-
 
 def request_connection(user_id: str, target_agent_id: str, target_name: str = "Network Agent") -> dict:
     """
@@ -1317,7 +1292,6 @@ def request_connection(user_id: str, target_agent_id: str, target_name: str = "N
 
     return {"error": "Failed to create connection thread."}
 
-
 def check_connection_status(user_id: str, target_agent_id: str) -> dict:
     """
     Check if the user is connected to a specific persona.
@@ -1349,9 +1323,7 @@ def check_connection_status(user_id: str, target_agent_id: str) -> dict:
         "initiated_by_me": t["initiator_id"] == my_agent_id,
     }
 
-
 # ── Messaging Tool ───────────────────────────────────────────────────
-
 
 def _persona_signer(user_id: str):
     """Return ``(keypair, agent_id, developer_proof)`` for the user's active
@@ -1385,7 +1357,6 @@ def _persona_signer(user_id: str):
     # receiver may require it on first contact within a context.
     developer_proof = build_derivation_proof(dev_seed, public_key_bytes, index)
     return keypair, agent_id, developer_proof
-
 
 def _signed_a2a_send(
     *,
@@ -1505,7 +1476,6 @@ def _signed_a2a_send(
         )
     return base
 
-
 def _send_via_a2a_v3(
     sender_agent_id: str,
     sender_user_id: str,
@@ -1546,7 +1516,6 @@ def _send_via_a2a_v3(
         origin_kind="mcp_tool",
         origin_ref={"thread_id": context_id, "tool": "message_zynd_agent"},
     )
-
 
 def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: str, message: str) -> dict:
     """
@@ -1745,7 +1714,6 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
         result["message"] = proposal_note + " Then, " + result["message"]
     return result
 
-
 def call_zynd_agent(entity_id: str, text: str = "", data: dict = None, user_id: str = "", conversation_id: str = "") -> dict:
     """
     Invoke a standalone Zynd Network AGENT (not a stateless `zns:svc:` service,
@@ -1830,7 +1798,6 @@ def call_zynd_agent(entity_id: str, text: str = "", data: dict = None, user_id: 
         ),
     }
 
-
 def _dispatch_agent_call_bg(entity_id: str, text: str, data: "Any", user_id: str, conversation_id: str = "") -> None:
     """Background worker for ``call_zynd_agent``: resolve the agent card,
     sign, and dispatch via PUSH off the chat turn so nothing blocks the user.
@@ -1904,7 +1871,6 @@ def _dispatch_agent_call_bg(entity_id: str, text: str, data: "Any", user_id: str
     except Exception as e:  # noqa: BLE001
         print(f"[call_zynd_agent bg] EXCEPTION: {type(e).__name__}: {e}")
         logger.exception("call_zynd_agent[bg] dispatch failed for %s: %s", entity_id, e)
-
 
 def read_agent_channel(user_id: str, thread_id: str, limit: int = 20) -> dict:
     """

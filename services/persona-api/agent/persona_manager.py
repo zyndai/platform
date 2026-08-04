@@ -14,12 +14,13 @@ so they can be reconstructed from just the derivation_index — no need to
 persist private keys in the database.
 """
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import hashlib
 import json
 import logging
-
 
 import config
 from agent.heartbeat_manager import get_heartbeat_manager
@@ -33,7 +34,6 @@ from agent.zynd_identity import (
 )
 
 logger = logging.getLogger(__name__)
-
 
 def _register_entity_v2(
     keypair: Keypair,
@@ -205,11 +205,9 @@ def _register_entity_v2(
         )
     return agent_id
 
-
 def _load_developer_seed() -> bytes:
     """Load the developer Ed25519 seed (32 bytes) from the keypair file."""
     return _load_dev_seed(config.ZYND_DEVELOPER_KEYPAIR_PATH)
-
 
 def _derive_agent_keypair(developer_seed: bytes, index: int) -> tuple[bytes, bytes]:
     """
@@ -221,10 +219,8 @@ def _derive_agent_keypair(developer_seed: bytes, index: int) -> tuple[bytes, byt
     kp = keypair_from_seed(seed)
     return kp.private_seed, kp.public_key_bytes
 
-
 def _get_supabase():
     return config.get_supabase()
-
 
 def _next_derivation_index() -> int:
     """Get the next available derivation index from the database."""
@@ -236,7 +232,6 @@ def _next_derivation_index() -> int:
     if result.data:
         return result.data[0]["derivation_index"] + 1
     return 0
-
 
 async def create_persona(
     user_id: str,
@@ -364,7 +359,6 @@ async def create_persona(
         "derivation_index": index,
     }
 
-
 async def delete_persona(user_id: str) -> dict:
     """
     Deregister and clean up a user's persona.
@@ -424,7 +418,6 @@ async def delete_persona(user_id: str) -> dict:
 
     logger.info(f"[persona] Deleted persona for user {user_id}: {agent_id}")
     return {"status": "deleted", "agent_id": agent_id}
-
 
 async def purge_user_account(user_id: str) -> dict:
     """
@@ -558,7 +551,6 @@ async def purge_user_account(user_id: str) -> dict:
 
     return {"status": "deleted", "agent_id": agent_id}
 
-
 def get_persona_status(user_id: str) -> dict:
     """Check if a user has a deployed persona. Returns status dict."""
     sb = _get_supabase()
@@ -582,7 +574,6 @@ def get_persona_status(user_id: str) -> dict:
         "brief_doc_url": persona.get("brief_doc_url"),
         "brief_doc_revision_id": persona.get("brief_doc_revision_id"),
     }
-
 
 def update_persona_profile(user_id: str, updates: dict) -> dict:
     """
@@ -613,13 +604,11 @@ def update_persona_profile(user_id: str, updates: dict) -> dict:
     logger.info(f"[persona] Updated profile for user {user_id}: {list(patch.keys())}")
     return get_persona_status(user_id)
 
-
 def get_persona_by_agent_id(agent_id: str) -> dict | None:
     """Look up a persona by its agent_id. Returns the full row or None."""
     sb = _get_supabase()
     result = sb.table("persona_agents").select("*").eq("agent_id", agent_id).eq("active", True).execute()
     return result.data[0] if result.data else None
-
 
 # ── Brief Google Doc lifecycle ───────────────────────────────────────
 #
@@ -678,7 +667,6 @@ def init_brief_doc(user_id: str) -> dict:
     logger.info(f"[persona] Initialized brief doc for {user_id}: {doc_id}")
     return {"doc_id": doc_id, "url": doc_url, "created": True}
 
-
 def get_brief(user_id: str) -> dict:
     """
     Return the persona's brief — both metadata (doc_id, url) and current
@@ -719,7 +707,6 @@ def get_brief(user_id: str) -> dict:
         "title": fetched.get("title"),
     }
 
-
 def save_brief_content(user_id: str, content: str) -> dict:
     """Replace the body of the persona's brief Google Doc with `content`."""
     persona = get_persona_status(user_id)
@@ -743,7 +730,6 @@ def save_brief_content(user_id: str, content: str) -> dict:
         logger.warning(f"[persona] brief_content DB sync failed (non-fatal): {e}")
 
     return {"success": True, "doc_id": doc_id, "content": content}
-
 
 def _migrate_stale_webhook_url(persona: dict, developer_seed: bytes) -> None:
     """Re-point a persona's entity_url at the canonical base URL.
@@ -802,7 +788,6 @@ def _migrate_stale_webhook_url(persona: dict, developer_seed: bytes) -> None:
     sb = _get_supabase()
     sb.table("persona_agents").update({"webhook_url": fixed_url}).eq("agent_id", agent_id).execute()
     logger.info(f"[persona] Migrated {agent_id} entity_url → {fixed_url}")
-
 
 async def startup():
     """
@@ -867,7 +852,6 @@ async def startup():
         logger.info(f"[persona] Scheduled entity_url migration for {len(stale)} persona(s) in background")
 
     logger.info(f"[persona] Rehydrated {count} active personas, heartbeat started")
-
 
 async def shutdown():
     """Called on server shutdown. Stops all heartbeats gracefully."""

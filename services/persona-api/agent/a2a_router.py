@@ -1,3 +1,5 @@
+
+from __future__ import annotations
 """
 A2A v3 — JSON-RPC 2.0 transport for cross-agent traffic.
 
@@ -65,7 +67,6 @@ from api.persona import DEFAULT_CONNECTION_PERMISSIONS
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-
 # ── Module-level singletons ─────────────────────────────────────────
 #
 # One ReplayCache for the whole process — per-sender buckets are managed
@@ -80,7 +81,6 @@ _replay_cache = ReplayCache()
 # drop it when the task finishes via a discard-on-done callback.
 _push_tasks: set[asyncio.Task] = set()
 
-
 def _track_push_task(coro):
     """Schedule a coroutine to run in the background and keep it alive."""
     t = asyncio.create_task(coro)
@@ -88,13 +88,11 @@ def _track_push_task(coro):
     t.add_done_callback(_push_tasks.discard)
     return t
 
-
 # Sentinel DataPart kind that a sender uses to introduce themselves on a
 # pending (`requested`) connection. The §5.4 admission gate dispatches
 # this even though the connection isn't `accepted` yet — the receiver's
 # UI surfaces the request content, the human decides accept/decline.
 HANDSHAKE_DATA_KIND = "zynd.connection.request"
-
 
 def _is_handshake_message(msg_dict: dict) -> bool:
     """True iff the Message carries a DataPart with kind=zynd.connection.request."""
@@ -104,7 +102,6 @@ def _is_handshake_message(msg_dict: dict) -> bool:
             if isinstance(data, dict) and data.get("kind") == HANDSHAKE_DATA_KIND:
                 return True
     return False
-
 
 # JSON-RPC method names from the A2A v0.3 spec.
 KNOWN_METHODS = frozenset({
@@ -117,9 +114,7 @@ KNOWN_METHODS = frozenset({
     "tasks/pushNotificationConfig/get",
 })
 
-
 # ── JSON-RPC envelope helpers ───────────────────────────────────────
-
 
 def _rpc_error(req_id, code: int, message: str, data=None) -> dict:
     err: dict = {"code": code, "message": message}
@@ -127,10 +122,8 @@ def _rpc_error(req_id, code: int, message: str, data=None) -> dict:
         err["data"] = data
     return {"jsonrpc": "2.0", "id": req_id, "error": err}
 
-
 def _rpc_result(req_id, result: Any) -> dict:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
-
 
 # ── Map ZyndAuthError reasons → JSON-RPC error codes ────────────────
 #
@@ -148,13 +141,11 @@ _AUTH_REASON_TO_CODE = {
     "untrusted_sender":     ZYND_AUTH_FAILED,
 }
 
-
 # ── Persona keypair lookup ──────────────────────────────────────────
 #
 # Each persona signs its replies with its own derived keypair. We pull
 # the derivation_index from persona_agents and rebuild the keypair on
 # demand — same shape as persona_manager.startup() rehydration.
-
 
 def _persona_keypair(user_id: str):
     """Return (keypair, agent_id) for the deployed persona of `user_id`,
@@ -175,14 +166,12 @@ def _persona_keypair(user_id: str):
     private_seed, _ = _derive_agent_keypair(seed, persona["derivation_index"])
     return keypair_from_seed(private_seed), persona["agent_id"]
 
-
 def _now_iso() -> str:
     return (
         datetime.now(tz=timezone.utc)
         .isoformat(timespec="milliseconds")
         .replace("+00:00", "Z")
     )
-
 
 def _extract_text(parts: list) -> str:
     """Flatten the TextParts of a Message into one string — the orchestrator
@@ -198,9 +187,7 @@ def _extract_text(parts: list) -> str:
                 chunks.append(txt)
     return "\n".join(chunks)
 
-
 # ── Push notification helpers ───────────────────────────────────────
-
 
 def _extract_push_config(params: Any) -> tuple[Optional[str], Optional[str]]:
     """Pull the (url, token) tuple out of params.configuration.pushNotificationConfig.
@@ -223,11 +210,9 @@ def _extract_push_config(params: Any) -> tuple[Optional[str], Optional[str]]:
         token = auth.get("credentials")
     return url, token if isinstance(token, str) and token else None
 
-
 _PUSH_BACKOFFS = (1.0, 4.0, 16.0)
 _PUSH_TIMEOUT = 30.0
 _MAX_PUSH_INFLIGHT_PER_PEER = 16  # design §11.4 backpressure cap
-
 
 async def _deliver_push_for_task(
     user_id: str,
@@ -291,7 +276,6 @@ async def _deliver_push_for_task(
         f"[a2a push task={task_id[:8]}] giving up after {len(_PUSH_BACKOFFS)} attempts to {push_url}: {last_err}"
     )
 
-
 def _build_status_update_event_for_push(
     *,
     task_id: str,
@@ -311,9 +295,7 @@ def _build_status_update_event_for_push(
         timestamp=timestamp,
     )
 
-
 # ── message/send + message/stream shared admission gate ────────────
-
 
 class _Admitted:
     """Carrier for state computed by the admission gate so the send and
@@ -352,7 +334,6 @@ class _Admitted:
         self.log_prefix = log_prefix
         self.inbound_text = inbound_text
         self.is_continuation = is_continuation
-
 
 def _ping_inbound_dm(
     recipient_user_id: str,
@@ -429,7 +410,6 @@ def _ping_inbound_dm(
             threading.Thread(target=_runner, daemon=True).start()
     except Exception as e:
         logger.warning(f"[a2a inbound ping] failed: {e}")
-
 
 async def _admit_message_send(
     user_id: str,
@@ -689,7 +669,6 @@ async def _admit_message_send(
         None,
     )
 
-
 async def _run_handler_and_finalize(
     user_id: str,
     admitted: _Admitted,
@@ -855,7 +834,6 @@ async def _run_handler_and_finalize(
 
     return next_state, reply_text, failure_reason, reply_msg, artifact, now_iso
 
-
 def _maybe_fire_push(
     user_id: str,
     task_id: str,
@@ -891,7 +869,6 @@ def _maybe_fire_push(
     _track_push_task(
         _deliver_push_for_task(user_id, task_id, push_url, push_token, event)
     )
-
 
 async def _handle_message_send(user_id: str, addressee_agent_id: str, params: Any, req_id: Any) -> dict:
     """Synchronous JSON-RPC: run admission gate, dispatch handler, return Task."""
@@ -929,9 +906,7 @@ async def _handle_message_send(user_id: str, addressee_agent_id: str, params: An
         task_obj["artifacts"] = [artifact]
     return _rpc_result(req_id, task_obj)
 
-
 # ── message/stream + tasks/resubscribe (SSE) ────────────────────────
-
 
 # Headers we send with every SSE response. `X-Accel-Buffering: no`
 # stops nginx from holding events until the connection closes;
@@ -942,12 +917,10 @@ _SSE_HEADERS = {
     "Connection": "keep-alive",
 }
 
-
 def _sse_pack(envelope: dict) -> bytes:
     """Encode a JSON-RPC envelope as a single SSE event."""
     payload = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False)
     return f"data: {payload}\n\n".encode("utf-8")
-
 
 def _status_update_event(
     *,
@@ -969,7 +942,6 @@ def _status_update_event(
         "final": final,
     }
 
-
 def _artifact_update_event(*, task_id: str, context_id: str, artifact: dict, last_chunk: bool = True) -> dict:
     return {
         "kind": "artifact-update",
@@ -978,7 +950,6 @@ def _artifact_update_event(*, task_id: str, context_id: str, artifact: dict, las
         "artifact": artifact,
         "lastChunk": last_chunk,
     }
-
 
 async def _stream_message_send(
     user_id: str,
@@ -1060,7 +1031,6 @@ async def _stream_message_send(
         timestamp=now_iso,
     )
 
-
 async def _stream_tasks_resubscribe(
     user_id: str,
     addressee_agent_id: str,
@@ -1113,9 +1083,7 @@ async def _stream_tasks_resubscribe(
         ),
     ))
 
-
 # ── tasks/get + tasks/cancel handlers ───────────────────────────────
-
 
 def _load_task_for_addressee(
     sb,
@@ -1161,7 +1129,6 @@ def _load_task_for_addressee(
         )
     return rec, None
 
-
 def _row_to_task(rec: dict, *, history_length: int | None = None) -> dict[str, Any]:
     """Project an a2a_tasks row into an A2A v0.3 Task dict."""
     history = list(rec.get("history") or [])
@@ -1192,7 +1159,6 @@ def _row_to_task(rec: dict, *, history_length: int | None = None) -> dict[str, A
         task["metadata"] = {"failure_reason": rec["failure_reason"]}
     return task
 
-
 async def _handle_tasks_get(
     user_id: str,
     addressee_agent_id: str,
@@ -1216,7 +1182,6 @@ async def _handle_tasks_get(
         return err
 
     return _rpc_result(req_id, _row_to_task(rec, history_length=history_length))
-
 
 async def _handle_push_config_set(
     user_id: str,
@@ -1265,7 +1230,6 @@ async def _handle_push_config_set(
         "pushNotificationConfig": {"url": url, **({"token": token} if token else {})},
     })
 
-
 async def _handle_push_config_get(
     user_id: str,
     addressee_agent_id: str,
@@ -1294,7 +1258,6 @@ async def _handle_push_config_get(
     if token:
         cfg["token"] = token
     return _rpc_result(req_id, {"taskId": task_id, "pushNotificationConfig": cfg})
-
 
 async def _handle_tasks_cancel(
     user_id: str,
@@ -1361,9 +1324,7 @@ async def _handle_tasks_cancel(
     rec["updated_at"] = now_iso
     return _rpc_result(req_id, _row_to_task(rec))
 
-
 # ── Endpoints ───────────────────────────────────────────────────────
-
 
 @router.post("/{user_id}/a2a/v1")
 async def a2a_jsonrpc(user_id: str, request: Request):
@@ -1437,7 +1398,6 @@ async def a2a_jsonrpc(user_id: str, request: Request):
         status_code=200,
     )
 
-
 @router.get("/{user_id}/.well-known/agent-card.json")
 async def a2a_agent_card(user_id: str):
     """Signed A2A v0.3 agent card."""
@@ -1451,18 +1411,14 @@ async def a2a_agent_card(user_id: str):
         raise HTTPException(status_code=404, detail="No active persona for this user.")
     return card
 
-
 # ── Lifecycle: restart reconciliation + idle TTL sweeper ────────────
-
 
 _DEFAULT_IDLE_TTL_MS = 3_600_000   # 1 hour, matches the design default
 _SWEEPER_INTERVAL_S = 60           # how often we scan for timed-out tasks
 _POLLER_INTERVAL_S = 30            # how often we poll pending callbacks via tasks/get
 
-
 _sweeper_task: asyncio.Task | None = None
 _poller_task: asyncio.Task | None = None
-
 
 async def reconcile_orphan_tasks() -> int:
     """On boot: any 'submitted' / 'working' rows are orphans from a prior
@@ -1495,7 +1451,6 @@ async def reconcile_orphan_tasks() -> int:
     if n > 0:
         logger.warning(f"[a2a reconcile] transitioned {n} orphan task(s) to failed/server_restart")
     return n
-
 
 async def sweep_idle_tasks() -> int:
     """Scan a2a_tasks for INTERRUPTED rows whose updated_at + idle_ttl_ms
@@ -1566,7 +1521,6 @@ async def sweep_idle_tasks() -> int:
         logger.info(f"[a2a sweep] timed out {fired} interrupted task(s)")
     return fired
 
-
 async def _sweeper_loop():
     """Background loop that calls sweep_idle_tasks every minute."""
     logger.info(f"[a2a sweep] loop started (interval={_SWEEPER_INTERVAL_S}s)")
@@ -1580,7 +1534,6 @@ async def _sweeper_loop():
     except asyncio.CancelledError:
         logger.info("[a2a sweep] loop stopped")
         raise
-
 
 async def _poll_pending_callbacks() -> int:
     """Fallback for the push path: pull the result of still-pending agent
@@ -1611,7 +1564,6 @@ async def _poll_pending_callbacks() -> int:
         logger.info("[a2a poll] checked %d pending call(s)", polled)
     return polled
 
-
 async def _poller_loop():
     """Background loop that polls pending callbacks every _POLLER_INTERVAL_S."""
     logger.info(f"[a2a poll] loop started (interval={_POLLER_INTERVAL_S}s)")
@@ -1626,7 +1578,6 @@ async def _poller_loop():
         logger.info("[a2a poll] loop stopped")
         raise
 
-
 async def start_a2a_lifecycle() -> None:
     """Hook into the FastAPI lifespan startup: reconcile orphans + start
     the idle-task sweeper and the pending-callback poller."""
@@ -1636,7 +1587,6 @@ async def start_a2a_lifecycle() -> None:
         _sweeper_task = asyncio.create_task(_sweeper_loop())
     if _poller_task is None:
         _poller_task = asyncio.create_task(_poller_loop())
-
 
 async def stop_a2a_lifecycle() -> None:
     """Lifespan shutdown: stop sweeper + poller + drain in-flight pushes."""
@@ -1654,7 +1604,6 @@ async def stop_a2a_lifecycle() -> None:
         # Wait briefly for in-flight push deliveries to settle so we
         # don't lose them at process exit.
         await asyncio.gather(*list(_push_tasks), return_exceptions=True)
-
 
 @router.post("/push/{user_id}")
 async def a2a_push_inbound(user_id: str, request: Request):
@@ -1806,7 +1755,6 @@ async def a2a_push_inbound(user_id: str, request: Request):
         "from": sender_entity_id,
     }
 
-
 def _extract_push_event(wrapper: dict[str, Any]) -> Optional[dict[str, Any]]:
     """Pull the status-update event out of a push wrapper's DataParts.
     Lenient: accepts the canonical ``kind=="status-update"`` part, but also
@@ -1821,7 +1769,6 @@ def _extract_push_event(wrapper: dict[str, Any]) -> Optional[dict[str, Any]]:
             ):
                 return d
     return None
-
 
 async def _fetch_and_record_push_result(
     callback: dict[str, Any], event: dict[str, Any], wrapper: dict[str, Any]
@@ -1906,7 +1853,6 @@ async def _fetch_and_record_push_result(
         raw_event={**event, "fetched_task": task, "structured": structured},
     )
 
-
 def _record_push_result(cb_service, callback, cb_id, *, task_state, reply, structured, raw_event) -> None:
     # The frontend renders reply_text; a structured-only result (no text part)
     # would otherwise show as an empty "processing" row, so serialize the
@@ -1943,7 +1889,6 @@ def _record_push_result(cb_service, callback, cb_id, *, task_state, reply, struc
                 reply_text=reply_text or "",
                 structured=raw_event.get("structured"),
             ))
-
 
 async def _autonomous_chat_reply(
     user_id: str,
@@ -2042,7 +1987,6 @@ async def _autonomous_chat_reply(
     except Exception as e:
         logger.warning("[a2a push] autonomous reply failed conv=%s: %s", conversation_id[:8], e)
 
-
 def _push_body_as_task(event: dict[str, Any], wrapper: dict[str, Any]) -> dict[str, Any]:
     """Assemble a Task-like view of a result that may be delivered INSIDE the
     push body (the "shortlist will be POSTed to the callback URL" style).
@@ -2063,7 +2007,6 @@ def _push_body_as_task(event: dict[str, Any], wrapper: dict[str, Any]) -> dict[s
         artifacts.append({"parts": extra_parts})
     return {"status": event.get("status") or {}, "artifacts": artifacts}
 
-
 def _resolve_peer_a2a_url(peer_agent_id: Optional[str]) -> Optional[str]:
     """Fallback for legacy callbacks with no stored peer_a2a_url: resolve
     the peer's A2A endpoint from its registry card."""
@@ -2078,7 +2021,6 @@ def _resolve_peer_a2a_url(peer_agent_id: Optional[str]) -> Optional[str]:
         logger.warning("[a2a push-fetch] peer url resolve failed for %s: %s", peer_agent_id, e)
         return None
 
-
 # Keys in a result DataPart that are narration/metadata rather than payload —
 # their presence doesn't make a Task "ready".
 _ACK_NARRATION_KEYS = frozenset({
@@ -2089,7 +2031,6 @@ _ACK_PHRASES = (
     "when ready", "task accepted", "will be posted", "will be pushed",
     "delivered via push", "search done", "result delivered",
 )
-
 
 def _push_result_ready(task: dict[str, Any]) -> tuple[bool, Optional[str], Any]:
     """Decide whether a fetched Task carries the real result vs. a deferral
@@ -2118,7 +2059,6 @@ def _push_result_ready(task: dict[str, Any]) -> tuple[bool, Optional[str], Any]:
 
     return False, None, None
 
-
 def _all_data_payloads(task: dict[str, Any]) -> list[dict[str, Any]]:
     """All non-empty DataPart payloads from status.message and every artifact,
     in document order."""
@@ -2139,12 +2079,10 @@ def _all_data_payloads(task: dict[str, Any]) -> list[dict[str, Any]]:
             _scan(art.get("parts"))
     return results
 
-
 def _first_data_payload(task: dict[str, Any]) -> Optional[dict[str, Any]]:
     """First non-empty DataPart payload (kept for callers outside this module)."""
     payloads = _all_data_payloads(task)
     return payloads[0] if payloads else None
-
 
 def _nonempty(v: Any) -> bool:
     if v is None:
@@ -2152,7 +2090,6 @@ def _nonempty(v: Any) -> bool:
     if isinstance(v, (str, list, dict, tuple, set)) and len(v) == 0:
         return False
     return True
-
 
 def _is_acceptance_ack(reply: Optional[str], structured: Any) -> bool:
     """True when the Task is just an 'accepted; result will be pushed later'

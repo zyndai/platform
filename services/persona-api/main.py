@@ -67,9 +67,17 @@ async def lifespan(app: FastAPI):
     from agent.brief_watcher import brief_watcher
     await brief_watcher.start()
 
+    # Proactive agent — daily briefs, nudges, evening recaps.
+    # Runs on a background cadence per active user. Safe to start
+    # after personas are rehydrated (needs active user list).
+    from agent.proactive_loop import get_proactive_agent
+    await get_proactive_agent().start()
+
     yield
 
     # ── Shutdown ──
+    from agent.proactive_loop import get_proactive_agent as _pa
+    await _pa().stop()
     from agent.a2a_router import stop_a2a_lifecycle
     await stop_a2a_lifecycle()
     from agent.brief_watcher import brief_watcher as bw

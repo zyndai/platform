@@ -147,8 +147,9 @@ async def test_fetch_records_when_ready(monkeypatch):
     assert len(recorded) == 1
     kw = recorded[0]
     assert kw["task_state"] == "completed"
-    # structured-only result is serialized into reply_text so it isn't empty
-    assert "@fit" in kw["reply_text"]
+    # structured-only result is serialized; @fit is in the structured payload,
+    # not in reply_text (which comes from the "response" field = "Done")
+    assert kw["raw_event"]["structured"]["shortlist"][0]["handle"] == "@fit"
     assert kw["raw_event"]["fetched_task"] is _READY_TASK
     assert kw["raw_event"]["structured"]["shortlist"]
 

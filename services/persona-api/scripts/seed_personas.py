@@ -1,3 +1,5 @@
+
+from __future__ import annotations
 """
 Seed the local network with placeholder personas for testing.
 
@@ -54,9 +56,7 @@ from supabase import create_client
 import config
 from agent.persona_manager import create_persona
 
-
 SEED_EMAIL_DOMAIN = "zynd-seed.local"
-
 
 # 8 placeholder personas. Diverse enough to make matching feel real:
 # a few founders, a designer, a customer-side person, an investor, a
@@ -122,10 +122,8 @@ SEEDS: list[dict] = [
     },
 ]
 
-
 def _auth_url(path: str) -> str:
     return f"{config.SUPABASE_URL.rstrip('/')}/auth/v1{path}"
-
 
 def _service_headers() -> dict:
     return {
@@ -133,7 +131,6 @@ def _service_headers() -> dict:
         "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
         "Content-Type": "application/json",
     }
-
 
 def list_seed_users() -> list[dict]:
     """Page through auth.users and return the ones with our seed email domain."""
@@ -160,7 +157,6 @@ def list_seed_users() -> list[dict]:
         page += 1
     return out
 
-
 def find_existing(seeds_by_email: dict[str, dict]) -> dict[str, str]:
     """Return {email → user_id} for already-seeded users."""
     have = {}
@@ -169,7 +165,6 @@ def find_existing(seeds_by_email: dict[str, dict]) -> dict[str, str]:
         if email in seeds_by_email:
             have[email] = u["id"]
     return have
-
 
 def create_auth_user(email: str, name: str) -> str:
     """Create an auth.users row via the admin API. Returns the new user_id."""
@@ -193,7 +188,6 @@ def create_auth_user(email: str, name: str) -> str:
         raise RuntimeError(f"create_user failed [{r.status_code}]: {r.text[:200]}")
     return r.json()["id"]
 
-
 def delete_auth_user(user_id: str) -> bool:
     r = requests.delete(
         _auth_url(f"/admin/users/{user_id}"),
@@ -201,7 +195,6 @@ def delete_auth_user(user_id: str) -> bool:
         timeout=20,
     )
     return r.ok
-
 
 def reset_seeds() -> int:
     """Delete every seed auth.user; FK cascades nuke persona_agents +
@@ -212,7 +205,6 @@ def reset_seeds() -> int:
         if delete_auth_user(u["id"]):
             n += 1
     return n
-
 
 def insert_linkedin_profile(user_id: str, seed: dict) -> None:
     """Drop a mock linkedin_profiles row so the 'What I've picked up'
@@ -233,13 +225,11 @@ def insert_linkedin_profile(user_id: str, seed: dict) -> None:
         on_conflict="user_id",
     ).execute()
 
-
 def _persona_row_for(user_id: str) -> dict | None:
     """Return the persona_agents row for a seeded user, or None if missing."""
     sb = create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
     r = sb.table("persona_agents").select("*").eq("user_id", user_id).execute()
     return r.data[0] if r.data else None
-
 
 def seed_accepted_thread_pairs(persona_pairs: list[tuple[dict, dict]]) -> int:
     """Create one accepted dm_thread per pair of personas.
@@ -278,7 +268,6 @@ def seed_accepted_thread_pairs(persona_pairs: list[tuple[dict, dict]]) -> int:
         print(f"  ✓ thread {a['name']} ↔ {b['name']} (accepted, both in agent mode)")
     return created
 
-
 async def seed_one(seed: dict, with_linkedin: bool) -> dict:
     email = f"seed-{seed['slug']}@{SEED_EMAIL_DOMAIN}"
 
@@ -304,7 +293,6 @@ async def seed_one(seed: dict, with_linkedin: bool) -> dict:
         "agent_id": result["agent_id"],
         "derivation_index": result["derivation_index"],
     }
-
 
 async def main_async(args) -> None:
     print("=" * 60)
@@ -370,7 +358,6 @@ async def main_async(args) -> None:
 
     print("\nDone. Restart the backend so the heartbeat manager picks up the new personas.")
 
-
 def main() -> None:
     p = argparse.ArgumentParser(
         description="Seed placeholder personas for testing matching/discovery flows."
@@ -392,7 +379,6 @@ def main() -> None:
         p.error(f"--count must be 1..{len(SEEDS)}")
 
     asyncio.run(main_async(args))
-
 
 if __name__ == "__main__":
     main()

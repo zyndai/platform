@@ -9,13 +9,14 @@ Registered via the ContextAware framework so the agent can:
 All functions accept a `user_id` to look up stored Google OAuth tokens.
 """
 
+from __future__ import annotations
+
 import asyncio
 from datetime import datetime, timedelta, timezone
 
 from mcp.tools.google.common import get_google_creds
 from googleapiclient.discovery import build
 import config
-
 
 def _parse_iso(value: str) -> datetime:
     """Parse an ISO-8601 timestamp the LLM (or scheduler) gave us.
@@ -34,7 +35,6 @@ def _parse_iso(value: str) -> datetime:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
 
-
 def _get_service(user_id: str):
     """Build a Google Calendar API service from stored tokens."""
     print(f"[calendar] Building service for user {user_id}")
@@ -44,7 +44,6 @@ def _get_service(user_id: str):
     service = build("calendar", "v3", credentials=creds)
     print(f"[calendar] Service built successfully for {user_id}")
     return service
-
 
 def create_event(
     user_id: str,
@@ -129,7 +128,6 @@ def create_event(
         traceback.print_exc()
         return {"success": False, "error": str(e)}
 
-
 def list_events(user_id: str, max_results: int = 10) -> dict:
     """
     List upcoming Google Calendar events.
@@ -172,7 +170,6 @@ def list_events(user_id: str, max_results: int = 10) -> dict:
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
-
 
 def delete_event(user_id: str, event_id: str) -> dict:
     """

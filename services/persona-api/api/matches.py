@@ -10,6 +10,8 @@ v1 logic (no LLM yet):
     excerpt + a one-liner "why I picked them" reason.
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Optional
 
@@ -20,10 +22,8 @@ import config
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-
 def _sb():
     return config.get_supabase()
-
 
 def _interests(persona: dict) -> set[str]:
     """Pull the union of capabilities + profile.interests, lower-cased."""
@@ -38,13 +38,11 @@ def _interests(persona: dict) -> set[str]:
         ints = []
     return {x.lower() for x in (list(caps) + ints) if x}
 
-
 def _short(s: str | None, n: int) -> str:
     if not s:
         return ""
     s = s.strip()
     return s if len(s) <= n else s[: n - 1].rstrip() + "…"
-
 
 def _build_reason(candidate: dict, my_interests: set[str]) -> str:
     """One-line 'why I picked them'. Prefers an interest-overlap framing
@@ -56,7 +54,6 @@ def _build_reason(candidate: dict, my_interests: set[str]) -> str:
     desc = (candidate.get("description") or "").strip()
     first = desc.split(".")[0].strip() if desc else ""
     return _short(first or desc or "Active on the network.", 160)
-
 
 @router.get("/{user_id}")
 async def get_matches(user_id: str, exclude: Optional[str] = None, limit: int = 3):

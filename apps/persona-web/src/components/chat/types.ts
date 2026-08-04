@@ -89,6 +89,10 @@ export interface PersonaHit {
   name?: string;
   description?: string;
   avatar_url?: string | null;
+  /** Grounded one-line "why this matched" from the backend's keyword-overlap
+   *  scoring (e.g. "matched on: founder, ai") — shown as MatchCard's reason
+   *  instead of an arbitrary slice of the description. */
+  match_reason?: string;
 }
 
 export interface ThreadHandoff {

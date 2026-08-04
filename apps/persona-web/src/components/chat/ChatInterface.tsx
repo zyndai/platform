@@ -116,6 +116,11 @@ function MatchCardRow({
           hit={hit}
           busy={busyId === hit.agent_id}
           onSayHi={() => onSayHi(hit)}
+          reason={
+            hit.match_reason
+              ? hit.match_reason.charAt(0).toUpperCase() + hit.match_reason.slice(1)
+              : undefined
+          }
         />
       ))}
     </div>
@@ -505,7 +510,16 @@ export default function ChatInterface() {
   // Render network-search tool results from plain chat as clickable cards,
   // inserted just before the streaming assistant bubble. Mirrors the shape
   // the /agents slash command produces so the same ServicesPanel + Call
-  // buttons light up. Personas-only and services-only searches map too.
+  // buttons light up. Services-only searches map too.
+  //
+  // search_zynd_personas is deliberately NOT handled here — it already gets
+  // its own dedicated "a few worth a look" MatchCard row (see
+  // extractPersonaHits/MatchCardRow below), which is the friendlier,
+  // avatar+reason card built specifically for people results. Rendering it
+  // a second time here as a generic technical row (raw zns: id, "View
+  // card"/"Let my persona handle it" buttons meant for callable
+  // agents/services) just duplicated the same search 2-3x in one turn —
+  // once as this block, once as prose, once as MatchCard.
   const maybeInsertSearchCards = useCallback(
     (event: Record<string, unknown>) => {
       const tool = event.name as string | undefined;
@@ -528,27 +542,6 @@ export default function ChatInterface() {
             total_available: result.total_available as number | undefined,
             by_kind: result.by_kind as Record<string, number> | undefined,
             results: rows as never[],
-          },
-        };
-      } else if (tool === "search_zynd_personas") {
-        // Persona rows use agent_id/description/webhook_url — adapt to the
-        // AgentSearchResult shape the cards expect, tagging kind "persona".
-        const adapted = (rows as Record<string, unknown>[]).map((r) => ({
-          entity_id: (r.agent_id as string) || (r.entity_id as string) || "",
-          name: (r.name as string) || "",
-          kind: "persona",
-          summary: (r.description as string) || (r.summary as string) || "",
-          category: "persona",
-          avatar_url: (r.avatar_url as string) ?? null,
-        }));
-        panel = {
-          kind: "agents",
-          query,
-          agents: {
-            status: "success",
-            count: adapted.length,
-            total_available: result.total_available as number | undefined,
-            results: adapted as never[],
           },
         };
       } else if (tool === "search_zynd_services") {

@@ -31,6 +31,7 @@ export function extractPersonaHits(actions: ActionRecord[] | undefined): Persona
         name: typeof item.name === "string" ? item.name : undefined,
         description: typeof item.description === "string" ? item.description : undefined,
         avatar_url: typeof item.avatar_url === "string" ? item.avatar_url : null,
+        match_reason: typeof item.match_reason === "string" ? item.match_reason : undefined,
       });
     }
   }

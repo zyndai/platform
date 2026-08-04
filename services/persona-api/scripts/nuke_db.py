@@ -1,3 +1,5 @@
+
+from __future__ import annotations
 """
 Clean-slate script for local/dev testing.
 
@@ -54,7 +56,6 @@ from agent.zynd_identity import (
     derive_agent_seed,
 )
 
-
 # (table, primary-key column) — the PK is used to drive the
 # `not.is.null` DELETE filter, since PostgREST refuses to delete
 # without a WHERE clause and not every table has `updated_at`.
@@ -77,14 +78,11 @@ WIPE_TABLES: list[tuple[str, str]] = [
     ("persona_agents",        "user_id"),
 ]
 
-
 def _rest_url(path: str) -> str:
     return f"{config.SUPABASE_URL.rstrip('/')}/rest/v1{path}"
 
-
 def _auth_url(path: str) -> str:
     return f"{config.SUPABASE_URL.rstrip('/')}/auth/v1{path}"
-
 
 def _service_headers() -> dict:
     return {
@@ -92,7 +90,6 @@ def _service_headers() -> dict:
         "Authorization": f"Bearer {config.SUPABASE_SERVICE_KEY}",
         "Content-Type": "application/json",
     }
-
 
 def count_rows(table: str) -> int:
     """Return row count via PostgREST's exact-count header."""
@@ -109,7 +106,6 @@ def count_rows(table: str) -> int:
     except Exception:
         return -1
 
-
 def list_personas() -> list[dict]:
     try:
         r = requests.get(
@@ -123,7 +119,6 @@ def list_personas() -> list[dict]:
     except Exception as e:
         print(f"  ! could not list personas: {e}")
         return []
-
 
 def wipe_table(table: str, pk_col: str) -> tuple[bool, str]:
     """DELETE ... WHERE pk_col IS NOT NULL (i.e. all rows)."""
@@ -139,7 +134,6 @@ def wipe_table(table: str, pk_col: str) -> tuple[bool, str]:
         return False, f"HTTP {r.status_code}: {r.text[:160]}"
     except Exception as e:
         return False, str(e)
-
 
 def deregister_persona(persona: dict) -> tuple[bool, str]:
     """Deregister a single persona from the Zynd registry.
@@ -172,7 +166,6 @@ def deregister_persona(persona: dict) -> tuple[bool, str]:
     except Exception as e:
         return False, str(e)
 
-
 def list_auth_users() -> list[dict]:
     """Page through auth.admin.users via the admin REST API."""
     out: list[dict] = []
@@ -200,7 +193,6 @@ def list_auth_users() -> list[dict]:
         page += 1
     return out
 
-
 def delete_auth_user(user_id: str) -> bool:
     try:
         r = requests.delete(
@@ -211,7 +203,6 @@ def delete_auth_user(user_id: str) -> bool:
         return r.ok
     except Exception:
         return False
-
 
 def wipe_auth_users(skip_user_ids: set[str] | None = None) -> tuple[int, int]:
     skip = skip_user_ids or set()
@@ -233,7 +224,6 @@ def wipe_auth_users(skip_user_ids: set[str] | None = None) -> tuple[int, int]:
         print(f"  ⋯ skipped {skipped} user(s) tied to personas whose deregister failed")
     return deleted, failed
 
-
 def delete_persona_rows_by_user_ids(user_ids: list[str]) -> tuple[bool, str]:
     """Delete persona_agents rows for a specific list of users — used when
     we want to keep failed-deregister rows around so the user can retry."""
@@ -252,7 +242,6 @@ def delete_persona_rows_by_user_ids(user_ids: list[str]) -> tuple[bool, str]:
         return False, f"HTTP {r.status_code}: {r.text[:160]}"
     except Exception as e:
         return False, str(e)
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -394,7 +383,6 @@ def main():
         print("    python scripts/nuke_db.py --retry-deregister-only")
         print("Or accept the orphans and run with --force to wipe locally.")
     print("\nDone.")
-
 
 if __name__ == "__main__":
     main()

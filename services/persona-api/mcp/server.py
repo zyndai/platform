@@ -78,6 +78,31 @@ from mcp.tools.brief import (
     add_todo,
 )
 
+# ── Import Memory Tools ──
+# Principal-private; querying/forgetting memory facts.
+from mcp.tools.memory import (
+    what_do_you_know_about_me,
+    remember_this,
+    forget_this,
+)
+
+# ── Import Digital Twin Tools ──
+# Principal-private; style cloning, knowledge Q&A, delegation.
+from mcp.tools.twin import (
+    answer_like_me,
+    delegate_to_my_persona,
+    what_do_i_really_know_about,
+    refresh_my_style,
+)
+
+# ── Import A2A Network Tools ──
+# Principal-private; network intros, smart scheduling, overlap checks.
+from mcp.tools.a2a_network import (
+    find_best_intro_for_me,
+    check_network_overlap,
+    smart_group_schedule,
+)
+
 
 def create_mcp_server(disable_security: bool = True) -> ContextAware:
     """
@@ -182,6 +207,25 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
 
     # ── Default utility tools ──────────────────────
     mcp.register_default(names=["internet_search", "webpage_scrape", "get_current_time", "calculate"])
+
+    # ── Memory tools (principal-private) ────────────────────────────
+    # These query the ZYND memory layer for long-term recall.
+    mcp.register(what_do_you_know_about_me, name="what_do_you_know_about_me", description="Query the persona's long-term memory about the principal. Use when the user asks what you remember about them, what they're working on, their goals, preferences, past conversations, or anything about their life. Provide a topic keyword for filtered results (e.g. 'startup', 'health', 'travel').")
+    mcp.register(remember_this, name="remember_this", description="Persist a single fact the user explicitly wants remembered. Use when the user says 'remember that...', 'make a note...', or 'don't forget...'. The fact should be a clear statement (e.g. 'The principal is allergic to peanuts').")
+    mcp.register(forget_this, name="forget_this", description="Remove or decay a fact the user wants forgotten. Use when the user says 'forget that...', 'I don't actually...', or asks to remove something from memory.")
+
+    # ── Digital Twin tools (principal-private) ──────────────────────
+    # These let the persona answer personal questions, delegate tasks,
+    # and match the principal's communication style.
+    mcp.register(answer_like_me, name="answer_like_me", description="Answer a personal question using the principal's memory graph and communication style. Use when the user asks about themselves, their work, opinions, or knowledge — anything that requires synthesizing facts from past conversations. More powerful than what_do_you_know_about_me because it uses the LLM to craft a natural answer.")
+    mcp.register(delegate_to_my_persona, name="delegate_to_my_persona", description="Delegate a multi-step task for the persona to complete offline. Use when the user wants something that needs research, drafting, or delivery — like 'brief Sarah on Q3 numbers', 'draft an investor update', or 'compile competitor research'. The persona gathers context from memory, drafts in the user's style, and delivers to the target.")
+    mcp.register(what_do_i_really_know_about, name="what_do_i_really_know_about", description="Deep-dive into the memory graph on a specific topic. Groups facts by category, shows confidence bars, and flags contradictions. Use when the user asks for a comprehensive picture — 'tell me everything about X'.")
+    mcp.register(refresh_my_style, name="refresh_my_style", description="Re-analyze the principal's recent conversation history and update their communication style profile. Use when the persona doesn't sound like the principal, or after many conversations to keep the style current.")
+
+    # ── A2A Network tools (principal-private) ─────────────────────
+    mcp.register(find_best_intro_for_me, name="find_best_intro_for_me", description="Find the best person on the Zynd network to connect with about a topic. Searches personas, checks existing connections, finds mutual contacts, and ranks by relevance + trust. Use when the user asks 'who should I talk to about X?'")
+    mcp.register(check_network_overlap, name="check_network_overlap", description="Check what the principal has in common with another person on the network — shared interests, mutual connections, and suggested icebreakers. Use when asked 'what do I have in common with X?'")
+    mcp.register(smart_group_schedule, name="smart_group_schedule", description="Find the best meeting time for a group using everyone's Google Calendars. Queries each member's availability and ranks slots by how many people can attend. Use when asked 'find a time we're all free' or 'schedule a group meeting'.")
 
     return mcp
 

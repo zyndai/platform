@@ -1,16 +1,19 @@
 
+from __future__ import annotations
+
 import asyncio
 import json
+import logging
 import re
 import uuid
 
 import config
 from mcp.server import mcp_server
 from services.token_store import list_connected_providers, is_linkedin_scraped
+from agent.memory_context import load_memory_context, format_context_for_prompt, ingest_conversation
 
 # ── Conversation memory ──────────────────────────────────────────────
 _conversations: dict[str, list[dict]] = {}
-
 
 def _persist_chat_message(
     user_id: str,
@@ -40,7 +43,6 @@ def _persist_chat_message(
         sb.table("chat_messages").insert(row).execute()
     except Exception as e:  # noqa: BLE001
         print(f"[orchestrator] persist chat_messages failed: {type(e).__name__}: {e}")
-
 
 # =====================================================================
 # External-mode permission gating
@@ -121,7 +123,6 @@ EXTERNAL_PERMISSION_GATES: dict[str, set[str]] = {
     # briefing rendered into the system prompt (handled in _format_user_brief).
 }
 
-
 # ── Approval gate ────────────────────────────────────────────────────
 # Tool calls in this set are commitment-class — they bind the user to
 # something other agents (or other users) will see. In external mode we
@@ -144,7 +145,6 @@ APPROVAL_REQUIRED_TOOLS: set[str] = {
     "post_to_linkedin",
     "send_linkedin_dm",
 }
-
 
 def _summarize_for_approval(fn_name: str, fn_args: dict, sender_agent_id: str | None) -> str:
     partner = sender_agent_id or "the other agent"
@@ -184,7 +184,6 @@ def _summarize_for_approval(fn_name: str, fn_args: dict, sender_agent_id: str | 
         return f"Send {platform} DM to {to} — requested by {partner}"
     return f"Run {fn_name} (requested by {partner})"
 
-
 def _thread_id_from_conv(conversation_id: str | None) -> str | None:
     """conversation_id is `thread:<uuid>` for agent-to-agent webhook turns
     (set by api/persona.py:process_async_webhook). For internal user chat
@@ -196,7 +195,6 @@ def _thread_id_from_conv(conversation_id: str | None) -> str | None:
         return conversation_id.split(":", 1)[1]
     return None
 
-
 def _group_id_from_conv(conversation_id: str | None) -> str | None:
     """conversation_id is `group:<group_id>:<target_uid>` for group-dispatch
     turns (set by agent/group_dispatch.py:_conversation_id_for). Returns the
@@ -205,7 +203,6 @@ def _group_id_from_conv(conversation_id: str | None) -> str | None:
         return None
     parts = conversation_id.split(":", 2)
     return parts[1] if len(parts) >= 2 else None
-
 
 def _is_seeded_user(user_id: str) -> bool:
     """Seeded test personas (created by scripts/seed_personas.py) have
@@ -226,7 +223,6 @@ def _is_seeded_user(user_id: str) -> bool:
         return bool(meta.get("seeded"))
     except Exception:
         return False
-
 
 def _ping_telegram_approval(user_id: str, summary: str) -> None:
     """Fire-and-forget Telegram ping for a freshly-staged approval.
@@ -266,7 +262,6 @@ def _ping_telegram_approval(user_id: str, summary: str) -> None:
     except Exception as e:
         # Notifications must never break the orchestrator path.
         print(f"[orchestrator] approval ping failed: {e}")
-
 
 def _maybe_stage_approval(
     user_id: str,
@@ -324,7 +319,6 @@ def _maybe_stage_approval(
         print(f"[orchestrator] ⚠ couldn't stage approval for {fn_name}: {e}")
         return None
 
-
 def _allowed_external_tools(permissions: dict | None) -> set[str]:
     """Compute the full external-mode tool allowlist for a given permission set."""
     allowed = set(EXTERNAL_DEFAULT_ALLOWED)
@@ -335,11 +329,9 @@ def _allowed_external_tools(permissions: dict | None) -> set[str]:
             allowed |= tools
     return allowed
 
-
 def _filter_tools_by_allowlist(tools: list[dict], allowed: set[str]) -> list[dict]:
     """Drop tool defs whose names are not in the allowlist."""
     return [t for t in tools if t.get("name") in allowed]
-
 
 # Some OpenAI-compatible models (notably DeepSeek-v3 over OpenRouter)
 # intermittently emit tool calls as plain text in their native template
@@ -364,7 +356,6 @@ _TEXT_TOOLCALL_HEAD_RE = re.compile(
     r"\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)",  # tool name
     re.DOTALL,
 )
-
 
 def _scan_balanced_json(text: str, start: int) -> tuple[dict | None, int]:
     """From the first '{' at/after `start`, return (parsed_object, end_index)
@@ -402,7 +393,6 @@ def _scan_balanced_json(text: str, start: int) -> tuple[dict | None, int]:
                 return (obj if isinstance(obj, dict) else None), i + 1
     return None, len(text)
 
-
 def _parse_text_tool_calls(raw_text: str) -> list[dict] | None:
     """Recover tool calls a model emitted as plain text instead of as
     structured `tool_calls`. Returns the same shape the providers use
@@ -418,7 +408,6 @@ def _parse_text_tool_calls(raw_text: str) -> list[dict] | None:
             continue
         calls.append({"id": f"text_{uuid.uuid4().hex[:24]}", "name": name, "arguments": args})
     return calls or None
-
 
 def _sanitize_json_schema(schema):
     """Make a JSON Schema safe for strict function-calling backends (Gemini
@@ -446,7 +435,6 @@ def _sanitize_json_schema(schema):
     if out.get("type") == "array" and "items" not in out:
         out["items"] = {"type": "string"}
     return out
-
 
 # =====================================================================
 # LLM Provider Abstraction
@@ -523,7 +511,6 @@ class ThinkTagParser:
             yield (etype, self._buffer)
             self._buffer = ""
 
-
 def strip_think_tags(text: str) -> str:
     """Remove all <think>...</think> blocks from a string (for non-streaming paths).
 
@@ -535,7 +522,6 @@ def strip_think_tags(text: str) -> str:
     # Drop any remaining unclosed <think> through end-of-string.
     cleaned = re.sub(r"<think>.*\Z", "", cleaned, flags=re.DOTALL)
     return cleaned.strip()
-
 
 class LLMProvider:
     """Base class for LLM providers."""
@@ -580,7 +566,6 @@ class LLMProvider:
 
     def build_assistant_tool_message(self, content, tool_calls) -> dict:
         raise NotImplementedError
-
 
 class OpenAIProvider(LLMProvider):
     """OpenAI GPT models with function calling."""
@@ -856,7 +841,6 @@ class OpenAIProvider(LLMProvider):
                 for tc in tool_calls
             ],
         }
-
 
 class GeminiProvider(LLMProvider):
     """Google Gemini models with function calling."""
@@ -1154,7 +1138,6 @@ class GeminiProvider(LLMProvider):
             "tool_calls": tool_calls,
         }
 
-
 def _get_provider() -> LLMProvider:
     """Get the configured LLM provider."""
     provider_name = config.LLM_PROVIDER.lower()
@@ -1178,7 +1161,6 @@ def _get_provider() -> LLMProvider:
         )
     else:
         return OpenAIProvider()
-
 
 # =====================================================================
 # Tool conversion from ContextAware → generic format
@@ -1238,14 +1220,12 @@ def _capabilities_to_generic_tools() -> list[dict]:
 
     return tools
 
-
 # =====================================================================
 # Main orchestration loop
 # =====================================================================
 
 _BRIEF_DOC_CACHE: dict[str, tuple[float, str]] = {}
 _BRIEF_DOC_CACHE_TTL_SECONDS = 60
-
 
 def _fetch_brief_doc_content(user_id: str, doc_id: str) -> str | None:
     """
@@ -1269,7 +1249,6 @@ def _fetch_brief_doc_content(user_id: str, doc_id: str) -> str | None:
     except Exception as e:
         print(f"[orchestrator] brief doc fetch failed for {doc_id}: {e}")
     return None
-
 
 def _format_user_brief(
     persona: dict,
@@ -1340,7 +1319,6 @@ def _format_user_brief(
 
     return "\n".join(lines) if lines else "(no profile details set yet)"
 
-
 def _build_system_prompt(
     user_id: str,
     connected_providers: list[str],
@@ -1351,6 +1329,8 @@ def _build_system_prompt(
     is_group_context: bool = False,
     surface: str = "web",
     linkedin_scraped: bool = False,
+    memory_context_str: str = "",
+    style_context_str: str = "",
 ) -> str:
     """Build a system prompt that tells the agent what it can do.
 
@@ -1712,6 +1692,8 @@ You are currently in a private chat WITH your principal — the human who deploy
   - Your job is to help them network, manage their accounts, and act on their requests.
   - Do not claim to be them. If they say "what's my next meeting", you look it up and report back as their agent — you don't pretend to be them.
 
+{memory_context_str}
+{style_context_str}
 ## Your Job
 PRIMARY: Help your principal network on the Zynd AI Network — discover other people's agents, look up their profiles, connect with them, and exchange messages on your principal's behalf.
 SECONDARY: Manage your principal's connected accounts (social media, calendar, email, productivity tools) when they ask.
@@ -1953,7 +1935,6 @@ When your principal asks you to turn content into a shareable page, or says some
 12. Your FINAL reply to the principal must ONLY be the answer. No meta-commentary about your process, your data sources, or how you're going to present things. Specifically: NEVER write phrases like "The search results provide…", "I'll provide these figures…", "I will present this clearly…", "Based on the most recent source…", "Summary to provide:", "Here's what I found so I'll now…". Those are reasoning-scratch, not answers. Put the reasoning in your head, then write ONLY the clean final response. Your principal sees the bullet points, tables, numbers — nothing about how you got there.
 """
 
-
 async def handle_user_message(
     user_id: str,
     message: str,
@@ -1988,6 +1969,27 @@ async def handle_user_message(
     connected = [c["provider"] for c in user_conns]
     linkedin_read = is_linkedin_scraped(user_id)
 
+    # ── Memory layer: load relevant user context ─────────────────
+    memory_context_str = ""
+    style_context_str = ""
+    if not is_external:
+        try:
+            mem_ctx = await load_memory_context(user_id, message)
+            if mem_ctx.assertions:
+                memory_context_str = format_context_for_prompt(mem_ctx)
+        except Exception as exc:
+            logger = logging.getLogger(__name__)
+            logger.debug("[orchestrator] memory context load failed: %s", exc)
+
+        # Load style profile for natural communication.
+        try:
+            from agent.digital_twin import _load_style_profile, format_style_prompt
+            style = await _load_style_profile(user_id)
+            if style.get("confidence", 0) >= 0.4:
+                style_context_str = format_style_prompt(style)
+        except Exception as exc:
+            logging.getLogger(__name__).debug("[orchestrator] style load failed: %s", exc)
+
     # Build messages
     system_msg = {
         "role": "system",
@@ -2001,6 +2003,8 @@ async def handle_user_message(
             is_group_context=is_group_context,
             surface=surface,
             linkedin_scraped=linkedin_read,
+            memory_context_str=memory_context_str,
+            style_context_str=style_context_str,
         ),
     }
     print("System Prompt: ", system_msg)
@@ -2055,6 +2059,10 @@ async def handle_user_message(
                 _persist_chat_message(
                     user_id, conversation_id, "assistant", final_reply, actions_taken,
                 )
+                # Fire-and-forget: ingest this exchange into the memory layer.
+                asyncio.create_task(
+                    ingest_conversation(user_id, history, message, final_reply, conversation_id)
+                )
             return {
                 "reply": final_reply,
                 "actions_taken": actions_taken,
@@ -2081,6 +2089,9 @@ async def handle_user_message(
             if not is_external:
                 _persist_chat_message(
                     user_id, conversation_id, "assistant", final_reply, actions_taken,
+                )
+                asyncio.create_task(
+                    ingest_conversation(user_id, history, message, final_reply, conversation_id)
                 )
             return {
                 "reply": final_reply,
@@ -2246,12 +2257,16 @@ async def handle_user_message(
             f"Tools called: {tools_called}. Ask me to recap and I'll do it now."
         )
     history.append({"role": "assistant", "content": summary_text})
+    final_reply = strip_think_tags(summary_text)
+    if not is_external:
+        asyncio.create_task(
+            ingest_conversation(user_id, history, message, final_reply, conversation_id)
+        )
     return {
-        "reply": strip_think_tags(summary_text),
+        "reply": final_reply,
         "actions_taken": actions_taken,
         "conversation_id": conversation_id,
     }
-
 
 # =====================================================================
 # Streaming orchestrator
@@ -2290,7 +2305,6 @@ async def _run_provider_stream(provider, messages, tools):
             return
         yield event
 
-
 async def handle_user_message_stream(
     user_id: str,
     message: str,
@@ -2321,6 +2335,25 @@ async def handle_user_message_stream(
     connected = [c["provider"] for c in user_conns]
     linkedin_read = is_linkedin_scraped(user_id)
 
+    # ── Memory layer: load relevant user context ─────────────────
+    memory_context_str = ""
+    style_context_str = ""
+    if not is_external:
+        try:
+            mem_ctx = await load_memory_context(user_id, message)
+            if mem_ctx.assertions:
+                memory_context_str = format_context_for_prompt(mem_ctx)
+        except Exception as exc:
+            logging.getLogger(__name__).debug("[orchestrator/stream] memory context load failed: %s", exc)
+
+        try:
+            from agent.digital_twin import _load_style_profile, format_style_prompt
+            style = await _load_style_profile(user_id)
+            if style.get("confidence", 0) >= 0.4:
+                style_context_str = format_style_prompt(style)
+        except Exception as exc:
+            logging.getLogger(__name__).debug("[orchestrator/stream] style load failed: %s", exc)
+
     system_msg = {
         "role": "system",
         "content": _build_system_prompt(
@@ -2332,6 +2365,8 @@ async def handle_user_message_stream(
             time_zone=time_zone,
             surface=surface,
             linkedin_scraped=linkedin_read,
+            memory_context_str=memory_context_str,
+            style_context_str=style_context_str,
         ),
     }
     user_msg = {"role": "user", "content": message}
@@ -2393,6 +2428,9 @@ async def handle_user_message_stream(
                 _persist_chat_message(
                     user_id, conversation_id, "assistant", final_reply, actions_taken,
                 )
+                asyncio.create_task(
+                    ingest_conversation(user_id, history, message, final_reply, conversation_id)
+                )
             yield {
                 "type": "done",
                 "reply": final_reply,
@@ -2418,6 +2456,9 @@ async def handle_user_message_stream(
             if not is_external:
                 _persist_chat_message(
                     user_id, conversation_id, "assistant", final_reply, actions_taken,
+                )
+                asyncio.create_task(
+                    ingest_conversation(user_id, history, message, final_reply, conversation_id)
                 )
             yield {
                 "type": "done",
@@ -2574,6 +2615,9 @@ async def handle_user_message_stream(
     if not is_external:
         _persist_chat_message(
             user_id, conversation_id, "assistant", final_reply, actions_taken,
+        )
+        asyncio.create_task(
+            ingest_conversation(user_id, history, message, final_reply, conversation_id)
         )
     yield {
         "type": "done",

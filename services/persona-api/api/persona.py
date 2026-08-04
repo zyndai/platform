@@ -8,6 +8,8 @@ went away with them. The TaskFSM in a2a_router naturally produces deterministic
 terminal/interrupted states, so the band-aids aren't needed.
 """
 
+from __future__ import annotations
+
 import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -27,7 +29,6 @@ from agent.persona_manager import (
 
 router = APIRouter()
 
-
 # Thread lifecycle values written to dm_threads.lifecycle — read by the
 # frontend to render the top-of-panel pill. The values are still meaningful
 # even though the legacy auto-flips around turn-cap / escalation phrases
@@ -41,7 +42,6 @@ LIFECYCLE_PENDING        = "pending"
 LIFECYCLE_ACTIVE         = "active"
 LIFECYCLE_NEEDS_HUMAN    = "needs_human"
 LIFECYCLE_HUMAN_HANDLING = "human_handling"
-
 
 def _set_thread_status(sb, thread_id: str, new_lifecycle: str, allowed_from: list[str] | None = None) -> None:
     """Idempotent lifecycle transition. If `allowed_from` is given, only
@@ -57,7 +57,6 @@ def _set_thread_status(sb, thread_id: str, new_lifecycle: str, allowed_from: lis
         sb.table("dm_threads").update({"lifecycle": new_lifecycle}).eq("id", thread_id).execute()
     except Exception as e:
         print(f"[thread-lifecycle] couldn't set {thread_id} → {new_lifecycle}: {e}")
-
 
 # ── Connection permissions ───────────────────────────────────────────
 #
@@ -80,7 +79,6 @@ DEFAULT_CONNECTION_PERMISSIONS: dict[str, bool] = {
     "can_post_on_my_behalf":  False,
 }
 
-
 # ── Thread lookup helper ─────────────────────────────────────────────
 #
 # Webhooks need to find the dm_thread for an incoming message so they can:
@@ -93,7 +91,6 @@ DEFAULT_CONNECTION_PERMISSIONS: dict[str, bool] = {
 
 def _supabase():
     return config.get_supabase()
-
 
 def _find_thread_for(sb, user_id: str, partner_id: str) -> dict | None:
     """Return the dm_thread row between this user (or their persona) and a partner agent, or None."""
@@ -113,7 +110,6 @@ def _find_thread_for(sb, user_id: str, partner_id: str) -> dict | None:
             return r.data[0]
     return None
 
-
 def _my_side(thread: dict, user_id: str) -> str | None:
     """
     Return 'initiator' or 'receiver' to indicate which side of a dm_thread
@@ -129,7 +125,6 @@ def _my_side(thread: dict, user_id: str) -> str | None:
         return "receiver"
     return None
 
-
 def _my_mode(thread: dict, user_id: str) -> str:
     """Return the per-side mode for this user on this thread ('agent' default)."""
     side = _my_side(thread, user_id)
@@ -139,9 +134,7 @@ def _my_mode(thread: dict, user_id: str) -> str:
         return thread.get("receiver_mode") or "agent"
     return "agent"
 
-
 CONNECTION_REQUEST_DATA_KIND = "zynd.connection.request"
-
 
 def _connection_request_data(thread: dict, sender_agent_id: str, sender_name: str, content: str) -> dict:
     """DataPart payload that lets a first message through the A2A pending-thread gate."""
@@ -153,7 +146,6 @@ def _connection_request_data(thread: dict, sender_agent_id: str, sender_name: st
         "text": content,
     }
 
-
 # ── Models ────────────────────────────────���─────────────────────────
 
 class PersonaRegisterRequest(BaseModel):
@@ -164,7 +156,6 @@ class PersonaRegisterRequest(BaseModel):
     price: Optional[str] = "Free"
     agent_handle: Optional[str] = None  # optional internal nickname for the AI agent
 
-
 class PersonaProfileUpdate(BaseModel):
     name: Optional[str] = None
     agent_handle: Optional[str] = None  # pass empty string to clear
@@ -172,22 +163,18 @@ class PersonaProfileUpdate(BaseModel):
     capabilities: Optional[List[str]] = None
     profile: Optional[dict] = None  # {title, organization, location, twitter, linkedin, github, website, interests}
 
-
 class ThreadModeUpdate(BaseModel):
     mode: str  # 'human' or 'agent'
     user_id: str  # whose side to flip — must be a participant of the thread
-
 
 class ThreadCreateRequest(BaseModel):
     target_agent_id: str
     target_name: Optional[str] = "Network Agent"
     mode: Optional[str] = "human"  # 'human' (default) or 'agent'
 
-
 class AgentChannelSend(BaseModel):
     thread_id: str
     content: str
-
 
 class ThreadPermissionsUpdate(BaseModel):
     # Any subset of CONNECTION_PERMISSION_KEYS — only the keys you pass
@@ -197,14 +184,12 @@ class ThreadPermissionsUpdate(BaseModel):
     can_view_full_profile: Optional[bool] = None
     can_post_on_my_behalf: Optional[bool] = None
 
-
 # ── Persona Lifecycle ───────────────────────────────────────────────
 
 @router.get("/{user_id}/status")
 async def persona_status(user_id: str):
     """Check if the user has a deployed persona on the network."""
     return get_persona_status(user_id)
-
 
 @router.get("/{user_id}/public")
 async def persona_public_card(user_id: str):
@@ -256,7 +241,6 @@ async def persona_public_card(user_id: str):
         "location": profile.get("location") or None,
     }
 
-
 def _fetch_auth_user_avatar(user_id: str) -> Optional[str]:
     """Pull avatar_url from Supabase auth.users.user_metadata.
 
@@ -279,7 +263,6 @@ def _fetch_auth_user_avatar(user_id: str) -> Optional[str]:
     md = (resp.json() or {}).get("user_metadata") or {}
     pic = md.get("avatar_url") or md.get("picture")
     return pic if isinstance(pic, str) and pic else None
-
 
 @router.post("/register")
 async def register_persona(req: PersonaRegisterRequest):
@@ -316,7 +299,6 @@ async def register_persona(req: PersonaRegisterRequest):
         print(f"[register] UNEXPECTED: {type(e).__name__}: {e}\n{tb}")
         raise HTTPException(status_code=500, detail=f"Unexpected [{type(e).__name__}]: {str(e)}")
 
-
 @router.delete("/{user_id}")
 async def delete_user_persona(user_id: str):
     """Delete a user's persona — stops heartbeat, deregisters from network, marks inactive."""
@@ -327,7 +309,6 @@ async def delete_user_persona(user_id: str):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.delete("/{user_id}/account")
 async def purge_account(user_id: str):
@@ -347,7 +328,6 @@ async def purge_account(user_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # ── Profile Update ───────────────────────────────────────────────────
 
 @router.put("/{user_id}/profile")
@@ -361,7 +341,6 @@ async def update_profile(user_id: str, req: PersonaProfileUpdate):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # ── Brief Google Doc ────────────────────────────────────────────────
 #
@@ -382,7 +361,6 @@ async def init_brief(user_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @router.get("/{user_id}/brief")
 async def read_brief(user_id: str):
     """Return the user's Brief metadata + current content fetched live from Google Docs."""
@@ -393,10 +371,8 @@ async def read_brief(user_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 class BriefSave(BaseModel):
     content: str
-
 
 def _classify_google_error(raw: str) -> dict:
     """Map a raw Google HttpError string into a clean {code, message} pair the
@@ -419,7 +395,6 @@ def _classify_google_error(raw: str) -> dict:
         return {"code": "google_rate_limited", "message": "Google is rate-limiting us right now. Try again in a moment."}
     return {"code": "save_failed", "message": "Couldn't save to Google Docs right now. Try again in a moment."}
 
-
 @router.patch("/{user_id}/brief")
 async def save_brief(user_id: str, req: BriefSave):
     """Replace the body of the persona's brief Google Doc."""
@@ -431,7 +406,6 @@ async def save_brief(user_id: str, req: BriefSave):
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 
 # ── Agent-channel human send ─────────────────────────────────────────
 #
@@ -566,7 +540,6 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend):
         "delivery": delivery_result,
     }
 
-
 # ── Threads (create + mode toggle) ───────────────────────────────────
 
 @router.post("/{user_id}/threads")
@@ -609,7 +582,6 @@ async def create_thread(user_id: str, req: ThreadCreateRequest):
         raise HTTPException(status_code=500, detail="Failed to create thread.")
     return {"status": "created", "thread": inserted.data[0]}
 
-
 @router.get("/threads/{thread_id}/permissions")
 async def get_thread_permissions(thread_id: str):
     """Return the current per-connection permission set for a thread, with defaults filled in."""
@@ -621,7 +593,6 @@ async def get_thread_permissions(thread_id: str):
     # Merge with defaults so missing keys come back as their default value
     merged = {**DEFAULT_CONNECTION_PERMISSIONS, **stored}
     return {"thread_id": thread_id, "permissions": merged}
-
 
 @router.patch("/threads/{thread_id}/permissions")
 async def update_thread_permissions(thread_id: str, req: ThreadPermissionsUpdate):
@@ -651,7 +622,6 @@ async def update_thread_permissions(thread_id: str, req: ThreadPermissionsUpdate
     sb.table("dm_threads").update({"permissions": merged}).eq("id", thread_id).execute()
     return {"status": "ok", "thread_id": thread_id, "permissions": merged}
 
-
 class ThreadStatusUpdate(BaseModel):
     # 'decline' on a pending request, 'revoke' on an accepted connection,
     # or 'unblock' to lift a block. (Accept and block keep using the
@@ -659,7 +629,6 @@ class ThreadStatusUpdate(BaseModel):
     # the dm_threads RLS policy — no behavior change there.)
     action: str  # 'decline' | 'revoke' | 'unblock'
     user_id: str  # whoever is acting — must be a participant
-
 
 @router.patch("/threads/{thread_id}/status")
 async def update_thread_status(thread_id: str, req: ThreadStatusUpdate):
@@ -726,7 +695,6 @@ async def update_thread_status(thread_id: str, req: ThreadStatusUpdate):
 
     return {"status": "ok", "thread_id": thread_id, "new_status": new_status, "side": side}
 
-
 @router.patch("/threads/{thread_id}/mode")
 async def update_thread_mode(thread_id: str, req: ThreadModeUpdate):
     """
@@ -762,7 +730,6 @@ async def update_thread_mode(thread_id: str, req: ThreadModeUpdate):
         "side": side,
         "mode": req.mode,
     }
-
 
 # ── Search Proxy (for frontend) ──────────────────────────────────────
 

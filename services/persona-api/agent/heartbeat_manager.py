@@ -20,6 +20,7 @@ import json
 import time
 import logging
 from dataclasses import dataclass
+from typing import Optional
 
 import websockets.sync.client  # noqa: F401 — used in _send_heartbeat_sync
 
@@ -221,7 +222,7 @@ class HeartbeatManager:
 
 
 # ── Module singleton ─────────────────────────────────────────────────
-_manager: HeartbeatManager | None = None
+_manager: Optional[HeartbeatManager] = None
 
 
 def get_heartbeat_manager() -> HeartbeatManager:

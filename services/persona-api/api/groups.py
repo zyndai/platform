@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Persona Groups API — bounded chat rooms shared by 3–15 personas.
 
@@ -37,6 +38,7 @@ import logging
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -50,16 +52,11 @@ from api.auth import get_current_user
 
 router = APIRouter()
 
-
 def _supabase():
     return config.get_supabase()
 
-
-
-
 def _is_missing_table(err: APIError) -> bool:
     return getattr(err, "code", None) == "PGRST205"
-
 
 def _post_group_system_note(sb, group_id: str, note: str) -> None:
     """Best-effort system message into the group chat. Failure is swallowed."""
@@ -73,7 +70,6 @@ def _post_group_system_note(sb, group_id: str, note: str) -> None:
     except Exception as e:
         logger.warning(f"[groups] couldn't post system note in {group_id}: {e}")
 
-
 # Soft cap. Phase 1's design target was small teams of 3–15. We don't want
 # someone accidentally inviting their entire org and tipping the page into
 # unbounded fan-out — the @-mention dispatcher fires one orchestrator call
@@ -81,7 +77,6 @@ def _post_group_system_note(sb, group_id: str, note: str) -> None:
 # with member count too. Owners hit this cap before they hit something
 # the system can't recover from gracefully.
 MAX_GROUP_MEMBERS = 15
-
 
 def _enforce_member_cap(sb, group_id: str) -> None:
     """Raise 409 if the group is at the soft cap."""
@@ -98,17 +93,14 @@ def _enforce_member_cap(sb, group_id: str) -> None:
             detail=f"This group is at the {MAX_GROUP_MEMBERS}-member limit.",
         )
 
-
 # ── Slug + invite token helpers ─────────────────────────────────────────
 _SLUG_BAD = re.compile(r"[^a-z0-9-]+")
 _SLUG_TRIM = re.compile(r"-{2,}")
-
 
 def _slugify(name: str) -> str:
     base = _SLUG_BAD.sub("-", name.strip().lower())
     base = _SLUG_TRIM.sub("-", base).strip("-")
     return base[:48] or "group"
-
 
 def _unique_slug(sb, candidate: str) -> str:
     """Try `slug`, then `slug-2`, `slug-3`, … until one isn't taken."""
@@ -124,10 +116,8 @@ def _unique_slug(sb, candidate: str) -> str:
             # Belt-and-suspenders against an unlikely worst case; never expected.
             return f"{candidate}-{secrets.token_hex(3)}"
 
-
 def _new_invite_token() -> str:
     return secrets.token_urlsafe(18)
-
 
 # ── Membership helpers ──────────────────────────────────────────────────
 def _membership(sb, group_id: str, user_id: str) -> dict | None:
@@ -141,7 +131,6 @@ def _membership(sb, group_id: str, user_id: str) -> dict | None:
     )
     return r.data[0] if r.data else None
 
-
 def _require_member(sb, group_id: str, user_id: str) -> dict:
     """Return the membership row; 404 if not a member.
 
@@ -153,11 +142,9 @@ def _require_member(sb, group_id: str, user_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Group not found.")
     return m
 
-
 def _require_role(membership: dict, allowed: tuple[str, ...]) -> None:
     if membership.get("role") not in allowed:
         raise HTTPException(status_code=403, detail="Not allowed.")
-
 
 def _resolve_agent_id(sb, user_id: str) -> str | None:
     """Look up the user's deployed persona agent_id, if any."""
@@ -171,7 +158,6 @@ def _resolve_agent_id(sb, user_id: str) -> str | None:
     )
     return (r.data or [{}])[0].get("agent_id")
 
-
 def _resolve_display_name(user: dict) -> str:
     meta = user.get("user_metadata") or {}
     return (
@@ -180,7 +166,6 @@ def _resolve_display_name(user: dict) -> str:
         or (user.get("email") or "").split("@")[0]
         or "Someone"
     )
-
 
 GROUP_PERMISSION_DEFAULTS: dict[str, bool] = {
     "can_see_brief": False,
@@ -192,7 +177,6 @@ GROUP_PERMISSION_DEFAULTS: dict[str, bool] = {
     "can_speak_for_group": False,
 }
 GROUP_PERMISSION_KEYS = set(GROUP_PERMISSION_DEFAULTS.keys())
-
 
 def _normalize_group_permissions(perms: dict | None, role: str | None = None) -> dict:
     """
@@ -223,59 +207,48 @@ def _normalize_group_permissions(perms: dict | None, role: str | None = None) ->
         })
     return out
 
-
 def _permissions_for_member_row(member: dict) -> dict:
     return _normalize_group_permissions(member.get("permissions"), member.get("role"))
-
 
 def _can_see_member_briefs(perms: dict | None) -> bool:
     return bool(_normalize_group_permissions(perms).get("can_see_member_briefs"))
 
-
 def _can_see_group_brief(perms: dict | None) -> bool:
     return bool(_normalize_group_permissions(perms).get("can_see_group_brief"))
-
 
 # ── Pydantic models ─────────────────────────────────────────────────────
 class GroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    description: str | None = Field(default=None, max_length=500)
+    description: Optional[str] = Field(default=None, max_length=500)
     visibility: str = Field(default="private", pattern="^(private|open)$")
 
-
 class GroupUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=80)
-    description: str | None = Field(default=None, max_length=500)
-    avatar_url: str | None = None
-    visibility: str | None = Field(default=None, pattern="^(private|open)$")
-    join_domain: str | None = Field(default=None, max_length=120)
-
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    description: Optional[str] = Field(default=None, max_length=500)
+    avatar_url: Optional[str] = None
+    visibility: Optional[str] = Field(default=None, pattern="^(private|open)$")
+    join_domain: Optional[str] = Field(default=None, max_length=120)
 
 class MemberAdd(BaseModel):
     user_id: str
     role: str = Field(default="member", pattern="^(member|admin)$")
 
-
 class MemberUpdate(BaseModel):
-    role: str | None = Field(default=None, pattern="^(member|admin)$")
-    permissions: dict | None = None
-
+    role: Optional[str] = Field(default=None, pattern="^(member|admin)$")
+    permissions: Optional[dict] = None
 
 class MessagePost(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
-    reply_to: str | None = None
-    time_zone: str | None = None
-
+    reply_to: Optional[str] = None
+    time_zone: Optional[str] = None
 
 class InvitationCreate(BaseModel):
     user_id: str
     role: str = Field(default="member", pattern="^(member|admin)$")
-    message: str | None = Field(default=None, max_length=500)
-
+    message: Optional[str] = Field(default=None, max_length=500)
 
 class InvitationDecide(BaseModel):
     decision: str = Field(pattern="^(accept|decline)$")
-
 
 # ── CRUD: groups ────────────────────────────────────────────────────────
 @router.post("/")
@@ -341,7 +314,6 @@ async def create_group(body: GroupCreate, user: dict = Depends(get_current_user)
 
     return {"group": group}
 
-
 @router.get("/")
 async def list_my_groups(user: dict = Depends(get_current_user)):
     """Return all groups the caller belongs to, newest activity first."""
@@ -375,7 +347,6 @@ async def list_my_groups(user: dict = Depends(get_current_user)):
     for g in groups.data or []:
         out.append({**g, "my_role": role_by_id.get(g["id"])})
     return {"groups": out}
-
 
 # ── Discoverable groups (phase 5) ──────────────────────────────────────
 # Static one-segment routes must be registered before `/{group_id}`.
@@ -454,7 +425,6 @@ async def discover_groups(
         })
     return {"groups": out}
 
-
 @router.get("/auto-join-candidates")
 async def auto_join_candidates(user: dict = Depends(get_current_user)):
     """
@@ -496,7 +466,6 @@ async def auto_join_candidates(user: dict = Depends(get_current_user)):
     out = [g for g in (rows.data or []) if g["id"] not in my_group_ids]
     return {"groups": out, "domain": domain}
 
-
 @router.get("/{group_id}")
 async def get_group(group_id: str, user: dict = Depends(get_current_user)):
     sb = _supabase()
@@ -515,7 +484,6 @@ async def get_group(group_id: str, user: dict = Depends(get_current_user)):
     )
     member_count = getattr(counts, "count", None) or len(counts.data or [])
     return {"group": group, "member_count": member_count}
-
 
 @router.patch("/{group_id}")
 async def update_group(
@@ -555,7 +523,6 @@ async def update_group(
         raise HTTPException(status_code=404, detail="Group not found.")
     return {"group": r.data[0]}
 
-
 @router.delete("/{group_id}")
 async def archive_group(group_id: str, user: dict = Depends(get_current_user)):
     """Owner-only soft delete. Members can no longer see it; data is kept."""
@@ -566,7 +533,6 @@ async def archive_group(group_id: str, user: dict = Depends(get_current_user)):
         "archived_at": datetime.now(timezone.utc).isoformat()
     }).eq("id", group_id).execute()
     return {"status": "archived"}
-
 
 async def _migrate_group_brief(
     *,
@@ -626,38 +592,31 @@ async def _migrate_group_brief(
 
     await asyncio.to_thread(_run)
 
-
 class OwnerTransfer(BaseModel):
     new_owner_user_id: str
 
-
 class GroupBriefSave(BaseModel):
     content: str = Field(min_length=0, max_length=50000)
-
 
 class GroupMeetingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     start: str  # ISO 8601 UTC
     end: str    # ISO 8601 UTC
-    description: str | None = Field(default=None, max_length=2000)
-    location: str | None = Field(default=None, max_length=200)
-    time_zone: str | None = None
-    member_user_ids: list[str] | None = None  # opt-in; defaults to all members
-
+    description: Optional[str] = Field(default=None, max_length=2000)
+    location: Optional[str] = Field(default=None, max_length=200)
+    time_zone: Optional[str] = None
+    member_user_ids: Optional[list[str]] = None  # opt-in; defaults to all members
 
 CONSTRAINT_KINDS = ("fact", "rule", "voice")
 MAX_CONSTRAINTS_PER_GROUP = 20
-
 
 class GroupConstraintCreate(BaseModel):
     kind: str = Field(pattern="^(fact|rule|voice)$")
     text: str = Field(min_length=1, max_length=400)
 
-
 class GroupConstraintUpdate(BaseModel):
-    kind: str | None = Field(default=None, pattern="^(fact|rule|voice)$")
-    text: str | None = Field(default=None, min_length=1, max_length=400)
-
+    kind: Optional[str] = Field(default=None, pattern="^(fact|rule|voice)$")
+    text: Optional[str] = Field(default=None, min_length=1, max_length=400)
 
 @router.post("/{group_id}/transfer-owner")
 async def transfer_owner(
@@ -711,7 +670,6 @@ async def transfer_owner(
         ))
 
     return {"status": "ok", "new_owner_user_id": body.new_owner_user_id}
-
 
 # ── Members ─────────────────────────────────────────────────────────────
 @router.get("/{group_id}/members")
@@ -770,7 +728,6 @@ async def list_members(group_id: str, user: dict = Depends(get_current_user)):
         m["avatar_url"] = avatar
     return {"members": members}
 
-
 @router.post("/{group_id}/members")
 async def add_member(
     group_id: str,
@@ -796,7 +753,6 @@ async def add_member(
         "invited_by": user["id"],
     }).execute()
     return {"member": inserted.data[0] if inserted.data else None}
-
 
 @router.patch("/{group_id}/members/{member_uid}")
 async def update_member(
@@ -841,7 +797,6 @@ async def update_member(
     )
     return {"member": r.data[0] if r.data else None}
 
-
 @router.delete("/{group_id}/members/{member_uid}")
 async def remove_member(
     group_id: str,
@@ -875,7 +830,6 @@ async def remove_member(
     sb.table("persona_group_members").delete().eq("group_id", group_id).eq("user_id", member_uid).execute()
     return {"status": "removed"}
 
-
 # ── Messages ────────────────────────────────────────────────────────────
 @router.get("/{group_id}/messages")
 async def list_messages(
@@ -900,7 +854,6 @@ async def list_messages(
     # Reverse so the client gets oldest-first (chat reading order).
     out = list(reversed(rows.data or []))
     return {"messages": out, "count": len(out)}
-
 
 @router.post("/{group_id}/messages")
 async def post_message(
@@ -960,7 +913,6 @@ async def post_message(
         "mentioned_user_ids": mentioned_uids,
     }
 
-
 def _spawn_mention_dispatch(
     *,
     sb,
@@ -970,7 +922,7 @@ def _spawn_mention_dispatch(
     asker_agent_id: str | None,
     asker_permissions: dict,
     message_content: str,
-    time_zone: str | None = None,
+    time_zone: Optional[str] = None,
 ) -> list[str]:
     """
     Parse @-mentions, resolve them to roster rows, and schedule a
@@ -1109,7 +1061,6 @@ def _spawn_mention_dispatch(
         )
     return scheduled_user_ids
 
-
 # ── Invites ─────────────────────────────────────────────────────────────
 @router.post("/{group_id}/invite")
 async def rotate_invite(group_id: str, user: dict = Depends(get_current_user)):
@@ -1130,7 +1081,6 @@ async def rotate_invite(group_id: str, user: dict = Depends(get_current_user)):
     if not r.data:
         raise HTTPException(status_code=404, detail="Group not found.")
     return {"invite_token": token, "slug": r.data[0]["slug"]}
-
 
 @router.get("/by-invite/{token}")
 async def preview_invite(token: str):
@@ -1169,7 +1119,6 @@ async def preview_invite(token: str):
         "member_count": getattr(counts, "count", None) or len(counts.data or []),
     }
 
-
 @router.post("/by-invite/{token}/join")
 async def join_via_invite(token: str, user: dict = Depends(get_current_user)):
     sb = _supabase()
@@ -1204,7 +1153,6 @@ async def join_via_invite(token: str, user: dict = Depends(get_current_user)):
     }).eq("id", group["id"]).execute()
     return {"status": "joined", "group_id": group["id"], "slug": group["slug"]}
 
-
 # ── Invitations (search by name → inbox decision) ───────────────────────
 
 def _require_invite_authority(sb, group_id: str, user_id: str) -> dict:
@@ -1214,7 +1162,6 @@ def _require_invite_authority(sb, group_id: str, user_id: str) -> dict:
     if _permissions_for_member_row(m).get("can_invite"):
         return m
     raise HTTPException(status_code=403, detail="Not allowed to invite to this group.")
-
 
 def _resolve_avatar_url(sb, user_id: str, profile: dict | None) -> str | None:
     p = profile or {}
@@ -1241,7 +1188,6 @@ def _resolve_avatar_url(sb, user_id: str, profile: dict | None) -> str | None:
         return None
     return None
 
-
 def _hydrate_persona(sb, user_ids: list[str]) -> dict[str, dict]:
     if not user_ids:
         return {}
@@ -1253,7 +1199,6 @@ def _hydrate_persona(sb, user_ids: list[str]) -> dict[str, dict]:
         .execute()
     )
     return {r["user_id"]: r for r in (rows.data or [])}
-
 
 def _hydrate_group_brief(sb, group_id: str) -> dict | None:
     r = (
@@ -1277,7 +1222,6 @@ def _hydrate_group_brief(sb, group_id: str) -> dict | None:
     g["member_count"] = getattr(counts, "count", None) or len(counts.data or [])
     g.pop("archived_at", None)
     return g
-
 
 @router.get("/{group_id}/invitable")
 async def search_invitable_users(
@@ -1337,7 +1281,6 @@ async def search_invitable_users(
             break
     return {"results": results, "count": len(results)}
 
-
 @router.post("/{group_id}/invitations")
 async def create_invitation(
     group_id: str,
@@ -1389,7 +1332,6 @@ async def create_invitation(
         "invitation": _serialize_invitation(row, sb=sb, inviter=inviter) if row else None,
     }
 
-
 @router.get("/{group_id}/invitations")
 async def list_group_invitations(
     group_id: str,
@@ -1411,7 +1353,6 @@ async def list_group_invitations(
             return {"invitations": []}
         raise
     return {"invitations": [_serialize_invitation(r, sb=sb) for r in rows]}
-
 
 @router.delete("/{group_id}/invitations/{invitation_id}")
 async def revoke_invitation(
@@ -1438,7 +1379,6 @@ async def revoke_invitation(
         "decided_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", invitation_id).execute()
     return {"status": "revoked"}
-
 
 @router.get("/invitations/incoming")
 async def list_incoming_invitations(user: dict = Depends(get_current_user)):
@@ -1470,7 +1410,6 @@ async def list_incoming_invitations(user: dict = Depends(get_current_user)):
                 pass
         live.append(r)
     return {"invitations": [_serialize_invitation(r, sb=sb) for r in live]}
-
 
 @router.post("/invitations/{invitation_id}/respond")
 async def respond_to_invitation(
@@ -1544,7 +1483,6 @@ async def respond_to_invitation(
     }).eq("id", group_id).execute()
     return {"status": "accepted", "group_id": group_id}
 
-
 def _serialize_invitation(row: dict, *, sb, inviter: dict | None = None) -> dict:
     group = _hydrate_group_brief(sb, row["group_id"]) or {"id": row["group_id"]}
     invitee_uid = row.get("invitee_user_id")
@@ -1576,7 +1514,6 @@ def _serialize_invitation(row: dict, *, sb, inviter: dict | None = None) -> dict
         "decided_at": row.get("decided_at"),
         "expires_at": row.get("expires_at"),
     }
-
 
 # ── Group brief (phase 3a) ──────────────────────────────────────────────
 # The shared Google Doc lives in the OWNER's Drive — that keeps the
@@ -1636,7 +1573,6 @@ async def init_group_brief(group_id: str, user: dict = Depends(get_current_user)
 
     return await asyncio.to_thread(_run)
 
-
 @router.get("/{group_id}/brief")
 async def get_group_brief(group_id: str, user: dict = Depends(get_current_user)):
     """
@@ -1681,7 +1617,6 @@ async def get_group_brief(group_id: str, user: dict = Depends(get_current_user))
 
     return await asyncio.to_thread(_run)
 
-
 @router.patch("/{group_id}/brief")
 async def save_group_brief(
     group_id: str,
@@ -1724,7 +1659,6 @@ async def save_group_brief(
         return {"success": True, "doc_id": group["brief_doc_id"]}
 
     return await asyncio.to_thread(_run)
-
 
 # ── Group calendar — availability + meetings (phase 3b) ─────────────────
 #
@@ -1835,7 +1769,6 @@ async def group_availability(
         "duration_minutes": duration_minutes,
     }
 
-
 @router.post("/{group_id}/meetings")
 async def create_group_meeting(
     group_id: str,
@@ -1945,7 +1878,6 @@ async def create_group_meeting(
 
     return await asyncio.to_thread(_run)
 
-
 def _fetch_user_emails(user_ids: list[str]) -> list[str]:
     """Resolve auth.users.email for a list of user_ids via Supabase admin."""
     import requests
@@ -1974,7 +1906,6 @@ def _fetch_user_emails(user_ids: list[str]) -> list[str]:
         except Exception:
             continue
     return out
-
 
 def _create_event_with_attendees(
     *,
@@ -2019,7 +1950,6 @@ def _create_event_with_attendees(
         logger.exception(f"[group-meetings] create_event failed: {e}")
         return {"success": False, "error": str(e)}
 
-
 # ── Group memory — shared constraints (phase 4) ─────────────────────────
 # Three kinds:
 #   fact  — positive context ("Our launch is May 20")
@@ -2048,7 +1978,6 @@ async def list_constraints(group_id: str, user: dict = Depends(get_current_user)
             return {"constraints": []}
         raise
     return {"constraints": rows.data or []}
-
 
 @router.post("/{group_id}/constraints")
 async def add_constraint(
@@ -2092,7 +2021,6 @@ async def add_constraint(
     }).eq("id", group_id).execute()
     return {"constraint": inserted.data[0] if inserted.data else None}
 
-
 @router.patch("/{group_id}/constraints/{constraint_id}")
 async def update_constraint(
     group_id: str,
@@ -2123,7 +2051,6 @@ async def update_constraint(
         raise HTTPException(status_code=404, detail="Constraint not found.")
     return {"constraint": r.data[0]}
 
-
 @router.delete("/{group_id}/constraints/{constraint_id}")
 async def archive_constraint(
     group_id: str,
@@ -2138,7 +2065,6 @@ async def archive_constraint(
         "archived_at": datetime.now(timezone.utc).isoformat()
     }).eq("id", constraint_id).eq("group_id", group_id).execute()
     return {"status": "archived"}
-
 
 # ── Audit logger (phase 5) ──────────────────────────────────────────────
 # Records access events so members can see who looked at what. Best-effort:
@@ -2167,7 +2093,6 @@ def _log_audit_event(
             logger.warning(f"[group-audit] couldn't log {kind} for {affected_user_id}: {e}")
     except Exception as e:
         logger.warning(f"[group-audit] couldn't log {kind} for {affected_user_id}: {e}")
-
 
 # ── Audit (phase 5) ────────────────────────────────────────────────────
 @router.get("/{group_id}/activity")

@@ -14,6 +14,7 @@ import logging
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from typing import Optional
 
 import config
 from api.auth import get_current_user
@@ -29,11 +30,11 @@ def _sb():
 
 class ChatRequest(BaseModel):
     message: str
-    conversation_id: str | None = None
+    conversation_id: Optional[str] = None
     # IANA timezone of the user's browser (e.g. "America/Los_Angeles"). The
     # orchestrator surfaces this to the LLM so calendar/meeting tools land at
     # the wall-clock time the user means, not UTC.
-    time_zone: str | None = None
+    time_zone: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

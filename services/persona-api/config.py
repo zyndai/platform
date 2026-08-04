@@ -114,6 +114,19 @@ LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
 # ── Apify (LinkedIn scraping) ────────────────────────────────────────
 APIFY_API_TOKEN: str = os.getenv("APIFY_API_TOKEN", "")
 
+# ── Memory Layer ──────────────────────────────────────────────────────
+# The ZYND memory layer (assertion graph from conversations).
+# When enabled, the persona queries memory-layer for user context on every
+# chat turn and ingests conversations back for long-term recall.
+MEMORY_LAYER_URL: str = os.getenv("MEMORY_LAYER_URL", "https://api.zynd.ai")
+# Shared HS256 JWT secret between agent-persona and memory-layer.
+# Must match memory-layer's JWT_SECRET. When empty, memory features are off.
+MEMORY_LAYER_JWT_SECRET: str = os.getenv("MEMORY_LAYER_JWT_SECRET", "")
+# Maximum assertions to inject into the system prompt (controls context window usage).
+MEMORY_LAYER_MAX_CONTEXT_ASSERTIONS: int = int(os.getenv("MEMORY_LAYER_MAX_CONTEXT_ASSERTIONS", "20"))
+# Minimum confidence threshold for assertions (0.0–1.0).
+MEMORY_LAYER_MIN_CONFIDENCE: float = float(os.getenv("MEMORY_LAYER_MIN_CONFIDENCE", "0.5"))
+
 # ── App ──────────────────────────────────────────────────────────────
 APP_SECRET_KEY: str = os.getenv("APP_SECRET_KEY", "change-me-in-production")
 FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")

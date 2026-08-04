@@ -5,7 +5,7 @@ read endpoint used by the Next.js page renderer.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -30,20 +30,20 @@ class CreatePageRequest(BaseModel):
 
 
 class UpdatePageRequest(BaseModel):
-    content: str | None = Field(default=None, min_length=1)
-    title: str | None = Field(default=None, max_length=200)
-    format: str | None = Field(default=None, pattern=r"^(html|markdown|md|htm)$")
-    visibility: str | None = Field(default=None, pattern=r"^(public|unlisted|private)$")
+    content: Optional[str] = Field(default=None, min_length=1)
+    title: Optional[str] = Field(default=None, max_length=200)
+    format: Optional[str] = Field(default=None, pattern=r"^(html|markdown|md|htm)$")
+    visibility: Optional[str] = Field(default=None, pattern=r"^(public|unlisted|private)$")
 
 
 class CreatePageResponse(BaseModel):
     success: bool
-    slug: str | None = None
-    url: str | None = None
-    title: str | None = None
-    format: str | None = None
-    visibility: str | None = None
-    error: str | None = None
+    slug: Optional[str] = None
+    url: Optional[str] = None
+    title: Optional[str] = None
+    format: Optional[str] = None
+    visibility: Optional[str] = None
+    error: Optional[str] = None
 
 
 class PageListResponse(BaseModel):
@@ -56,13 +56,13 @@ class PublicPageResponse(BaseModel):
     title: str
     format: str
     content: str
-    created_at: str | None = None
+    created_at: Optional[str] = None
 
 
 class DeletePageResponse(BaseModel):
     success: bool
-    slug: str | None = None
-    error: str | None = None
+    slug: Optional[str] = None
+    error: Optional[str] = None
 
 
 @router.post("/", response_model=CreatePageResponse)

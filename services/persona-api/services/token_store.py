@@ -8,15 +8,15 @@ from Supabase auth tokens which only handle login identity.
 The table schema is in db/schema.sql.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timedelta, timezone
 import config
 
 TABLE = "api_tokens"
 
-
 def _sb():
     return config.get_supabase()
-
 
 def save_tokens(
     user_id: str,
@@ -57,7 +57,6 @@ def save_tokens(
         on_conflict="user_id,provider",
     ).execute()
 
-
 def get_tokens(user_id: str, provider: str) -> dict | None:
     """
     Retrieve API tokens for a user + provider.
@@ -86,12 +85,10 @@ def get_tokens(user_id: str, provider: str) -> dict | None:
         "scope": row.get("scopes", ""),
     }
 
-
 def delete_tokens(user_id: str, provider: str) -> None:
     """Delete API tokens for a user + provider (disconnect)."""
     sb = _sb()
     sb.table(TABLE).delete().eq("user_id", user_id).eq("provider", provider).execute()
-
 
 def list_connected_providers(user_id: str) -> list[dict]:
     """Return info for all platform providers that have stored API tokens."""
@@ -103,7 +100,6 @@ def list_connected_providers(user_id: str) -> list[dict]:
         .execute()
     )
     return result.data or []
-
 
 def is_linkedin_scraped(user_id: str) -> bool:
     """Check if the user has LinkedIn profile data from scraping."""

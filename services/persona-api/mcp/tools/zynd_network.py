@@ -1363,6 +1363,39 @@ def _persona_signer(user_id: str):
     developer_proof = build_derivation_proof(dev_seed, public_key_bytes, index)
     return keypair, agent_id, developer_proof
 
+def _classify_transport_error(e: Exception) -> str:
+    """Turn a raw transport exception into a specific, plain-language reason
+    instead of the generic "network request failed" every transport failure
+    used to collapse into regardless of what actually happened — a timeout,
+    an offline peer, and a 500 from their server all need different things
+    said to the user (and possibly different next steps), not one blanket
+    "couldn't be delivered, try again"."""
+    import httpx
+
+    if isinstance(e, httpx.ConnectTimeout):
+        return "timed out trying to connect to their persona's server"
+    if isinstance(e, httpx.ReadTimeout):
+        return "connected, but their persona's server didn't respond in time"
+    if isinstance(e, httpx.TimeoutException):
+        return "timed out waiting on their persona's server"
+    if isinstance(e, httpx.ConnectError):
+        return "couldn't reach their persona's server — it may be offline or unreachable"
+    if isinstance(e, httpx.HTTPStatusError):
+        status = e.response.status_code
+        if status >= 500:
+            return f"their persona's server returned an error (HTTP {status})"
+        if status == 404:
+            return "their persona's server endpoint wasn't found (HTTP 404) — it may have moved or been taken down"
+        if status in (401, 403):
+            return f"their persona's server rejected the request (HTTP {status})"
+        return f"their persona's server returned HTTP {status}"
+    if isinstance(e, httpx.RemoteProtocolError):
+        return "the connection was interrupted mid-request"
+    if isinstance(e, httpx.HTTPError):
+        return f"a network error ({type(e).__name__})"
+    return f"an unexpected error ({type(e).__name__}: {e})"
+
+
 def _signed_a2a_send(
     *,
     sender_agent_id: str,
@@ -1445,17 +1478,23 @@ def _signed_a2a_send(
             ),
         }
     except Exception as e:
-        # Transport failure (DNS, TLS, 5xx, etc.). Same shape as above so
-        # the LLM's existing prompt branches still work.
+        # Transport failure (DNS, TLS, 5xx, timeout, offline peer, etc.).
+        # Same shape as above so the LLM's existing prompt branches still
+        # work, but reason is now specific (see _classify_transport_error)
+        # instead of every kind of failure collapsing into one generic
+        # "network request failed, try again".
+        reason = _classify_transport_error(e)
         return {
             "status": "delivery_failed",
             "reply_status": "transport_error",
             "thread_id": context_id,
             "partner_agent_id": target_agent_id,
             "error": f"{type(e).__name__}: {e}",
+            "failure_reason": reason,
             "message": (
-                "The message couldn't be delivered. Tell the user the network "
-                "request failed and offer to retry."
+                f"The message couldn't be delivered — {reason}. Tell the user "
+                f"that specific reason, not a generic 'it failed', and offer "
+                f"to retry."
             ),
         }
 

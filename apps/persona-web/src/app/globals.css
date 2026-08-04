@@ -4862,6 +4862,33 @@ textarea.input { resize: vertical; min-height: 88px; }
   background: var(--ink-muted);
   box-shadow: none;
 }
+.connector-card.pending .top-row .status {
+  background: var(--warning-soft);
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 22%, transparent);
+}
+.connector-card.pending .top-row .status::before {
+  background: var(--warning);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 18%, transparent);
+  animation: connector-pending-pulse 1.4s ease-in-out infinite;
+}
+@keyframes connector-pending-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.connector-card .what-we-read {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-sm, 8px);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-secondary);
+}
+.connector-card .what-we-read a {
+  color: var(--accent);
+}
 .connector-card .description {
   flex: 1;
   font-family: var(--font-geist), sans-serif;

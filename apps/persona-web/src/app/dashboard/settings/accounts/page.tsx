@@ -28,8 +28,17 @@ const TELEGRAM_BOT = "zynd_brief_bot";
 
 type ConnId = "linkedin" | "brief" | "calendar" | "email" | "telegram";
 
+interface LinkedinPreview {
+  headline?: string;
+  currentTitle?: string;
+  currentCompany?: string;
+  skillsCount?: number;
+  postsCount?: number;
+  profileUrl?: string;
+}
+
 interface ConnState {
-  linkedin: { read: boolean; write: boolean; lastReadIso?: string };
+  linkedin: { read: boolean; write: boolean; lastReadIso?: string } & LinkedinPreview;
   brief: { connected: boolean };
   calendar: { connected: boolean };
   email: { connected: boolean };
@@ -43,6 +52,12 @@ const EMPTY: ConnState = {
   email: { connected: false },
   telegram: { connected: false },
 };
+
+const LINKEDIN_REAL_DATA_KEYS = ["headline", "experience", "education", "skills", "summary"] as const;
+
+function hasRealLinkedinData(rawProfile: Record<string, unknown>): boolean {
+  return LINKEDIN_REAL_DATA_KEYS.some((k) => rawProfile[k]);
+}
 
 /** Google features share one token; disconnecting one drops all of them. */
 function googleSiblingsNote(conn: ConnState, self: "brief" | "calendar" | "email"): string {
@@ -79,6 +94,13 @@ export default function AccountsPage() {
   const [confirming, setConfirming] = useState<ConnId | null>(null);
   const [oauthFlash, setOauthFlash] =
     useState<{ tone: "success" | "danger"; msg: string } | null>(null);
+  // True while a background LinkedIn scrape is believed to be in flight —
+  // covers the gap (up to a few minutes: search-by-name + profile + posts
+  // actors on Apify) between "clicked connect/refresh" and the row actually
+  // updating. Without this the card just sat there looking unchanged, which
+  // read as "nothing happened."
+  const [linkedinScraping, setLinkedinScraping] = useState(false);
+  const [linkedinNotice, setLinkedinNotice] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const sb = getSupabase();
@@ -107,17 +129,39 @@ export default function AccountsPage() {
 
     let linkedinRead = false;
     let linkedinLastReadIso: string | undefined;
+    let linkedinPreview: LinkedinPreview = {};
     if (linkedinRes.ok) {
       const data = await linkedinRes.json();
-      if (data.present) {
+      // `present` alone isn't enough — a just-connected or failed-scrape
+      // row exists with no real content, and once `connected` is true the
+      // card only offers "Disconnect" (no retry button). Gating on actual
+      // profile fields keeps the connect/retry button visible until there's
+      // real data, so a failed background scrape can be retried in place
+      // instead of requiring a full disconnect + reconnect.
+      const rawProfile = data.raw_profile || {};
+      if (data.present && hasRealLinkedinData(rawProfile)) {
         linkedinRead = true;
         linkedinLastReadIso = data.scraped_at;
+        const topExperience = (rawProfile.experience || [])[0] || {};
+        linkedinPreview = {
+          headline: rawProfile.headline || undefined,
+          currentTitle: topExperience.title || undefined,
+          currentCompany: topExperience.companyName || topExperience.company || undefined,
+          skillsCount: Array.isArray(rawProfile.skills) ? rawProfile.skills.length : undefined,
+          postsCount: Array.isArray(data.raw_posts) ? data.raw_posts.length : undefined,
+          profileUrl: data.profile_url || undefined,
+        };
       }
     }
 
     const scopes = google.scopes || "";
     setConn({
-      linkedin: { read: linkedinRead, write: linkedinOauth, lastReadIso: linkedinLastReadIso },
+      linkedin: {
+        read: linkedinRead,
+        write: linkedinOauth,
+        lastReadIso: linkedinLastReadIso,
+        ...linkedinPreview,
+      },
       brief: { connected: google.connected && (scopes.includes("documents") || scopes.includes("drive")) },
       calendar: { connected: google.connected && scopes.includes("calendar") },
       email: { connected: google.connected && scopes.includes("gmail") },
@@ -129,6 +173,57 @@ export default function AccountsPage() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Polls /api/linkedin/me until the scrape that was just kicked off
+  // actually lands (real profile fields + a scraped_at newer than
+  // `sinceIso`), or gives up after ~3 minutes. That's the realistic upper
+  // bound for the search-by-name + profile + posts Apify actors combined.
+  // Without this, clicking connect/refresh looked like a no-op for however
+  // long the scrape actually took.
+  const pollLinkedinUntilReady = useCallback(
+    async (sinceIso: string | undefined) => {
+      setLinkedinScraping(true);
+      setLinkedinNotice(null);
+      const sb = getSupabase();
+      const { data: { session } } = await sb.auth.getSession();
+      const jwt = session?.access_token;
+      if (!jwt) {
+        setLinkedinScraping(false);
+        return;
+      }
+      const attempts = 22; // ~3 minutes at 8s apart
+      for (let i = 0; i < attempts; i++) {
+        await new Promise((r) => setTimeout(r, 8000));
+        try {
+          const res = await fetch(`${API}/api/linkedin/me`, {
+            headers: { Authorization: `Bearer ${jwt}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const rawProfile = data.raw_profile || {};
+            const ready =
+              data.present &&
+              hasRealLinkedinData(rawProfile) &&
+              data.scraped_at &&
+              data.scraped_at !== sinceIso;
+            if (ready) {
+              await refresh();
+              setLinkedinScraping(false);
+              return;
+            }
+          }
+        } catch {
+          // transient — keep polling
+        }
+      }
+      setLinkedinScraping(false);
+      setLinkedinNotice(
+        "Still working — this can occasionally take longer than a few minutes. It'll show up here once it lands, no need to reconnect.",
+      );
+      await refresh();
+    },
+    [refresh],
+  );
 
   // OAuth callback flash — strip ?oauth=... and refresh state.
   useEffect(() => {
@@ -161,13 +256,14 @@ export default function AccountsPage() {
               method: "POST",
               headers: { Authorization: `Bearer ${session.access_token}` },
             }).catch(() => {});
+            void pollLinkedinUntilReady(undefined);
           }
         })();
       }
       const t = setTimeout(() => setOauthFlash(null), 4000);
       return () => clearTimeout(t);
     }
-  }, [refresh]);
+  }, [refresh, pollLinkedinUntilReady]);
 
   const buildGoogleConnect = async (features: string): Promise<string | null> => {
     const sb = getSupabase();
@@ -182,17 +278,18 @@ export default function AccountsPage() {
     return `${API}/api/oauth/google/authorize?features=${features}&token=${session.access_token}`;
   };
 
-  const connectLinkedIn = async () => {
+  const connectLinkedIn = async (force = false) => {
     setWorking("linkedin");
+    const sinceIso = conn.linkedin.lastReadIso;
     try {
       const sb = getSupabase();
       const { data: { session } } = await sb.auth.getSession();
       if (!session?.access_token) return;
-      await fetch(`${API}/api/linkedin/scrape`, {
+      await fetch(`${API}/api/linkedin/scrape${force ? "?force=1" : ""}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
-      setTimeout(() => void refresh(), 1500);
+      void pollLinkedinUntilReady(sinceIso);
     } finally {
       setWorking(null);
     }
@@ -294,18 +391,46 @@ export default function AccountsPage() {
           icon={<LinkedinIcon size={22} />}
           name="LinkedIn"
           connected={conn.linkedin.read}
+          pending={linkedinScraping}
+          pendingLabel="Reading…"
           loading={loading}
           working={working === "linkedin"}
           confirming={confirming === "linkedin"}
           description={
             conn.linkedin.write
-              ? "Your Persona reads your posts and profile. It also has permission to post on your behalf."
-              : "Your Persona reads your posts and profile every few hours to keep up with what you're into."
+              ? "Your Persona reads your posts and profile. It also has permission to post on your behalf. Data isn't refreshed automatically — use Refresh below to pull the latest."
+              : "Your Persona reads your posts and profile. Data isn't refreshed automatically — use Refresh below to pull the latest."
           }
           meta={
-            conn.linkedin.read
-              ? `${conn.linkedin.write ? "Read + Post" : "Read only"} · Last read ${timeAgo(conn.linkedin.lastReadIso) || "recently"}`
-              : undefined
+            linkedinScraping
+              ? "Fetching your profile from LinkedIn — this usually takes 1–2 minutes."
+              : conn.linkedin.read
+                ? `${conn.linkedin.write ? "Read + Post" : "Read only"} · Last read ${timeAgo(conn.linkedin.lastReadIso) || "recently"}`
+                : linkedinNotice || undefined
+          }
+          extra={
+            conn.linkedin.read ? (
+              <div className="what-we-read">
+                <div><strong>What Persona read:</strong> {conn.linkedin.headline || "(no headline set)"}</div>
+                {(conn.linkedin.currentTitle || conn.linkedin.currentCompany) && (
+                  <div>
+                    Current: {conn.linkedin.currentTitle || "—"}
+                    {conn.linkedin.currentCompany ? ` @ ${conn.linkedin.currentCompany}` : ""}
+                  </div>
+                )}
+                <div>
+                  {conn.linkedin.skillsCount ?? 0} skill{conn.linkedin.skillsCount === 1 ? "" : "s"} ·{" "}
+                  {conn.linkedin.postsCount ?? 0} recent post{conn.linkedin.postsCount === 1 ? "" : "s"}
+                </div>
+                {conn.linkedin.profileUrl && (
+                  <div>
+                    <a href={conn.linkedin.profileUrl} target="_blank" rel="noreferrer">
+                      View the profile we scraped ↗
+                    </a>
+                  </div>
+                )}
+              </div>
+            ) : undefined
           }
           connectLabel={
             conn.linkedin.read && !conn.linkedin.write
@@ -317,6 +442,16 @@ export default function AccountsPage() {
           onAskDisconnect={() => setConfirming("linkedin")}
           onCancelConfirm={() => setConfirming(null)}
           onConfirmDisconnect={() => disconnect("linkedin")}
+          secondaryActions={
+            conn.linkedin.read && !confirming
+              ? [
+                  { label: "Refresh now", onClick: () => void connectLinkedIn(true), disabled: linkedinScraping },
+                  ...(!conn.linkedin.write
+                    ? [{ label: "Allow posting", onClick: () => oauthLinkedIn() }]
+                    : []),
+                ]
+              : []
+          }
         />
 
         <ConnectorCard
@@ -395,16 +530,31 @@ export default function AccountsPage() {
   );
 }
 
+interface SecondaryAction {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}
+
 interface ConnectorCardProps {
   id: ConnId;
   icon: React.ReactNode;
   name: string;
   connected: boolean;
+  /** True while a connected-but-not-yet-ready background job (e.g. a
+   *  LinkedIn scrape) is in flight. Shows a distinct amber status instead
+   *  of flatly "Not connected", which otherwise reads as a failure. */
+  pending?: boolean;
+  pendingLabel?: string;
   loading: boolean;
   working: boolean;
   confirming: boolean;
   description: string;
   meta?: string;
+  /** Extra content (e.g. a "what we actually read" preview) rendered
+   *  between the meta line and the action buttons. Only shown when
+   *  `connected`. */
+  extra?: React.ReactNode;
   connectLabel: string;
   /** Note shown above the Confirm button when disconnect would have side-effects. */
   confirmNote: string;
@@ -412,38 +562,55 @@ interface ConnectorCardProps {
   onAskDisconnect: () => void;
   onCancelConfirm: () => void;
   onConfirmDisconnect: () => void;
+  /** Extra buttons shown next to Disconnect once connected — e.g. a manual
+   *  "Refresh now". Without these, a connected card offered no action
+   *  except disconnecting, so a stuck or stale connection had no in-place
+   *  fix short of a full disconnect + reconnect. */
+  secondaryActions?: SecondaryAction[];
 }
 
 function ConnectorCard({
   icon,
   name,
   connected,
+  pending,
+  pendingLabel,
   loading,
   working,
   confirming,
   description,
   meta,
+  extra,
   connectLabel,
   confirmNote,
   onConnect,
   onAskDisconnect,
   onCancelConfirm,
   onConfirmDisconnect,
+  secondaryActions,
 }: ConnectorCardProps) {
+  const statusText = loading
+    ? "…"
+    : pending
+      ? pendingLabel || "Working…"
+      : connected
+        ? "Connected"
+        : "Not connected";
   return (
-    <div className={`connector-card ${connected ? "" : "disconnected"}`}>
+    <div className={`connector-card ${pending ? "pending" : connected ? "" : "disconnected"}`}>
       <div className="top-row">
         <span className="ico">{icon}</span>
         <span className="name">{name}</span>
-        <span className="status">{loading ? "…" : connected ? "Connected" : "Not connected"}</span>
+        <span className="status">{statusText}</span>
       </div>
       <p className="description">{description}</p>
       {confirming && confirmNote && (
         <p className="confirm-note caption">{confirmNote}</p>
       )}
+      {connected && !confirming && extra}
       <div className="bottom-row">
         {meta && !confirming && <span className="meta">{meta}</span>}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
           {connected ? (
             confirming ? (
               <>
@@ -453,9 +620,22 @@ function ConnectorCard({
                 </Button>
               </>
             ) : (
-              <Button size="sm" variant="tertiary" onClick={onAskDisconnect}>
-                Disconnect
-              </Button>
+              <>
+                {secondaryActions?.map((action) => (
+                  <Button
+                    key={action.label}
+                    size="sm"
+                    variant="tertiary"
+                    onClick={action.onClick}
+                    disabled={action.disabled ?? working}
+                  >
+                    {action.label}
+                  </Button>
+                ))}
+                <Button size="sm" variant="tertiary" onClick={onAskDisconnect}>
+                  Disconnect
+                </Button>
+              </>
             )
           ) : (
             <Button size="sm" onClick={onConnect} disabled={working}>

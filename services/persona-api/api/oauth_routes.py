@@ -167,11 +167,18 @@ async def linkedin_callback(code: str = None, state: str = None, error: str = No
             me_data = me_resp.json()
             name = me_data.get("name", "")
             sb = config.get_supabase()
+            # Deliberately omit `scraped_at` here — this is just OIDC
+            # userinfo (full_name/sub), not a real profile scrape.
+            # trigger_scrape and is_linkedin_scraped() both treat a
+            # truthy `scraped_at` as "we already have good data" and skip
+            # kicking off the actual Apify scrape; stamping it here left
+            # raw_profile stuck at this placeholder forever, and since
+            # disconnect+reconnect recreates the same placeholder, "just
+            # reconnect" never actually fixed it.
             sb.table("linkedin_profiles").upsert(
                 {
                     "user_id": user_id,
                     "profile_url": "",
-                    "scraped_at": datetime.now(timezone.utc).isoformat(),
                     "raw_profile": {"full_name": name, "sub": me_data.get("sub", "")},
                 },
                 on_conflict="user_id",

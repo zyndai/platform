@@ -31,6 +31,7 @@ async def _safe_scrape(user_id: str, full_name: str, profile_url: str | None = N
 async def trigger_scrape(
     background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
+    force: bool = False,
 ):
     """
     Kick off a LinkedIn scrape for the current user. Returns immediately;
@@ -39,6 +40,10 @@ async def trigger_scrape(
 
     If a profile_url was stored from a prior OAuth connect, it is passed
     directly to the scraper, avoiding the fragile search-by-name step.
+
+    `force=True` (the Accounts page's "Refresh now" button) bypasses the
+    cached-data short-circuit below. There's no periodic re-scrape job —
+    this is the only way data ever gets refreshed after the first scrape.
     """
     metadata = user.get("user_metadata") or {}
     full_name = metadata.get("full_name") or metadata.get("name") or ""
@@ -46,14 +51,25 @@ async def trigger_scrape(
     sb = _get_supabase()
     existing = (
         sb.table("linkedin_profiles")
-        .select("scraped_at, profile_url")
+        .select("scraped_at, profile_url, raw_profile")
         .eq("user_id", user["id"])
         .execute()
     )
     if existing.data:
         row = existing.data[0]
-        # If we already have good data from a prior scrape, don't re-scrape.
-        if row.get("scraped_at"):
+        # A truthy `scraped_at` alone isn't proof of a real scrape — the
+        # OIDC-userinfo placeholder written right after OAuth connect used
+        # to stamp it too, which made this short-circuit forever and left
+        # raw_profile stuck with no headline/experience/etc (see
+        # linkedin_callback). Require actual profile content as well, so a
+        # user stuck with an old placeholder row can self-heal by hitting
+        # connect again instead of being told to disconnect/reconnect.
+        raw_profile = row.get("raw_profile") or {}
+        has_real_data = any(
+            key in raw_profile
+            for key in ("headline", "experience", "education", "skills", "summary")
+        )
+        if not force and row.get("scraped_at") and has_real_data:
             return {"status": "cached", "scraped_at": row["scraped_at"]}
         # If we have a profile_url from OAuth but no scrape data yet, use it.
         if row.get("profile_url"):

@@ -238,11 +238,23 @@ def read_linkedin_profile(user_id: str) -> dict:
     profile["recent_posts"] = recent_posts
 
     if profile_empty:
-        profile["warning"] = (
-            "The last scrape returned no profile details (headline, experience, education, skills). "
-            "The Apify actor may need a fresh run — ask the principal to disconnect and reconnect "
-            "LinkedIn in their dashboard's Accounts page to trigger a new scrape. "
-            "Also verify the profile URL is correct: " + (profile["profile_url"] or "unknown")
-        )
+        if not row.get("scraped_at"):
+            # No scraped_at yet means a scrape has never actually completed —
+            # most commonly because one just kicked off (connect triggers it
+            # in the background and it can take a minute or two) and hasn't
+            # landed. Telling the principal to reconnect here would just
+            # restart the same in-flight process, not fix anything.
+            profile["warning"] = (
+                "LinkedIn is connected but the profile scrape hasn't finished yet. "
+                "This usually completes within a couple of minutes of connecting — "
+                "ask the principal to try again shortly rather than reconnecting."
+            )
+        else:
+            profile["warning"] = (
+                "The last scrape returned no profile details (headline, experience, education, skills). "
+                "The Apify actor may need a fresh run — ask the principal to disconnect and reconnect "
+                "LinkedIn in their dashboard's Accounts page to trigger a new scrape. "
+                "Also verify the profile URL is correct: " + (profile["profile_url"] or "unknown")
+            )
 
     return {"success": True, **profile}

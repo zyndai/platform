@@ -628,7 +628,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
               ? "Transcribing…"
               : recording
                 ? "Listening… click the mic again to stop."
-                : "Your Persona may make mistakes — double-check anything important."}
+                : null}
         </div>
       </div>
     </div>

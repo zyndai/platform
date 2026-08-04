@@ -1,5 +1,6 @@
 from DefaultTools import default_tools
 from flask import Flask, request, jsonify
+import asyncio
 import threading
 import inspect
 import re
@@ -199,7 +200,18 @@ class ContextAware:
             raise ValueError(f"Tool '{name}' not found. Available: {available}")
 
         params = params or {}
-        return self.tools[name]["func"](**params)
+        result = self.tools[name]["func"](**params)
+        if inspect.iscoroutine(result):
+            # A tool registered as `async def` — every call site into this
+            # method runs on a plain thread with no event loop of its own
+            # (agent/orchestrator.py + api/approvals.py both invoke this via
+            # asyncio.to_thread), so asyncio.run() here is safe. Without
+            # this, the coroutine is silently never awaited: `func(...)`
+            # just returns the coroutine object itself, which the caller
+            # then tries to json.dumps as the tool's "result" — the tool's
+            # actual body never executes.
+            result = asyncio.run(result)
+        return result
 
     def list_tools(self):
         """Return a simple list of registered tool names."""

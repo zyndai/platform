@@ -44,6 +44,48 @@ def _persist_chat_message(
     except Exception as e:  # noqa: BLE001
         print(f"[orchestrator] persist chat_messages failed: {type(e).__name__}: {e}")
 
+
+def _load_history_from_db(user_id: str, conversation_id: str, limit: int = 200) -> list[dict]:
+    """Rehydrate a conversation's history from `chat_messages` when it's not
+    already in the in-process `_conversations` cache.
+
+    `_conversations` is a plain in-memory dict — it holds nothing across a
+    process restart. Without this, any conversation whose backend restarted
+    between messages (deploys, crashes, OOM — this happens routinely) loses
+    all server-side context, even though the frontend still shows the full
+    thread intact (it loads chat_messages independently via /api/chat/history).
+    The user sees a continuous conversation; the model sees a stranger who
+    just walked in. That's the "asks who the recipient is again right after
+    we just discussed them" bug: the restart landed between those two turns.
+
+    Only user/assistant text turns are stored here (not the tool-call
+    scaffolding from mid-turn), but that's enough for the model to recall
+    what was actually discussed and referenced ("him", "the recipient",
+    "that founder") even without replaying the exact tool calls that
+    produced it.
+    """
+    if not conversation_id or conversation_id.startswith("thread:"):
+        return []
+    try:
+        sb = config.get_supabase()
+        rows = (
+            sb.table("chat_messages")
+            .select("role, content")
+            .eq("user_id", user_id)
+            .eq("conversation_id", conversation_id)
+            .order("created_at", desc=False)
+            .limit(limit)
+            .execute()
+        )
+        return [
+            {"role": r["role"], "content": r["content"]}
+            for r in (rows.data or [])
+            if r.get("content")
+        ]
+    except Exception as e:
+        print(f"[orchestrator] history rehydration failed for {conversation_id}: {type(e).__name__}: {e}")
+        return []
+
 # =====================================================================
 # External-mode permission gating
 # =====================================================================
@@ -2056,7 +2098,7 @@ async def handle_user_message(
     if not conversation_id:
         conversation_id = str(uuid.uuid4())
     if conversation_id not in _conversations:
-        _conversations[conversation_id] = []
+        _conversations[conversation_id] = _load_history_from_db(user_id, conversation_id)
 
     history = _conversations[conversation_id]
 
@@ -2430,7 +2472,7 @@ async def handle_user_message_stream(
     if not conversation_id:
         conversation_id = str(uuid.uuid4())
     if conversation_id not in _conversations:
-        _conversations[conversation_id] = []
+        _conversations[conversation_id] = _load_history_from_db(user_id, conversation_id)
 
     history = _conversations[conversation_id]
 

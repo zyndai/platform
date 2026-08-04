@@ -831,12 +831,15 @@ def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:
         user_id: Injected automatically by the orchestrator — do not pass it.
 
     Returns ``{status, count, total_available, results: [{name, agent_id,
-    description, webhook_url, avatar_url, match_reason}], source}``.
-    ``match_reason`` is a short, grounded note on why each result matched
-    (e.g. "matched on: founder, ai") — use it when explaining results to
-    the principal instead of inventing a reason. An empty `results` list
-    with `status="success"` means a real, complete search came back with
-    no relevant match — not a broken search.
+    description, webhook_url, avatar_url, match_reason, match_score}],
+    source}``. ``match_reason`` is a short, grounded note on why each
+    result matched (e.g. "matched on: founder, ai") — use it when
+    explaining results to the principal instead of inventing a reason.
+    ``match_score`` is the underlying keyword-overlap count it's derived
+    from (0 for a catchall/broad browse, where every result "matches" by
+    definition). An empty `results` list with `status="success"` means a
+    real, complete search came back with no relevant match — not a
+    broken search.
     """
     self_id = _caller_agent_id(user_id)
     catchall_phrases = {
@@ -959,6 +962,7 @@ def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:
     for score, reason, item, is_local in scored[:top_k]:
         if is_local:
             item["match_reason"] = reason
+            item["match_score"] = score
             combined.append(item)
             continue
         a = item
@@ -981,6 +985,7 @@ def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:
             "webhook_url": webhook,
             "avatar_url": avatars.get(aid),
             "match_reason": reason,
+            "match_score": score,
         })
 
     if not combined:

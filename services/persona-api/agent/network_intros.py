@@ -62,7 +62,10 @@ async def find_best_introduction(
     scored: list[dict[str, Any]] = []
     for candidate in candidates:
         entity_id = candidate.get("entity_id", "")
-        score = await _score_candidate(user_id, entity_id, topic)
+        # match_score comes straight from search_zynd_personas — the actual
+        # keyword-overlap count between `topic` and this candidate's bio.
+        # Pass it through so ranking here reflects real topical relevance.
+        score = await _score_candidate(user_id, entity_id, topic, raw_match_score=candidate.get("match_score", 0))
         candidate["score"] = score["total"]
         candidate["score_breakdown"] = score
         candidate["connection_status"] = score.get("connection_status", "none")
@@ -192,8 +195,19 @@ async def _score_candidate(
     user_id: str,
     target_agent_id: str,
     topic: str,
+    raw_match_score: int = 0,
 ) -> dict[str, Any]:
-    """Score a candidate for introduction relevance."""
+    """Score a candidate for introduction relevance.
+
+    Args:
+        raw_match_score: The keyword-overlap count from search_zynd_personas
+            (how many of `topic`'s terms actually appear in this candidate's
+            bio/tags) — the real topical-relevance signal. Without this, every
+            candidate previously scored an identical hardcoded 0.5 "relevance"
+            regardless of fit, so ranking was driven entirely by connection/
+            mutual/trust bonuses — a candidate with zero relation to the topic
+            but one mutual connection could outrank a strong topical match.
+    """
     score: dict[str, Any] = {
         "total": 0.0,
         "relevance": 0.0,       # How well they match the topic
@@ -204,9 +218,11 @@ async def _score_candidate(
         "mutual_context": [],
     }
 
-    # Relevance: from the network search score.
-    # (Set by caller — we don't have the raw score here, use default.)
-    score["relevance"] = 0.5  # Default mid-range.
+    # Relevance: 3+ overlapping keyword stems between the topic and this
+    # candidate's bio/tags counts as a full-relevance match; scales linearly
+    # below that. Zero overlap (e.g. a catchall browse, or a candidate that
+    # only surfaced via connection/mutual signals) means zero relevance here.
+    score["relevance"] = min(1.0, max(0, raw_match_score) / 3.0)
 
     # Connection check.
     conn = await _check_connection(user_id, target_agent_id)
@@ -280,13 +296,21 @@ async def _get_own_agent_id(user_id: str) -> str | None:
 async def _check_connection(
     user_id: str, target_agent_id: str
 ) -> str:
-    """Check connection status between user and target."""
+    """Check connection status between user and target.
+
+    dm_threads' columns are initiator_id/receiver_id (not participant_id),
+    and they store agent_ids, not Supabase user_ids — both mismatches
+    silently made every lookup here fail and fall through to "unknown",
+    even for pairs that really were connected.
+    """
     try:
+        own_agent_id = await _get_own_agent_id(user_id)
+        if not own_agent_id:
+            return "unknown"
         sb = config.get_supabase()
-        # Check both directions.
         for direction in [
-            {"initiator_id": user_id, "participant_id": target_agent_id},
-            {"initiator_id": target_agent_id, "participant_id": user_id},
+            {"initiator_id": own_agent_id, "receiver_id": target_agent_id},
+            {"initiator_id": target_agent_id, "receiver_id": own_agent_id},
         ]:
             rows = (
                 sb.table("dm_threads")
@@ -305,33 +329,41 @@ async def _check_connection(
 async def _find_shared_connections(
     user_id: str, target_agent_id: str
 ) -> list[str]:
-    """Find personas that both users are connected to."""
+    """Find personas that both users are connected to.
+
+    Same column-name/id-type mismatch as _check_connection — dm_threads
+    uses initiator_id/receiver_id (agent_ids), not participant_id keyed by
+    the raw Supabase user_id.
+    """
     try:
+        own_agent_id = await _get_own_agent_id(user_id)
+        if not own_agent_id:
+            return []
         sb = config.get_supabase()
 
         # Get user's connections.
         user_conns = (
             sb.table("dm_threads")
-            .select("initiator_id, participant_id")
-            .or_(f"initiator_id.eq.{user_id},participant_id.eq.{user_id}")
+            .select("initiator_id, receiver_id")
+            .or_(f"initiator_id.eq.{own_agent_id},receiver_id.eq.{own_agent_id}")
             .eq("status", "accepted")
             .execute()
         )
 
         user_peers: set[str] = set()
         for row in (user_conns.data or []):
-            if row["initiator_id"] == user_id:
-                user_peers.add(row["participant_id"])
+            if row["initiator_id"] == own_agent_id:
+                user_peers.add(row["receiver_id"])
             else:
                 user_peers.add(row["initiator_id"])
 
         # Get target's connections.
         target_conns = (
             sb.table("dm_threads")
-            .select("initiator_id, participant_id")
+            .select("initiator_id, receiver_id")
             .or_(
                 f"initiator_id.eq.{target_agent_id},"
-                f"participant_id.eq.{target_agent_id}"
+                f"receiver_id.eq.{target_agent_id}"
             )
             .eq("status", "accepted")
             .execute()
@@ -340,7 +372,7 @@ async def _find_shared_connections(
         target_peers: set[str] = set()
         for row in (target_conns.data or []):
             if row["initiator_id"] == target_agent_id:
-                target_peers.add(row["participant_id"])
+                target_peers.add(row["receiver_id"])
             else:
                 target_peers.add(row["initiator_id"])
 
@@ -352,27 +384,36 @@ async def _find_shared_connections(
 
 
 def _format_recommendation_reason(candidate: dict[str, Any]) -> str:
-    """Format a human-readable reason for recommending this person."""
+    """Format a human-readable reason for recommending this person.
+
+    Leads with WHY they're topically relevant (the actual point of an
+    "introduce me to someone who..." ask) before the social-graph context
+    (connection/mutual status) — a reason built only from connection status
+    and mutual connections doesn't answer "why this person" at all if
+    there's zero topical basis for the match.
+    """
     parts = []
     name = candidate.get("name", "This person")
 
+    # Topical relevance first — this is the actual answer to "why them".
+    match_reason = candidate.get("match_reason")
+    if match_reason:
+        parts.append(match_reason)
+    else:
+        description = (candidate.get("description") or "").strip()
+        if description:
+            parts.append(description[:140])
+
     score_breakdown = candidate.get("score_breakdown", {})
     conn = score_breakdown.get("connection_status", "none")
-
     if conn == "accepted":
-        parts.append(f"You're connected with {name}")
+        parts.append(f"you're already connected with {name}")
     elif conn == "pending":
-        parts.append(f"Connection already pending with {name}")
+        parts.append(f"a connection request is already pending with {name}")
 
     mutual = score_breakdown.get("mutual_context", [])
     if mutual:
         parts.append(f"you share {len(mutual)} mutual connection(s)")
-
-    # Use the candidate's capability description.
-    capabilities = candidate.get("capabilities", [])
-    if capabilities:
-        if isinstance(capabilities, list):
-            parts.append(f"their persona lists: {', '.join(capabilities[:3])}")
 
     return (
         f"{name} — {'; '.join(parts)}"

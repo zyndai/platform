@@ -1728,6 +1728,20 @@ You are currently in a private chat WITH your principal — the human who deploy
 PRIMARY: Help your principal network on the Zynd AI Network — discover other people's agents, look up their profiles, connect with them, and exchange messages on your principal's behalf.
 SECONDARY: Manage your principal's connected accounts (social media, calendar, email, productivity tools) when they ask.
 
+## Compound & Multi-Step Requests
+When one message asks for MULTIPLE things — "find X, then email them, then schedule a meeting, then make a page", or a numbered/bulleted list of asks — that's several sub-tasks in one turn, not one task. Work through every sub-task before you stop; use as many tool calls as it takes (you have room for many tool-call rounds in a single turn).
+
+1. **Decompose first.** Before calling anything, mentally list each distinct ask. "Find AI founders, email them, schedule a meeting, and create a page" is FOUR sub-tasks: (a) find, (b) email, (c) schedule, (d) create a page.
+2. **Independent sub-tasks never wait on each other.** A blocker on one sub-task does not excuse skipping the others. "Create a page" has no dependency on whether an email went out or a connection got accepted — do it in the same turn regardless.
+3. **Dependent sub-tasks chain using the real data from the earlier step**, not placeholders — "email them" after "find founders" means the specific people you just found. Don't ask your principal to re-list information you already have from earlier in this same turn.
+4. **A genuinely blocked step gets a specific, plain-language explanation — never silence.** Common real blockers here, and how to report them:
+   - No email on file for a Zynd persona from a network search — search results never include email, only name/agent_id/webhook. Say that plainly, then either ask your principal for an email or offer to connect via the Zynd Network instead. Never guess or invent an address.
+   - A Zynd connection is still pending acceptance — `message_zynd_agent`/`propose_meeting` can't fire until the other side accepts. Say you've sent the request and it's waiting on them; don't make it sound like the whole ask failed.
+   - A needed account isn't connected (Gmail, Calendar, etc.) — name which one and say it needs connecting in Settings.
+5. **Finish with ONE consolidated reply**, not a trail-off after the first sub-task. Account for every sub-task you were asked to do: what's done, what's pending and why, what you need from your principal to continue — as one coherent answer.
+
+Never silently drop a requested step. If you truly can't do something, say so explicitly rather than letting the turn just end.
+
 ## TOOL ROUTING — Todo vs Brief (READ FIRST, then act)
 Two SEPARATE stores. Picking the wrong tool is a hard failure.
 
@@ -2113,8 +2127,15 @@ async def handle_user_message(
     # Multi-step workflows like "search → check → message → summarize" need
     # at least N+1 iterations. The Zynd-services flow (search → card → call,
     # possibly retried across 2-3 candidates) can take 6-8 tool turns plus a
-    # final summary turn, so 10 is the floor that avoids cap-exhaustion stubs.
-    max_iterations = 10
+    # final summary turn. A compound ask spanning several protocols in one
+    # message (e.g. "find founders, email them, schedule a meeting, create
+    # a page") needs even more headroom, especially if the model doesn't
+    # batch multiple tool calls into one response — each person found can
+    # cost its own round (profile lookup + connection request) before the
+    # calendar/page steps even start. Raising the ceiling only affects
+    # requests that actually need this many rounds; the loop still exits as
+    # soon as the model returns a final answer with no more tool calls.
+    max_iterations = 16
     for iteration in range(max_iterations):
         # The LLM SDKs (OpenAI, Gemini) are sync and block the event loop
         # while they wait for the model response. That's catastrophic in a
@@ -2465,7 +2486,9 @@ async def handle_user_message_stream(
     actions_taken: list[dict] = []
     executed_tools: set = set()
 
-    max_iterations = 10
+    # See handle_user_message's max_iterations comment — compound multi-step
+    # asks need more tool-call rounds than a single capability lookup.
+    max_iterations = 16
     for iteration in range(max_iterations):
         turn_text = ""
         turn_tool_calls: list[dict] | None = None

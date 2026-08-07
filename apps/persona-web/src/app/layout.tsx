@@ -54,9 +54,14 @@ const chakraPetch = Chakra_Petch({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://persona.zynd.ai"),
   title: "ZyndAI",
   description:
     "Your Persona finds people worth meeting, reaches out on your behalf, and books the times. You just show up.",
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({

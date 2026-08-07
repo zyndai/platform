@@ -25,6 +25,7 @@ from api.approvals import router as approvals_router
 from api.matches import router as matches_router
 from api.brief import router as brief_router
 from api.todos import router as todos_router
+from api.memory import router as memory_router
 from api.groups import router as groups_router
 from api.services import router as services_router
 from api.agents import router as agents_router
@@ -130,6 +131,7 @@ app.include_router(approvals_router, prefix="/api/approvals", tags=["Approvals"]
 app.include_router(matches_router, prefix="/api/matches", tags=["Matches"])
 app.include_router(brief_router,   prefix="/api/brief",   tags=["Brief"])
 app.include_router(todos_router, prefix="/api/todos", tags=["Todos"])
+app.include_router(memory_router, prefix="/api/memory", tags=["Memory"])
 app.include_router(groups_router, prefix="/api/groups", tags=["Groups"])
 app.include_router(services_router, prefix="/api/services", tags=["Services"])
 app.include_router(agents_router, prefix="/api/agents", tags=["Agents"])

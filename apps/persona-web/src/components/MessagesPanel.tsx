@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { ArrowLeft } from "lucide-react";
+import { useEffect, useState, useRef, Fragment } from "react";
+import Link from "next/link";
+import { ArrowLeft, ArrowUp, Check, Settings, X, Info } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { getSupabase } from "@/lib/supabase";
+import { meetingStatusLabel, meetingTimeline } from "@/lib/meetingStatus";
 
 interface Thread {
   id: string;
@@ -293,24 +295,31 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     });
   };
 
-  const updateThreadStatus = async (status: string) => {
-    if (!activeThread) return;
+  const updateThreadStatus = async (status: string, thread?: Thread) => {
+    const target = thread || activeThread;
+    if (!target) return;
     await getSupabase()
       .from("dm_threads")
       .update({ status })
-      .eq("id", activeThread.id);
+      .eq("id", target.id);
 
+    setThreads((prev) =>
+      prev.map((t) => (t.id === target.id ? { ...t, status: status as any } : t))
+    );
     setActiveThread((prev) =>
-      prev ? { ...prev, status: status as any } : null
+      prev && prev.id === target.id ? { ...prev, status: status as any } : prev
     );
   };
 
   // ConnectionFSM transitions handled by the v3 backend (decline/revoke
   // touch in-flight a2a_tasks too, so we don't update Supabase directly).
-  const transitionConnection = async (action: "decline" | "revoke" | "unblock") => {
-    if (!activeThread || !sessionUser) return;
-    const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const res = await fetch(`${API}/api/persona/threads/${activeThread.id}/status`, {
+  const transitionConnection = async (
+    action: "decline" | "revoke" | "unblock",
+    thread?: Thread
+  ) => {
+    const target = thread || activeThread;
+    if (!target || !sessionUser) return;
+    const res = await fetch(`${API}/api/persona/threads/${target.id}/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, user_id: sessionUser.id }),
@@ -320,8 +329,11 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
       return;
     }
     const data = await res.json();
+    setThreads((prev) =>
+      prev.map((t) => (t.id === target.id ? { ...t, status: data.new_status } : t))
+    );
     setActiveThread((prev) =>
-      prev ? { ...prev, status: data.new_status } : null
+      prev && prev.id === target.id ? { ...prev, status: data.new_status } : prev
     );
   };
 
@@ -396,10 +408,50 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
           t.initiator_id === sessionAgentId))
   );
 
+  // dm_threads.initiator_id/receiver_id are agent_ids, not user_ids — the
+  // one bulk call resolves the whole visible thread list's avatars via
+  // persona_agents + the cached Supabase admin-API avatar map (see
+  // /api/persona/avatars), keyed by whatever id getPartnerId() returns.
+  const [partnerAvatars, setPartnerAvatars] = useState<Record<string, string | null>>({});
+  useEffect(() => {
+    const ids = Array.from(new Set(threads.map((t) => getPartnerId(t)))).filter(
+      (id) => id && !(id in partnerAvatars)
+    );
+    if (ids.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API}/api/persona/avatars?ids=${encodeURIComponent(ids.join(","))}`);
+        const map = res.ok ? await res.json() : {};
+        if (!cancelled) {
+          setPartnerAvatars((prev) => {
+            const next = { ...prev };
+            for (const id of ids) next[id] = map[id] ?? null;
+            return next;
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setPartnerAvatars((prev) => {
+            const next = { ...prev };
+            for (const id of ids) next[id] = null;
+            return next;
+          });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threads]);
+
   const [agentDraft, setAgentDraft] = useState("");
   const [agentSending, setAgentSending] = useState(false);
 
-  // Send a human-typed message on the agent channel (when user has taken over)
+  // Send a human-typed message on the agent channel.
+  // If this was a one-off "Reply yourself" action, hand the thread back
+  // to the AI agent automatically after the message is sent.
   const handleAgentSend = async () => {
     if (!agentDraft.trim() || !activeThread || !sessionUser || agentSending) return;
     const content = agentDraft;
@@ -414,6 +466,11 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
           content,
         }),
       });
+      if (agentManualReply) {
+        setAgentManualReply(false);
+        // Hand the thread back to the AI agent automatically.
+        await toggleThreadMode();
+      }
     } catch (e) {
       console.error("Failed to send agent-channel message:", e);
     } finally {
@@ -424,6 +481,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
   const [newChatQuery, setNewChatQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [agentManualReply, setAgentManualReply] = useState(false);
 
   // ── Meeting tickets for the active thread ──────────────────────────
   const [meetings, setMeetings] = useState<MeetingTask[]>([]);
@@ -680,15 +738,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
 
   if (!sessionUser)
     return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "calc(100vh - 73px)",
-          background: "var(--bg-base)",
-        }}
-      >
+      <div className="messages-loading">
         <div className="status-pill">
           <span className="status-dot" />
           Authenticating...
@@ -697,28 +747,9 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     );
 
   return (
-    <div
-      className={`messages-panel ${activeThread ? "has-active-thread" : ""}`}
-      style={{
-        display: "flex",
-        height: "calc(100vh - 73px)",
-        width: "100%",
-        overflow: "hidden",
-        background: "var(--bg-base)",
-      }}
-    >
+    <div className={`messages-panel ${activeThread ? "has-active-thread" : ""}`}>
       {/* -- Left: Thread Inbox -- */}
-      <div
-        className="messages-sidebar"
-        style={{
-          width: "300px",
-          borderRight: "1px solid var(--border-subtle)",
-          display: "flex",
-          flexDirection: "column",
-          background: "var(--bg-base)",
-          flexShrink: 0,
-        }}
-      >
+      <div className="messages-sidebar">
         {/* Header & Search */}
         <div
           className="messages-sidebar-head"
@@ -728,61 +759,21 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
             position: "relative",
           }}
         >
-          <h2
-            style={{
-              fontFamily: "var(--font-instrument-sans), system-ui, sans-serif",
-              fontSize: "15px",
-              fontWeight: 600,
-              letterSpacing: "-0.2px",
-              color: "var(--ink)",
-              marginBottom: "4px",
-            }}
-          >
-            Network DMs
-          </h2>
-          <p
-            className="section-label"
-            style={{ marginBottom: "14px", color: "var(--text-muted)" }}
-          >
-            Cross-agent messaging
-          </p>
+          <h2>Network DMs</h2>
+          <p className="section-label">Cross-agent messaging</p>
           <input
             type="text"
             placeholder="Search Zynd Network..."
             value={newChatQuery}
             onChange={(e) => setNewChatQuery(e.target.value)}
             className="input"
-            style={{ fontSize: "12px", padding: "8px 12px" }}
           />
 
           {/* Live Search Dropdown */}
           {(searchResults.length > 0 || isSearching) && (
-            <div
-              className="messages-search-popover"
-              style={{
-                position: "absolute",
-                top: "100%",
-                left: "16px",
-                right: "16px",
-                background: "var(--bg-overlay)",
-                border: "1px solid var(--border-default)",
-                borderRadius: "var(--r-md)",
-                zIndex: 100,
-                maxHeight: "280px",
-                overflowY: "auto",
-                boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-                marginTop: "4px",
-              }}
-            >
+            <div className="messages-search-popover">
               {isSearching ? (
-                <div
-                  style={{
-                    padding: "14px",
-                    fontSize: "11px",
-                    color: "var(--text-muted)",
-                    fontFamily: "IBM Plex Mono, monospace",
-                  }}
-                >
+                <div className="messages-search-popover-item desc" style={{ cursor: "default" }}>
                   Searching network...
                 </div>
               ) : (
@@ -790,42 +781,10 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                   <div
                     key={p.agent_id}
                     onClick={() => startNewChat(p)}
-                    style={{
-                      padding: "12px 14px",
-                      borderBottom: "1px solid var(--border-subtle)",
-                      cursor: "pointer",
-                      transition: "background 0.15s",
-                    }}
-                    onMouseEnter={(e) =>
-                      (e.currentTarget.style.background = "var(--bg-raised)")
-                    }
-                    onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = "transparent")
-                    }
+                    className="messages-search-popover-item"
                   >
-                    <div
-                      style={{
-                        fontFamily: "DM Sans, sans-serif",
-                        fontSize: "13px",
-                        fontWeight: 500,
-                        color: "var(--text-primary)",
-                      }}
-                    >
-                      {p.name}
-                    </div>
-                    <div
-                      style={{
-                        fontFamily: "IBM Plex Mono, monospace",
-                        fontSize: "10px",
-                        color: "var(--text-muted)",
-                        marginTop: "2px",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {p.description || "Zynd Agent"}
-                    </div>
+                    <div className="name">{p.name}</div>
+                    <div className="desc">{p.description || "Zynd Agent"}</div>
                   </div>
                 ))
               )}
@@ -834,59 +793,68 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
         </div>
 
         {/* Thread list */}
-        <div className="messages-thread-list" style={{ flex: 1, overflowY: "auto" }}>
+        <div className="messages-thread-list">
           {/* Requests */}
           {requests.length > 0 && (
-            <div className="messages-thread-section" style={{ padding: "12px 16px" }}>
-              <p
-                className="section-label"
-                style={{ color: "var(--accent, #6366f1)", marginBottom: "8px" }}
-              >
+            <div className="messages-thread-section">
+              <p className="section-label" style={{ color: "var(--accent)" }}>
                 Requests ({requests.length})
               </p>
-              {requests.map((t) => (
-                <div
-                  key={t.id}
-                  onClick={() => setActiveThread(t)}
-                  className={`card messages-thread-card ${activeThread?.id === t.id ? "is-active" : ""}`}
-                  style={{
-                    padding: "12px",
-                    marginBottom: "6px",
-                    background:
-                      activeThread?.id === t.id
-                        ? "var(--bg-raised)"
-                        : "var(--bg-surface)",
-                    borderColor:
-                      activeThread?.id === t.id
-                        ? "var(--border-strong)"
-                        : "var(--border-default)",
-                  }}
-                >
+              {requests.map((t) => {
+                const partnerId = getPartnerId(t);
+                const avatarUrl = partnerAvatars[partnerId];
+                const partnerName = getPartnerName(t);
+                return (
                   <div
-                    style={{
-                      fontFamily: "DM Sans, sans-serif",
-                      fontSize: "13px",
-                      fontWeight: 500,
-                      color: "var(--text-primary)",
-                    }}
+                    key={t.id}
+                    onClick={() => setActiveThread(t)}
+                    className={`messages-thread-card messages-request-card ${activeThread?.id === t.id ? "is-active" : ""}`}
                   >
-                    New Request
+                    <Link
+                      href={`/p/${partnerId}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="messages-request-avatar"
+                      aria-label={`View ${partnerName || "profile"}`}
+                    >
+                      {avatarUrl ? (
+                        <img src={avatarUrl} alt="" referrerPolicy="no-referrer" />
+                      ) : (
+                        <span>{partnerName?.charAt(0) || "Z"}</span>
+                      )}
+                    </Link>
+                    <div className="messages-request-body">
+                      <div className="name">New Request</div>
+                      <div className="meta">{partnerName}</div>
+                    </div>
+                    <div className="messages-request-actions">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateThreadStatus("accepted", t);
+                        }}
+                        className="icon-btn-xs accept"
+                        title="Accept"
+                        aria-label="Accept request"
+                      >
+                        <Check size={14} strokeWidth={2.4} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          transitionConnection("decline", t);
+                        }}
+                        className="icon-btn-xs decline"
+                        title="Decline"
+                        aria-label="Decline request"
+                      >
+                        <X size={14} strokeWidth={2.4} />
+                      </button>
+                    </div>
                   </div>
-                  <div
-                    style={{
-                      fontFamily: "IBM Plex Mono, monospace",
-                      fontSize: "10px",
-                      color: "var(--text-muted)",
-                      marginTop: "3px",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {getPartnerName(t)}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -897,66 +865,92 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
             </p>
             {primary.map((t) => {
               const partnerName = getPartnerName(t);
+              const partnerId = getPartnerId(t);
+              const avatarUrl = partnerAvatars[partnerId];
               return (
                 <div
                   key={t.id}
                   onClick={() => setActiveThread(t)}
-                  className={`card messages-thread-card ${activeThread?.id === t.id ? "is-active" : ""}`}
-                  style={{
-                    padding: "12px",
-                    marginBottom: "6px",
-                    background:
-                      activeThread?.id === t.id
-                        ? "var(--bg-raised)"
-                        : "var(--bg-surface)",
-                    borderColor:
-                      activeThread?.id === t.id
-                        ? "var(--border-strong)"
-                        : "var(--border-default)",
-                  }}
+                  className={`messages-thread-card messages-thread-card-row ${activeThread?.id === t.id ? "is-active" : ""}`}
                 >
-                  <div
-                    style={{
-                      fontFamily: "DM Sans, sans-serif",
-                      fontSize: "13px",
-                      fontWeight: 500,
-                      color: "var(--text-primary)",
-                    }}
+                  <Link
+                    href={`/p/${partnerId}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="messages-request-avatar"
+                    aria-label={`View ${partnerName || "profile"}`}
                   >
-                    {partnerName}
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      marginTop: "4px",
-                    }}
-                  >
-                    {t.status === "pending" ? (
-                      <span className="tag tag-amber" style={{ fontSize: "9px" }}>
-                        PENDING
-                      </span>
+                    {avatarUrl ? (
+                      <img src={avatarUrl} alt="" referrerPolicy="no-referrer" />
                     ) : (
-                      <span className="tag tag-teal" style={{ fontSize: "9px" }}>
-                        ACTIVE
-                      </span>
+                      <span>{partnerName?.charAt(0) || "Z"}</span>
                     )}
+                  </Link>
+                  <div className="messages-request-body">
+                  <div className="name">{partnerName}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
+                    {(() => {
+                      // Terminal connection states first — these threads rarely
+                      // stay in the primary list, but surface them plainly if they do.
+                      if (t.status === "blocked") {
+                        return (
+                          <span className="tag tag-coral">
+                            BLOCKED
+                          </span>
+                        );
+                      }
+                      if (t.status === "declined") {
+                        return (
+                          <span className="tag tag-coral">
+                            DECLINED
+                          </span>
+                        );
+                      }
+                      if (t.status === "revoked") {
+                        return (
+                          <span className="tag tag-coral">
+                            ENDED
+                          </span>
+                        );
+                      }
+                      if (t.status === "pending") {
+                        return (
+                          <span className="tag tag-amber">
+                            AWAITING APPROVAL
+                          </span>
+                        );
+                      }
+                      // Accepted connection: say "Connected" and add a lifecycle
+                      // hint so the user knows what is actually happening on the
+                      // agent channel.
+                      const phase = t.lifecycle || "pending";
+                      const lifecycleHint:
+                        | { text: string; tone: "teal" | "amber" }
+                        | undefined =
+                        phase === "needs_human"
+                          ? { text: " · Needs you", tone: "amber" }
+                          : phase === "human_handling"
+                            ? { text: " · You're handling", tone: "teal" }
+                            : phase === "active"
+                              ? { text: " · Agents talking", tone: "teal" }
+                              : phase === "pending"
+                                ? { text: " · Waiting for them", tone: "amber" }
+                                : undefined;
+                      return (
+                        <span
+                          className={`tag ${lifecycleHint?.tone === "amber" ? "tag-amber" : "tag-teal"}`}
+                        >
+                          CONNECTED
+                          {lifecycleHint?.text}
+                        </span>
+                      );
+                    })()}
+                  </div>
                   </div>
                 </div>
               );
             })}
             {primary.length === 0 && (
-              <p
-                style={{
-                  fontSize: "12px",
-                  color: "var(--text-muted)",
-                  marginTop: "16px",
-                  fontFamily: "DM Sans, sans-serif",
-                }}
-              >
-                No active chats yet.
-              </p>
+              <p className="messages-thread-empty">No active chats yet.</p>
             )}
           </div>
         </div>
@@ -966,25 +960,13 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
       <div
         className="messages-chat-panel"
         style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          background: "var(--bg-base)",
           position: "relative", // anchor for the connection-settings drawer overlay
         }}
       >
         {activeThread ? (
           <>
             {/* Chat header */}
-            <div
-              className="topbar messages-chat-header"
-              style={{
-                gap: "14px",
-                borderBottom: "1px solid var(--border-subtle)",
-                flexWrap: "wrap",
-                rowGap: "10px",
-              }}
-            >
+            <div className="topbar messages-chat-header">
               <button
                 type="button"
                 className="messages-mobile-back"
@@ -993,71 +975,40 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
               >
                 <ArrowLeft size={16} strokeWidth={1.8} />
               </button>
-              <div
-                className="messages-chat-avatar"
-                style={{
-                  width: "36px",
-                  height: "36px",
-                  borderRadius: "var(--r-sm)",
-                  background:
-                    "linear-gradient(135deg, var(--accent-blue), var(--accent-purple))",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontFamily: "Syne, sans-serif",
-                  fontWeight: 800,
-                  fontSize: "14px",
-                  color: "#fff",
-                  flexShrink: 0,
-                }}
-              >
-                {getPartnerName(activeThread)?.charAt(0) || "Z"}
+              <div className="messages-chat-avatar">
+                {partnerAvatars[getPartnerId(activeThread)] ? (
+                  <img
+                    src={partnerAvatars[getPartnerId(activeThread)]!}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  getPartnerName(activeThread)?.charAt(0) || "Z"
+                )}
               </div>
               <div className="messages-chat-heading">
-                <h3
-                  style={{
-                    fontFamily: "Syne, sans-serif",
-                    fontSize: "14px",
-                    fontWeight: 600,
-                    color: "var(--text-primary)",
-                  }}
-                >
-                  {getPartnerName(activeThread)}
-                </h3>
-                <p
-                  style={{
-                    fontFamily: "IBM Plex Mono, monospace",
-                    fontSize: "9.5px",
-                    color: "var(--text-muted)",
-                    maxWidth: "280px",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {getPartnerId(activeThread)}
-                </p>
+                <h3>{getPartnerName(activeThread)}</h3>
               </div>
-              <div className="messages-chat-actions" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px" }}>
+              <div className="messages-chat-actions">
                 {(() => {
                   // Terminal connection states take precedence over the
                   // conversation-phase pill — blocked/declined/revoked
                   // mean no traffic flows here at all.
                   if (activeThread.status === "blocked") {
-                    return <span className="tag tag-coral" style={{ fontSize: "9px" }}>BLOCKED</span>;
+                    return <span className="tag tag-coral">BLOCKED</span>;
                   }
                   if (activeThread.status === "declined") {
-                    return <span className="tag tag-coral" style={{ fontSize: "9px" }}>DECLINED</span>;
+                    return <span className="tag tag-coral">DECLINED</span>;
                   }
                   if (activeThread.status === "revoked") {
-                    return <span className="tag tag-coral" style={{ fontSize: "9px" }}>ENDED</span>;
+                    return <span className="tag tag-coral">ENDED</span>;
                   }
                   // Otherwise surface the friendly conversation phase
                   // (pending → active → needs_human → human_handling).
                   const phase = activeThread.lifecycle || "pending";
                   const label = LIFECYCLE_LABEL[phase] || LIFECYCLE_LABEL.pending;
                   return (
-                    <span className={`tag ${label.tag}`} style={{ fontSize: "9px" }}>
+                    <span className={`tag ${label.tag}`}>
                       {label.text}
                     </span>
                   );
@@ -1067,71 +1018,29 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                 <button
                   onClick={() => setPermissionsOpen(true)}
                   title="Connection settings"
-                  style={{
-                    width: "28px",
-                    height: "28px",
-                    borderRadius: "999px",
-                    background: "var(--bg-surface)",
-                    border: "1px solid var(--border-default)",
-                    color: "var(--text-secondary)",
-                    cursor: "pointer",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "13px",
-                  }}
+                  className="icon-btn-sm"
                 >
-                  ⚙
+                  <Settings size={16} strokeWidth={1.8} />
                 </button>
 
-                {/* ── Mode toggle: YOUR side only. The other side is independent. ── */}
+                {/* ── Mode toggle: controls the AGENT channel only. The human
+                    Conversation tab is always manual. ── */}
                 <button
                   onClick={toggleThreadMode}
                   title={
                     myMode === "agent"
-                      ? "Your AI is auto-replying on this thread. Click to take over."
-                      : "You are handling this thread. Click to delegate to your AI."
+                      ? "AI is replying on the Agent Activity channel. Click to switch to manual replies."
+                      : "You are manually replying on the Agent Activity channel. Click to let your AI take over."
                   }
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    padding: "5px 10px",
-                    borderRadius: "999px",
-                    fontFamily: "IBM Plex Mono, monospace",
-                    fontSize: "10px",
-                    letterSpacing: "0.5px",
-                    cursor: "pointer",
-                    background:
-                      myMode === "agent"
-                        ? "var(--accent-soft-bg)"
-                        : "var(--bg-surface)",
-                    border:
-                      myMode === "agent"
-                        ? "1px solid color-mix(in srgb, var(--accent, #6366f1) 26%, transparent)"
-                        : "1px solid var(--border-default)",
-                    color:
-                      myMode === "agent"
-                        ? "var(--accent)"
-                        : "var(--text-secondary)",
-                  }}
+                  className={`messages-mode-toggle ${myMode === "agent" ? "on" : ""}`}
                 >
-                  {myMode === "agent" ? "AI handling" : "Taken over"}
+                  {myMode === "agent" ? "AI replies" : "Manual replies"}
                 </button>
               </div>
             </div>
 
             {/* ── Channel tabs: Conversation vs Agent Activity ── */}
-            <div
-              className="messages-channel-tabs"
-              style={{
-                display: "flex",
-                gap: "4px",
-                padding: "10px 24px 0",
-                borderBottom: "1px solid var(--border-subtle)",
-                background: "var(--bg-base)",
-              }}
-            >
+            <div className="messages-channel-tabs">
               {([
                 { key: "human", label: "💬 Conversation", help: "Direct human-to-human messages." },
                 { key: "agent", label: "🤖 Agent Activity", help: "Read-only log of what your agent and theirs have been saying to each other." },
@@ -1143,18 +1052,6 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                     className={`messages-channel-tab ${isActive ? "is-active" : ""}`}
                     onClick={() => setActiveChannel(tab.key)}
                     title={tab.help}
-                    style={{
-                      padding: "8px 14px",
-                      fontFamily: "DM Sans, sans-serif",
-                      fontSize: "12px",
-                      fontWeight: 500,
-                      cursor: "pointer",
-                      background: "transparent",
-                      border: "none",
-                      borderBottom: `2px solid ${isActive ? "var(--accent-teal)" : "transparent"}`,
-                      color: isActive ? "var(--text-primary)" : "var(--text-muted)",
-                      marginBottom: "-1px",
-                    }}
                   >
                     {tab.label}
                   </button>
@@ -1163,17 +1060,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
             </div>
 
             {/* Messages area */}
-            <div
-              className="messages-scroll"
-              style={{
-                flex: 1,
-                overflowY: "auto",
-                padding: "24px",
-                display: "flex",
-                flexDirection: "column",
-                gap: "12px",
-              }}
-            >
+            <div className="messages-scroll">
               {/* ── Meeting ticket cards ── */}
               {meetings
                 .filter((m) =>
@@ -1202,7 +1089,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p
                             style={{
-                              fontFamily: "Syne, sans-serif",
+                              fontFamily: "var(--font-chakra-petch), system-ui, sans-serif",
                               fontSize: "14px",
                               fontWeight: 700,
                               color: "var(--text-primary)",
@@ -1213,7 +1100,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                           </p>
                           <p
                             style={{
-                              fontFamily: "DM Sans, sans-serif",
+                              fontFamily: "var(--font-geist), 'Inter', system-ui, sans-serif",
                               fontSize: "12px",
                               color: "var(--text-secondary)",
                             }}
@@ -1221,12 +1108,12 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                             {formatMeetingTime(m.payload?.start_time, m.payload?.end_time)}
                           </p>
                           {m.payload?.location && (
-                            <p style={{ fontFamily: "DM Sans, sans-serif", fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
+                            <p style={{ fontFamily: "var(--font-geist), 'Inter', system-ui, sans-serif", fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
                               📍 {m.payload.location}
                             </p>
                           )}
                           {m.payload?.description && (
-                            <p style={{ fontFamily: "DM Sans, sans-serif", fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: 1.5 }}>
+                            <p style={{ fontFamily: "var(--font-geist), 'Inter', system-ui, sans-serif", fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", lineHeight: 1.5 }}>
                               {m.payload.description}
                             </p>
                           )}
@@ -1246,26 +1133,18 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                             }
                             style={{ fontSize: "9px" }}
                           >
-                            {m.status === "scheduled" ? "✓ ON CALENDAR" : m.status.toUpperCase()}
+                            {meetingStatusLabel({
+                              status: m.status,
+                              awaitingMe,
+                              iProposed,
+                            }).toUpperCase()}
                           </span>
                           <button
                             onClick={() => setHistoryModal(m)}
                             title="View history"
-                            style={{
-                              background: "transparent",
-                              border: "1px solid var(--border-default)",
-                              borderRadius: "999px",
-                              width: "20px",
-                              height: "20px",
-                              color: "var(--text-muted)",
-                              cursor: "pointer",
-                              fontSize: "10px",
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                            }}
+                            className="icon-btn-xs"
                           >
-                            ⓘ
+                            <Info size={12} strokeWidth={1.8} />
                           </button>
                         </div>
                       </div>
@@ -1301,15 +1180,13 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                                 });
                               }}
                               disabled={meetingBusy === m.id || !counterStart || !counterEnd}
-                              className="btn-primary"
-                              style={{ padding: "6px 14px", fontSize: "11px" }}
+                              className="btn btn-primary btn-xs"
                             >
                               Send counter
                             </button>
                             <button
                               onClick={() => setCounterEditing(null)}
-                              className="btn-secondary"
-                              style={{ padding: "6px 14px", fontSize: "11px" }}
+                              className="btn btn-secondary btn-xs"
                             >
                               Cancel
                             </button>
@@ -1320,8 +1197,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                           <button
                             onClick={() => respondToMeeting(m.id, "accept")}
                             disabled={meetingBusy === m.id}
-                            className="btn-primary"
-                            style={{ padding: "6px 14px", fontSize: "11px" }}
+                            className="btn btn-primary btn-xs"
                           >
                             Accept
                           </button>
@@ -1337,16 +1213,14 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                               }
                             }}
                             disabled={meetingBusy === m.id}
-                            className="btn-secondary"
-                            style={{ padding: "6px 14px", fontSize: "11px" }}
+                            className="btn btn-secondary btn-xs"
                           >
                             Counter
                           </button>
                           <button
                             onClick={() => respondToMeeting(m.id, "decline")}
                             disabled={meetingBusy === m.id}
-                            className="btn-danger"
-                            style={{ padding: "6px 14px", fontSize: "11px" }}
+                            className="btn btn-danger btn-xs"
                           >
                             Decline
                           </button>
@@ -1365,7 +1239,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                         >
                           <p
                             style={{
-                              fontFamily: "IBM Plex Mono, monospace",
+                              fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
                               fontSize: "10px",
                               color: "var(--accent-teal)",
                             }}
@@ -1379,16 +1253,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                               }
                             }}
                             disabled={meetingBusy === m.id}
-                            style={{
-                              padding: "4px 10px",
-                              fontSize: "10px",
-                              fontFamily: "IBM Plex Mono, monospace",
-                              background: "transparent",
-                              border: "1px solid rgba(255, 95, 109, 0.35)",
-                              color: "var(--accent-coral)",
-                              borderRadius: "var(--r-sm)",
-                              cursor: "pointer",
-                            }}
+                            className="messages-pill-btn xs danger"
                           >
                             CANCEL MEETING
                           </button>
@@ -1404,7 +1269,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                             return (
                               <p
                                 style={{
-                                  fontFamily: "DM Sans, sans-serif",
+                                  fontFamily: "var(--font-geist), 'Inter', system-ui, sans-serif",
                                   fontSize: "11px",
                                   color: "var(--accent-coral)",
                                   marginBottom: "8px",
@@ -1419,16 +1284,14 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                             <button
                               onClick={() => respondToMeeting(m.id, "accept")}
                               disabled={meetingBusy === m.id}
-                              className="btn-primary"
-                              style={{ padding: "6px 14px", fontSize: "11px" }}
+                              className="btn btn-primary btn-xs"
                             >
                               Retry booking
                             </button>
                             <button
                               onClick={() => respondToMeeting(m.id, "cancel")}
                               disabled={meetingBusy === m.id}
-                              className="btn-secondary"
-                              style={{ padding: "6px 14px", fontSize: "11px" }}
+                              className="btn btn-secondary btn-xs"
                             >
                               Abandon
                             </button>
@@ -1444,31 +1307,58 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                             gap: "8px",
                           }}
                         >
-                          <p
+                          <div
                             style={{
-                              fontFamily: "IBM Plex Mono, monospace",
-                              fontSize: "10px",
-                              color: "var(--text-muted)",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "6px",
+                              flexWrap: "wrap",
                             }}
                           >
-                            {m.status === "accepted"
-                              ? "Booking in progress…"
-                              : `Waiting for ${awaitingMe ? "you" : "the other side"}…`}
-                          </p>
+                            {meetingTimeline({ status: m.status, awaitingMe, iProposed }).map(
+                              (step, idx, arr) => (
+                                <Fragment key={step.label}>
+                                  <span
+                                    style={{
+                                      fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
+                                      fontSize: "9px",
+                                      padding: "2px 8px",
+                                      borderRadius: "999px",
+                                      background:
+                                        step.state === "active"
+                                          ? "var(--accent-soft-bg)"
+                                          : step.state === "done"
+                                            ? "rgba(0, 212, 180, 0.12)"
+                                            : "var(--bg-raised)",
+                                      color:
+                                        step.state === "active"
+                                          ? "var(--accent)"
+                                          : step.state === "done"
+                                            ? "var(--accent-teal)"
+                                            : "var(--text-muted)",
+                                      border:
+                                        step.state === "pending"
+                                          ? "1px dashed var(--border-default)"
+                                          : "1px solid transparent",
+                                    }}
+                                  >
+                                    {step.state === "done" ? "✓ " : ""}
+                                    {step.label}
+                                  </span>
+                                  {idx < arr.length - 1 && (
+                                    <span style={{ color: "var(--text-muted)", fontSize: "10px" }}>
+                                      →
+                                    </span>
+                                  )}
+                                </Fragment>
+                              )
+                            )}
+                          </div>
                           {iProposed && (m.status === "proposed" || m.status === "countered") && (
                             <button
                               onClick={() => respondToMeeting(m.id, "cancel")}
                               disabled={meetingBusy === m.id}
-                              style={{
-                                padding: "4px 10px",
-                                fontSize: "10px",
-                                fontFamily: "IBM Plex Mono, monospace",
-                                background: "transparent",
-                                border: "1px solid var(--border-default)",
-                                color: "var(--text-muted)",
-                                borderRadius: "var(--r-sm)",
-                                cursor: "pointer",
-                              }}
+                              className="messages-pill-btn xs"
                             >
                               WITHDRAW
                             </button>
@@ -1479,44 +1369,41 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                   );
                 })}
 
-              {/* Agent-mode banner — shows when MY side has AI handling on */}
-              {myMode === "agent" && activeThread.status !== "blocked" && (
-                <div
-                  style={{
-                    background: "rgba(0, 212, 180, 0.06)",
-                    border: "1px solid rgba(0, 212, 180, 0.20)",
-                    padding: "10px 14px",
-                    borderRadius: "var(--r-md)",
-                    color: "var(--accent-teal)",
-                    fontSize: "12px",
-                    fontFamily: "DM Sans, sans-serif",
-                    alignSelf: "stretch",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "10px",
-                  }}
-                >
-                  <span>🤖</span>
-                  <span style={{ flex: 1, color: "var(--text-secondary)" }}>
-                    Your AI agent is auto-replying on this thread.
-                  </span>
-                  <button
-                    onClick={toggleThreadMode}
+              {/* Agent-mode banner — only shown inside the Agent Activity channel.
+                  The Conversation tab is always human-to-human; the AI never posts there. */}
+              {activeChannel === "agent" &&
+                myMode === "agent" &&
+                activeThread.status !== "blocked" && (
+                  <div
                     style={{
-                      padding: "4px 10px",
-                      fontSize: "10px",
-                      fontFamily: "IBM Plex Mono, monospace",
-                      background: "transparent",
-                      border: "1px solid rgba(0, 212, 180, 0.40)",
+                      background: "rgba(0, 212, 180, 0.06)",
+                      border: "1px solid rgba(0, 212, 180, 0.20)",
+                      padding: "10px 14px",
+                      borderRadius: "var(--r-md)",
                       color: "var(--accent-teal)",
-                      borderRadius: "var(--r-sm)",
-                      cursor: "pointer",
+                      fontSize: "12px",
+                      fontFamily: "var(--font-geist), 'Inter', system-ui, sans-serif",
+                      alignSelf: "stretch",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
                     }}
                   >
-                    TAKE OVER
-                  </button>
-                </div>
-              )}
+                    <span>🤖</span>
+                    <span style={{ flex: 1, color: "var(--text-secondary)" }}>
+                      Your AI agent is auto-replying on this thread.
+                    </span>
+                    <button
+                      onClick={() => {
+                        setAgentManualReply(true);
+                        toggleThreadMode();
+                      }}
+                      className="messages-pill-btn xs teal"
+                    >
+                      Reply yourself
+                    </button>
+                  </div>
+                )}
 
               {/* Pending request banner */}
               {activeThread.status === "pending" &&
@@ -1591,7 +1478,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                           maxWidth: "90%",
                           textAlign: "center",
                           padding: "8px 14px",
-                          fontFamily: "DM Sans, sans-serif",
+                          fontFamily: "var(--font-geist), 'Inter', system-ui, sans-serif",
                           fontSize: "12.5px",
                           fontStyle: "italic",
                           color: "var(--text-muted)",
@@ -1602,7 +1489,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                         {m.content}
                         <span
                           style={{
-                            fontFamily: "IBM Plex Mono, monospace",
+                            fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
                             fontSize: "10px",
                             marginLeft: "8px",
                             opacity: 0.7,
@@ -1637,12 +1524,14 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                             width: "28px",
                             height: "28px",
                             borderRadius: "var(--r-sm)",
-                            background:
-                              "linear-gradient(135deg, var(--accent-blue), var(--accent-purple))",
+                            overflow: "hidden",
+                            background: partnerAvatars[getPartnerId(activeThread)]
+                              ? "var(--surface-raised)"
+                              : "linear-gradient(135deg, var(--accent-blue), var(--accent-purple))",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
-                            fontFamily: "Syne, sans-serif",
+                            fontFamily: "var(--font-chakra-petch), system-ui, sans-serif",
                             fontWeight: 800,
                             fontSize: "11px",
                             color: "#fff",
@@ -1650,7 +1539,16 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                             marginTop: "2px",
                           }}
                         >
-                          {getPartnerName(activeThread)?.charAt(0) || "A"}
+                          {partnerAvatars[getPartnerId(activeThread)] ? (
+                            <img
+                              src={partnerAvatars[getPartnerId(activeThread)]!}
+                              alt=""
+                              referrerPolicy="no-referrer"
+                              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                            />
+                          ) : (
+                            getPartnerName(activeThread)?.charAt(0) || "A"
+                          )}
                         </div>
                       )}
                       <div
@@ -1676,7 +1574,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                             <span
                               title="Sent by an AI agent"
                               style={{
-                                fontFamily: "IBM Plex Mono, monospace",
+                                fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
                                 fontSize: "9px",
                                 padding: "1px 6px",
                                 borderRadius: "999px",
@@ -1705,88 +1603,29 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
 
             {/* ── Ticket history modal ── */}
             {historyModal && (
-              <div
-                onClick={() => setHistoryModal(null)}
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  background: "rgba(0,0,0,0.55)",
-                  zIndex: 250,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: "24px",
-                }}
-              >
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  style={{
-                    width: "440px",
-                    maxWidth: "95vw",
-                    maxHeight: "80vh",
-                    background: "var(--bg-base)",
-                    border: "1px solid var(--border-default)",
-                    borderRadius: "var(--r-md)",
-                    boxShadow: "0 12px 32px rgba(0,0,0,0.5)",
-                    display: "flex",
-                    flexDirection: "column",
-                  }}
-                >
-                  <div
-                    style={{
-                      padding: "18px 20px",
-                      borderBottom: "1px solid var(--border-subtle)",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                    }}
-                  >
+              <div className="messages-modal-scrim" onClick={() => setHistoryModal(null)}>
+                <div className="messages-modal-shell" onClick={(e) => e.stopPropagation()}>
+                  <div className="messages-panel-head">
                     <div style={{ flex: 1 }}>
-                      <p
-                        style={{
-                          fontFamily: "Syne, sans-serif",
-                          fontSize: "14px",
-                          fontWeight: 700,
-                          color: "var(--text-primary)",
-                        }}
-                      >
-                        Meeting history
-                      </p>
-                      <p
-                        style={{
-                          fontFamily: "IBM Plex Mono, monospace",
-                          fontSize: "9px",
-                          color: "var(--text-muted)",
-                          letterSpacing: "0.5px",
-                          textTransform: "uppercase",
-                          marginTop: "2px",
-                        }}
-                      >
+                      <p className="messages-panel-title">Meeting history</p>
+                      <p className="messages-panel-subtitle">
                         {historyModal.payload?.title || "Untitled meeting"}
                       </p>
                     </div>
                     <button
                       onClick={() => setHistoryModal(null)}
-                      style={{
-                        width: "26px",
-                        height: "26px",
-                        borderRadius: "999px",
-                        background: "var(--bg-surface)",
-                        border: "1px solid var(--border-default)",
-                        color: "var(--text-secondary)",
-                        cursor: "pointer",
-                        fontSize: "12px",
-                      }}
+                      className="messages-panel-close"
+                      aria-label="Close"
                     >
-                      ✕
+                      <X size={14} strokeWidth={1.8} />
                     </button>
                   </div>
 
-                  <div style={{ padding: "16px 20px", overflowY: "auto" }}>
+                  <div className="messages-panel-body">
                     {historyModal.history.length === 0 ? (
-                      <p style={{ fontSize: "12px", color: "var(--text-muted)" }}>No history yet.</p>
+                      <p className="messages-history-empty">No history yet.</p>
                     ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                      <div className="messages-history-list">
                         {historyModal.history.map((h: any, i: number) => {
                           const when = h.at ? new Date(h.at).toLocaleString() : "";
                           const isMe = h.actor_user_id === myUserId;
@@ -1807,64 +1646,27 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                                         : action === "book_failed"
                                           ? "booking failed"
                                           : action;
+                          const dotClass =
+                            action === "book_failed"
+                              ? "messages-history-dot is-failed"
+                              : action === "booked"
+                                ? "messages-history-dot is-booked"
+                                : "messages-history-dot";
                           return (
-                            <div
-                              key={i}
-                              style={{
-                                display: "flex",
-                                gap: "12px",
-                                padding: "10px 12px",
-                                background: "var(--bg-surface)",
-                                borderRadius: "var(--r-sm)",
-                                border: "1px solid var(--border-subtle)",
-                              }}
-                            >
-                              <div
-                                style={{
-                                  width: "8px",
-                                  height: "8px",
-                                  borderRadius: "999px",
-                                  background:
-                                    action === "book_failed"
-                                      ? "var(--accent-coral)"
-                                      : action === "booked"
-                                        ? "var(--accent-teal)"
-                                        : "var(--accent-blue)",
-                                  marginTop: "5px",
-                                  flexShrink: 0,
-                                }}
-                              />
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <p
-                                  style={{
-                                    fontFamily: "DM Sans, sans-serif",
-                                    fontSize: "12px",
-                                    color: "var(--text-primary)",
-                                  }}
-                                >
+                            <div key={i} className="messages-history-row">
+                              <div className={dotClass} />
+                              <div className="messages-history-row-body">
+                                <p className="action">
                                   {isMe ? "You " : "The other side "}
                                   {verb}
                                 </p>
                                 {h.payload && (h.payload.start_time || h.payload.title) && (
-                                  <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px", fontFamily: "IBM Plex Mono, monospace" }}>
+                                  <p className="meta">
                                     {h.payload.title || ""} {h.payload.start_time ? `· ${formatMeetingTime(h.payload.start_time, h.payload.end_time)}` : ""}
                                   </p>
                                 )}
-                                {h.reason && (
-                                  <p style={{ fontSize: "10px", color: "var(--accent-coral)", marginTop: "2px", fontFamily: "DM Sans, sans-serif" }}>
-                                    {h.reason}
-                                  </p>
-                                )}
-                                <p
-                                  style={{
-                                    fontFamily: "IBM Plex Mono, monospace",
-                                    fontSize: "9px",
-                                    color: "var(--text-muted)",
-                                    marginTop: "3px",
-                                  }}
-                                >
-                                  {when}
-                                </p>
+                                {h.reason && <p className="reason">{h.reason}</p>}
+                                <p className="when">{when}</p>
                               </div>
                             </div>
                           );
@@ -1878,185 +1680,53 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
 
             {/* ── Connection settings drawer ── */}
             {permissionsOpen && (
-              <div
-                onClick={() => setPermissionsOpen(false)}
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  background: "rgba(0,0,0,0.55)",
-                  zIndex: 200,
-                  display: "flex",
-                  justifyContent: "flex-end",
-                }}
-              >
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  style={{
-                    width: "360px",
-                    maxWidth: "90vw",
-                    height: "100%",
-                    background: "var(--bg-base)",
-                    borderLeft: "1px solid var(--border-default)",
-                    display: "flex",
-                    flexDirection: "column",
-                    boxShadow: "-12px 0 32px rgba(0,0,0,0.4)",
-                  }}
-                >
-                  <div
-                    style={{
-                      padding: "20px 22px",
-                      borderBottom: "1px solid var(--border-subtle)",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                    }}
-                  >
+              <div className="messages-drawer-scrim" onClick={() => setPermissionsOpen(false)}>
+                <div className="messages-drawer-shell" onClick={(e) => e.stopPropagation()}>
+                  <div className="messages-panel-head">
                     <div style={{ flex: 1 }}>
-                      <p
-                        style={{
-                          fontFamily: "Syne, sans-serif",
-                          fontSize: "14px",
-                          fontWeight: 700,
-                          color: "var(--text-primary)",
-                        }}
-                      >
-                        Connection Settings
-                      </p>
-                      <p
-                        style={{
-                          fontFamily: "IBM Plex Mono, monospace",
-                          fontSize: "9px",
-                          letterSpacing: "0.5px",
-                          color: "var(--text-muted)",
-                          textTransform: "uppercase",
-                          marginTop: "2px",
-                        }}
-                      >
-                        {getPartnerName(activeThread)}
-                      </p>
+                      <p className="messages-panel-title">Connection Settings</p>
+                      <p className="messages-panel-subtitle">{getPartnerName(activeThread)}</p>
                     </div>
                     <button
                       onClick={() => setPermissionsOpen(false)}
-                      style={{
-                        width: "26px",
-                        height: "26px",
-                        borderRadius: "999px",
-                        background: "var(--bg-surface)",
-                        border: "1px solid var(--border-default)",
-                        color: "var(--text-secondary)",
-                        cursor: "pointer",
-                        fontSize: "12px",
-                      }}
+                      className="messages-panel-close"
+                      aria-label="Close"
                     >
-                      ✕
+                      <X size={14} strokeWidth={1.8} />
                     </button>
                   </div>
 
-                  <div style={{ padding: "16px 22px 20px", overflowY: "auto", flex: 1 }}>
-                    <p
-                      className="section-label"
-                      style={{ marginBottom: "12px" }}
-                    >
+                  <div className="messages-panel-body">
+                    <p className="section-label" style={{ marginBottom: "12px" }}>
                       WHAT THIS CONNECTION CAN DO
                     </p>
-                    <p
-                      style={{
-                        fontFamily: "DM Sans, sans-serif",
-                        fontSize: "12px",
-                        color: "var(--text-secondary)",
-                        lineHeight: 1.55,
-                        marginBottom: "18px",
-                      }}
-                    >
+                    <p className="messages-panel-lead">
                       These toggles control what the other side's AI agent is allowed to ask
                       yours for, on this thread only. Defaults are conservative — flip on the
                       ones you trust this connection with.
                     </p>
 
                     {permissions === null ? (
-                      <p
-                        style={{
-                          fontSize: "12px",
-                          color: "var(--text-muted)",
-                          fontFamily: "IBM Plex Mono, monospace",
-                        }}
-                      >
-                        Loading permissions...
-                      </p>
+                      <p className="messages-history-empty">Loading permissions...</p>
                     ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                      <div>
                         {PERMISSION_LABELS.map(({ key, label, help }) => {
                           const on = permissions[key];
                           const saving = permissionsSaving === key;
                           return (
-                            <div
-                              key={key}
-                              style={{
-                                padding: "12px 14px",
-                                borderRadius: "var(--r-md)",
-                                background: "var(--bg-surface)",
-                                border: `1px solid ${on ? "rgba(0, 212, 180, 0.30)" : "var(--border-default)"}`,
-                                display: "flex",
-                                gap: "12px",
-                                alignItems: "flex-start",
-                              }}
-                            >
-                              <div style={{ flex: 1 }}>
-                                <p
-                                  style={{
-                                    fontFamily: "DM Sans, sans-serif",
-                                    fontSize: "13px",
-                                    fontWeight: 500,
-                                    color: "var(--text-primary)",
-                                    marginBottom: "4px",
-                                  }}
-                                >
-                                  {label}
-                                </p>
-                                <p
-                                  style={{
-                                    fontFamily: "DM Sans, sans-serif",
-                                    fontSize: "11px",
-                                    color: "var(--text-muted)",
-                                    lineHeight: 1.5,
-                                  }}
-                                >
-                                  {help}
-                                </p>
+                            <div key={key} className={`permission-row ${on ? "is-on" : ""}`}>
+                              <div className="permission-row-label">
+                                <p className="name">{label}</p>
+                                <p className="help">{help}</p>
                               </div>
                               <button
                                 onClick={() => toggleConnectionPermission(key)}
                                 disabled={saving}
-                                style={{
-                                  width: "38px",
-                                  height: "22px",
-                                  borderRadius: "999px",
-                                  border: "none",
-                                  cursor: saving ? "wait" : "pointer",
-                                  background: on
-                                    ? "var(--accent-teal)"
-                                    : "var(--bg-raised)",
-                                  position: "relative",
-                                  flexShrink: 0,
-                                  transition: "background 0.15s",
-                                  opacity: saving ? 0.6 : 1,
-                                }}
+                                className={`permission-toggle ${on ? "is-on" : ""}`}
                                 aria-pressed={on}
                                 aria-label={label}
                               >
-                                <span
-                                  style={{
-                                    position: "absolute",
-                                    top: "2px",
-                                    left: on ? "18px" : "2px",
-                                    width: "18px",
-                                    height: "18px",
-                                    borderRadius: "999px",
-                                    background: "#fff",
-                                    transition: "left 0.15s",
-                                    boxShadow: "0 1px 3px rgba(0,0,0,0.4)",
-                                  }}
-                                />
+                                <span className="knob" />
                               </button>
                             </div>
                           );
@@ -2066,24 +1736,8 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
 
                     {/* Connection management — Revoke for accepted, Unblock for blocked */}
                     {activeThread.status === "accepted" && (
-                      <div
-                        style={{
-                          marginTop: "20px",
-                          padding: "16px",
-                          background: "var(--bg-surface)",
-                          borderRadius: "var(--r-md)",
-                          border: "1px solid var(--border-default)",
-                        }}
-                      >
-                        <p
-                          style={{
-                            fontFamily: "DM Sans, sans-serif",
-                            fontSize: "12px",
-                            color: "var(--text-muted)",
-                            lineHeight: 1.5,
-                            marginBottom: "10px",
-                          }}
-                        >
+                      <div className="messages-mgmt-card">
+                        <p>
                           End this connection. Past messages stay visible for
                           your records, but no new traffic flows in either
                           direction. Any in-flight agent work is canceled.
@@ -2099,32 +1753,15 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                               setPermissionsOpen(false);
                             }
                           }}
-                          className="btn-danger"
-                          style={{ padding: "6px 14px", fontSize: "11px" }}
+                          className="btn btn-danger btn-xs"
                         >
                           End connection
                         </button>
                       </div>
                     )}
                     {activeThread.status === "blocked" && (
-                      <div
-                        style={{
-                          marginTop: "20px",
-                          padding: "16px",
-                          background: "var(--bg-surface)",
-                          borderRadius: "var(--r-md)",
-                          border: "1px solid var(--border-default)",
-                        }}
-                      >
-                        <p
-                          style={{
-                            fontFamily: "DM Sans, sans-serif",
-                            fontSize: "12px",
-                            color: "var(--text-muted)",
-                            lineHeight: 1.5,
-                            marginBottom: "10px",
-                          }}
-                        >
+                      <div className="messages-mgmt-card">
+                        <p>
                           You blocked this connection. Unblocking restores it
                           to accepted; future messages flow normally.
                         </p>
@@ -2133,16 +1770,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                             await transitionConnection("unblock");
                             setPermissionsOpen(false);
                           }}
-                          style={{
-                            padding: "6px 14px",
-                            fontSize: "11px",
-                            fontFamily: "IBM Plex Mono, monospace",
-                            background: "transparent",
-                            border: "1px solid rgba(0, 212, 180, 0.40)",
-                            color: "var(--accent-teal)",
-                            borderRadius: "var(--r-sm)",
-                            cursor: "pointer",
-                          }}
+                          className="btn btn-xs btn-accent"
                         >
                           Unblock
                         </button>
@@ -2153,187 +1781,119 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
               </div>
             )}
 
-            {/* Input bar — only on the human channel. The agent channel is a
-                read-only transparency log; humans don't type into it. */}
+            {/* Input bar — human channel is always manual. Agent channel defaults
+                to AI replies but supports one-off manual replies via "Reply yourself". */}
             {activeChannel === "human" ? (
-              <div
-                className="messages-composer"
-                style={{
-                  padding: "16px 24px 20px",
-                  borderTop: "1px solid var(--border-subtle)",
-                  background: "var(--bg-surface)",
-                }}
-              >
-                <div
-                  className="messages-composer-inner"
-                  style={{ maxWidth: "720px", margin: "0 auto" }}
-                >
+              <div className="messages-composer">
+                <div className="messages-composer-inner">
                   <div className="input-wrap">
-                    <input
-                      className="chat-input"
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleSend();
-                      }}
-                      placeholder={
-                        activeThread.status === "accepted"
-                          ? "Type a message..."
-                          : activeThread.status === "declined"
-                            ? "Connection declined."
-                            : activeThread.status === "revoked"
-                              ? "Connection ended."
-                              : activeThread.status === "blocked"
-                                ? "Blocked."
-                                : "Awaiting approval..."
-                      }
-                      disabled={
-                        activeThread.status !== "accepted"
-                      }
-                    />
-                    <button
-                      onClick={handleSend}
-                      disabled={
-                        !draft.trim() || activeThread.status !== "accepted"
-                      }
-                      className="btn-primary"
-                      style={{ padding: "8px 18px", fontSize: "12px" }}
-                    >
-                      Send
-                    </button>
+                    <div className="input-wrap-inner">
+                      <input
+                        className="chat-input"
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSend();
+                        }}
+                        placeholder={
+                          activeThread.status === "accepted"
+                            ? "Type a message..."
+                            : activeThread.status === "declined"
+                              ? "Connection declined."
+                              : activeThread.status === "revoked"
+                                ? "Connection ended."
+                                : activeThread.status === "blocked"
+                                  ? "Blocked."
+                                  : "Awaiting approval..."
+                        }
+                        disabled={
+                          activeThread.status !== "accepted"
+                        }
+                      />
+                      <button
+                        onClick={handleSend}
+                        disabled={
+                          !draft.trim() || activeThread.status !== "accepted"
+                        }
+                        className="btn-primary"
+                        aria-label="Send"
+                      >
+                        <ArrowUp />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
-            ) : myMode === "human" ? (
-              /* Taken-over mode: the user can type on the agent channel */
-              <div
-                className="messages-composer"
-                style={{
-                  padding: "16px 24px 20px",
-                  borderTop: "1px solid var(--border-subtle)",
-                  background: "var(--bg-surface)",
-                }}
-              >
-                <div className="messages-composer-inner" style={{ maxWidth: "720px", margin: "0 auto" }}>
+            ) : myMode === "human" || agentManualReply ? (
+              /* User is typing on the agent channel (permanent take-over or one-off reply). */
+              <div className="messages-composer">
+                <div className="messages-composer-inner">
                   <div className="input-wrap">
-                    <input
-                      className="chat-input"
-                      value={agentDraft}
-                      onChange={(e) => setAgentDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleAgentSend();
-                      }}
-                      placeholder="You're typing on the agent channel…"
-                      disabled={agentSending}
-                    />
-                    <button
-                      onClick={handleAgentSend}
-                      disabled={!agentDraft.trim() || agentSending}
-                      className="btn-primary"
-                      style={{ padding: "8px 18px", fontSize: "12px" }}
-                    >
-                      {agentSending ? "…" : "Send"}
-                    </button>
+                    <div className="input-wrap-inner">
+                      <input
+                        className="chat-input"
+                        value={agentDraft}
+                        onChange={(e) => setAgentDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleAgentSend();
+                        }}
+                        placeholder={
+                          agentManualReply
+                            ? "Type your reply… (AI will resume after you send)"
+                            : "You're typing on the agent channel…"
+                        }
+                        disabled={agentSending}
+                      />
+                      <button
+                        onClick={handleAgentSend}
+                        disabled={!agentDraft.trim() || agentSending}
+                        className="btn-primary"
+                        aria-label="Send"
+                      >
+                        <ArrowUp />
+                      </button>
+                    </div>
+                  </div>
+                  {!agentManualReply && (
                     <button
                       onClick={toggleThreadMode}
                       title="Hand back to your AI agent"
-                      style={{
-                        padding: "8px 12px",
-                        fontSize: "10px",
-                        fontFamily: "IBM Plex Mono, monospace",
-                        background: "rgba(0, 212, 180, 0.08)",
-                        border: "1px solid rgba(0, 212, 180, 0.25)",
-                        color: "var(--accent-teal)",
-                        borderRadius: "var(--r-sm)",
-                        cursor: "pointer",
-                        whiteSpace: "nowrap",
-                      }}
+                      className="messages-pill-btn teal"
                     >
                       🤖 Resume AI
                     </button>
-                  </div>
+                  )}
+                  {agentManualReply && (
+                    <button
+                      onClick={() => setAgentManualReply(false)}
+                      title="Cancel and keep AI handling"
+                      className="messages-pill-btn"
+                    >
+                      Cancel
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (
-              /* AI Handling mode: read-only log with a Take Over button */
-              <div
-                className="messages-ai-notice"
-                style={{
-                  padding: "14px 24px 18px",
-                  borderTop: "1px solid var(--border-subtle)",
-                  background: "var(--bg-surface)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "12px",
-                }}
-              >
-                <p
-                  style={{
-                    fontFamily: "IBM Plex Mono, monospace",
-                    fontSize: "10px",
-                    color: "var(--text-muted)",
-                    letterSpacing: "0.4px",
-                  }}
-                >
-                  Your AI agent is handling this conversation.
-                </p>
+              /* AI Handling mode: offer a one-off manual reply without permanently taking over. */
+              <div className="messages-ai-notice">
+                <p>Your AI agent is handling this conversation.</p>
                 <button
-                  onClick={toggleThreadMode}
-                  style={{
-                    padding: "6px 14px",
-                    fontSize: "10px",
-                    fontFamily: "IBM Plex Mono, monospace",
-                    background: "transparent",
-                    border: "1px solid var(--border-default)",
-                    color: "var(--text-secondary)",
-                    borderRadius: "var(--r-sm)",
-                    cursor: "pointer",
-                    whiteSpace: "nowrap",
+                  onClick={() => {
+                    setAgentManualReply(true);
+                    toggleThreadMode();
                   }}
+                  className="messages-pill-btn"
                 >
-                  👤 Take Over
+                  ✍️ Reply yourself
                 </button>
               </div>
             )}
           </>
         ) : (
-          <div
-            className="messages-empty-state"
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "12px",
-            }}
-          >
-            <div
-              style={{
-                width: "48px",
-                height: "48px",
-                borderRadius: "var(--r-md)",
-                background: "var(--bg-surface)",
-                border: "1px solid var(--border-default)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "20px",
-                color: "var(--text-muted)",
-              }}
-            >
-              ◈
-            </div>
-            <p
-              style={{
-                color: "var(--text-muted)",
-                fontSize: "13px",
-                fontFamily: "DM Sans, sans-serif",
-              }}
-            >
-              Select a connection to start messaging
-            </p>
+          <div className="messages-empty-state">
+            <div className="icon-box">◈</div>
+            <p>Select a connection to start messaging</p>
             <p className="section-label">CROSS-NETWORK PROTOCOL</p>
           </div>
         )}

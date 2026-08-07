@@ -12,6 +12,7 @@ All functions accept a `user_id` to look up stored OAuth tokens.
 
 import tweepy
 from services.token_store import get_tokens
+from mcp.tools.error_utils import friendly_error
 
 import asyncio
 
@@ -47,7 +48,7 @@ def post_tweet(user_id: str, text: str) -> dict:
             "text": text,
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("post to X", e)
 
 
 def read_timeline(user_id: str, max_results: int = 10) -> dict:
@@ -76,7 +77,7 @@ def read_timeline(user_id: str, max_results: int = 10) -> dict:
             ],
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("read your X timeline", e)
 
 
 def send_dm(user_id: str, recipient_username: str, text: str) -> dict:
@@ -96,7 +97,12 @@ def send_dm(user_id: str, recipient_username: str, text: str) -> dict:
         # Look up recipient by username
         recipient = client.get_user(username=recipient_username)
         if not recipient.data:
-            return {"success": False, "error": f"User @{recipient_username} not found"}
+            return {
+                "success": False,
+                "error": f"User @{recipient_username} not found",
+                "error_message": f"I couldn't find an X account with the handle @{recipient_username}.",
+                "hint": "Double-check the username and try again.",
+            }
 
         response = client.create_direct_message(
             participant_id=recipient.data.id,
@@ -104,7 +110,7 @@ def send_dm(user_id: str, recipient_username: str, text: str) -> dict:
         )
         return {"success": True, "dm_id": response.data["id"]}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("send an X DM", e, f"Make sure @{recipient_username} exists and your account can message them.")
 
 
 def read_dms(user_id: str, max_results: int = 10) -> dict:
@@ -133,4 +139,4 @@ def read_dms(user_id: str, max_results: int = 10) -> dict:
             ],
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("read your X DMs", e)

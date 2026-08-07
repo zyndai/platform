@@ -58,8 +58,14 @@ class IngestResult:
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-def _is_enabled() -> bool:
-    """Memory features are enabled when a shared JWT secret is configured."""
+def is_enabled() -> bool:
+    """Memory features are enabled when a shared JWT secret is configured.
+
+    Public so every caller (orchestrator, nudge_engine, digital_twin,
+    daily_brief, proactive_loop, twin.py, ...) checks the same thing one
+    way instead of re-testing ``config.MEMORY_LAYER_JWT_SECRET`` truthiness
+    inline everywhere.
+    """
     return bool(config.MEMORY_LAYER_JWT_SECRET)
 
 
@@ -76,7 +82,8 @@ def _make_jwt(user_id: str) -> str:
     now = int(time.time())
     payload = {
         "sub": user_id,
-        "type": "access",
+        "iss": "zynd",
+        "typ": "access",
         "iat": now,
         "exp": now + 300,  # 5 minutes — enough for a single request
     }
@@ -113,7 +120,7 @@ async def get_context(
         On error, returns empty context with error set — callers should
         degrade gracefully.
     """
-    if not _is_enabled():
+    if not is_enabled():
         return MemoryContext()
 
     if k is None:
@@ -171,6 +178,42 @@ async def get_context(
         return MemoryContext(error=str(exc)[:120])
 
 
+async def list_assertions(user_id: str) -> list[MemoryAssertion]:
+    """Fetch the user's full active assertion graph — every current fact,
+    unranked (no topic filter, no confidence cutoff).
+
+    Distinct from `get_context`: that's a topic-scoped, ranked slice for
+    prompt injection; this is "everything", for surfaces like a settings
+    page where the user wants to see (and confirm/forget) the whole graph.
+    """
+    if not is_enabled():
+        return []
+
+    token = _make_jwt(user_id)
+    try:
+        async with _client() as client:
+            resp = await client.get(
+                f"/users/{user_id}/graph",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            resp.raise_for_status()
+            raw: list[dict[str, Any]] = resp.json()
+            return [
+                MemoryAssertion(
+                    statement=item.get("statement", ""),
+                    predicate=item.get("predicate", "unknown"),
+                    object=item.get("object") or "",
+                    object_type=item.get("object_type") or "unknown",
+                    confidence=float(item.get("confidence", 0.0)),
+                    relevance=1.0,
+                )
+                for item in raw
+            ]
+    except Exception as exc:
+        logger.warning("[memory] /users/%s/graph failed: %s", user_id, exc)
+        return []
+
+
 async def ingest_turns(
     user_id: str,
     turns: list[dict[str, Any]],
@@ -189,7 +232,7 @@ async def ingest_turns(
         conversation_id: Optional conversation identifier for grouping.
         source_system: Label for the originating system.
     """
-    if not _is_enabled():
+    if not is_enabled():
         return IngestResult()
     if not turns:
         return IngestResult()
@@ -224,9 +267,13 @@ async def ingest_turns(
         return IngestResult(error=str(exc)[:120])
 
 
-async def confirm_fact(user_id: str, fact_statement: str) -> bool:
-    """Boost confidence on a fact the user has explicitly confirmed."""
-    if not _is_enabled():
+async def confirm_by_ref(user_id: str, predicate: str, obj: str) -> bool:
+    """Confirm a fact by its exact (predicate, object) pair — the shape the
+    memory-layer's FactRef actually requires (assertions have no stable id).
+    Use this directly when the caller already has the exact pair (e.g. a
+    settings UI listing real assertions); use `confirm_fact` when only a
+    loose natural-language description is available."""
+    if not is_enabled():
         return False
 
     token = _make_jwt(user_id)
@@ -234,7 +281,7 @@ async def confirm_fact(user_id: str, fact_statement: str) -> bool:
         async with _client() as client:
             resp = await client.post(
                 "/me/confirm",
-                json={"statement": fact_statement},
+                json={"predicate": predicate, "object": obj},
                 headers={"Authorization": f"Bearer {token}"},
             )
             resp.raise_for_status()
@@ -244,9 +291,9 @@ async def confirm_fact(user_id: str, fact_statement: str) -> bool:
         return False
 
 
-async def forget_fact(user_id: str, fact_statement: str) -> bool:
-    """Decay a fact the user wants forgotten."""
-    if not _is_enabled():
+async def forget_by_ref(user_id: str, predicate: str, obj: str) -> bool:
+    """Forget a fact by its exact (predicate, object) pair. See `confirm_by_ref`."""
+    if not is_enabled():
         return False
 
     token = _make_jwt(user_id)
@@ -254,7 +301,7 @@ async def forget_fact(user_id: str, fact_statement: str) -> bool:
         async with _client() as client:
             resp = await client.post(
                 "/me/forget",
-                json={"statement": fact_statement},
+                json={"predicate": predicate, "object": obj},
                 headers={"Authorization": f"Bearer {token}"},
             )
             resp.raise_for_status()
@@ -262,3 +309,42 @@ async def forget_fact(user_id: str, fact_statement: str) -> bool:
     except Exception as exc:
         logger.debug("[memory] /forget failed for %s: %s", user_id, exc)
         return False
+
+
+async def _find_fact_ref(user_id: str, fact_statement: str) -> tuple[str, str] | None:
+    """Resolve a loose natural-language fact description to the
+    (predicate, object) pair the API needs, by matching it against the
+    user's current graph. Returns None when nothing matches."""
+    needle = (fact_statement or "").strip().lower()
+    if not needle:
+        return None
+    assertions = await list_assertions(user_id)
+    if not assertions:
+        return None
+    for a in assertions:
+        if needle in a.statement.lower() or a.statement.lower() in needle:
+            return (a.predicate, a.object)
+    for a in assertions:
+        if a.object and (needle in a.object.lower() or a.object.lower() in needle):
+            return (a.predicate, a.object)
+    return None
+
+
+async def confirm_fact(user_id: str, fact_statement: str) -> bool:
+    """Boost confidence on a fact the user has explicitly confirmed, given a
+    loose natural-language description of it (see `_find_fact_ref`)."""
+    ref = await _find_fact_ref(user_id, fact_statement)
+    if not ref:
+        logger.debug("[memory] /confirm: no assertion matched %r for %s", fact_statement, user_id)
+        return False
+    return await confirm_by_ref(user_id, *ref)
+
+
+async def forget_fact(user_id: str, fact_statement: str) -> bool:
+    """Decay a fact the user wants forgotten, given a loose natural-language
+    description of it (see `_find_fact_ref`)."""
+    ref = await _find_fact_ref(user_id, fact_statement)
+    if not ref:
+        logger.debug("[memory] /forget: no assertion matched %r for %s", fact_statement, user_id)
+        return False
+    return await forget_by_ref(user_id, *ref)

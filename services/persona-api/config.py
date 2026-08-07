@@ -106,6 +106,9 @@ OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "")
 OPENROUTER_BASE_URL: str = os.getenv(
     "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
 )
+# Comma-separated models OpenRouter falls back to (in order) if
+# OPENROUTER_MODEL's provider errors out (e.g. upstream balance/rate-limit).
+OPENROUTER_FALLBACK_MODELS: str = os.getenv("OPENROUTER_FALLBACK_MODELS", "")
 
 # ── LLM Provider Selection ──────────────────────────────────────────
 # "openai", "gemini", "openrouter", or "custom"

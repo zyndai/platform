@@ -17,6 +17,7 @@ import logging
 from typing import Any
 
 import config
+from agent.memory_client import is_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,14 @@ async def find_best_introduction(
         # match_score comes straight from search_zynd_personas — the actual
         # keyword-overlap count between `topic` and this candidate's bio.
         # Pass it through so ranking here reflects real topical relevance.
-        score = await _score_candidate(user_id, entity_id, topic, raw_match_score=candidate.get("match_score", 0))
+        score = await _score_candidate(
+            user_id,
+            entity_id,
+            topic,
+            raw_match_score=candidate.get("match_score", 0),
+            target_name=candidate.get("name", ""),
+            target_description=candidate.get("description", ""),
+        )
         candidate["score"] = score["total"]
         candidate["score_breakdown"] = score
         candidate["connection_status"] = score.get("connection_status", "none")
@@ -121,14 +129,27 @@ async def get_network_overlap(
         conn_status = await _check_connection(user_id, target_agent_id)
         overlap["connection_status"] = conn_status
 
+        # Resolve the target's actual profile once — used both as a real
+        # search topic below (a raw agent_id is not natural language and
+        # would never semantically match anything in memory) and as the
+        # source of *their* interests (previously this pulled the caller's
+        # own profile by mistake, so "shared interests" was really "the
+        # user's interests compared against themselves").
+        from mcp.tools.zynd_network import get_persona_profile
+        target_profile_result = get_persona_profile(target_agent_id)
+        target_name = (target_profile_result or {}).get("name") or ""
+        target_description = (target_profile_result or {}).get("description") or ""
+        target_profile_fields = (target_profile_result or {}).get("profile") or {}
+        search_topic = f"{target_name} {target_description}".strip() or target_agent_id
+
         # Query memory-layer for context about both parties.
-        if config.MEMORY_LAYER_JWT_SECRET:
+        if is_enabled():
             from agent.memory_client import get_context
 
             # What does the user's memory say about this person?
             user_ctx = await get_context(
                 user_id=user_id,
-                topic=target_agent_id,
+                topic=search_topic,
                 k=5,
                 min_confidence=0.4,
             )
@@ -145,10 +166,7 @@ async def get_network_overlap(
                 min_confidence=0.5,
             )
 
-            # Try to get the target's profile from the network.
-            from agent.persona_manager import get_persona_status
-            persona = get_persona_status(user_id)
-            profile = persona.get("profile") or {}
+            profile = target_profile_fields
 
             # Match topics that overlap.
             if user_topics and user_topics.assertions and profile:
@@ -196,6 +214,8 @@ async def _score_candidate(
     target_agent_id: str,
     topic: str,
     raw_match_score: int = 0,
+    target_name: str = "",
+    target_description: str = "",
 ) -> dict[str, Any]:
     """Score a candidate for introduction relevance.
 
@@ -207,6 +227,10 @@ async def _score_candidate(
             regardless of fit, so ranking was driven entirely by connection/
             mutual/trust bonuses — a candidate with zero relation to the topic
             but one mutual connection could outrank a strong topical match.
+        target_name, target_description: From the search result row that
+            produced this candidate — used as the memory-layer search topic
+            below instead of the raw `target_agent_id`, which is not natural
+            language and would never semantically match a stored assertion.
     """
     score: dict[str, Any] = {
         "total": 0.0,
@@ -241,17 +265,24 @@ async def _score_candidate(
         score["mutual_context"] = shared
 
     # Trust bonus from memory: has the user mentioned this person before?
-    if config.MEMORY_LAYER_JWT_SECRET:
+    if is_enabled():
         try:
             from agent.memory_client import get_context
+            search_topic = f"{target_name} {target_description}".strip() or target_agent_id
             ctx = await get_context(
                 user_id=user_id,
-                topic=target_agent_id,
+                topic=search_topic,
                 k=3,
                 min_confidence=0.5,
             )
             if ctx and ctx.assertions:
-                score["trust_bonus"] = 0.15
+                # Weight by how confident/relevant the strongest match is,
+                # rather than a flat bonus for "any assertion came back at
+                # all" — a barely-relevant hit and a strong, confident one
+                # about this specific person shouldn't move the score by
+                # the same amount.
+                top = ctx.assertions[0]
+                score["trust_bonus"] = round(0.15 * top.confidence, 4)
         except Exception:
             pass
 

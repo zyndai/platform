@@ -58,8 +58,12 @@ def _predicate_label(predicate: str) -> str:
     return labels.get(predicate, predicate)
 
 
-def _confidence_bar(confidence: float, width: int = 5) -> str:
-    """A visual confidence bar like ████░."""
+def confidence_bar(confidence: float, width: int = 5) -> str:
+    """A visual confidence bar like ████░.
+
+    Public — this exact rendering was independently reimplemented in
+    mcp/tools/twin.py; both now share this one.
+    """
     filled = max(1, int(confidence * width))
     return "█" * filled + "░" * (width - filled)
 
@@ -92,7 +96,7 @@ def format_context_for_prompt(context: MemoryContext) -> str:
         label = _predicate_label(predicate)
         lines.append(f"### {label}")
         for a in assertions:
-            bar = _confidence_bar(a.confidence)
+            bar = confidence_bar(a.confidence)
             obj = a.object if a.object else a.statement
             lines.append(f"- {bar} {obj}")
         lines.append("")

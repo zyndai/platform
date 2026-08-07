@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import config
-from agent.memory_client import get_context
+from agent.memory_client import get_context, is_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +206,7 @@ async def answer_like_me(
     Returns:
         A natural-language answer synthesized from memory.
     """
-    if not config.MEMORY_LAYER_JWT_SECRET:
+    if not is_enabled():
         return "I don't have access to my memory store yet. Configure MEMORY_LAYER_JWT_SECRET to enable this."
 
     # 1. Query memory-layer for relevant facts.
@@ -349,7 +349,7 @@ async def generate_public_profile(user_id: str) -> dict[str, Any]:
         profile["bio"] = persona.get("description") or persona.get("profile", {}).get("title", "")
 
         # Memory-layer facts.
-        if config.MEMORY_LAYER_JWT_SECRET:
+        if is_enabled():
             ctx = await get_context(
                 user_id=user_id,
                 topic="work role interests expertise projects achievements",

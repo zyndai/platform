@@ -43,6 +43,7 @@ import httpx
 import requests
 
 import config
+from mcp.tools.error_utils import friendly_error, friendly_error_message
 from agent.a2a.types import (
     ZYND_AUTH_EXPIRED,
     ZYND_AUTH_FAILED,
@@ -145,8 +146,9 @@ def search_zynd_services(query: str, top_k: int = 5, category: str = "") -> dict
     if not q:
         return {
             "status": "error",
-            "error": "Empty query",
-            "hint": "Pass a short natural-language description of the capability you need.",
+            "error": "No search query provided",
+            "error_message": "I need a short description of what you're looking for before I can search.",
+            "hint": "Try something like 'currency converter' or 'pdf to text'.",
             "results": [],
             "count": 0,
         }
@@ -179,15 +181,19 @@ def search_zynd_services(query: str, top_k: int = 5, category: str = "") -> dict
     except requests.exceptions.Timeout:
         return {
             "status": "error",
-            "error": "Registry search timed out.",
-            "hint": "Tell the user the network discovery is slow right now and offer to retry.",
+            "error": "Network search timed out",
+            "error_message": "The service directory took too long to respond.",
+            "hint": "Wait a moment and try again, or ask me another way.",
             "results": [],
             "count": 0,
         }
     except Exception as e:
+        err = friendly_error("search the Zynd Network", e)
         return {
             "status": "error",
-            "error": f"Registry search failed: {e}",
+            "error": err["error"],
+            "error_message": err["error_message"],
+            "hint": err["hint"],
             "results": [],
             "count": 0,
         }
@@ -261,7 +267,12 @@ def get_zynd_service_card(entity_id: str) -> dict:
     """
     eid = (entity_id or "").strip()
     if not eid:
-        return {"status": "error", "error": "entity_id is required."}
+        return {
+            "status": "error",
+            "error": "No service ID provided",
+            "error_message": "I need the service ID from the search result to fetch its details.",
+            "hint": "Run a search first, then pick an entity_id from the results.",
+        }
 
     try:
         resp = requests.get(
@@ -272,14 +283,18 @@ def get_zynd_service_card(entity_id: str) -> dict:
         return {
             "status": "error",
             "entity_id": eid,
-            "error": "Registry timed out fetching the service card.",
-            "hint": "Try another service from the search results.",
+            "error": "Fetching service details timed out",
+            "error_message": "The service directory took too long to load the card.",
+            "hint": "Try another result from the search, or wait a moment and try again.",
         }
     except Exception as e:
+        err = friendly_error("fetch the service details", e)
         return {
             "status": "error",
             "entity_id": eid,
-            "error": f"Registry request failed: {e}",
+            "error": err["error"],
+            "error_message": err["error_message"],
+            "hint": err["hint"],
         }
 
     # The registry proxies the fetch from the service's deployer. When the
@@ -288,15 +303,12 @@ def get_zynd_service_card(entity_id: str) -> dict:
     # with a JSON `error` field. Surface that distinctly so the LLM knows
     # to pick a different result rather than retrying this one.
     if resp.status_code == 502:
-        try:
-            err_payload = resp.json() or {}
-        except Exception:
-            err_payload = {}
         return {
             "status": "unreachable",
             "entity_id": eid,
-            "error": err_payload.get("error") or "Service is registered but its agent-card endpoint is unreachable.",
-            "hint": "This service's deployment is broken. Try another result from search_zynd_services.",
+            "error": "This service is currently unreachable",
+            "error_message": "The service is listed but its deployment isn't responding right now.",
+            "hint": "Try another result from the search.",
         }
     if resp.status_code == 404:
         # Not in the registry — but it may be a deployer slug for an agent
@@ -308,15 +320,20 @@ def get_zynd_service_card(entity_id: str) -> dict:
         return {
             "status": "not_found",
             "entity_id": eid,
-            "error": "No entity with that id is registered.",
+            "error": "Service not found",
+            "error_message": "No service with that ID is registered on the network.",
+            "hint": "Double-check the ID or run another search.",
         }
     try:
         resp.raise_for_status()
     except Exception as e:
+        err = friendly_error("fetch the service details", e)
         return {
             "status": "error",
             "entity_id": eid,
-            "error": f"Registry returned HTTP {resp.status_code}: {e}",
+            "error": err["error"],
+            "error_message": err["error_message"],
+            "hint": err["hint"],
         }
 
     return _card_to_result(resp.json() or {}, eid)
@@ -585,7 +602,12 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None, user_id
     """
     eid = (entity_id or "").strip()
     if not eid:
-        return {"status": "error", "error": "entity_id is required."}
+        return {
+            "status": "error",
+            "error": "No service ID provided",
+            "error_message": "I need the service ID to call it.",
+            "hint": "Use the entity_id returned by the search or card lookup.",
+        }
 
     has_text = bool((text or "").strip())
     has_data = isinstance(data, dict) and len(data) > 0
@@ -593,8 +615,9 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None, user_id
         return {
             "status": "error",
             "entity_id": eid,
-            "error": "At least one of 'text' or 'data' must be provided.",
-            "hint": "Check the input_schema returned by get_zynd_service_card and try again.",
+            "error": "Nothing to send to the service",
+            "error_message": "A service call needs either free text (text=) or structured inputs (data=).",
+            "hint": "Check the input_schema from the service card and try again.",
         }
 
     # Get the real URL from the card. Never trust the ``service_endpoint``
@@ -606,18 +629,22 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None, user_id
         return {
             "status": "error",
             "entity_id": eid,
-            "error": (
-                f"Could not load the service card ({card_status}): {card.get('error')}"
+            "error": "Couldn't load the service card",
+            "error_message": (
+                card.get("error_message")
+                or card.get("error")
+                or "I couldn't read this service's details from the network."
             ),
-            "hint": card.get("hint")
-                    or "Try a different service from search_zynd_services.",
+            "hint": card.get("hint") or "Try another result from the search.",
         }
     url = card.get("url") or ""
     if not url:
         return {
             "status": "error",
             "entity_id": eid,
-            "error": "Service card has no 'url' field — service may be misconfigured.",
+            "error": "Service is misconfigured",
+            "error_message": "The service card is missing its endpoint, so I can't call it.",
+            "hint": "Try another service from the search results.",
         }
 
     parts: list[dict] = []
@@ -713,24 +740,27 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None, user_id
         return {
             "status": "error",
             "entity_id": eid,
-            "url": url,
-            "error": f"Service call timed out ({int(timeout)}s).",
-            "hint": "Tell the user the service didn't respond in time and offer to retry.",
+            "error": "The service didn't respond in time",
+            "error_message": f"It took longer than {int(timeout)} seconds to answer.",
+            "hint": "Wait a moment and try again, or pick another service.",
         }
     except Exception as e:
+        err = friendly_error("call the service", e)
         return {
             "status": "error",
             "entity_id": eid,
-            "url": url,
-            "error": f"Service call failed: {type(e).__name__}: {e}",
+            "error": err["error"],
+            "error_message": err["error_message"],
+            "hint": err["hint"],
         }
 
     if not isinstance(envelope, dict):
         return {
             "status": "error",
             "entity_id": eid,
-            "url": url,
-            "error": "Service returned a non-JSON-object envelope.",
+            "error": "The service returned an unreadable response",
+            "error_message": "Its reply wasn't in the expected JSON format.",
+            "hint": "Try again, or pick another service from the search.",
         }
     if "error" in envelope:
         err = envelope["error"] or {}
@@ -750,12 +780,10 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None, user_id
         return {
             "status": "error",
             "entity_id": eid,
-            "url": url,
             "error_code": code,
-            "error_message": err.get("message") or "Unknown JSON-RPC error.",
-            "error_data": err.get("data"),
-            "error": f"JSON-RPC error from service: {err.get('message')}",
-            "hint": "Network/registry issue or a malformed call — retry once or pick another result.",
+            "error_message": err.get("message") or "The service reported an error.",
+            "error": "The service returned an error",
+            "hint": "Retry once, or pick another result from the search.",
         }
 
     task = envelope.get("result") or {}
@@ -763,8 +791,9 @@ def call_zynd_service(entity_id: str, text: str = "", data: dict = None, user_id
         return {
             "status": "error",
             "entity_id": eid,
-            "url": url,
-            "error": "Service returned an unexpected result shape.",
+            "error": "The service returned an unexpected response",
+            "error_message": "The reply didn't match the expected format.",
+            "hint": "Try again, or pick another service from the search.",
         }
 
     if push_cfg and callback_id:

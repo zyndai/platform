@@ -171,7 +171,7 @@ function Shell({
 
 // ── shape → descriptor ──────────────────────────────────────────────────
 type GenUiNode =
-  | { kind: "status"; tone: "error" | "pending" | "empty" | "default"; statusWord: string; message: string }
+  | { kind: "status"; tone: "error" | "pending" | "empty" | "default"; statusWord: string; message: string; hint?: string }
   | { kind: "prose"; statusWord: string; markdown: string }
   | { kind: "table"; statusWord: string; rows: Record<string, unknown>[] }
   | { kind: "list"; statusWord: string; items: unknown[] }
@@ -213,6 +213,7 @@ export function pickRenderer(result: ServiceCallResult): GenUiNode {
         (st === "auth_required"
           ? "This agent needs you to authenticate first."
           : "The service returned an error."),
+      hint: result.hint,
     };
   }
   if (st === "partial" || st === "working" || st === "needs_input") {
@@ -225,6 +226,7 @@ export function pickRenderer(result: ServiceCallResult): GenUiNode {
         (st === "needs_input"
           ? "The service is waiting for more information."
           : "The service is still working on this…"),
+      hint: result.hint,
     };
   }
 
@@ -411,6 +413,9 @@ export default function GenUiResult({
         >
           <div className={`genui-status is-${node.tone}`}>
             <p>{node.message}</p>
+            {node.hint && node.hint !== node.message && (
+              <p className="genui-status-hint">{node.hint}</p>
+            )}
           </div>
         </Shell>
       );

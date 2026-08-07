@@ -7,6 +7,7 @@ import httpx
 import json
 from services.token_store import get_tokens
 from datetime import datetime
+from mcp.tools.error_utils import friendly_error
 
 NOTION_API_VERSION = "2022-06-28"
 NOTION_BASE_URL = "https://api.notion.com/v1"
@@ -43,10 +44,10 @@ def _notion_request(method: str, path: str, user_id: str, payload: dict = None) 
             return {"success": True, "data": resp.json()}
     except httpx.HTTPStatusError as e:
         print(f"[notion] HTTP Error: {e.response.text}")
-        return {"success": False, "error": f"Notion API error: {resp.text}"}
+        return friendly_error("talk to Notion", Exception(f"Notion returned HTTP {e.response.status_code}"))
     except Exception as e:
         print(f"[notion] Request Exception: {str(e)}")
-        return {"success": False, "error": str(e)}
+        return friendly_error("talk to Notion", e)
 
 
 def build_notion_properties(data: dict, schema: dict = None) -> dict:

@@ -5,7 +5,7 @@ personal knowledge Q&A, and async delegation.
 
 from __future__ import annotations
 
-import config
+from agent.memory_client import is_enabled
 
 
 async def answer_like_me(user_id: str, question: str) -> str:
@@ -26,7 +26,7 @@ async def answer_like_me(user_id: str, question: str) -> str:
         question: A clear, specific question about the principal's life,
                   work, opinions, or knowledge.
     """
-    if not config.MEMORY_LAYER_JWT_SECRET:
+    if not is_enabled():
         return "Memory layer not configured. Set MEMORY_LAYER_JWT_SECRET to enable personal knowledge Q&A."
 
     from agent.digital_twin import answer_like_me as _answer
@@ -57,7 +57,7 @@ async def delegate_to_my_persona(
         task: Clear description of what to produce.
         target: Optional recipient — a persona name, email, or "save as draft".
     """
-    if not config.MEMORY_LAYER_JWT_SECRET:
+    if not is_enabled():
         return "Memory layer not configured. Set MEMORY_LAYER_JWT_SECRET to enable delegation."
 
     from agent.digital_twin import delegate_task
@@ -99,10 +99,11 @@ async def what_do_i_really_know_about(
     Args:
         topic: A specific topic to deep-dive into.
     """
-    if not config.MEMORY_LAYER_JWT_SECRET:
+    if not is_enabled():
         return "Memory layer not configured."
 
     from agent.memory_client import get_context
+    from agent.memory_context import confidence_bar
 
     ctx = await get_context(
         user_id=user_id,
@@ -140,9 +141,8 @@ async def what_do_i_really_know_about(
     for label, assertions in by_predicate.items():
         lines.append(f"### {label}")
         for a in assertions:
-            confidence_bar = "█" * max(1, int(a.confidence * 5)) + "░" * (5 - max(1, int(a.confidence * 5)))
             obj = a.object if a.object else a.statement
-            lines.append(f"- {confidence_bar} {obj}")
+            lines.append(f"- {confidence_bar(a.confidence)} {obj}")
         lines.append("")
 
     # Flag contradictions.

@@ -606,6 +606,7 @@ class GroupMeetingCreate(BaseModel):
     location: Optional[str] = Field(default=None, max_length=200)
     time_zone: Optional[str] = None
     member_user_ids: Optional[list[str]] = None  # opt-in; defaults to all members
+    force: bool = False  # bypass the calendar-conflict check
 
 CONSTRAINT_KINDS = ("fact", "rule", "voice")
 MAX_CONSTRAINTS_PER_GROUP = 20
@@ -1836,7 +1837,13 @@ async def create_group_meeting(
             location=body.location or "",
             time_zone=body.time_zone or "UTC",
             attendees=attendees_payload,
+            force=body.force,
         )
+        if result.get("conflict"):
+            raise HTTPException(
+                status_code=409,
+                detail=result.get("error") or "That time overlaps an existing event on your calendar.",
+            )
         if not result.get("success"):
             raise HTTPException(
                 status_code=502,
@@ -1917,6 +1924,7 @@ def _create_event_with_attendees(
     location: str,
     time_zone: str,
     attendees: list[dict],
+    force: bool = False,
 ) -> dict:
     """
     Build a Calendar event with attendees. We use _get_service() from the
@@ -1925,14 +1933,48 @@ def _create_event_with_attendees(
     but omits `guestsCanSeeOtherGuests`, `guestsCanInviteOthers`, and
     `reminders` that group meetings benefit from).
 
-    Returns {success, event} or {success: False, error}.
+    Checks the asker's calendar for conflicts the same way the MCP-level
+    `create_event` does (this used to reimplement insert() from scratch
+    without that check, so group meetings could double-book the asker's
+    calendar with no warning — see `force`).
+
+    Args:
+        force: Skip the conflict check and create the event even if it
+            overlaps an existing event on the asker's calendar.
+
+    Returns {success, event} or {success: False, error}, or on a conflict
+    (force=False): {success: False, conflict: True, conflicting_events,
+    suggested_times, error}.
     """
     try:
-        from mcp.tools.google.calendar import _get_service, _parse_iso
+        from mcp.tools.google.calendar import (
+            _get_service, _parse_iso, _find_conflicts, _suggest_free_slots,
+        )
         from datetime import timedelta as _td
         service = _get_service(user_id)
         start_dt = _parse_iso(start_time)
         end_dt = _parse_iso(end_time) if end_time else (start_dt + _td(hours=1))
+
+        if not force:
+            conflicts = _find_conflicts(service, start_dt, end_dt)
+            if conflicts:
+                suggested_times = _suggest_free_slots(service, start_dt, end_dt, time_zone or "UTC")
+                conflict_desc = "; ".join(
+                    f"\"{c['summary']}\" ({c['start']}–{c['end']})" for c in conflicts
+                )
+                logger.info(f"[group-meetings] conflict detected for {user_id}: {conflict_desc}")
+                return {
+                    "success": False,
+                    "conflict": True,
+                    "conflicting_events": conflicts,
+                    "suggested_times": suggested_times,
+                    "error": (
+                        f"Requested time overlaps existing event(s) on your calendar: {conflict_desc}. "
+                        "Present the conflict and suggested_times instead of creating this meeting. "
+                        "If the group explicitly wants it anyway, call again with force=true."
+                    ),
+                }
+
         body = {
             "summary": summary,
             "description": description,

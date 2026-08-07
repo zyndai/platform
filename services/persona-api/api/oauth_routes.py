@@ -167,22 +167,45 @@ async def linkedin_callback(code: str = None, state: str = None, error: str = No
             me_data = me_resp.json()
             name = me_data.get("name", "")
             sb = config.get_supabase()
-            # Deliberately omit `scraped_at` here — this is just OIDC
-            # userinfo (full_name/sub), not a real profile scrape.
-            # trigger_scrape and is_linkedin_scraped() both treat a
-            # truthy `scraped_at` as "we already have good data" and skip
-            # kicking off the actual Apify scrape; stamping it here left
-            # raw_profile stuck at this placeholder forever, and since
-            # disconnect+reconnect recreates the same placeholder, "just
-            # reconnect" never actually fixed it.
-            sb.table("linkedin_profiles").upsert(
-                {
-                    "user_id": user_id,
-                    "profile_url": "",
-                    "raw_profile": {"full_name": name, "sub": me_data.get("sub", "")},
-                },
-                on_conflict="user_id",
-            ).execute()
+
+            # Don't clobber a real scrape that's already there. This upsert
+            # used to unconditionally blank profile_url and overwrite
+            # raw_profile with just this OIDC placeholder — so reconnecting
+            # (e.g. after being told to "disconnect and reconnect" to fix a
+            # bad scrape) destroyed good data every single time instead of
+            # fixing anything.
+            existing = (
+                sb.table("linkedin_profiles")
+                .select("profile_url, raw_profile")
+                .eq("user_id", user_id)
+                .execute()
+            )
+            existing_row = existing.data[0] if existing.data else {}
+            existing_raw_profile = existing_row.get("raw_profile") or {}
+            has_real_data = any(
+                key in existing_raw_profile
+                for key in ("headline", "experience", "education", "skills", "summary")
+            )
+
+            if not has_real_data:
+                # Deliberately omit `scraped_at` here — this is just OIDC
+                # userinfo (full_name/sub), not a real profile scrape.
+                # trigger_scrape and is_linkedin_scraped() both treat a
+                # truthy `scraped_at` as "we already have good data" and skip
+                # kicking off the actual Apify scrape; stamping it here left
+                # raw_profile stuck at this placeholder forever, and since
+                # disconnect+reconnect recreates the same placeholder, "just
+                # reconnect" never actually fixed it.
+                sb.table("linkedin_profiles").upsert(
+                    {
+                        "user_id": user_id,
+                        # Preserve a profile_url the user already supplied
+                        # (e.g. via the paste-URL field) rather than blanking it.
+                        "profile_url": existing_row.get("profile_url") or "",
+                        "raw_profile": {"full_name": name, "sub": me_data.get("sub", "")},
+                    },
+                    on_conflict="user_id",
+                ).execute()
     except Exception:
         pass
 

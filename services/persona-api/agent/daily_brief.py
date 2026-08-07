@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, timezone
 
 import config
-from agent.memory_client import get_context
+from agent.memory_client import get_context, is_enabled
 from agent.memory_context import format_context_as_list
 
 logger = logging.getLogger(__name__)
@@ -190,18 +190,16 @@ async def _fetch_today_events(
 
 async def _lookup_person_context(user_id: str, name: str) -> str | None:
     """Search memory-layer for context about a person."""
-    if not config.MEMORY_LAYER_JWT_SECRET:
+    if not is_enabled():
         return None
 
     try:
-        ctx = await get_context(user_id=user_id, topic=name, k=3, min_confidence=0.4)
+        # min_confidence=0.5 matches what we actually keep below — no point
+        # fetching 0.4-0.5 assertions from the server just to discard them.
+        ctx = await get_context(user_id=user_id, topic=name, k=3, min_confidence=0.5)
         if not ctx.assertions:
             return None
-
-        # Return the most relevant fact as a one-liner.
-        top = ctx.assertions[0]
-        if top.confidence >= 0.5:
-            return top.statement[:120]
+        return ctx.assertions[0].statement[:120]
     except Exception:
         pass
     return None
@@ -209,7 +207,7 @@ async def _lookup_person_context(user_id: str, name: str) -> str | None:
 
 async def _get_memory_snapshot(user_id: str) -> str | None:
     """Get a snapshot of what the memory layer knows about the user."""
-    if not config.MEMORY_LAYER_JWT_SECRET:
+    if not is_enabled():
         return None
 
     try:
@@ -222,13 +220,12 @@ async def _get_memory_snapshot(user_id: str) -> str | None:
         if not ctx.assertions:
             return None
 
-        # Format as compact bullet list.
-        lines = []
-        for a in ctx.assertions[:6]:
-            obj = a.object if a.object else a.statement
-            lines.append(f"- {obj[:100]}")
-
-        return "\n".join(lines) if lines else None
+        # Reuse the shared list formatter rather than hand-rolling another
+        # one; drop its own "## What I remember about you" header since
+        # generate_morning_brief already prints its own section header.
+        formatted = format_context_as_list(ctx)
+        lines = [ln[:120] for ln in formatted.splitlines() if ln.startswith("-")]
+        return "\n".join(lines[:6]) if lines else None
     except Exception:
         return None
 

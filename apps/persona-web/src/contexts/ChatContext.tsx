@@ -29,6 +29,33 @@ import type { ChatMessage } from "@/components/chat/types";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+/** localStorage key for the active conversation id, per user. Persists
+ * "New chat" across a refresh — without this, a refresh before the first
+ * message in a new thread would re-fetch /api/chat/history with no id,
+ * which falls back to "most recent row in chat_messages" and silently
+ * resurrects the old (possibly poisoned) conversation instead. */
+const activeConversationKey = (userId: string) => `zynd:active-conversation:${userId}`;
+
+type HistoryRow = {
+  role: "user" | "assistant";
+  content: string;
+  actions?: ChatMessage["actions"];
+};
+
+const rowsToMessages = (rows: HistoryRow[]): ChatMessage[] =>
+  rows.map((r) => ({
+    role: r.role,
+    content: r.content,
+    actions: r.actions || undefined,
+  }));
+
+export interface ChatSession {
+  conversation_id: string;
+  preview: string;
+  updated_at: string;
+  message_count: number;
+}
+
 interface ChatContextValue {
   messages: ChatMessage[];
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
@@ -36,6 +63,23 @@ interface ChatContextValue {
   setConversationId: React.Dispatch<React.SetStateAction<string | null>>;
   /** True until the initial /api/chat/history fetch completes (or fails). */
   hydrated: boolean;
+  /**
+   * Starts a fresh conversation thread with a new client-generated id
+   * (persisted to localStorage so a refresh doesn't lose it — see
+   * activeConversationKey below). The old thread's messages stay in the DB
+   * untouched, just no longer loaded into context — and become reachable
+   * again from the history sidebar via loadConversation. Exists so a model
+   * that's gotten stuck repeating a stale claim from earlier in the
+   * conversation can be given a clean slate instead of dragging that
+   * history into every future turn.
+   */
+  newChat: () => void;
+  /** Switches the active thread to a past conversation_id — used by the
+   * history sidebar. Fetches its messages fresh rather than trusting
+   * anything already in local state. */
+  loadConversation: (id: string) => Promise<void>;
+  historyOpen: boolean;
+  toggleHistory: () => void;
 }
 
 const ChatContext = createContext<ChatContextValue>({
@@ -44,6 +88,10 @@ const ChatContext = createContext<ChatContextValue>({
   conversationId: null,
   setConversationId: () => {},
   hydrated: false,
+  newChat: () => {},
+  loadConversation: async () => {},
+  historyOpen: false,
+  toggleHistory: () => {},
 });
 
 export function useChat() {
@@ -82,7 +130,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           if (!cancelled) setHydrated(true);
           return;
         }
-        const res = await fetch(`${API}/api/chat/history`, {
+        // If we already know which conversation was active (e.g. "New chat"
+        // then a refresh, before any message was sent in it), ask for that
+        // exact thread — otherwise the server falls back to "most recent
+        // row", which would be the thread the user just left.
+        let storedConversationId: string | null = null;
+        try {
+          storedConversationId = window.localStorage.getItem(activeConversationKey(user.id));
+        } catch {
+          /* localStorage unavailable */
+        }
+        const url = storedConversationId
+          ? `${API}/api/chat/history?conversation_id=${encodeURIComponent(storedConversationId)}`
+          : `${API}/api/chat/history`;
+        const res = await fetch(url, {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
         if (!res.ok) {
@@ -92,21 +153,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         const data = await res.json();
         if (cancelled) return;
         if (data.conversation_id) setConversationId(data.conversation_id);
-        type Row = {
-          role: "user" | "assistant";
-          content: string;
-          actions?: ChatMessage["actions"];
-        };
-        const rows: Row[] = data.messages || [];
-        if (rows.length > 0) {
-          setMessages(
-            rows.map((r) => ({
-              role: r.role,
-              content: r.content,
-              actions: r.actions || undefined,
-            })),
-          );
-        }
+        const rows: HistoryRow[] = data.messages || [];
+        if (rows.length > 0) setMessages(rowsToMessages(rows));
       } catch {
         /* ignore — chat just starts fresh */
       } finally {
@@ -218,6 +266,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           event: "INSERT",
           schema: "public",
           table: "dm_messages",
+          // Narrows delivery to agent-channel rows only — the handler
+          // below only ever acts on `channel === "agent"` anyway, so this
+          // was previously firing (and paying an RLS-scoped fetch's worth
+          // of client work) for every human-channel row too, table-wide.
+          filter: "channel=eq.agent",
         },
         async (payload) => {
           const row = payload.new as {
@@ -307,12 +360,80 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     };
   }, [user]);
 
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const toggleHistory = useCallback(() => setHistoryOpen((v) => !v), []);
+
+  const newChat = useCallback(() => {
+    // Mint the id client-side (rather than null) so it can be persisted
+    // immediately — a refresh before the first message is sent still needs
+    // something concrete to ask /api/chat/history for. The backend accepts
+    // this id as-is on the next /api/chat/stream call (see
+    // handle_user_message_stream in orchestrator.py), same as if it had
+    // generated one itself.
+    const id = crypto.randomUUID();
+    setMessages([]);
+    setConversationId(id);
+    setHistoryOpen(false);
+    if (user) {
+      try {
+        window.localStorage.setItem(activeConversationKey(user.id), id);
+      } catch {
+        /* localStorage unavailable */
+      }
+    }
+  }, [user]);
+
+  // Keep localStorage in sync whenever the active conversation changes for
+  // any other reason too — e.g. the very first message of a brand-new
+  // session, where the id comes from the server's "done" event rather than
+  // from newChat() above.
+  useEffect(() => {
+    if (!user || !conversationId) return;
+    try {
+      window.localStorage.setItem(activeConversationKey(user.id), conversationId);
+    } catch {
+      /* localStorage unavailable */
+    }
+  }, [user, conversationId]);
+
+  // Switch to a past session — used by the history sidebar. Always fetches
+  // fresh rather than trusting any cached list-view preview text.
+  const loadConversation = useCallback(async (id: string) => {
+    if (!user) return;
+    try {
+      const sb = getSupabase();
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session?.access_token) return;
+      const res = await fetch(
+        `${API}/api/chat/history?conversation_id=${encodeURIComponent(id)}`,
+        { headers: { Authorization: `Bearer ${session.access_token}` } },
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const rows: HistoryRow[] = data.messages || [];
+      setMessages(rowsToMessages(rows));
+      setConversationId(id);
+      setHistoryOpen(false);
+      try {
+        window.localStorage.setItem(activeConversationKey(user.id), id);
+      } catch {
+        /* localStorage unavailable */
+      }
+    } catch {
+      /* best-effort — leave the current thread showing on failure */
+    }
+  }, [user]);
+
   const value: ChatContextValue = {
     messages,
     setMessages,
     conversationId,
     setConversationId,
     hydrated,
+    newChat,
+    loadConversation,
+    historyOpen,
+    toggleHistory,
   };
 
   return (

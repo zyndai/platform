@@ -31,6 +31,7 @@ import {
   type GroupInvitation,
 } from "@/lib/group-invitations";
 import { getSupabase } from "@/lib/supabase";
+import { meetingStatusLabel } from "@/lib/meetingStatus";
 
 function formatMeetingTime(start?: string, end?: string): string {
   if (!start) return "Time TBD";
@@ -629,6 +630,7 @@ function GroupInviteCard({
 }
 
 function MeetingRow({ ticket, awaitingMe }: { ticket: MeetingTicket; awaitingMe: boolean }) {
+  const { user } = useDashboard();
   const { title, start_time, end_time, location } = ticket.payload;
   const href = ticket.thread_id
     ? `/dashboard/messages?thread=${ticket.thread_id}`
@@ -642,7 +644,13 @@ function MeetingRow({ ticket, awaitingMe }: { ticket: MeetingTicket; awaitingMe:
         <div className="inbox-card-title-row">
           <h3>{title || "Untitled meeting"}</h3>
           <Pill tone={awaitingMe ? "action" : ticket.status === "accepted" ? "accepted" : "neutral"}>
-            {awaitingMe ? "Your reply" : ticket.status}
+            {awaitingMe
+              ? "Your reply"
+              : meetingStatusLabel({
+                  status: ticket.status,
+                  awaitingMe: false,
+                  iProposed: ticket.initiator_user_id === user?.id,
+                })}
           </Pill>
         </div>
         <p>{formatMeetingTime(start_time, end_time)}</p>

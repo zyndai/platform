@@ -17,6 +17,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabase } from "@/lib/supabase";
+import { meetingStatusLabel } from "@/lib/meetingStatus";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -215,7 +216,11 @@ export default function TasksPanel() {
             }
             style={{ fontSize: "9px", flexShrink: 0 }}
           >
-            {m.status === "scheduled" ? "✓ ON CALENDAR" : m.status.toUpperCase()}
+            {meetingStatusLabel({
+              status: m.status,
+              awaitingMe: mode === "awaiting_me",
+              iProposed: m.initiator_user_id === userId,
+            }).toUpperCase()}
           </span>
         </div>
 

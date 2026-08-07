@@ -21,11 +21,13 @@ import re
 import threading
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import requests
 
 import config
+from mcp.tools.error_utils import friendly_error, friendly_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -320,7 +322,15 @@ def discover_personas(query: str, top_k: int = 20) -> dict:
     )
 
     if not results:
-        return {"status": "error", "error": "No personas found.", "results": [], "count": 0, "source": "none"}
+        return {
+            "status": "error",
+            "error": "No personas found",
+            "error_message": "I couldn't find any personas matching that request.",
+            "hint": "Try a broader or differently-worded query.",
+            "results": [],
+            "count": 0,
+            "source": "none",
+        }
 
     out = {
         "status": "success",
@@ -625,7 +635,9 @@ def search_zynd_network(query: str, top_k: int = 8, kind: str = "any", user_id: 
         if inner.get("status") == "error":
             return {
                 "status": "error",
-                "error": inner.get("error", "Persona search failed."),
+                "error": inner.get("error", "Persona search failed"),
+                "error_message": inner.get("error_message") or "I couldn't complete the persona search.",
+                "hint": inner.get("hint") or "Try a different phrasing.",
                 "results": [],
                 "count": 0,
                 "query_used": raw_query,
@@ -787,9 +799,12 @@ def search_zynd_network(query: str, top_k: int = 8, kind: str = "any", user_id: 
     # If the registry errored AND the deployer gave us nothing, surface
     # the error. Otherwise we have live results — report success.
     if registry_error and not results:
+        err = friendly_error_message("search the network", registry_error)
         return {
             "status": "error",
-            "error": registry_error,
+            "error": err["error"],
+            "error_message": err["error_message"],
+            "hint": err["hint"],
             "results": [],
             "count": 0,
             "query_used": query_used,
@@ -834,12 +849,18 @@ def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:
     description, webhook_url, avatar_url, match_reason, match_score}],
     source}``. ``match_reason`` is a short, grounded note on why each
     result matched (e.g. "matched on: founder, ai") — use it when
-    explaining results to the principal instead of inventing a reason.
-    ``match_score`` is the underlying keyword-overlap count it's derived
-    from (0 for a catchall/broad browse, where every result "matches" by
-    definition). An empty `results` list with `status="success"` means a
-    real, complete search came back with no relevant match — not a
-    broken search.
+    explaining results to the principal instead of inventing a reason. If
+    it ends with "— missing: <concept>", the candidate only matched PART
+    of a multi-concept query (e.g. matched "ai" but not "founder") — say
+    so plainly ("he's in AI but I don't see him described as a founder")
+    rather than presenting it as a solid match. ``match_score`` ranks
+    candidates by how much of the query they cover — someone matching
+    every concept in the query always scores above someone matching only
+    one, regardless of raw keyword-count (0 for a catchall/broad browse,
+    where every result "matches" by definition). An empty `results` list
+    with `status="success"` means a real, complete search came back with
+    no relevant match — not a broken search; tell the principal that
+    plainly rather than padding the answer with loose matches.
     """
     self_id = _caller_agent_id(user_id)
     catchall_phrases = {
@@ -990,7 +1011,15 @@ def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:
 
     if not combined:
         if registry_error and not local_matches:
-            return {"status": "error", "error": registry_error, "results": [], "count": 0}
+            err = friendly_error_message("search for personas", registry_error)
+            return {
+                "status": "error",
+                "error": err["error"],
+                "error_message": err["error_message"],
+                "hint": err["hint"],
+                "results": [],
+                "count": 0,
+            }
         return {"status": "success", "count": 0, "results": [], "source": "none"}
 
     source = (
@@ -1087,13 +1116,27 @@ def _stem(word: str) -> str:
 def _match_score(query: str, name: str, description: str, tags: list[str] | None = None) -> tuple[int, str]:
     """Score + explain how well `query` matches a candidate's name/bio/tags.
 
-    Returns (hit_count, reason_string). hit_count is the number of
-    overlapping keyword stems — used to rank a candidate pool we fetched
-    ourselves (e.g. the full persona catalog) when the source we pulled it
-    from (the registry) did no bio-aware ranking of its own. reason_string
-    is "" when nothing textually overlaps — callers should fall back to
-    summarizing the result's own description in that case, not claim a
-    keyword match that didn't happen.
+    A multi-concept query like "AI founders" has two independent concepts
+    (topic "ai", role "founder"). The old version scored purely by raw
+    keyword-overlap count, so a developer whose bio just says "AI" (1 hit)
+    could out-rank — or at least crowd the top_k alongside — an actual
+    founder (also potentially just 1 hit, if their bio never repeats "AI").
+    Neither ever needed to match BOTH concepts to place well.
+
+    This version ranks primarily by *coverage* — the fraction of the
+    query's distinct concepts a candidate actually matches — so someone
+    matching every concept in the query always outranks someone matching
+    only one, however many times that one concept appears in their bio.
+    Hits inside `name`/`tags` (curated, higher-signal fields) count for
+    more than incidental hits buried in free-text `description`, as a
+    tiebreaker within the same coverage tier.
+
+    Returns (score, reason_string). `score` is 0 when nothing textually
+    overlaps at all. reason_string is "" in that case too — callers should
+    fall back to summarizing the result's own description, not claim a
+    keyword match that didn't happen. When coverage is partial (only some
+    query concepts matched), the reason notes what's missing so the caller
+    can be honest about it being a loose match instead of overselling it.
     """
     # Filter by the same stopword list used for registry-query normalization
     # rather than a raw length cutoff — a length filter would drop short but
@@ -1104,18 +1147,51 @@ def _match_score(query: str, name: str, description: str, tags: list[str] | None
     }
     if not q_tokens:
         return 0, ""
+
+    name_stems = {_stem(w) for w in re.findall(r"[a-z]+", (name or "").lower())}
+    tag_stems = {_stem(w) for w in re.findall(r"[a-z]+", " ".join(tags or []).lower())}
     haystack_words = re.findall(r"[a-z]+", f"{name} {description} {' '.join(tags or [])}".lower())
     stem_to_word: dict[str, str] = {}
     for w in haystack_words:
         stem_to_word.setdefault(_stem(w), w)
+
     hits: list[str] = []
+    hit_stems: list[str] = []
+    weight = 0
     for t in q_tokens:
         w = stem_to_word.get(t)
-        if w and w not in hits:
-            hits.append(w)
+        if not w and len(t) >= 4:
+            # Compound-word fallback. Real bios say "cofounder"/"co-founder"
+            # far more often than the bare word "founder" — and someone
+            # explicitly describing themselves as a cofounder is exactly
+            # who a "founders" search is looking for. An exact-stem lookup
+            # misses this entirely (the stem of "cofounder" is "cofounder",
+            # never "founder"), which was silently zeroing out the
+            # strongest candidates in real data. Length-gated to 4+ chars
+            # so short/noisy tokens like "ai" or "vc" can't suffix-match
+            # into unrelated words (e.g. "ai" inside "mumbai").
+            w = next((word for stem, word in stem_to_word.items() if stem != t and stem.endswith(t)), None)
+        if not w:
+            continue
+        hits.append(w)
+        hit_stems.append(t)
+        weight += 3 if (t in name_stems or t in tag_stems) else 1
+
     if not hits:
         return 0, ""
-    return len(hits), f"matched on: {', '.join(hits[:3])}"
+
+    coverage = len(hit_stems) / len(q_tokens)
+    # Coverage dominates: each full coverage-tier is worth more than any
+    # amount of same-tier weight, so it can only ever act as a tiebreaker
+    # between candidates that matched the same fraction of concepts.
+    score = round(coverage * 100) + weight
+
+    reason = f"matched on: {', '.join(hits[:3])}"
+    if coverage < 1.0 and len(q_tokens) > 1:
+        missing = sorted(q_tokens - set(hit_stems))
+        if missing:
+            reason += f" — missing: {', '.join(missing[:2])}"
+    return score, reason
 
 
 def _match_reason(query: str, name: str, description: str, tags: list[str] | None = None) -> str:
@@ -1152,7 +1228,11 @@ def get_persona_profile(agent_id: str) -> dict:
     try:
         card = _fetch_agent_card(agent_id)
         if not card:
-            return {"error": "Agent not found in registry"}
+            return {
+                "error": "Profile not found",
+                "error_message": "I couldn't find that persona on the network.",
+                "hint": "Double-check the agent ID or run a search.",
+            }
 
         metadata = card.get("metadata") or {}
         return {
@@ -1167,7 +1247,8 @@ def get_persona_profile(agent_id: str) -> dict:
             "last_heartbeat": card.get("last_heartbeat"),
         }
     except Exception as e:
-        return {"error": str(e)}
+        err = friendly_error("fetch the persona profile", e)
+        return {"error": err["error"], "error_message": err["error_message"], "hint": err["hint"]}
 
 # ── Connection Tools ─────────────────────────────────────────────────
 
@@ -1242,7 +1323,11 @@ def request_connection(user_id: str, target_agent_id: str, target_name: str = "N
     my_name = persona.get("name", "Zynd Agent")
 
     if not my_agent_id:
-        return {"error": "You need to deploy a persona first before connecting with others."}
+        return {
+            "error": "No deployed persona",
+            "error_message": "You need a persona before you can request connections.",
+            "hint": "Finish onboarding in the Zynd dashboard first.",
+        }
 
     sb = _get_supabase()
 
@@ -1295,7 +1380,11 @@ def request_connection(user_id: str, target_agent_id: str, target_name: str = "N
             "message": f"Zynd Network connection request sent to {target_name}. They'll need to accept it on the Zynd Network — note this is a Zynd connection, not a LinkedIn invitation.",
         }
 
-    return {"error": "Failed to create connection thread."}
+    return {
+        "error": "Couldn't send the connection request",
+        "error_message": "Something went wrong while creating the connection thread.",
+        "hint": "Please try again in a moment.",
+    }
 
 def check_connection_status(user_id: str, target_agent_id: str) -> dict:
     """
@@ -1489,7 +1578,6 @@ def _signed_a2a_send(
             "reply_status": "transport_error",
             "thread_id": context_id,
             "partner_agent_id": target_agent_id,
-            "error": f"{type(e).__name__}: {e}",
             "failure_reason": reason,
             "message": (
                 f"The message couldn't be delivered — {reason}. Tell the user "
@@ -1540,10 +1628,9 @@ def _send_via_a2a_v3(
     a2a_url = resolve_a2a_url(target_webhook_url)
     if not a2a_url:
         return {
-            "error": (
-                "Could not resolve an A2A v3 URL from the partner's stored URL. "
-                f"webhook_url={target_webhook_url!r}"
-            )
+            "error": "Can't reach this persona",
+            "error_message": "I couldn't resolve a working chat address from their stored details.",
+            "hint": "Try searching for them again to refresh their address.",
         }
     # Card sits at `{base}/.well-known/agent-card.json` — sibling of the
     # A2A endpoint, derived from the same stored URL.
@@ -1560,6 +1647,40 @@ def _send_via_a2a_v3(
         origin_kind="mcp_tool",
         origin_ref={"thread_id": context_id, "tool": "message_zynd_agent"},
     )
+
+def _message_exists_on_thread(
+    thread_id: str,
+    sender_agent_id: str,
+    content: str,
+    window_minutes: int = 10,
+) -> bool:
+    """Return True if an identical agent-channel message was already sent
+    by this persona on the thread within the recent window.
+
+    Prevents the same follow-up from being dispatched twice when the LLM
+    retries or re-emits the same message on a later turn.
+    """
+    sb = _get_supabase()
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).isoformat()
+        rows = (
+            sb.table("dm_messages")
+            .select("content")
+            .eq("thread_id", thread_id)
+            .eq("sender_id", sender_agent_id)
+            .eq("sender_type", "agent")
+            .eq("channel", "agent")
+            .gte("created_at", cutoff)
+            .execute()
+        )
+        normalized = " ".join(content.split())
+        for r in rows.data or []:
+            if " ".join((r.get("content") or "").split()) == normalized:
+                return True
+    except Exception as e:
+        logger.warning("[zynd_network] duplicate-message check failed for thread %s: %s", thread_id, e)
+    return False
+
 
 def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: str, message: str) -> dict:
     """
@@ -1584,10 +1705,18 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
     persona = get_persona_status(user_id)
     sender_agent_id = persona.get("agent_id")
     if not sender_agent_id:
-        return {"error": "You haven't deployed a persona yet — cannot send messages."}
+        return {
+            "error": "No deployed persona",
+            "error_message": "You need a persona before sending network messages.",
+            "hint": "Finish onboarding in the Zynd dashboard first.",
+        }
 
     if not target_webhook_url:
-        return {"error": "The target agent does not have a webhook URL. They cannot receive messages."}
+        return {
+            "error": "Recipient can't be reached",
+            "error_message": "That persona doesn't have a reachable address on the network.",
+            "hint": "Try searching for them again or use a different contact method.",
+        }
 
     log_prefix = f"[message_zynd_agent {sender_agent_id[:12]}→{target_agent_id[:12]}]"
 
@@ -1610,20 +1739,29 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
     thread = (r1.data or r2.data or [None])[0]
     if not thread:
         return {
-            "error": (
-                "No connection thread exists with this agent. Call request_connection "
-                "first and wait for the receiver to accept it before messaging."
-            ),
+            "error": "No connection thread",
+            "error_message": "You aren't connected with this persona yet.",
+            "hint": "Send a connection request first and wait for them to accept.",
         }
     thread_id = thread["id"]
     thread_status = thread.get("status") or "pending"
     if thread_status not in ("accepted",):
         return {
-            "error": (
-                f"Connection is in '{thread_status}' state — only 'accepted' "
-                f"connections may exchange messages. Wait for the other side to accept."
-            ),
+            "error": f"Connection is {thread_status}",
+            "error_message": "You can only message accepted connections.",
+            "hint": "Wait for the other side to accept your request, or send a fresh connection request.",
             "thread_id": thread_id,
+        }
+
+    # Duplicate guard: don't send the exact same agent-channel message twice
+    # on the same thread within the recent window.
+    if _message_exists_on_thread(thread_id, sender_agent_id, message):
+        logger.info(f"{log_prefix} duplicate message detected; skipping send")
+        return {
+            "status": "duplicate",
+            "error_message": "This exact message was already sent on this thread recently.",
+            "thread_id": thread_id,
+            "partner_agent_id": target_agent_id,
         }
 
     # Insert outbound to dm_messages BEFORE the send (M-1: persist before
@@ -1642,7 +1780,6 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
     # Snapshot the time so the proposal lookup below can scope to "during
     # this exchange". (Receiver's orchestrator may have created an
     # agent_tasks meeting row while serving the request.)
-    from datetime import datetime, timezone
     send_time_iso = datetime.now(timezone.utc).isoformat()
 
     # ── The actual A2A v3 call ──────────────────────────────────────
@@ -1798,13 +1935,19 @@ def call_zynd_agent(entity_id: str, text: str = "", data: dict = None, user_id: 
     """
     eid = (entity_id or "").strip()
     if not eid:
-        return {"status": "error", "error": "entity_id is required."}
+        return {
+            "status": "error",
+            "error": "No agent ID provided",
+            "error_message": "I need the agent ID to call it.",
+            "hint": "Use the entity_id returned by the search or card lookup.",
+        }
     if not (user_id or "").strip():
         return {
             "status": "error",
             "entity_id": eid,
-            "error": "Signed agent calls require a calling user with a deployed persona.",
-            "hint": "This works for the principal's own persona, not in unauthenticated contexts.",
+            "error": "No deployed persona",
+            "error_message": "Calling a network agent requires a deployed persona.",
+            "hint": "Finish onboarding in the Zynd dashboard first.",
         }
 
     has_text = bool((text or "").strip())
@@ -1813,8 +1956,9 @@ def call_zynd_agent(entity_id: str, text: str = "", data: dict = None, user_id: 
         return {
             "status": "error",
             "entity_id": eid,
-            "error": "At least one of 'text' or 'data' must be provided.",
-            "hint": "Check the input_schema from get_zynd_service_card and try again.",
+            "error": "Nothing to send to the agent",
+            "error_message": "An agent call needs either free text (text=) or structured inputs (data=).",
+            "hint": "Check the input_schema from the agent card and try again.",
         }
 
     # Fire-and-forget: resolving the card, signing, and the message/send
@@ -1946,7 +2090,11 @@ def read_agent_channel(user_id: str, thread_id: str, limit: int = 20) -> dict:
     my_agent_id = persona.get("agent_id") if persona.get("deployed") else None
 
     if not my_agent_id:
-        return {"error": "No active persona for this user."}
+        return {
+            "error": "No deployed persona",
+            "error_message": "I need an active persona to read agent-channel messages.",
+            "hint": "Finish onboarding in the Zynd dashboard first.",
+        }
 
     sb = _get_supabase()
 
@@ -1954,10 +2102,18 @@ def read_agent_channel(user_id: str, thread_id: str, limit: int = 20) -> dict:
     # people's agent-channel traffic via a guessed thread_id).
     thread_res = sb.table("dm_threads").select("initiator_id,receiver_id").eq("id", thread_id).execute()
     if not thread_res.data:
-        return {"error": f"Thread {thread_id} not found."}
+        return {
+            "error": "Thread not found",
+            "error_message": "I couldn't find that conversation thread.",
+            "hint": "Check the thread ID and try again.",
+        }
     t = thread_res.data[0]
     if my_agent_id not in (t["initiator_id"], t["receiver_id"]):
-        return {"error": "You are not a participant of this thread."}
+        return {
+            "error": "Not a participant",
+            "error_message": "You aren't part of that conversation thread.",
+            "hint": "Make sure you're using a thread you belong to.",
+        }
 
     try:
         # Clamp limit to a sensible range
@@ -1972,7 +2128,8 @@ def read_agent_channel(user_id: str, thread_id: str, limit: int = 20) -> dict:
             .execute()
         )
     except Exception as e:
-        return {"error": f"Failed to read messages: {e}"}
+        err = friendly_error("read the agent-channel messages", e)
+        return {"error": err["error"], "error_message": err["error_message"], "hint": err["hint"]}
 
     rows = r.data or []
 

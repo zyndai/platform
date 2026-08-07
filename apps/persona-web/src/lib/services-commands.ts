@@ -182,7 +182,10 @@ export interface ServiceCallResult {
   reply_text?: string | null;
   structured_output?: unknown; // JSON-parsed reply; prefer over reply_text
   error?: string;
+  /** Non-technical explanation of why the error happened. */
   error_message?: string;
+  /** What the user can do next. */
+  hint?: string;
   error_code?: string | number;
   error_data?: unknown;
 }
@@ -201,7 +204,7 @@ export const HELP_TEXT = `**Slash commands**
 
 - \`/agents <query>\` — search the entire Zynd Network: personas, services, and standalone agents (e.g. \`/agents influencer discovery\`). Each result has a **Call** button (fill in the agent's inputs and run it) and a **Let my persona handle it** button.
 - \`/services <query>\` — narrow search to capability-style services only (e.g. \`/services translate text\`).
-- \`/card <entity_id>\` — fetch any entity's full agent-card (input schema, endpoint URL, status).
+- \`/card <service name or id>\` — fetch a service's live card (description, inputs, status).
 - \`/help\` — show this help.
 
 For natural-language requests like *"find a competitor research agent and run it"* your persona will search, read the card, and call it automatically — slash commands are a faster, deterministic path.`;
@@ -242,9 +245,9 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   },
   {
     name: "card",
-    args: "<entity_id>",
-    description: "Show a service's input schema, endpoint, and live status.",
-    example: "/card zns:svc:c565a80…",
+    args: "<service name or id>",
+    description: "Show a service's description, inputs, and live status.",
+    example: "/card currency converter",
     insertText: "/card ",
   },
   {

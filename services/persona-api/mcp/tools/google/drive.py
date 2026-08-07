@@ -8,6 +8,7 @@ for it via a Picker). The user's other Drive files are invisible by design.
 
 from googleapiclient.discovery import build
 from mcp.tools.google.common import get_google_creds
+from mcp.tools.error_utils import friendly_error
 
 def _get_drive_service(user_id: str):
     """Build a Google Drive API service."""
@@ -47,7 +48,7 @@ def list_drive_files(user_id: str, query: str = "", pageSize: int = 15) -> dict:
             "query": query
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("list your Drive files", e)
 
 def create_drive_folder(user_id: str, folder_name: str, parent_id: str = None) -> dict:
     """
@@ -71,7 +72,7 @@ def create_drive_folder(user_id: str, folder_name: str, parent_id: str = None) -
             "name": folder_name
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("create the Drive folder", e)
 
 def move_file_to_folder(user_id: str, file_id: str, folder_id: str) -> dict:
     """
@@ -98,7 +99,7 @@ def move_file_to_folder(user_id: str, file_id: str, folder_id: str) -> dict:
             "new_parents": new_file.get("parents")
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("move the file", e)
 
 def list_files_in_folder(user_id: str, folder_id: str) -> dict:
     """
@@ -111,4 +112,4 @@ def list_files_in_folder(user_id: str, folder_id: str) -> dict:
         files = results.get("files", [])
         return {"success": True, "files": files, "folder_id": folder_id}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("list the folder contents", e)

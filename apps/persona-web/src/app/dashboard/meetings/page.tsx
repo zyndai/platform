@@ -11,10 +11,12 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui";
+import { useDashboard } from "@/contexts/DashboardContext";
 import {
   type MeetingTicket,
   useDashboardActivity,
 } from "@/contexts/DashboardActivityContext";
+import { meetingStatusLabel } from "@/lib/meetingStatus";
 
 function formatMeetingTime(start?: string, end?: string): string {
   if (!start) return "Time TBD";
@@ -146,18 +148,18 @@ function MeetingColumn({
 }
 
 function MeetingCard({ ticket, awaitingMe }: { ticket: MeetingTicket; awaitingMe: boolean }) {
+  const { user } = useDashboard();
   const { title, start_time, end_time, location, description } = ticket.payload;
   const href = ticket.thread_id
     ? `/dashboard/messages?thread=${ticket.thread_id}`
     : "/dashboard/messages";
-  const statusLabel =
-    awaitingMe
-      ? "Your reply"
-      : ticket.status === "accepted"
-        ? "Accepted"
-        : ticket.status === "countered"
-          ? "Countered"
-          : "Sent";
+  const statusLabel = awaitingMe
+    ? "Your reply"
+    : meetingStatusLabel({
+        status: ticket.status,
+        awaitingMe: false,
+        iProposed: ticket.initiator_user_id === user?.id,
+      });
 
   return (
     <Link href={href} className="meetings-card">

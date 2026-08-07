@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const TABS = [
   { href: "/dashboard/settings/accounts", label: "Accounts" },
   { href: "/dashboard/settings/you",      label: "You" },
+  { href: "/dashboard/settings/memory",   label: "Memory" },
 ];
 
 export default function SettingsLayout({

@@ -143,7 +143,19 @@ async function loadConnectionRequests(userId: string): Promise<ConnectionRequest
   return (data || []) as ConnectionRequest[];
 }
 
-async function loadDashboardActivity(userId: string): Promise<DashboardActivity> {
+/**
+ * Fetches all five activity categories in parallel. Each category falls
+ * back to its `previous` value (not `[]`) when its own fetch fails — a
+ * transient blip on, say, /api/todos/ shouldn't blank out approvals or
+ * connection requests too. Before this, any single failed call in the
+ * batch (which got a lot more likely right around "Accept", when two
+ * refreshes could fire back-to-back — see the dm_threads listener below)
+ * made the whole inbox look empty.
+ */
+async function loadDashboardActivity(
+  userId: string,
+  previous: DashboardActivity,
+): Promise<DashboardActivity> {
   const [meetings, approvals, todos, requests, invitations] = await Promise.allSettled([
     apiGet<{ awaiting_me: MeetingTicket[]; awaiting_them: MeetingTicket[] }>(
       `/api/meetings/pending/${userId}`,
@@ -157,22 +169,22 @@ async function loadDashboardActivity(userId: string): Promise<DashboardActivity>
 
   return {
     meetingsAwaitingMe:
-      meetings.status === "fulfilled" ? meetings.value.awaiting_me ?? [] : [],
+      meetings.status === "fulfilled" ? meetings.value.awaiting_me ?? [] : previous.meetingsAwaitingMe,
     meetingsAwaitingThem:
-      meetings.status === "fulfilled" ? meetings.value.awaiting_them ?? [] : [],
+      meetings.status === "fulfilled" ? meetings.value.awaiting_them ?? [] : previous.meetingsAwaitingThem,
     approvals:
       approvals.status === "fulfilled"
         ? (approvals.value.approvals ?? []).filter(
             (a) => !a.status || a.status === "pending",
           )
-        : [],
+        : previous.approvals,
     todos:
       todos.status === "fulfilled"
         ? (todos.value.todos ?? []).filter((t) => !t.done)
-        : [],
-    connectionRequests: requests.status === "fulfilled" ? requests.value : [],
+        : previous.todos,
+    connectionRequests: requests.status === "fulfilled" ? requests.value : previous.connectionRequests,
     groupInvitations:
-      invitations.status === "fulfilled" ? invitations.value.invitations || [] : [],
+      invitations.status === "fulfilled" ? invitations.value.invitations || [] : previous.groupInvitations,
   };
 }
 
@@ -197,12 +209,18 @@ export function DashboardActivityProvider({ children }: { children: ReactNode })
   const [error, setError] = useState<string | null>(null);
   const refreshTimer = useRef<number | null>(null);
   const activeRequest = useRef(0);
+  // Mirrors `activity` without being a `refresh` dependency — reading the
+  // latest known-good value here (for loadDashboardActivity's per-category
+  // fallback) must not make `refresh`'s identity change on every fetch,
+  // which would retrigger the mount effect that calls it.
+  const activityRef = useRef<DashboardActivity>(EMPTY_ACTIVITY);
 
   const refresh = useCallback(async () => {
     const userId = user?.id;
     const requestId = activeRequest.current + 1;
     activeRequest.current = requestId;
     if (!userId) {
+      activityRef.current = EMPTY_ACTIVITY;
       setActivity(EMPTY_ACTIVITY);
       setLoading(false);
       setError(null);
@@ -210,8 +228,9 @@ export function DashboardActivityProvider({ children }: { children: ReactNode })
     }
 
     try {
-      const next = await loadDashboardActivity(userId);
+      const next = await loadDashboardActivity(userId, activityRef.current);
       if (activeRequest.current !== requestId) return;
+      activityRef.current = next;
       setActivity(next);
       setError(null);
     } catch (e) {
@@ -254,6 +273,26 @@ export function DashboardActivityProvider({ children }: { children: ReactNode })
     };
   }, [refresh, user?.id]);
 
+  // Resolved once per user so the dm_threads listener below can tell
+  // whether a changed row actually involves this user (threads are keyed
+  // by agent_id, not the Supabase user id).
+  const myAgentId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!user?.id) return;
+    myAgentId.current = null;
+    let cancelled = false;
+    apiGet<{ agent_id?: string }>(`/api/persona/${user.id}/status`, { noCache: true })
+      .then((data) => {
+        if (!cancelled && typeof data?.agent_id === "string") myAgentId.current = data.agent_id;
+      })
+      .catch(() => {
+        /* best-effort — the dm_threads listener just won't scope by agent_id until this resolves */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
   useEffect(() => {
     if (!user?.id) return;
     const sb = getSupabase();
@@ -285,7 +324,25 @@ export function DashboardActivityProvider({ children }: { children: ReactNode })
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "dm_threads" },
-        scheduleRefresh,
+        (payload) => {
+          // Unlike the agent_tasks listener above, this had no relevance
+          // check at all — it refetched this user's whole inbox (5
+          // endpoints) on every dm_threads change from every user in the
+          // system. Also: accepting a connection request updates this row
+          // AND the Inbox page's own handler awaits refresh() directly, so
+          // an unguarded listener double-fires the same burst right when
+          // the user clicks Accept.
+          const row = (payload.new || payload.old || {}) as {
+            initiator_id?: string | null;
+            receiver_id?: string | null;
+          };
+          const mine =
+            row.initiator_id === user.id ||
+            row.receiver_id === user.id ||
+            (myAgentId.current !== null &&
+              (row.initiator_id === myAgentId.current || row.receiver_id === myAgentId.current));
+          if (mine) scheduleRefresh();
+        },
       )
       .on(
         "postgres_changes",

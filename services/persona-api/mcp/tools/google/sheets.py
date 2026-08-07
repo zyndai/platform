@@ -5,6 +5,7 @@ Allows the agent to manage spreadsheets and log data.
 
 from googleapiclient.discovery import build
 from mcp.tools.google.common import get_google_creds
+from mcp.tools.error_utils import friendly_error
 
 def _get_sheets_service(user_id: str):
     """Build a Google Sheets API service."""
@@ -28,7 +29,7 @@ def create_spreadsheet(user_id: str, title: str) -> dict:
             "title": title
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("create the spreadsheet", e)
 
 def append_to_sheet(user_id: str, spreadsheet_id: str, values: list[list], range_name: str = "Sheet1!A1") -> dict:
     """
@@ -59,7 +60,7 @@ def append_to_sheet(user_id: str, spreadsheet_id: str, values: list[list], range
             "updates": res.get("updates", {})
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("append to the spreadsheet", e)
 
 def read_sheet_values(user_id: str, spreadsheet_id: str, range_name: str = "Sheet1!A:Z") -> dict:
     """
@@ -80,7 +81,7 @@ def read_sheet_values(user_id: str, spreadsheet_id: str, range_name: str = "Shee
             "range": range_name
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("read the spreadsheet", e)
 
 def search_spreadsheets(user_id: str, query: str = "") -> dict:
     """
@@ -106,4 +107,4 @@ def search_spreadsheets(user_id: str, query: str = "") -> dict:
             ]
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("search your spreadsheets", e)

@@ -14,7 +14,7 @@ import logging
 from datetime import datetime, timezone
 
 import config
-from agent.memory_client import get_context
+from agent.memory_client import get_context, is_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ async def push_nudge_to_user(user_id: str, nudge: dict) -> bool:
 
 async def _check_memory_decay(user_id: str) -> list[dict]:
     """Check for facts that are decaying — confidence fading below threshold."""
-    if not config.MEMORY_LAYER_JWT_SECRET:
+    if not is_enabled():
         return []
 
     try:
@@ -92,12 +92,12 @@ async def _check_memory_decay(user_id: str) -> list[dict]:
                 nudges.append({
                     "title": f"Fading memory: {a.predicate}",
                     "body": (
-                        f"I'm less sure about: *{a.statement[:120]}*\n"
-                        f"Confidence: {a.confidence:.0%}\n"
-                        f"Is this still true? Tell me 'yes' or 'no' and I'll update."
+                        f"I'm less sure about this than I used to be: "
+                        f"*{a.statement[:120]}*\n"
+                        f"Confidence: {a.confidence:.0%} — I'll keep it "
+                        f"unless you tell me it's changed."
                     ),
                     "priority": "low",
-                    "action": f"confirm {a.statement[:60]}",
                 })
 
         return nudges[:3]  # Cap at 3 decay nudges
@@ -107,7 +107,7 @@ async def _check_memory_decay(user_id: str) -> list[dict]:
 
 async def _check_memory_contradictions(user_id: str) -> list[dict]:
     """Check for contradictory assertions in memory."""
-    if not config.MEMORY_LAYER_JWT_SECRET:
+    if not is_enabled():
         return []
 
     try:

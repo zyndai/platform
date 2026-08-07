@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { getSupabase } from "@/lib/supabase";
 import { useDashboard } from "@/contexts/DashboardContext";
+import { Avatar } from "@/components/ui";
 
 interface AgentCall {
   id: string;
@@ -17,9 +19,37 @@ interface AgentCall {
 }
 
 const callPeerLabel = (c: AgentCall) => {
-  const id = c.peer_agent_id || "";
-  const short = id.includes(":") ? id.split(":").pop()!.slice(0, 10) : id.slice(0, 10);
-  return short || "agent";
+  // Never show raw agent/service IDs to end users.
+  const origin = c.origin_ref;
+  if (origin?.entity_id?.startsWith("zns:svc:")) return "Service call";
+  if (origin?.entity_id?.startsWith("zns:")) return "Agent call";
+  return "Network call";
+};
+
+const friendlyPreview = (text: string | null): string => {
+  if (!text) return "Waiting for the agent…";
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return trimmed.slice(0, 80);
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) {
+      return `Received ${parsed.length} item${parsed.length === 1 ? "" : "s"}`;
+    }
+    const keys = Object.keys(parsed);
+    // Look for a human-readable summary field first.
+    const summaryKey = keys.find((k) =>
+      ["summary", "reply_text", "result", "answer", "text"].includes(k),
+    );
+    if (summaryKey) {
+      const value = parsed[summaryKey];
+      if (typeof value === "string") return value.slice(0, 80);
+    }
+    return `Received response with ${keys.length} field${keys.length === 1 ? "" : "s"}`;
+  } catch {
+    return trimmed.slice(0, 80);
+  }
 };
 
 // A2A task-lifecycle states (submitted → working → completed/failed) the
@@ -44,6 +74,14 @@ export default function RightRail() {
   const { user } = useDashboard();
   const [calls, setCalls] = useState<AgentCall[]>([]);
   const [selected, setSelected] = useState<AgentCall | null>(null);
+
+  const displayName =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email?.split("@")[0] ||
+    "You";
+  const avatarUrl =
+    user?.user_metadata?.avatar_url || user?.user_metadata?.picture || null;
 
   // Agent/service calls our persona made. The row lands "pending" the moment
   // we dispatch and flips to "received" (with an answer) when the peer's push
@@ -121,6 +159,14 @@ export default function RightRail() {
           <span className="rail-title">Agent calls</span>
           <span className="rail-count">({calls.length})</span>
         </div>
+        <Link
+          href="/dashboard/settings/you"
+          className="icon-btn rail-avatar-btn"
+          aria-label={`Edit ${displayName}'s profile`}
+          title="Edit profile"
+        >
+          <Avatar size="sm" src={avatarUrl} name={displayName} />
+        </Link>
       </div>
 
       {calls.length === 0 ? (
@@ -136,13 +182,9 @@ export default function RightRail() {
               onClick={() => setSelected(c)}
             >
               <div className="rail-call-body">
-                <div className="rail-card-title">Agent · {callPeerLabel(c)}</div>
+                <div className="rail-card-title">{callPeerLabel(c)}</div>
                 <div className="rail-card-sub">
-                  {c.answer_text
-                    ? c.answer_text.slice(0, 80)
-                    : c.last_state
-                    ? `Last update: ${c.last_state}`
-                    : "Waiting for the agent…"}
+                  {friendlyPreview(c.answer_text)}
                 </div>
               </div>
               <span className={`rail-call-status ${status.tone}`}>{status.text}</span>
@@ -160,7 +202,7 @@ export default function RightRail() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="agent-call-modal-header">
-              <div className="agent-call-modal-title">Agent · {callPeerLabel(selected)}</div>
+              <div className="agent-call-modal-title">{callPeerLabel(selected)}</div>
               <span className={`rail-call-status ${callStatusLabel(selected).tone}`}>
                 {callStatusLabel(selected).text}
               </span>
@@ -175,14 +217,6 @@ export default function RightRail() {
             </div>
 
             <div className="agent-call-modal-body">
-              <div className="agent-call-row">
-                <span className="k">Task ID</span>
-                <span className="v">{selected.peer_task_id || "—"}</span>
-              </div>
-              <div className="agent-call-row">
-                <span className="k">Peer agent</span>
-                <span className="v">{selected.peer_agent_id}</span>
-              </div>
               {selected.origin_ref?.tool && (
                 <div className="agent-call-row">
                   <span className="k">Via</span>
@@ -191,11 +225,7 @@ export default function RightRail() {
               )}
               <div className="agent-call-row">
                 <span className="k">Status</span>
-                <span className="v">{selected.status}</span>
-              </div>
-              <div className="agent-call-row">
-                <span className="k">Last state</span>
-                <span className="v">{selected.last_state || "—"}</span>
+                <span className="v">{callStatusLabel(selected).text}</span>
               </div>
               <div className="agent-call-row">
                 <span className="k">Dispatched</span>
@@ -205,22 +235,13 @@ export default function RightRail() {
               <div className="agent-call-modal-section">
                 <div className="rail-call-label">Answer</div>
                 {selected.answer_text ? (
-                  <pre className="rail-call-pre">{selected.answer_text}</pre>
+                  <pre className="rail-call-pre">{friendlyPreview(selected.answer_text)}</pre>
                 ) : (
                   <div className="rail-call-muted">
                     No answer yet — last status: {selected.last_state || "working"}.
                   </div>
                 )}
               </div>
-
-              {selected.last_event != null && (
-                <div className="agent-call-modal-section">
-                  <div className="rail-call-label">Last webhook</div>
-                  <pre className="rail-call-pre">
-                    {JSON.stringify(selected.last_event, null, 2)}
-                  </pre>
-                </div>
-              )}
             </div>
           </div>
         </div>

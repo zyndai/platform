@@ -15,7 +15,7 @@ from ContextAware import ContextAware  # noqa: E402
 
 # ── Import Social Tools ──
 from mcp.tools.twitter import post_tweet, read_timeline, send_dm, read_dms
-from mcp.tools.linkedin import post_to_linkedin, send_linkedin_dm, read_linkedin_dms, read_linkedin_profile
+from mcp.tools.linkedin import post_to_linkedin, send_linkedin_dm, read_linkedin_dms, read_linkedin_profile, search_linkedin_people
 
 # ── Import Google Workspace Tools ──
 from mcp.tools.google.calendar import create_event, list_events, delete_event
@@ -124,6 +124,7 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(send_linkedin_dm, name="send_linkedin_dm", description="[PLACEHOLDER] Send a LinkedIn DM")
     mcp.register(read_linkedin_dms, name="read_linkedin_dms", description="[PLACEHOLDER] Read LinkedIn DMs")
     mcp.register(read_linkedin_profile, name="read_linkedin_profile", description="Read the principal's scraped LinkedIn profile — headline, experience, education, skills, and recent posts. Use this when the principal asks about their own LinkedIn background or work history.")
+    mcp.register(search_linkedin_people, name="search_linkedin_people", description="Search LinkedIn itself for people by role/topic/keyword (e.g. 'AI founders'). Real, metered LinkedIn scrape — separate from search_zynd_personas, which only covers people with a Zynd persona. Use when asked to find people 'on LinkedIn', or as an offered next step when a Zynd Network people search comes back thin.")
 
     # ── Google Calendar tools ────────────────────────────────────────
     mcp.register(create_event, name="create_calendar_event", description="Create an event on Google Calendar. Pass `attendees` (a list of email addresses) to invite guests — Google emails them the invite automatically. Checks for conflicts with existing events first: if the time overlaps something already on the calendar, it returns {conflict: true, conflicting_events, suggested_times} and does NOT create the event — present the conflict and suggested_times to the principal instead of retrying blindly. Only pass force=true to double-book anyway, and only when the principal explicitly asked for that after seeing the conflict.")
@@ -139,8 +140,8 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
 
     # ── Google Gmail tools ──────────────────────────────────────────
     mcp.register(search_emails, name="search_gmail_emails", description="Search Gmail for messages matching a query (e.g. from:someone)")
-    mcp.register(get_email_details, name="get_gmail_email_details", description="Get the full body and headers of a specific email")
-    mcp.register(send_email, name="send_gmail_email", description="Send an email through Gmail")
+    mcp.register(get_email_details, name="get_gmail_email_details", description="Get the full body and headers of a specific email, including `thread_id` and `message_id_header` — pass both to `send_gmail_email` when replying so the reply lands in this exact thread instead of a new/wrong one.")
+    mcp.register(send_email, name="send_gmail_email", description="Send an email through Gmail. When REPLYING to an existing email (not composing a new one), first call `get_gmail_email_details` on it and pass its `thread_id` and `message_id_header` here as `thread_id`/`in_reply_to_message_id` — otherwise Gmail has to guess the thread from the subject line alone and can misfile the reply into the wrong conversation.")
     mcp.register(list_recent_threads, name="list_recent_gmail_threads", description="List the most recent email conversations")
 
     # ── Google Sheets tools ──────────────────────────────────────────

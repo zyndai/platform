@@ -15,6 +15,12 @@ export interface ToolCallState {
   status: "running" | "done" | "error";
 }
 
+export interface ActionSummaryItem {
+  status: "done" | "pending" | "waiting" | "error" | "none";
+  label: string;
+  icon?: string;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
@@ -24,6 +30,8 @@ export interface ChatMessage {
   toolCalls?: ToolCallState[];
   /** Final actions array from the orchestrator's `done` event. */
   actions?: ActionRecord[];
+  /** User-facing status summary derived from actions. */
+  actionSummary?: ActionSummaryItem[];
   /** Synthetic = client-only message (welcome line, callback banner). Don't persist or count. */
   synthetic?: boolean;
   /** Set on synthetic A2A-callback banners — used for dedup if realtime re-delivers. */

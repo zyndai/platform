@@ -40,6 +40,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     actions_taken: list[dict] = []
+    action_summary: list[dict] | None = None
     conversation_id: str
 
 
@@ -96,13 +97,40 @@ async def stream_message(
 
 
 @router.get("/history")
-async def chat_history(user: dict = Depends(get_current_user), limit: int = 200):
-    """Return the user's most recent chat thread (with their own Aria) so
-    /dashboard/chat can hydrate state on mount instead of starting fresh
-    every reload. v1: pick the latest conversation_id from chat_messages
-    and return its messages oldest-first."""
+async def chat_history(
+    user: dict = Depends(get_current_user),
+    limit: int = 200,
+    conversation_id: str | None = None,
+):
+    """Return a chat thread (with their own Aria) so /dashboard/chat can
+    hydrate state on mount instead of starting fresh every reload.
+
+    If `conversation_id` is given, it's authoritative — return exactly that
+    thread's messages (possibly empty, e.g. a "New chat" the user hasn't
+    sent anything in yet) rather than falling back to the most recent one.
+    Without it, pick the latest conversation_id from chat_messages, same as
+    before. The explicit-id path exists because the frontend persists the
+    active conversation_id client-side (localStorage) precisely so "New
+    chat" then a refresh doesn't silently resurrect the old thread just
+    because it's still the newest row in the table.
+    """
     sb = _sb()
     try:
+        if conversation_id:
+            rows = (
+                sb.table("chat_messages")
+                .select("*")
+                .eq("user_id", user["id"])
+                .eq("conversation_id", conversation_id)
+                .order("created_at", desc=False)
+                .limit(limit)
+                .execute()
+            )
+            return {
+                "conversation_id": conversation_id,
+                "messages": rows.data or [],
+            }
+
         latest = (
             sb.table("chat_messages")
             .select("conversation_id,created_at")
@@ -131,3 +159,64 @@ async def chat_history(user: dict = Depends(get_current_user), limit: int = 200)
     except Exception as e:
         logger.warning(f"[chat] history fetch failed for {user['id']}: {e}")
         return {"conversation_id": None, "messages": []}
+
+
+@router.get("/conversations")
+async def list_conversations(
+    user: dict = Depends(get_current_user),
+    limit: int = 30,
+):
+    """List the user's past chat sessions for the history sidebar — one
+    entry per conversation_id, newest activity first, with a short preview
+    so a "New chat" thread that's since been abandoned is still findable.
+
+    No GROUP BY support in the Supabase client, so this pulls a recent
+    window of raw messages and groups them in Python. Fine at this scale
+    (a few thousand rows covers months of usage) — revisit with a real
+    aggregate query if that stops being true.
+    """
+    sb = _sb()
+    try:
+        rows = (
+            sb.table("chat_messages")
+            .select("conversation_id,role,content,created_at")
+            .eq("user_id", user["id"])
+            .order("created_at", desc=True)
+            .limit(2000)
+            .execute()
+        )
+        sessions: dict[str, dict] = {}
+        order: list[str] = []
+        for row in rows.data or []:
+            cid = row["conversation_id"]
+            if cid not in sessions:
+                sessions[cid] = {
+                    "conversation_id": cid,
+                    "updated_at": row["created_at"],
+                    "preview": None,
+                    "message_count": 0,
+                }
+                order.append(cid)
+            sessions[cid]["message_count"] += 1
+            # Rows arrive newest-first; the last user message we see for a
+            # conversation (i.e. its oldest, since we're walking backward)
+            # is the best one-line summary of what the thread was about.
+            if row["role"] == "user":
+                sessions[cid]["preview"] = row["content"]
+
+        conversations = []
+        for cid in order[:limit]:
+            s = sessions[cid]
+            preview = (s["preview"] or "").strip().replace("\n", " ")
+            if len(preview) > 80:
+                preview = preview[:77] + "..."
+            conversations.append({
+                "conversation_id": cid,
+                "preview": preview or "New chat",
+                "updated_at": s["updated_at"],
+                "message_count": s["message_count"],
+            })
+        return {"conversations": conversations}
+    except Exception as e:
+        logger.warning(f"[chat] conversations list failed for {user['id']}: {e}")
+        return {"conversations": []}

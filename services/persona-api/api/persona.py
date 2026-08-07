@@ -214,11 +214,33 @@ async def persona_public_card(user_id: str):
     we don't distinguish so attackers can't fingerprint the user_id
     space, and the frontend renders the same "this persona isn't live"
     state for both cases.
+
+    Callers sometimes only have an agent_id in hand (e.g. dm_threads rows,
+    which store initiator_id/receiver_id as agent_ids, not user_ids) — if
+    the direct user_id lookup misses, retry treating the param as an
+    agent_id before giving up.
     """
+    resolved_user_id = user_id
     try:
         persona = get_persona_status(user_id)
     except Exception:
-        raise HTTPException(status_code=404, detail="Persona not found")
+        persona = {"deployed": False}
+    if not persona.get("deployed"):
+        try:
+            sb = _supabase()
+            r = (
+                sb.table("persona_agents")
+                .select("user_id")
+                .eq("agent_id", user_id)
+                .eq("active", True)
+                .limit(1)
+                .execute()
+            )
+            if r.data:
+                resolved_user_id = r.data[0]["user_id"]
+                persona = get_persona_status(resolved_user_id)
+        except Exception:
+            pass
     if not persona.get("deployed"):
         raise HTTPException(status_code=404, detail="Persona not found")
 
@@ -231,7 +253,7 @@ async def persona_public_card(user_id: str):
     avatar_url = profile.get("avatar_url") or profile.get("picture")
     if not avatar_url:
         try:
-            avatar_url = _fetch_auth_user_avatar(user_id)
+            avatar_url = _fetch_auth_user_avatar(resolved_user_id)
         except Exception:
             avatar_url = None
 
@@ -792,4 +814,44 @@ async def search_personas(query: str = "persona", limit: int = 10):
     """
     from mcp.tools.zynd_network import discover_personas
     return await asyncio.to_thread(discover_personas, query, limit)
+
+@router.get("/avatars")
+async def personas_avatars(ids: str = ""):
+    """
+    Bulk-resolve avatar_url for a comma-separated list of ids, powering
+    Messages page avatars without an N+1 fetch per thread.
+
+    dm_threads.initiator_id/receiver_id are agent_ids (create_thread always
+    inserts my_agent_id / target_agent_id), but a handful of older rows may
+    carry a raw user_id instead — so each id here is tried as both, and the
+    response is keyed by whatever id the caller passed in.
+    """
+    id_list = [i for i in ids.split(",") if i]
+    if not id_list:
+        return {}
+
+    from mcp.tools.zynd_network import _get_avatar_map
+
+    agent_avatar_map = await asyncio.to_thread(_get_avatar_map)
+
+    sb = _supabase()
+    rows = (
+        sb.table("persona_agents")
+        .select("user_id,agent_id")
+        .eq("active", True)
+        .execute()
+    )
+    user_to_agent = {
+        r["user_id"]: r["agent_id"]
+        for r in (rows.data or [])
+        if r.get("user_id") and r.get("agent_id")
+    }
+
+    result: dict[str, str] = {}
+    for i in id_list:
+        if i in agent_avatar_map:
+            result[i] = agent_avatar_map[i]
+        elif i in user_to_agent and user_to_agent[i] in agent_avatar_map:
+            result[i] = agent_avatar_map[user_to_agent[i]]
+    return result
 

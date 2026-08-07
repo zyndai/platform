@@ -18,7 +18,7 @@ function LinkedinIcon({ size = 22 }: { size?: number }) {
     </svg>
   );
 }
-import { Banner, Button, Input, FieldLabel } from "@/components/ui";
+import { Banner, Button, Input, FieldLabel, Tag } from "@/components/ui";
 import { getSupabase } from "@/lib/supabase";
 import { useDashboard } from "@/contexts/DashboardContext";
 
@@ -401,6 +401,7 @@ export default function AccountsPage() {
         </div>
       )}
       <div className="settings-header">
+        <h1 className="display-s">Connections</h1>
         <p className="body secondary">Five things your Persona can see. Nothing else.</p>
       </div>
 
@@ -456,7 +457,12 @@ export default function AccountsPage() {
               ? "Allow my Persona to post"
               : "Let my Persona read my LinkedIn"
           }
-          confirmNote=""
+          permission={conn.linkedin.write ? "Can post" : undefined}
+          confirmNote={
+            conn.linkedin.write
+              ? "This removes your scraped profile data and any posting permission you granted."
+              : "This removes your scraped profile data."
+          }
           onConnect={() => handleConnect("linkedin")}
           onAskDisconnect={() => setConfirming("linkedin")}
           onCancelConfirm={() => setConfirming(null)}
@@ -473,11 +479,12 @@ export default function AccountsPage() {
           }
           footer={
             <div className="linkedin-url-footer">
-              <FieldLabel htmlFor="linkedin-profile-url-input">
+              <FieldLabel htmlFor="linkedin-profile-url-input">LinkedIn profile URL</FieldLabel>
+              <p className="field-hint">
                 {conn.linkedin.read
-                  ? "Wrong profile above? Paste your exact LinkedIn URL to fix it:"
-                  : "Know your profile URL? Paste it for a guaranteed-correct match — LinkedIn's login alone can't tell us which \"you\" you are among people with the same name."}
-              </FieldLabel>
+                  ? "Wrong profile above? Paste your exact URL to fix it."
+                  : "Know your URL? Paste it for a guaranteed-correct match — LinkedIn's login alone can't tell us which \"you\" you are among people with the same name."}
+              </p>
               <div className="linkedin-url-row">
                 <Input
                   id="linkedin-profile-url-input"
@@ -508,14 +515,14 @@ export default function AccountsPage() {
         <ConnectorCard
           id="brief"
           icon={<FileText size={22} strokeWidth={1.5} />}
-          name="Your brief"
+          name="Brief"
           connected={conn.brief.connected}
           loading={loading}
           working={working === "brief"}
           confirming={confirming === "brief"}
-          description="A doc in your Drive where you tell your Persona what's current. It re-reads whenever it changes."
+          description="Your Persona keeps a doc in your Drive where you tell it what's current. It re-reads automatically whenever it changes."
           meta={conn.brief.connected ? "Connected to Google Drive" : undefined}
-          connectLabel="Create my brief"
+          connectLabel="Let my Persona create my brief"
           confirmNote={googleSiblingsNote(conn, "brief")}
           onConnect={() => handleConnect("brief")}
           onAskDisconnect={() => setConfirming("brief")}
@@ -552,6 +559,7 @@ export default function AccountsPage() {
           description="Your Persona can search your inbox and send emails on your behalf when you ask it to in chat."
           meta={conn.email.connected ? "Read + send via Gmail" : undefined}
           connectLabel="Let my Persona send email for me"
+          permission={conn.email.connected ? "Can send" : undefined}
           confirmNote={googleSiblingsNote(conn, "email")}
           onConnect={() => handleConnect("email")}
           onAskDisconnect={() => setConfirming("email")}
@@ -567,10 +575,9 @@ export default function AccountsPage() {
           loading={loading}
           working={working === "telegram"}
           confirming={confirming === "telegram"}
-          description="Text your Persona from your phone. It replies in Telegram; everything syncs back here."
-          meta={conn.telegram.connected ? "Connected" : undefined}
-          connectLabel="Connect Telegram"
-          confirmNote=""
+          description="Your Persona can text with you on Telegram. Message it from your phone; replies sync back here."
+          connectLabel="Let my Persona text me on Telegram"
+          confirmNote="Your Persona will stop replying to messages on Telegram."
           onConnect={() => handleConnect("telegram")}
           onAskDisconnect={() => setConfirming("telegram")}
           onCancelConfirm={() => setConfirming(null)}
@@ -602,6 +609,10 @@ interface ConnectorCardProps {
   confirming: boolean;
   description: string;
   meta?: string;
+  /** Short badge next to the status pill for connections that can act on
+   *  the user's behalf (post, send), not just read — e.g. "Can post",
+   *  "Can send". Omit for read-only connections. */
+  permission?: string;
   /** Extra content (e.g. a "what we actually read" preview) rendered
    *  between the meta line and the action buttons. Only shown when
    *  `connected`. */
@@ -637,6 +648,7 @@ function ConnectorCard({
   confirming,
   description,
   meta,
+  permission,
   extra,
   connectLabel,
   confirmNote,
@@ -655,17 +667,22 @@ function ConnectorCard({
         ? "Connected"
         : "Not connected";
   return (
-    <div className={`connector-card ${pending ? "pending" : connected ? "" : "disconnected"}`}>
+    <div
+      className={`connector-card ${
+        loading ? "loading" : pending ? "pending" : connected ? "" : "disconnected"
+      }`}
+    >
       <div className="top-row">
         <span className="ico">{icon}</span>
         <span className="name">{name}</span>
+        {permission && connected && <Tag>{permission}</Tag>}
         <span className="status">{statusText}</span>
       </div>
       <p className="description">{description}</p>
       {confirming && confirmNote && (
-        <p className="confirm-note caption">{confirmNote}</p>
+        <p className="confirm-note">{confirmNote}</p>
       )}
-      {connected && !confirming && extra}
+      {connected && extra}
       <div className="bottom-row">
         {meta && !confirming && <span className="meta">{meta}</span>}
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>

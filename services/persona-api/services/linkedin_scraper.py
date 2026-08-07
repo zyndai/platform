@@ -25,6 +25,11 @@ APIFY_BASE = "https://api.apify.com/v2"
 SEARCH_BY_NAME_ACTOR = "harvestapi~linkedin-profile-search-by-name"
 PROFILE_ACTOR = "harvestapi~linkedin-profile-scraper"
 POSTS_ACTOR = "harvestapi~linkedin-profile-posts"
+# General keyword/role/location people search — distinct from
+# SEARCH_BY_NAME_ACTOR above, which only does exact first/last-name lookup
+# and is used solely for onboarding profile matching. This one is what
+# powers open-ended discovery ("find AI founders on LinkedIn").
+PEOPLE_SEARCH_ACTOR = "harvestapi~linkedin-profile-search"
 
 # Per-call timeout for Apify run-sync. Each actor takes ~10-60s in practice;
 # 120s gives headroom without leaving requests dangling forever.
@@ -114,6 +119,42 @@ async def scrape_profile(profile_url: str) -> dict:
     return items[0] if items else {}
 
 
+async def search_people(
+    query: str = "",
+    locations: list[str] | None = None,
+    max_items: int = 10,
+) -> list[dict]:
+    """
+    Keyword/role/location people search across LinkedIn (not a specific
+    person lookup — see find_profile_url for that). Backs the
+    `search_linkedin_people` MCP tool.
+
+    Field names on the returned dicts (firstName/lastName, headline,
+    location.linkedinText, linkedinUrl, currentPosition[].companyName) are
+    now confirmed against the actor's real input/output schema (fetched
+    directly from Apify's API, not the marketing page) — see
+    verification notes in the PR/commit history for the raw schema dump.
+
+    `takePages` has no default on the actor's side (confirmed via its
+    input schema) — omitting it makes the actor scrape zero search-result
+    pages and return an empty list regardless of query, independent of
+    `maxItems`. This was the actual bug behind "LinkedIn search always
+    comes back empty": every call was missing this field. Each page holds
+    up to 25 profiles, so we request enough pages to cover `max_items`.
+    """
+    max_items = max(1, min(int(max_items or 10), 20))
+    payload: dict = {
+        "profileScraperMode": "Short",
+        "maxItems": max_items,
+        "takePages": max(1, -(-max_items // 25)),  # ceil(max_items / 25)
+    }
+    if query:
+        payload["searchQuery"] = query
+    if locations:
+        payload["locations"] = locations
+    return await _run_actor(PEOPLE_SEARCH_ACTOR, payload)
+
+
 async def scrape_recent_posts(profile_url: str, max_posts: int = 10) -> list[dict]:
     """Fetch recent posts authored by the profile."""
     return await _run_actor(
@@ -149,6 +190,14 @@ async def scrape_user(user_id: str, full_name: str, profile_url: str | None = No
         if not profile_url:
             logger.info(f"[linkedin] no profile match for {user_id} ({full_name!r})")
             return {"status": "no_match"}
+
+    # Log the attempt before awaiting anything below. Past incidents had
+    # this coroutine start and then never produce another log line at all
+    # (no success, no failure, no exception) when run as a FastAPI
+    # BackgroundTask on a busy event loop — with no "started" marker there
+    # was no way to tell "never ran" apart from "ran and silently hung"
+    # without attaching a live debugger.
+    logger.info(f"[linkedin] starting profile+posts scrape for {user_id} ({profile_url})")
 
     profile_task = scrape_profile(profile_url)
     posts_task = scrape_recent_posts(profile_url)

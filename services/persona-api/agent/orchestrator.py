@@ -9,8 +9,11 @@ import uuid
 
 import config
 from mcp.server import mcp_server
+from mcp.tools.error_utils import friendly_error, friendly_error_message
 from services.token_store import list_connected_providers, is_linkedin_scraped
 from agent.memory_context import load_memory_context, format_context_for_prompt, ingest_conversation
+
+logger = logging.getLogger(__name__)
 
 # ── Conversation memory ──────────────────────────────────────────────
 _conversations: dict[str, list[dict]] = {}
@@ -85,6 +88,347 @@ def _load_history_from_db(user_id: str, conversation_id: str, limit: int = 200) 
     except Exception as e:
         print(f"[orchestrator] history rehydration failed for {conversation_id}: {type(e).__name__}: {e}")
         return []
+
+
+def _enrich_tool_error(tool_name: str, result: dict) -> dict:
+    """Add `error_message`/`hint` to a tool result that only has a raw `error`."""
+    if not isinstance(result, dict) or not result.get("error") or result.get("error_message"):
+        return result
+    # "post_tweet" → "run post tweet" gives the classifier a readable verb phrase.
+    operation = f"run {tool_name.replace('_', ' ')}"
+    meta = friendly_error_message(operation, str(result["error"]))
+    return {
+        **result,
+        "error_message": result.get("error_message") or meta.get("error_message"),
+        "hint": result.get("hint") or meta.get("hint"),
+    }
+
+
+# =====================================================================
+# Action summary builder
+# =====================================================================
+
+def _extract_action_summary_tag(text: str) -> tuple[list[dict], str]:
+    """
+    Extract a machine-readable action summary wrapped in `<action_summary>` tags.
+
+    Returns (summary_items, cleaned_text). If no tag is found or it is empty,
+    summary_items is empty and cleaned_text equals the input text.
+    """
+    summary: list[dict] = []
+    if not text:
+        return summary, text
+
+    import re
+
+    pattern = re.compile(r"<action_summary>\s*(.*?)\s*</action_summary>", re.DOTALL | re.IGNORECASE)
+    match = pattern.search(text)
+    if not match:
+        return summary, text
+
+    raw_block = match.group(1).strip()
+    cleaned = pattern.sub("", text).strip()
+
+    status_map = {
+        "✅": "done",
+        "⏳": "waiting",
+        "⚠️": "error",
+        "⚠": "error",
+        "📅": "none",
+        "📄": "done",
+    }
+
+    for line in raw_block.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # First character should be the status emoji
+        first_char = line[0]
+        status = status_map.get(first_char, "done")
+        label = line[1:].strip()
+        if label:
+            summary.append({
+                "status": status,
+                "label": label,
+                "icon": first_char if first_char in status_map else None,
+            })
+
+    return summary, cleaned
+
+
+def _resolve_action_summary(final_reply: str, actions_taken: list[dict]) -> tuple[list[dict], str]:
+    """
+    Prefer an agent-authored `<action_summary>` block in the reply.
+    Fall back to the heuristic summary if the tag is absent/empty.
+    Returns (summary_items, cleaned_reply).
+    """
+    tag_summary, cleaned = _extract_action_summary_tag(final_reply)
+    if tag_summary:
+        return tag_summary, cleaned
+    return _build_action_summary(actions_taken, final_reply), final_reply
+
+
+def _is_tool_result_error(result: dict) -> bool:
+    """Return True if a tool result dict represents a failure."""
+    if not isinstance(result, dict):
+        return False
+    if result.get("error"):
+        return True
+    if result.get("success") is False:
+        return True
+    if result.get("status") in ("failed", "error", "delivery_failed", "rejected", "unreachable", "not_found", "remote_failed"):
+        return True
+    return False
+
+
+def _collect_search_agent_ids(result: dict) -> set[str]:
+    """Collect unique entity ids from search tool results (persona/agent/service)."""
+    ids: set[str] = set()
+    if not isinstance(result, dict):
+        return ids
+    # Primary list keys across the network tools.
+    for key in ("results", "matches", "recommendations"):
+        arr = result.get(key)
+        if not isinstance(arr, list):
+            continue
+        for item in arr:
+            if isinstance(item, dict):
+                for id_key in ("agent_id", "entity_id", "id", "persona_id"):
+                    val = item.get(id_key)
+                    if isinstance(val, str) and val:
+                        ids.add(val)
+                        break
+    # find_best_intro_for_me returns a single recommended pick + matches list.
+    recommended = result.get("recommended")
+    if isinstance(recommended, dict):
+        for id_key in ("agent_id", "entity_id", "id", "persona_id"):
+            val = recommended.get(id_key)
+            if isinstance(val, str) and val:
+                ids.add(val)
+                break
+    return ids
+
+
+def _count_likely_meetings(result: dict) -> int:
+    """
+    Count calendar events that look like real meetings, not all-day
+    birthday/anniversary reminders.
+    """
+    if not isinstance(result, dict):
+        return 0
+    events = result.get("events")
+    if not isinstance(events, list):
+        return 0
+    ignored_terms = ("birthday", "anniversary", "holiday", "reminder")
+    count = 0
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        summary = (e.get("summary") or "").lower()
+        if any(term in summary for term in ignored_terms):
+            continue
+        start = e.get("start") or ""
+        # All-day events use a date string; timed meetings use dateTime.
+        if isinstance(start, str) and "T" in start:
+            count += 1
+            continue
+        # Some older results may not include dateTime; keep them as possible
+        # meetings unless they look like reminders.
+        count += 1
+    return count
+
+
+def _build_action_summary(actions_taken: list[dict], final_reply: str = "") -> list[dict]:
+    """
+    Convert the raw actions_taken list into a short, user-facing status summary.
+
+    Each item is:
+        {"status": "done" | "pending" | "waiting" | "error" | "none",
+         "label": str,
+         "icon": str (optional)}
+
+    This is intentionally heuristic and deterministic: no extra LLM call,
+    fast, and easy to test. We can swap in an LLM parser later without
+    changing the schema.
+    """
+    summary: list[dict] = []
+    if not actions_taken:
+        return summary
+
+    # Aggregates we will collapse into one line each.
+    found_ids: set[str] = set()
+    found_error = False
+    outreach_count = 0
+    outreach_waiting = 0
+    outreach_error = 0
+    meeting_proposed = 0
+    meeting_proposed_error = 0
+    event_created = 0
+    event_created_error = 0
+    connection_count = 0
+    connection_error = 0
+    calendar_meetings: int | None = None
+    calendar_error = False
+    todo_count = 0
+    page_published = 0
+    page_updated = 0
+    service_calls = 0
+    service_errors = 0
+    social_posts = 0
+    social_errors = 0
+    emails_dms = 0
+    email_dm_errors = 0
+
+    for action in actions_taken:
+        tool = action.get("tool", "")
+        result = action.get("result")
+        result = result if isinstance(result, dict) else {}
+        errored = _is_tool_result_error(result)
+
+        if tool in ("search_zynd_personas", "search_zynd_network", "search_zynd_services", "find_best_intro_for_me"):
+            # Dedupe by entity id across repeated searches/overlapping results.
+            found_ids |= _collect_search_agent_ids(result)
+            if errored:
+                found_error = True
+
+        elif tool == "message_zynd_agent":
+            if errored:
+                outreach_error += 1
+            else:
+                reply_status = result.get("reply_status") or result.get("status")
+                if reply_status in ("no_reply_yet", "dispatched"):
+                    outreach_waiting += 1
+                else:
+                    outreach_count += 1
+
+        elif tool in ("propose_meeting", "propose_group_meeting"):
+            if errored:
+                meeting_proposed_error += 1
+            else:
+                meeting_proposed += 1
+
+        elif tool == "create_calendar_event":
+            if errored:
+                event_created_error += 1
+            else:
+                event_created += 1
+
+        elif tool == "list_calendar_events":
+            if errored:
+                calendar_error = True
+            else:
+                calendar_meetings = _count_likely_meetings(result)
+
+        elif tool == "list_pending_meetings":
+            count = result.get("count") if isinstance(result.get("count"), int) else None
+            if count is None:
+                meetings = result.get("meetings") or result.get("items")
+                count = len(meetings) if isinstance(meetings, list) else None
+            if errored:
+                calendar_error = True
+            else:
+                calendar_meetings = count if count is not None else 0
+
+        elif tool == "request_connection":
+            if errored:
+                connection_error += 1
+            else:
+                connection_count += 1
+
+        elif tool == "add_todo":
+            if not errored:
+                todo_count += 1
+
+        elif tool in ("publish_page", "create_page"):
+            if not errored:
+                page_published += 1
+        elif tool == "update_page":
+            if not errored:
+                page_updated += 1
+
+        elif tool in ("call_zynd_service", "call_zynd_agent"):
+            if errored:
+                service_errors += 1
+            else:
+                service_calls += 1
+
+        elif tool in ("post_tweet", "post_to_linkedin"):
+            if errored:
+                social_errors += 1
+            else:
+                social_posts += 1
+
+        elif tool in ("send_gmail_email", "send_twitter_dm", "send_linkedin_dm"):
+            if errored:
+                email_dm_errors += 1
+            else:
+                emails_dms += 1
+
+    found_count = len(found_ids)
+
+    # ── Build summary lines in a sensible order ──
+    if found_error and found_count == 0:
+        summary.append({"status": "error", "label": "Search failed", "icon": "⚠️"})
+    elif found_count > 0:
+        summary.append({"status": "done", "label": f"Found {found_count} relevant {'person' if found_count == 1 else 'people'}", "icon": "✅"})
+    elif found_error:
+        summary.append({"status": "error", "label": "Search completed with errors", "icon": "⚠️"})
+
+    if outreach_error:
+        summary.append({"status": "error", "label": f"{outreach_error} outreach message{' failed' if outreach_error == 1 else 's failed'}", "icon": "⚠️"})
+    if outreach_waiting:
+        summary.append({"status": "waiting", "label": f"{'Drafted' if outreach_count == 0 else 'Sent'} outreach for {outreach_waiting} {'person' if outreach_waiting == 1 else 'people'} — waiting for reply", "icon": "⏳"})
+    if outreach_count:
+        summary.append({"status": "done", "label": f"Drafted outreach for {outreach_count} {'person' if outreach_count == 1 else 'people'}", "icon": "✅"})
+
+    if meeting_proposed_error:
+        summary.append({"status": "error", "label": "Meeting proposal failed", "icon": "⚠️"})
+    elif meeting_proposed:
+        summary.append({"status": "pending", "label": "Meeting proposed — waiting for confirmation", "icon": "📅"})
+
+    if event_created:
+        summary.append({"status": "done", "label": f"Created {event_created} calendar event{'s' if event_created > 1 else ''}", "icon": "✅"})
+    if event_created_error:
+        summary.append({"status": "error", "label": f"{event_created_error} calendar event{'s' if event_created_error > 1 else ''} failed to create", "icon": "⚠️"})
+
+    if calendar_meetings is not None:
+        if calendar_error:
+            summary.append({"status": "error", "label": "Could not check meetings", "icon": "⚠️"})
+        elif calendar_meetings == 0:
+            summary.append({"status": "none", "label": "No meetings scheduled", "icon": "📅"})
+        else:
+            summary.append({"status": "done", "label": f"{calendar_meetings} meeting{'s' if calendar_meetings > 1 else ''} on the calendar", "icon": "✅"})
+
+    if connection_error:
+        summary.append({"status": "error", "label": f"{connection_error} connection request{' failed' if connection_error == 1 else 's failed'}", "icon": "⚠️"})
+    elif connection_count:
+        summary.append({"status": "pending", "label": f"Sent {connection_count} connection request{'s' if connection_count > 1 else ''}", "icon": "⏳"})
+
+    if todo_count:
+        summary.append({"status": "done", "label": f"Added {todo_count} todo{'s' if todo_count > 1 else ''}", "icon": "✅"})
+
+    if page_published:
+        summary.append({"status": "done", "label": f"Published {page_published} page{'s' if page_published > 1 else ''}", "icon": "✅"})
+    if page_updated:
+        summary.append({"status": "done", "label": f"Updated {page_updated} page{'s' if page_updated > 1 else ''}", "icon": "✅"})
+
+    if service_errors:
+        summary.append({"status": "error", "label": f"{service_errors} service/agent call{' failed' if service_errors == 1 else 's failed'}", "icon": "⚠️"})
+    if service_calls:
+        summary.append({"status": "done", "label": f"Used {service_calls} network service{'s' if service_calls > 1 else ''}/agent{'s' if service_calls > 1 else ''}", "icon": "✅"})
+
+    if social_errors:
+        summary.append({"status": "error", "label": f"{social_errors} social post{' failed' if social_errors == 1 else 's failed'}", "icon": "⚠️"})
+    if social_posts:
+        summary.append({"status": "done", "label": f"Posted to {social_posts} social account{'s' if social_posts > 1 else ''}", "icon": "✅"})
+
+    if email_dm_errors:
+        summary.append({"status": "error", "label": f"{email_dm_errors} email/DM{' failed' if email_dm_errors == 1 else 's failed'}", "icon": "⚠️"})
+    if emails_dms:
+        summary.append({"status": "done", "label": f"Sent {emails_dms} email/DM{'s' if emails_dms > 1 else ''}", "icon": "✅"})
+
+    return summary
+
 
 # =====================================================================
 # External-mode permission gating
@@ -618,6 +962,7 @@ class OpenAIProvider(LLMProvider):
         api_key: str | None = None,
         model: str | None = None,
         default_headers: dict | None = None,
+        fallback_models: list[str] | None = None,
     ):
         from openai import OpenAI
         kwargs = {}
@@ -637,16 +982,42 @@ class OpenAIProvider(LLMProvider):
         safe_api_key = api_key or config.OPENAI_API_KEY or "dummy-key"
         self._client = OpenAI(api_key=safe_api_key, **kwargs)
         self._model = model or config.OPENAI_MODEL
+        # Ordered list of models to try after `self._model` if its provider
+        # errors out (e.g. upstream balance/rate-limit issues). Retried
+        # explicitly in Python rather than via OpenRouter's `models` extra_body
+        # field — that field turned out to be unreliable: when OpenRouter's
+        # own routing pins the primary model to a single broken upstream
+        # provider (verified live with DeepSeek's "Insufficient Balance"
+        # 402), it can return that error directly instead of advancing to
+        # the next model in the list. An explicit retry loop here is
+        # guaranteed to fail over regardless of OpenRouter's internal
+        # provider-routing behavior for the primary model.
+        self._fallback_models = fallback_models or []
+
+    def _models_to_try(self) -> list[str]:
+        return [self._model, *self._fallback_models]
 
     def chat_with_tools(self, messages, tools):
         openai_tools = self._convert_tools(tools)
 
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=messages,
-            tools=openai_tools if openai_tools else None,
-            tool_choice="auto",
-        )
+        last_exc: Exception | None = None
+        response = None
+        for model in self._models_to_try():
+            try:
+                response = self._client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=openai_tools if openai_tools else None,
+                    tool_choice="auto",
+                )
+                if model != self._model:
+                    logger.warning(f"[llm] primary model {self._model!r} failed, succeeded on fallback {model!r}")
+                break
+            except Exception as e:
+                logger.warning(f"[llm] model {model!r} failed: {e}")
+                last_exc = e
+        if response is None:
+            raise last_exc
 
         choice = response.choices[0]
 
@@ -682,13 +1053,30 @@ class OpenAIProvider(LLMProvider):
         """
         openai_tools = self._convert_tools(tools)
 
-        stream = self._client.chat.completions.create(
-            model=self._model,
-            messages=messages,
-            tools=openai_tools if openai_tools else None,
-            tool_choice="auto",
-            stream=True,
-        )
+        # Same explicit fallback as chat_with_tools. This call blocks until
+        # the response headers arrive (SSE body is only iterated below), so
+        # a provider-side error like a 402/429 raises here, before any
+        # partial output has been yielded — safe to retry against the next
+        # model without risk of duplicating already-streamed text.
+        last_exc: Exception | None = None
+        stream = None
+        for model in self._models_to_try():
+            try:
+                stream = self._client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=openai_tools if openai_tools else None,
+                    tool_choice="auto",
+                    stream=True,
+                )
+                if model != self._model:
+                    logger.warning(f"[llm] primary model {self._model!r} failed, succeeded on fallback {model!r}")
+                break
+            except Exception as e:
+                logger.warning(f"[llm] model {model!r} failed: {e}")
+                last_exc = e
+        if stream is None:
+            raise last_exc
 
         # Accumulators across the stream.
         # raw_text_parts   = EVERYTHING the model produced, including thinking
@@ -1186,6 +1574,11 @@ def _get_provider() -> LLMProvider:
     if provider_name == "gemini":
         return GeminiProvider()
     elif provider_name == "openrouter":
+        fallback_models = [
+            m.strip()
+            for m in config.OPENROUTER_FALLBACK_MODELS.split(",")
+            if m.strip()
+        ]
         return OpenAIProvider(
             base_url=config.OPENROUTER_BASE_URL,
             api_key=config.OPENROUTER_API_KEY,
@@ -1194,6 +1587,7 @@ def _get_provider() -> LLMProvider:
                 "HTTP-Referer": config.FRONTEND_URL or "https://persona.zynd.ai",
                 "X-Title": "Zynd",
             },
+            fallback_models=fallback_models,
         )
     elif provider_name == "custom":
         return OpenAIProvider(
@@ -1617,6 +2011,7 @@ This is a private, invitation-only group room. Everyone in this room was explici
 - NEVER do persona discovery here (`search_zynd_personas`, `get_persona_profile`) — this is a private group room, not a place to surface other agents.
 - You MAY use Zynd *services* (`search_zynd_services` → `get_zynd_service_card` → `call_zynd_service`) when the group asks for a capability you don't have built in (translation, file conversion, summarization, currency, etc.). Always go search → card → call in order; read `input_schema` to decide whether to pass `text=` or `data=`. Lead replies with the answer, not with "I used a service".
 - NEVER use the words "staged", "queued for approval", "scheduled", "booked", "created the ticket", "sent the invite", or any equivalent confirmation phrasing UNLESS you actually invoked a tool on this turn that returned success. If the tool wasn't called (because it's not in your allowed list, or you chose not to call it), do NOT pretend the action happened. State plainly that you can't do it and why.
+- Same rule for read/fetch tools: NEVER describe what a tool "returned", "keeps returning", or how many times you've "tried" it (e.g. LinkedIn/profile/data lookups) unless you actually called that tool in THIS turn and are reporting its real result. Earlier turns in this conversation may contain a prior tool result or a prior assistant claim — that is not a new attempt, and re-describing it (or inventing an escalating retry count) as if you just tried again is a hallucination. If the principal repeats a question you already have a real answer for, either reuse that real answer or call the tool again — never fabricate a new outcome.
 
 ## Allowed Tools (this thread)
 {allowlist_block if allowlist_block != "(none)" else "No tools available on this thread."}
@@ -1784,6 +2179,9 @@ When one message asks for MULTIPLE things — "find X, then email them, then sch
 
 Never silently drop a requested step. If you truly can't do something, say so explicitly rather than letting the turn just end.
 
+## Autonomy
+You are an autonomous agent, not a chatbot. Once a goal is given, complete as much of the workflow as you can in the current turn. Do not pause to ask "Shall I proceed?", "Would you like me to...?", or "Let me know if you want me to continue." — proceed, act, and report what happened. Only stop for explicit user approval gates, missing data that cannot be reasonably inferred, or a failed step that needs direction.
+
 ## TOOL ROUTING — Todo vs Brief (READ FIRST, then act)
 Two SEPARATE stores. Picking the wrong tool is a hard failure.
 
@@ -1882,14 +2280,14 @@ After the search, the UI shows the user clickable result cards (each labeled age
 Render the agent's actual output, not a placeholder. Lead with what was found, not "I searched the network and got…".
 
 **When presenting PEOPLE results** (persona rows): never present a bare list of names with no explanation. For EACH person, cover three things in one or two natural sentences — don't label them, just write it like a person would:
-1. **Why they were selected** — ground this in the result's own data. If `match_reason` is present (e.g. `"matched on: founder, ai"`), turn it into a natural sentence — *"he's a co-founder building in AI"* — don't paste the raw field verbatim. If `match_reason` is empty (no direct keyword overlap — the match came from the registry's own ranking, or from connection/mutual-connection signals rather than topical fit), base it on the persona's `description`/`summary` instead of inventing one, or say plainly it's a loose match if the description doesn't clearly connect to the ask.
+1. **Why they were selected** — ground this in the result's own data. If `match_reason` is present and covers the FULL query (e.g. `"matched on: founder, ai"` for "AI founders"), turn it into a natural sentence — *"he's a co-founder building in AI"* — don't paste the raw field verbatim. If `match_reason` ends with `"— missing: <concept>"` (e.g. matched "ai" but not "founder"), that person only satisfies PART of the ask — say so honestly ("he's working in AI, but I don't see him described as a founder specifically") rather than presenting a partial match as a solid one; don't let a person like this crowd out or get listed ahead of someone who matches the full ask. If `match_reason` is empty (no direct keyword overlap — the match came from the registry's own ranking, or from connection/mutual-connection signals rather than topical fit), base it on the persona's `description`/`summary` instead of inventing one, or say plainly it's a loose match if the description doesn't clearly connect to the ask.
 2. **How they match the principal's own goal** — connect the result back to what the principal is actually looking for, from THEIR side: their Brief (rendered above under "Who Your Principal Is"), or the specific wording of their ask if the Brief doesn't cover it. "He's building an AI product and explicitly looking for a technical cofounder" lands very differently depending on whether the principal's Brief says they're job-hunting vs. fundraising vs. looking for a cofounder themselves — use what you actually know about the principal, don't write a generic blurb that would apply to anyone.
 3. **Why it's worth connecting** — a concrete, specific reason, not a filler line like "could be a good connection." If there's nothing concretely compelling beyond topical overlap, say that honestly rather than manufacturing enthusiasm.
 
 If the ask is "who should I talk to about X" / "introduce me to someone who…" style rather than a raw search, `find_best_intro_for_me(topic, top_k)` is usually the better call over `search_zynd_personas` — it already factors in existing connection status and mutual connections on top of topical relevance, and returns a `recommended` pick with its own `reason` you can build on (still apply points 2–3 above using the principal's actual Brief, don't just relay its `reason` field verbatim).
 
 ### Hard rules
-- **Never invent links** to a "details page" or "view details URL." The search result's `url` field is the agent's A2A endpoint, NOT a human-viewable page — do not include it in chat as a clickable link. If the user wants the raw endpoint, mention it as plain text (`zns:abc…`).
+- **Never expose internal implementation details to the principal.** Do not mention A2A endpoints, JSON-RPC URLs, webhook paths, "connection endpoints", internal thread IDs, or raw service/agent IDs like `zns:abc…` in your visible reply. The principal sees only clean, user-facing results: names, summaries, and what happened. If something goes wrong, describe it in plain language ("their persona's server appears to be offline") rather than naming technical infrastructure.
 - **Never stop at "found, want me to call it?"** for non-persona kinds. The user already asked you to do the thing. Confirmation turns are only for actions that commit on the user's behalf (sending money, posting to social, etc.), not for read-only agent calls.
 - For people-seeking asks, use `search_zynd_personas` or `search_zynd_network(kind="persona")` (see Step 1) — never `kind="any"` for a people-only ask, including as a fallback after a weak/empty people search. Falling back to a `kind="any"` catalog browse when the ask was about people is what used to dump unrelated internal agents/services (translators, PDF generators, business-card makers…) into a "find me people" answer — do not do this, no matter how many retries came up empty.
 - **A non-empty result means STOP searching — do not retry looking for a "better" one.** The retry rule below is for ZERO hits only. If a search call returns even one result, that's what you present (with an honest caveat if it's a loose match) — do not fire a second search with rephrased keywords just because the match doesn't feel strong enough. Calling search again for a query that already returned a result is what caused the same person to show up in duplicate result cards — never do this.
@@ -1989,7 +2387,9 @@ Your principal currently has these accounts connected: {providers_str}
 
 When "linkedin (profile reading only)" appears, it means their LinkedIn profile data is available for reference but you do NOT have API posting access. You can discuss their LinkedIn activity but must not claim you can post to LinkedIn.
 
-You CANNOT send LinkedIn connection invitations, and you CANNOT search LinkedIn for people — there is no tool for either and LinkedIn's API does not allow it. If the principal asks you to "connect with someone on LinkedIn" or "find people on LinkedIn", say plainly that you can't act on LinkedIn connections or search, then offer to find and connect people on the Zynd Network instead. ALL discovery and connecting you do happens on the Zynd Network (`search_zynd_network`, `request_connection`) — never on LinkedIn. Whenever you send a connection request, state explicitly that it is a Zynd Network request, not a LinkedIn invitation, so the principal doesn't go looking for it on LinkedIn.
+You CANNOT send LinkedIn connection invitations — LinkedIn's API does not allow third-party apps to do that, full stop. You CAN, however, search LinkedIn for people via `search_linkedin_people(query, location?, top_k?)` — this is a real (metered) scrape, separate from the Zynd Network. Default to the Zynd Network first for people-discovery (`search_zynd_personas` / `search_zynd_network`) since those results are people your principal can actually connect and message; treat `search_linkedin_people` as a supplementary source — reach for it when the principal explicitly says "on LinkedIn", or when a Zynd search comes back thin (see below). Whenever you show LinkedIn search results, make clear they're public LinkedIn profiles, not Zynd connections — your principal cannot `request_connection` or `message_zynd_agent` them, only view/share the profile link. Whenever you send an actual connection request, state explicitly that it is a Zynd Network request, not a LinkedIn invitation, so the principal doesn't go looking for it on LinkedIn.
+
+**When a people search comes back thin.** Zynd Network coverage is still small relative to LinkedIn's — if `search_zynd_personas`/`search_zynd_network` returns zero results, or only 1-2 weak/loose matches (low `match_score`, or `match_reason` empty/partial) for a specific ask, say so plainly instead of presenting a short list as if it were comprehensive — e.g. "Only found 2 people on the network for 'AI founders', and the match isn't strong. Want me to also check LinkedIn?" Don't silently pad a thin result with loose matches to look complete, and don't silently switch to `search_linkedin_people` without saying you're doing it.
 
 ## Current Time Context
 {time_context}
@@ -2038,7 +2438,7 @@ at 1pm and invite bob@example.com"). Do NOT go through Zynd negotiation here.
 6. When the event is created (no conflict, or force=true), confirm it back to your
    principal and mention that the invite has been emailed to the attendees.
 
-### Zynd-to-Zynd meeting negotiation (no "invite" keyword — just Zynd contacts)
+### Zynd-to-Zynd meeting scheduling (no "invite" keyword — just Zynd contacts)
 This path is ONLY for coordinating a meeting between two Zynd users. Do NOT use it
 when the principal says "send an invite" or "invite them" — those words mean a
 calendar invite with an email attendee (see previous section). If the principal uses
@@ -2047,14 +2447,12 @@ path if the principal explicitly says they want a Zynd meeting ticket instead.
 
 When your principal asks you to schedule a meeting with someone on the Zynd Network:
 1. First check that you have an accepted connection with them (`check_connection_status` or `list_my_connections`). You CANNOT propose a meeting on a thread that isn't accepted yet — if it's still pending, tell your principal to wait for the other side to accept the connection request first.
-2. Negotiate availability by sending a message to the other agent via `message_zynd_agent` on the accepted thread. Ask an open question like "when is your principal free next week?".
-3. When the other agent replies with candidate times, STOP and bring the options back to your principal in plain text. Example: *"Alice is free Tuesday 2-4pm or Friday 10am. Which slot should I book?"*
-4. Wait for your principal's explicit confirmation of a specific start and end time. Do NOT guess. Do NOT pick one yourself.
-5. ONLY THEN call `propose_meeting(thread_id, title, start_time, end_time, ...)` to formalise the ticket. This writes a proper record both sides can see, and the UI renders it as an acceptable/declinable card.
-6. The `thread_id` must match the dm_thread you've been negotiating on — get it from `list_my_connections` if you don't already have it.
-7. All times must be ISO-8601 UTC (e.g. "2026-04-14T15:00:00Z"). Convert the principal's local-time phrasing to UTC before calling.
-8. If your principal asks "what meetings am I expecting?" or "do I need to respond to anything?", use `list_pending_meetings`. If they ask you to accept / decline / reschedule a specific ticket, use `respond_to_meeting`.
-9. Never auto-accept a meeting on your principal's behalf without them telling you to.
+2. If the principal gave a concrete date and time, convert it to ISO-8601 UTC and call `propose_meeting(thread_id, title, start_time, end_time, ...)` immediately. Do NOT ask the other agent when they are free first — the meeting card IS the negotiation mechanism.
+3. If the principal did NOT give a concrete time, call `list_calendar_events` to find the next reasonable free slot in their calendar. Default to a 30-minute duration during business hours. If you find a suitable slot, propose it via `propose_meeting` immediately. If the calendar is unavailable or there is no clear slot, ask the principal for ONE preferred time rather than messaging the other agent.
+4. The `thread_id` must match the dm_thread — get it from `list_my_connections` if you don't already have it.
+5. All times passed to `propose_meeting` must be ISO-8601 UTC (e.g. "2026-04-14T15:00:00Z"). Convert the principal's local-time phrasing to UTC before calling.
+6. If your principal asks "what meetings am I expecting?" or "do I need to respond to anything?", use `list_pending_meetings`. If they ask you to accept / decline / reschedule a specific ticket, use `respond_to_meeting`.
+7. Never auto-accept a meeting on your principal's behalf without them telling you to.
 
 ## Published Pages Protocol
 When your principal asks you to turn content into a shareable page, or says something like "publish this as HTML", "make a Markdown page", or "save this as a web page":
@@ -2063,6 +2461,7 @@ When your principal asks you to turn content into a shareable page, or says some
 3. When your principal asks to edit or update an existing page, call `update_page(slug, content?, title?, format?, visibility?)`. The `slug` is the last part of the page URL (`/pages/<slug>`). Use `list_my_pages()` first if you don't know the slug.
 4. When your principal asks to "list my pages", "show my pages", or "what pages have I published", call `list_my_pages()` and summarize the result. The UI will render the list with copy/open buttons.
 5. Do not publish pages containing private credentials or secrets.
+6. NEVER invent factual content the principal did not give you — pricing, testimonials, customer names/logos, stats, dates, or claims about the product/company. This page gets a real public URL your principal may actually share; fabricated pricing or fake testimonials on it is a real, embarrassing lie in their voice. If the principal's request is missing content a normal page of that kind would need, either ask for it before publishing, or write the section as an explicit placeholder clearly marked as such (e.g. "[Add pricing here]", "Testimonials coming soon") — never fill the gap with invented specifics.
 
 ## Rules
 1. When calling a tool, ALWAYS pass the `user_id` parameter as "{user_id}".
@@ -2072,7 +2471,7 @@ When your principal asks you to turn content into a shareable page, or says some
 5. For tweets, respect the 280 character limit.
 6. NEVER call the same tool more than once in a single turn unless your principal explicitly asks for multiple actions.
 7. After a tool executes, surface the result for your principal. For built-in tools that return lists (emails, connections), list the names/details. For `call_zynd_service` / `call_zynd_agent` results, follow the "What to tell your principal" guidance above — a one-line lead-in is enough when a card is shown; otherwise include the details.
-8. If you have any doubt about what your principal wants, ask for clarification.
+8. Only ask your principal a question when you genuinely cannot proceed without the missing information, or when the action commits them to something significant (money, legal, a public post, a calendar event with external attendees, or formally accepting someone else's proposal). If a reasonable default exists, use it and report what you chose.
 9. Never claim to be your principal. You are their AI agent, not them.
 10. If a tool returns an error (the result contains an "error" field, a timeout, permission_denied, or any failure), DO NOT silently claim success. Tell your principal exactly what failed, what you tried, and offer a next step (retry, different approach, ask for clarification). Never end a turn with a generic "I completed the requested actions" when a step actually failed.
 11. When `message_zynd_agent` (or `call_zynd_agent`) returns:
@@ -2080,6 +2479,29 @@ When your principal asks you to turn content into a shareable page, or says some
     - `reply_status: "no_reply_yet"` — tell your principal the message was delivered but no reply has come back yet (the other side may still be processing or in manual mode), and that the reply will appear in their Agent Activity tab when it arrives.
     - `status: "delivery_failed"` — the message was NOT delivered. Relay the SPECIFIC reason from the `message` field (e.g. "their persona's server appears to be offline", "timed out waiting on their server", "their server returned an error (HTTP 500)") — never collapse this to a generic "something went wrong" or "the connection failed", the whole point of this field is that it already tells you what actually happened. `reply_status: "rejected"` means the receiver's own agent explicitly declined the message (check `error_reason`) — that's different from `"transport_error"` (couldn't even reach them) and should be described differently: a rejection is about them, a transport error is about the network/their server being unreachable. Always offer to retry.
 12. Your FINAL reply to the principal must ONLY be the answer. No meta-commentary about your process, your data sources, or how you're going to present things. Specifically: NEVER write phrases like "The search results provide…", "I'll provide these figures…", "I will present this clearly…", "Based on the most recent source…", "Summary to provide:", "Here's what I found so I'll now…". Those are reasoning-scratch, not answers. Put the reasoning in your head, then write ONLY the clean final response. Your principal sees the bullet points, tables, numbers — nothing about how you got there.
+
+## Action Summary
+When you complete a multi-step workflow or produce multiple deliverables in one turn (found people, drafted outreach, checked meetings, scheduled something, sent messages, published a page, etc.), end your final reply with a compact status summary wrapped in `<action_summary>` tags.
+
+Rules for the summary block:
+- One item per line.
+- Each line starts with one status emoji:
+  - ✅ for completed items
+  - ⏳ for pending / waiting-for-someone-else items
+  - ⚠️ for errors or blocked items
+  - 📅 for meeting/calendar status
+  - 📄 for created/published documents
+- Keep the label short and specific (e.g. "Found 3 relevant people", "Drafted outreach for 3 people", "No meetings scheduled").
+- Do NOT use markdown inside the block — plain text only.
+- The rest of your reply stays unchanged; the UI will extract this block and render it as a clean status card.
+
+Example:
+
+<action_summary>
+✅ Found 3 relevant people
+✅ Drafted outreach for 3 people
+📅 No meetings scheduled
+</action_summary>
 """
 
 async def handle_user_message(
@@ -2217,9 +2639,11 @@ async def handle_user_message(
                 asyncio.create_task(
                     ingest_conversation(user_id, history, message, final_reply, conversation_id)
                 )
+            action_summary, cleaned_reply = _resolve_action_summary(final_reply, actions_taken)
             return {
-                "reply": final_reply,
+                "reply": cleaned_reply,
                 "actions_taken": actions_taken,
+                "action_summary": action_summary,
                 "conversation_id": conversation_id,
             }
 
@@ -2247,9 +2671,11 @@ async def handle_user_message(
                 asyncio.create_task(
                     ingest_conversation(user_id, history, message, final_reply, conversation_id)
                 )
+            action_summary, cleaned_reply = _resolve_action_summary(final_reply, actions_taken)
             return {
-                "reply": final_reply,
+                "reply": cleaned_reply,
                 "actions_taken": actions_taken,
+                "action_summary": action_summary,
                 "conversation_id": conversation_id,
             }
 
@@ -2360,10 +2786,16 @@ async def handle_user_message(
                 else:
                     print(f"[orchestrator] ✓ Tool '{fn_name}' ok: {_preview}")
             except Exception as e:
-                result = {"error": f"Tool execution failed: {str(e)}"}
-                print(f"[orchestrator] ⚠️ Tool '{fn_name}' CRASHED: {str(e)}")
+                operation = f"run {fn_name.replace('_', ' ')}"
+                result = friendly_error(operation, e)
+                print(f"[orchestrator] ⚠️ Tool '{fn_name}' CRASHED: {type(e).__name__}")
 
             executed_tools.add(fn_name)
+
+            # Give the model (and the user) a non-technical explanation when the
+            # tool only returned a bare `error` string.
+            if isinstance(result, dict):
+                result = _enrich_tool_error(fn_name, result)
 
             actions_taken.append({
                 "tool": fn_name,
@@ -2416,9 +2848,11 @@ async def handle_user_message(
         asyncio.create_task(
             ingest_conversation(user_id, history, message, final_reply, conversation_id)
         )
+    action_summary, cleaned_reply = _resolve_action_summary(final_reply, actions_taken)
     return {
-        "reply": final_reply,
+        "reply": cleaned_reply,
         "actions_taken": actions_taken,
+        "action_summary": action_summary,
         "conversation_id": conversation_id,
     }
 
@@ -2442,6 +2876,11 @@ async def _run_provider_stream(provider, messages, tools):
             for event in provider.chat_with_tools_stream(messages, tools):
                 loop.call_soon_threadsafe(queue.put_nowait, event)
         except Exception as e:
+            # This used to only reach the client as a raw SSE error event —
+            # invisible in server logs, which made a real production outage
+            # (every fallback model exhausted) undiagnosable without asking
+            # the user to paste their browser console output.
+            logger.error(f"[llm] provider stream crashed after exhausting all fallback models: {e}")
             loop.call_soon_threadsafe(
                 queue.put_nowait,
                 {"type": "error", "message": f"Provider stream crashed: {e}"},
@@ -2587,10 +3026,12 @@ async def handle_user_message_stream(
                 asyncio.create_task(
                     ingest_conversation(user_id, history, message, final_reply, conversation_id)
                 )
+            action_summary, cleaned_reply = _resolve_action_summary(final_reply, actions_taken)
             yield {
                 "type": "done",
-                "reply": final_reply,
+                "reply": cleaned_reply,
                 "actions_taken": actions_taken,
+                "action_summary": action_summary,
                 "conversation_id": conversation_id,
             }
             return
@@ -2616,10 +3057,12 @@ async def handle_user_message_stream(
                 asyncio.create_task(
                     ingest_conversation(user_id, history, message, final_reply, conversation_id)
                 )
+            action_summary, cleaned_reply = _resolve_action_summary(final_reply, actions_taken)
             yield {
                 "type": "done",
-                "reply": final_reply,
+                "reply": cleaned_reply,
                 "actions_taken": actions_taken,
+                "action_summary": action_summary,
                 "conversation_id": conversation_id,
             }
             return
@@ -2710,10 +3153,13 @@ async def handle_user_message_stream(
                 else:
                     print(f"[orchestrator/stream] ✓ Tool '{fn_name}' ok: {_preview}")
             except Exception as e:
-                result = {"error": f"Tool execution failed: {str(e)}"}
-                print(f"[orchestrator/stream] ⚠️ Tool '{fn_name}' CRASHED: {str(e)}")
+                operation = f"run {fn_name.replace('_', ' ')}"
+                result = friendly_error(operation, e)
+                print(f"[orchestrator/stream] ⚠️ Tool '{fn_name}' CRASHED: {type(e).__name__}")
 
             executed_tools.add(fn_name)
+            if isinstance(result, dict):
+                result = _enrich_tool_error(fn_name, result)
             actions_taken.append({"tool": fn_name, "args": fn_args, "result": result})
 
             yield {"type": "tool_result", "id": tc["id"], "name": fn_name, "result": result}
@@ -2775,9 +3221,11 @@ async def handle_user_message_stream(
         asyncio.create_task(
             ingest_conversation(user_id, history, message, final_reply, conversation_id)
         )
+    action_summary, cleaned_reply = _resolve_action_summary(final_reply, actions_taken)
     yield {
         "type": "done",
-        "reply": final_reply,
+        "reply": cleaned_reply,
         "actions_taken": actions_taken,
+        "action_summary": action_summary,
         "conversation_id": conversation_id,
     }

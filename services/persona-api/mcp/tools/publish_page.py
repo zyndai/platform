@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from mcp.tools.error_utils import friendly_error
 from services import page_publisher
 
 
@@ -101,4 +102,4 @@ def list_my_pages(user_id: str) -> dict[str, Any]:
         pages = page_publisher.list_pages(user_id=user_id)
         return {"success": True, "pages": pages, "count": len(pages)}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("list your published pages", e)

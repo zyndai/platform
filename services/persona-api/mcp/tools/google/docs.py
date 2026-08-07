@@ -18,6 +18,7 @@ user's other Drive files.
 
 from mcp.tools.google.common import get_google_creds
 from googleapiclient.discovery import build
+from mcp.tools.error_utils import friendly_error
 import config
 
 
@@ -62,7 +63,7 @@ def create_document(user_id: str, title: str) -> dict:
         }
     except Exception as e:
         print(f"[docs] EXCEPTION in create_document: {str(e)}")
-        return {"success": False, "error": str(e)}
+        return friendly_error("create the Google Doc", e)
 
 
 def append_to_document(user_id: str, document_id: str, text: str) -> dict:
@@ -100,7 +101,7 @@ def append_to_document(user_id: str, document_id: str, text: str) -> dict:
         return {"success": True, "document_id": document_id}
     except Exception as e:
         print(f"[docs] EXCEPTION in append_to_document: {str(e)}")
-        return {"success": False, "error": str(e)}
+        return friendly_error("append to the Google Doc", e)
 
 
 def replace_document_body(user_id: str, document_id: str, text: str) -> dict:
@@ -135,7 +136,7 @@ def replace_document_body(user_id: str, document_id: str, text: str) -> dict:
         return {"success": True, "document_id": document_id}
     except Exception as e:
         print(f"[docs] EXCEPTION in replace_document_body: {str(e)}")
-        return {"success": False, "error": str(e)}
+        return friendly_error("update the Google Doc", e)
 
 
 def read_document(user_id: str, document_id: str) -> dict:
@@ -166,7 +167,7 @@ def read_document(user_id: str, document_id: str) -> dict:
         return {"success": True, "title": doc.get("title"), "content": full_text}
     except Exception as e:
         print(f"[docs] EXCEPTION in read_document: {str(e)}")
-        return {"success": False, "error": str(e)}
+        return friendly_error("read the Google Doc", e)
 
 
 def list_google_docs(user_id: str, max_results: int = 15) -> dict:
@@ -210,7 +211,7 @@ def list_google_docs(user_id: str, max_results: int = 15) -> dict:
         }
     except Exception as e:
         print(f"[docs] EXCEPTION in list_google_docs: {str(e)}")
-        return {"success": False, "error": str(e)}
+        return friendly_error("list your Google Docs", e)
 
 
 def search_google_docs(user_id: str, query: str) -> dict:
@@ -255,4 +256,4 @@ def search_google_docs(user_id: str, query: str) -> dict:
         }
     except Exception as e:
         print(f"[docs] EXCEPTION in search_google_docs: {str(e)}")
-        return {"success": False, "error": str(e)}
+        return friendly_error("search your Google Docs", e)

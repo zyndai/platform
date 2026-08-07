@@ -14,7 +14,6 @@ import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  ExternalLink,
   Search,
   FileCode,
   Tag,
@@ -287,9 +286,6 @@ function AgentResultRow({
         {result.summary && (
           <div className="service-result-summary">{result.summary}</div>
         )}
-        <div className="service-result-id" title={result.entity_id}>
-          {result.entity_id}
-        </div>
       </div>
       <div className="service-result-actions">
         {/* Personas need a connection handshake — no direct call. */}
@@ -364,9 +360,6 @@ function ServiceResultRow({
         {result.summary && (
           <div className="service-result-summary">{result.summary}</div>
         )}
-        <div className="service-result-id" title={result.entity_id}>
-          {result.entity_id}
-        </div>
       </div>
       <div className="service-result-actions">
         {onCall && (
@@ -416,7 +409,6 @@ function ServiceCardDetail({
   onCall?: () => void;
   onAskPersona?: () => void;
 }) {
-  const [schemaOpen, setSchemaOpen] = useState(false);
   // The card payload has no persona/kind field — best-effort guard so we
   // don't offer a direct Call on a human's persona (which needs a
   // connection handshake). Reaching Call from a search row is more
@@ -427,7 +419,7 @@ function ServiceCardDetail({
     return (
       <div className="services-panel services-panel-empty">
         <p>
-          No service with id <code>{card.entity_id}</code> is registered.
+          {card.name || "That service"} is not registered on the network right now.
         </p>
       </div>
     );
@@ -436,7 +428,7 @@ function ServiceCardDetail({
     return (
       <div className="services-panel services-panel-empty">
         <p>
-          <strong>{card.entity_id}</strong> is registered but its deployment is
+          {card.name || "That service"} is registered but its deployment is
           unreachable.
         </p>
         {/* card.hint is LLM tool-use guidance (call_zynd_service / A2A schema) —
@@ -452,17 +444,11 @@ function ServiceCardDetail({
     );
   }
 
-  const schema = card.input_schema as
-    | { properties?: Record<string, unknown> }
-    | undefined;
-  const fieldKeys = schema?.properties ? Object.keys(schema.properties) : [];
-
   return (
     <div className="services-panel services-card-detail">
       <div className="services-card-head">
         <div>
           <div className="services-card-name">{card.name || "Service"}</div>
-          <div className="services-card-id">{card.entity_id}</div>
         </div>
         {card.category && (
           <span className="services-card-cat">
@@ -476,47 +462,9 @@ function ServiceCardDetail({
         <p className="services-card-desc">{card.description}</p>
       )}
 
-      {/* A persona's `url` is its A2A JSON-RPC endpoint (POST-only) — linking it
-          in the chat opens a raw 405. The developer chrome below (raw endpoint,
-          input-field chips, full JSON schema) is meaningful only for callable
-          services, so hide all of it for persona cards. */}
-      {card.url && !isPersona && (
-        <a
-          href={card.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="services-card-url"
-        >
-          <ExternalLink size={12} strokeWidth={1.8} />
-          {card.url}
-        </a>
-      )}
-
-      {fieldKeys.length > 0 && !isPersona && (
-        <div className="services-card-fields">
-          <div className="services-card-section">Input fields</div>
-          <div className="services-card-field-chips">
-            {fieldKeys.map((k) => (
-              <span key={k} className="services-card-chip">
-                {k}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {schema && !isPersona && (
-        <details
-          className="services-card-schema"
-          open={schemaOpen}
-          onToggle={(e) => setSchemaOpen((e.target as HTMLDetailsElement).open)}
-        >
-          <summary>Full input schema</summary>
-          <pre className="services-card-schema-pre">
-            {JSON.stringify(card.input_schema, null, 2)}
-          </pre>
-        </details>
-      )}
+      {/* Internal implementation details (raw IDs, endpoint URLs, input schema)
+          are hidden from end users. The LLM still receives them via tool results;
+          the UI shows only name, description, category, and action buttons. */}
 
       {(onCall || onAskPersona) && (
         <div className="services-card-actions">
@@ -592,9 +540,6 @@ function CallPanel({
         <span>
           Call <strong>{name}</strong>
         </span>
-      </div>
-      <div className="services-call-id" title={entityId}>
-        {entityId}
       </div>
 
       <CallForm

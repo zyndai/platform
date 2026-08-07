@@ -18,6 +18,7 @@ import { getSupabase } from "@/lib/supabase";
 import { useDashboard } from "@/contexts/DashboardContext";
 import { useChat } from "@/contexts/ChatContext";
 import type {
+  ActionSummaryItem,
   ChatMessage,
   PersonaHit,
   ThreadHandoff,
@@ -34,6 +35,7 @@ import {
 import GenUiResult, { LongResponseCard, isLongResponse } from "./GenUiResult";
 import ChatInput, { type ChatInputHandle } from "./ChatInput";
 import ChatThreadSkeleton from "./ChatThreadSkeleton";
+import ChatHistorySidebar from "./ChatHistorySidebar";
 import MatchCard from "./MatchCard";
 import IntroPreviewModal from "./IntroPreviewModal";
 import ApprovalCard, { type PendingApproval } from "./ApprovalCard";
@@ -62,6 +64,28 @@ function TypingIndicator() {
       <span className="typing-dot" />
       <span className="typing-dot" />
       <span className="typing-dot" />
+    </div>
+  );
+}
+
+function ActionSummaryBlock({ items }: { items: ActionSummaryItem[] }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="action-summary" aria-label="Action summary">
+      {items.map((item, i) => (
+        <div key={i} className={`action-summary-item action-summary-item--${item.status}`}>
+          <span className="action-summary-icon" aria-hidden="true">
+            {item.icon || {
+              done: "✅",
+              pending: "⏳",
+              waiting: "⏳",
+              error: "⚠️",
+              none: "📅",
+            }[item.status]}
+          </span>
+          <span className="action-summary-label">{item.label}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -381,11 +405,21 @@ function MessageRowInner({
           </span>
         )}
       </div>
+      {isAria && message.actionSummary && message.actionSummary.length > 0 && (
+        <ActionSummaryBlock items={message.actionSummary} />
+      )}
       {callResults.length > 0 && (
         <div className="genui-stack">
           {callResults.map((r, i) => (
             <div className="genui-wrap" key={`${r.entity_id}-${i}`}>
-              <GenUiResult result={r} title={r.entity_id} />
+              <GenUiResult
+                result={r}
+                title={
+                  r.entity_id?.startsWith("zns:svc:")
+                    ? "Service result"
+                    : "Agent result"
+                }
+              />
             </div>
           ))}
         </div>
@@ -451,6 +485,28 @@ export default function ChatInterface() {
   // Escape key in ChatInput) can cancel a streaming reply. Cleared on
   // completion / error.
   const abortRef = useRef<AbortController | null>(null);
+
+  // Guards against a stale stream corrupting a different conversation's
+  // messages. Scenario: send a message, don't wait for it, then hit "New
+  // chat" or open a past session from the history sidebar — the abandoned
+  // fetch keeps running and its events still arrive. Without this check,
+  // updateStreaming's "no message is flagged streaming, so patch the last
+  // one" fallback (needed for legitimate mid-turn card insertions) would
+  // instead silently overwrite the newly-loaded, already-complete
+  // conversation's last assistant message with leftover deltas.
+  const liveConversationIdRef = useRef(conversationId);
+  useEffect(() => {
+    if (liveConversationIdRef.current === conversationId) return;
+    liveConversationIdRef.current = conversationId;
+    // The conversation on screen just changed from under an in-flight (or
+    // just-finished) send. Release the input immediately rather than
+    // leaving it disabled until that abandoned background fetch happens
+    // to finish — the guard above already keeps its trailing updates from
+    // touching whatever's now displayed, so there's nothing left to wait
+    // on from this screen's point of view.
+    setLoading(false);
+  }, [conversationId]);
+  const sendConversationIdRef = useRef<string | null>(null);
 
   // S10 intro modal state. Holds the persona we're drafting an intro to.
   const [introTarget, setIntroTarget] = useState<PersonaHit | null>(null);
@@ -580,10 +636,19 @@ export default function ChatInterface() {
 
   const updateStreaming = useCallback(
     (patch: (m: ChatMessage) => ChatMessage) => {
+      // The conversation this stream was sent into is no longer the one
+      // on screen — ignore. See the sendConversationIdRef comment above.
+      if (sendConversationIdRef.current !== liveConversationIdRef.current) return;
       setMessages((prev) => {
         if (prev.length === 0) return prev;
         const out = prev.slice();
-        const lastIdx = out.length - 1;
+        // Find the most recent streaming assistant message (the "tail").
+        // This is more robust than only looking at the very last item when
+        // search-card messages are inserted just before the streaming reply.
+        const tailIdx = out.findLastIndex(
+          (m) => m.role === "assistant" && m.streaming,
+        );
+        const lastIdx = tailIdx >= 0 ? tailIdx : out.length - 1;
         if (out[lastIdx].role !== "assistant") return prev;
         out[lastIdx] = patch(out[lastIdx]);
         return out;
@@ -607,6 +672,9 @@ export default function ChatInterface() {
   // once as this block, once as prose, once as MatchCard.
   const maybeInsertSearchCards = useCallback(
     (event: Record<string, unknown>) => {
+      // Same staleness guard as updateStreaming — this bypasses it with
+      // its own setMessages call, so needs the check independently.
+      if (sendConversationIdRef.current !== liveConversationIdRef.current) return;
       const tool = event.name as string | undefined;
       const result = event.result as Record<string, unknown> | undefined;
       if (!tool || !result || typeof result !== "object") return;
@@ -754,16 +822,26 @@ export default function ChatInterface() {
           updateStreaming((m) => ({
             ...m,
             error: (event.message as string) || "stream error",
+            toolCalls: [],
+            streaming: false,
           }));
           break;
         case "done":
-          if (typeof event.conversation_id === "string") {
+          // Only adopt the server's id if the user hasn't since switched
+          // away (New chat / history load) — otherwise this would snap
+          // their view back to the abandoned conversation.
+          if (
+            typeof event.conversation_id === "string" &&
+            sendConversationIdRef.current === liveConversationIdRef.current
+          ) {
             setConversationId(event.conversation_id);
           }
           updateStreaming((m) => ({
             ...m,
             content: (event.reply as string) || m.content,
             actions: event.actions_taken as ChatMessage["actions"],
+            actionSummary: event.action_summary as ChatMessage["actionSummary"],
+            toolCalls: [],
             streaming: false,
           }));
           break;
@@ -1041,6 +1119,11 @@ export default function ChatInterface() {
     if (!text || loading) return;
 
     if (await tryHandleSlashCommand(text)) return;
+
+    // Snapshot which conversation this send targets — updateStreaming
+    // compares this against the live value on every event and no-ops once
+    // they diverge (New chat / history switch mid-stream).
+    sendConversationIdRef.current = conversationId;
 
     const userMsg: ChatMessage = { role: "user", content: text };
     const placeholder: ChatMessage = {
@@ -1329,6 +1412,8 @@ export default function ChatInterface() {
           disabled={loading}
         />
       </div>
+
+      <ChatHistorySidebar />
 
       {introTarget && (
         <IntroPreviewModal

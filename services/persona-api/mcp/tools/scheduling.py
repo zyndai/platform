@@ -27,6 +27,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from mcp.tools.error_utils import friendly_error, friendly_error_message
 from services import meetings as meetings_svc
 
 
@@ -85,11 +86,13 @@ def propose_meeting(
     description: str = "",
 ) -> dict:
     """
-    Formalise a meeting proposal as a ticket on the given DM thread.
+    Propose a meeting directly on an accepted DM thread.
 
-    ONLY call this AFTER you have already negotiated availability via
-    message_zynd_agent and your principal has explicitly confirmed a
-    specific start/end time in plain text. Never propose cold.
+    If the principal supplied a specific time, use it. If not, infer a
+    reasonable default slot (e.g. the next business-hour opening) from
+    their calendar. The other side receives the proposal as a meeting
+    card they can accept, counter, or decline — this IS the negotiation
+    mechanism, so do not ask the other agent for availability first.
 
     Args:
         user_id: The user on whose behalf the proposal is being made (injected).
@@ -114,7 +117,7 @@ def propose_meeting(
             },
         )
     except meetings_svc.MeetingError as e:
-        return {"error": str(e)}
+        return friendly_error_message("propose the meeting", str(e))
 
     return {
         "status": "success",
@@ -167,7 +170,7 @@ def respond_to_meeting(
             edits=edits or None,
         )
     except meetings_svc.MeetingError as e:
-        return {"error": str(e)}
+        return friendly_error_message("respond to the meeting", str(e))
 
     return {
         "status": "success",
@@ -188,6 +191,7 @@ def propose_group_meeting(
     location: str = "",
     description: str = "",
     time_zone: str = "",
+    force: bool = False,
 ) -> dict:
     """
     Propose a meeting in a group room. Use this (NOT propose_meeting) when
@@ -197,6 +201,14 @@ def propose_group_meeting(
     accept, the actual calendar event is created with every other group
     member as an attendee (Google sends invitations), and a system message
     is posted to the group chat so everyone sees the confirmed slot.
+
+    Before creating the event, this checks the asker's own calendar for a
+    conflict at the requested time. If one exists (and force=False), NO
+    event is created — you get back {status: "conflict", conflicting_events,
+    suggested_times, message} instead. Present the conflict and
+    suggested_times to the principal and ask what they want to do; only
+    retry with force=true if they explicitly say to book it anyway despite
+    the overlap.
 
     Args:
         user_id:    The principal whose calendar the event will be created on (injected).
@@ -210,6 +222,9 @@ def propose_group_meeting(
                     the group chat confirmation line in their wall-clock time
                     instead of raw UTC. Pass the asker's tz from your prompt
                     context. Leave blank only if truly unknown.
+        force:      Skip the conflict check and book anyway. Only set this
+                    when the principal has explicitly said to double-book /
+                    proceed after seeing a reported conflict.
     """
     from datetime import datetime, timezone
     import asyncio
@@ -220,7 +235,11 @@ def propose_group_meeting(
 
     g = sb.table("persona_groups").select("id, name, archived_at").eq("id", group_id).limit(1).execute()
     if not g.data or g.data[0].get("archived_at"):
-        return {"error": f"Group {group_id} not found or archived."}
+        return {
+            "error": "Group not found",
+            "error_message": "That group doesn't exist or has been archived.",
+            "hint": "Check the group name or create a new group.",
+        }
     group_name = g.data[0]["name"]
 
     roster = (
@@ -231,13 +250,17 @@ def propose_group_meeting(
     )
     all_uids = [r["user_id"] for r in (roster.data or [])]
     if user_id not in all_uids:
-        return {"error": "You're not a member of this group; cannot schedule here."}
+        return {
+            "error": "Not a group member",
+            "error_message": "You need to be a member of this group to schedule a meeting there.",
+            "hint": "Ask the group owner to add you, or pick a different group.",
+        }
     attendee_uids = [u for u in all_uids if u != user_id]
 
     try:
         attendee_emails = _fetch_user_emails(attendee_uids) if attendee_uids else []
     except Exception as e:
-        return {"error": f"Couldn't resolve attendees: {e}"}
+        return friendly_error("look up attendee emails", e)
 
     attendees_payload = [{"email": e} for e in attendee_emails if e]
     result = _create_event_with_attendees(
@@ -249,9 +272,20 @@ def propose_group_meeting(
         location=location or "",
         time_zone=time_zone or "UTC",
         attendees=attendees_payload,
+        force=force,
     )
+    if result.get("conflict"):
+        return {
+            "status": "conflict",
+            "conflict": True,
+            "conflicting_events": result.get("conflicting_events", []),
+            "suggested_times": result.get("suggested_times", []),
+            "message": result.get("error"),
+        }
     if not result.get("success"):
-        return {"error": result.get("error") or "Couldn't create the calendar event."}
+        raw = result.get("error") or "Couldn't create the calendar event."
+        meta = friendly_error_message("create the group calendar event", raw)
+        return meta
 
     ev = result.get("event") or {}
     try:

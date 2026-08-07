@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from mcp.tools.google.common import get_google_creds
 from googleapiclient.discovery import build
 import config
+from mcp.tools.error_utils import friendly_error
 
 def _parse_iso(value: str) -> datetime:
     """Parse an ISO-8601 timestamp the LLM (or scheduler) gave us.
@@ -261,7 +262,7 @@ def create_event(
         print(f"[calendar] EXCEPTION in create_event: {str(e)}")
         import traceback
         traceback.print_exc()
-        return {"success": False, "error": str(e)}
+        return friendly_error("create the calendar event", e)
 
 def list_events(
     user_id: str,
@@ -311,7 +312,7 @@ def list_events(
             ],
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("read your calendar", e)
 
 def delete_event(user_id: str, event_id: str) -> dict:
     """
@@ -329,4 +330,4 @@ def delete_event(user_id: str, event_id: str) -> dict:
         service.events().delete(calendarId="primary", eventId=event_id).execute()
         return {"success": True, "deleted": event_id}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("delete the calendar event", e)

@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import logging
 
+from mcp.tools.error_utils import friendly_error, friendly_error_message
+
 logger = logging.getLogger(__name__)
 
 
@@ -112,10 +114,10 @@ def read_my_brief(user_id: str) -> dict:
     try:
         result = persona_manager.get_brief(user_id)
     except ValueError as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("read your brief", e)
     except Exception as e:
         logger.exception(f"[brief] read_my_brief failed: {e}")
-        return {"success": False, "error": str(e)}
+        return friendly_error("read your brief", e)
 
     if not result.get("exists"):
         return {
@@ -158,14 +160,24 @@ def append_to_my_brief(user_id: str, text: str) -> dict:
         text: The text to append. A trailing newline is added if missing.
     """
     if not isinstance(text, str) or not text.strip():
-        return {"success": False, "error": "Nothing to append — `text` was empty."}
+        return friendly_error_message(
+            "add to your brief",
+            "Nothing to append — `text` was empty.",
+            hint="Tell me what you'd like me to add.",
+        )
 
     ensured = _ensure_brief_doc(user_id)
     if not ensured.get("ok"):
         return {
             "success": False,
             "error": ensured["message"],
+            "error_message": ensured["message"],
             "code": ensured["code"],
+            "hint": (
+                "Open the Zynd dashboard and finish onboarding"
+                if ensured["code"] == "no_persona"
+                else "Connect Google in Settings → Accounts and try again."
+            ),
         }
 
     from agent import persona_manager
@@ -183,7 +195,8 @@ def append_to_my_brief(user_id: str, text: str) -> dict:
     body = text if text.endswith("\n") else text + "\n"
     result = append_to_document(user_id=user_id, document_id=doc_id, text=body)
     if not result.get("success"):
-        return {"success": False, "error": result.get("error") or "Append failed."}
+        raw = result.get("error") or "Append failed."
+        return friendly_error_message("add to your brief", raw)
 
     return {
         "success": True,
@@ -218,13 +231,14 @@ def replace_my_brief(user_id: str, content: str) -> dict:
     try:
         result = persona_manager.save_brief_content(user_id, content)
     except ValueError as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("replace your brief", e)
     except Exception as e:
         logger.exception(f"[brief] replace_my_brief failed: {e}")
-        return {"success": False, "error": str(e)}
+        return friendly_error("replace your brief", e)
 
     if not result.get("success"):
-        return {"success": False, "error": result.get("error") or "Replace failed."}
+        raw = result.get("error") or "Replace failed."
+        return friendly_error_message("replace your brief", raw)
 
     status = persona_manager.get_persona_status(user_id)
     return {
@@ -262,7 +276,11 @@ def add_todo(user_id: str, title: str) -> dict:
             trims whitespace and caps overly-long input.
     """
     if not isinstance(title, str) or not title.strip():
-        return {"success": False, "error": "Nothing to add — `title` was empty."}
+        return friendly_error_message(
+            "add a todo",
+            "Nothing to add — `title` was empty.",
+            hint="Tell me the task you want to add, e.g. 'Email Sarah about the demo'.",
+        )
 
     cleaned = title.strip()
     if len(cleaned) > 200:
@@ -281,7 +299,7 @@ def add_todo(user_id: str, title: str) -> dict:
         inserted_id = row.data[0]["id"] if row.data else None
     except Exception as e:
         logger.warning(f"[brief] add_todo failed: {e}")
-        return {"success": False, "error": str(e)}
+        return friendly_error("add the todo", e)
 
     return {
         "success": True,

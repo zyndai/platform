@@ -8,12 +8,11 @@ import {
   Copy,
   Globe2,
   MessageSquare,
-  Pencil,
   QrCode,
   Share2,
   X,
 } from "lucide-react";
-import { AvatarPicker, Button, Input, Textarea } from "@/components/ui";
+import { AvatarPicker, Button, EmptyState, FieldLabel, Input, Textarea } from "@/components/ui";
 import DeleteAccountModal from "@/components/settings/DeleteAccountModal";
 import { QrCode as QrCodeImage } from "@/components/QrCode";
 import { getSupabase } from "@/lib/supabase";
@@ -114,6 +113,7 @@ export default function YouPage() {
   const { user } = useDashboard();
 
   const [persona, setPersona] = useState<Persona | null>(null);
+  const [loading, setLoading] = useState(true);
   const [linkedin, setLinkedin] = useState<LinkedInData | null>(null);
   const [draft, setDraft] = useState<DraftProfile>(EMPTY_DRAFT);
   const [tagInput, setTagInput] = useState("");
@@ -121,6 +121,8 @@ export default function YouPage() {
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [refreshingTopics, setRefreshingTopics] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [refreshedNotice, setRefreshedNotice] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -140,27 +142,31 @@ export default function YouPage() {
 
   const fetchAll = useCallback(async () => {
     if (!user) return;
-    const sb = getSupabase();
-    const {
-      data: { session },
-    } = await sb.auth.getSession();
-    const jwt = session?.access_token;
+    try {
+      const sb = getSupabase();
+      const {
+        data: { session },
+      } = await sb.auth.getSession();
+      const jwt = session?.access_token;
 
-    const [personaRes, linkedinRes] = await Promise.all([
-      fetch(`${API}/api/persona/${user.id}/status`),
-      jwt
-        ? fetch(`${API}/api/linkedin/me`, {
-            headers: { Authorization: `Bearer ${jwt}` },
-          })
-        : Promise.resolve(null),
-    ]);
+      const [personaRes, linkedinRes] = await Promise.all([
+        fetch(`${API}/api/persona/${user.id}/status`),
+        jwt
+          ? fetch(`${API}/api/linkedin/me`, {
+              headers: { Authorization: `Bearer ${jwt}` },
+            })
+          : Promise.resolve(null),
+      ]);
 
-    if (personaRes.ok) {
-      const data = await personaRes.json();
-      if (data.deployed) setPersona(data);
-    }
-    if (linkedinRes && linkedinRes.ok) {
-      setLinkedin(await linkedinRes.json());
+      if (personaRes.ok) {
+        const data = await personaRes.json();
+        if (data.deployed) setPersona(data);
+      }
+      if (linkedinRes && linkedinRes.ok) {
+        setLinkedin(await linkedinRes.json());
+      }
+    } finally {
+      setLoading(false);
     }
   }, [user]);
 
@@ -220,12 +226,14 @@ export default function YouPage() {
     if (typeof window === "undefined" || !user?.id) return "";
     return new URL(`/p/${user.id}`, window.location.origin).toString();
   }, [user?.id]);
-  // Pretty display form — host + last path segment, no scheme. Survives
-  // SSR by checking window first.
+  // Pretty display form — host + full path, no scheme. Survives SSR by
+  // checking window first. Kept as the real path (not a truncated id) so
+  // the visible text always matches what the link actually resolves to;
+  // long ids overflow with an ellipsis in CSS instead of being lied about.
   const publicDisplay = useMemo(() => {
     if (typeof window === "undefined" || !user?.id) return "";
     const host = window.location.host;
-    return `${host}/p/${user.id.slice(0, 8)}`;
+    return `${host}/p/${user.id}`;
   }, [user?.id]);
 
   const updateDraft = (patch: Partial<DraftProfile>) => {
@@ -380,19 +388,33 @@ export default function YouPage() {
 
   const handleRefreshTopics = async () => {
     setRefreshingTopics(true);
+    setRefreshError(null);
+    setRefreshedNotice(false);
     try {
       const sb = getSupabase();
       const {
         data: { session },
       } = await sb.auth.getSession();
-      if (!session?.access_token) return;
-      await fetch(`${API}/api/linkedin/scrape`, {
+      if (!session?.access_token) {
+        setRefreshError("Sign in again to refresh from LinkedIn.");
+        return;
+      }
+      const res = await fetch(`${API}/api/linkedin/scrape`, {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setRefreshError((body?.detail as string) || "Couldn't refresh from LinkedIn — try again.");
+        return;
+      }
       setTimeout(() => void fetchAll(), 2000);
+      setRefreshedNotice(true);
+      setTimeout(() => setRefreshedNotice(false), 3000);
+    } catch {
+      setRefreshError("Couldn't reach LinkedIn — try again in a moment.");
     } finally {
-      setTimeout(() => setRefreshingTopics(false), 2200);
+      setRefreshingTopics(false);
     }
   };
 
@@ -419,26 +441,48 @@ export default function YouPage() {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="persona-workbench">
+        <EmptyState title="Loading your profile…" body="One moment." />
+      </div>
+    );
+  }
+
+  if (!persona) {
+    return (
+      <div className="persona-workbench">
+        <EmptyState
+          title="No persona deployed yet"
+          body="Finish onboarding to create your persona, then come back here to edit the card people see."
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="persona-workbench">
       <header className="persona-workbench-head">
         <div>
           <p className="persona-kicker">Your profile</p>
-          <h1>The card people see.</h1>
+          <h1 className="display-s">The card people see.</h1>
         </div>
         <div className="persona-head-actions">
           <a href={publicPath} target="_blank" rel="noopener noreferrer" className="persona-public-link">
             <Globe2 size={18} strokeWidth={2} />
-            <span>{publicDisplay || "your card"}</span>
+            <span className="persona-public-link-text">{publicDisplay || "your card"}</span>
           </a>
-          <button type="button" className="persona-pill-btn" onClick={() => setQrOpen(true)}>
-            <QrCode size={17} strokeWidth={2} />
-            <span>Show QR</span>
-          </button>
-          <button type="button" className="persona-pill-btn persona-pill-btn-dark" onClick={handleShareCard}>
-            <Share2 size={17} strokeWidth={2} />
-            <span>{copied ? "Copied" : "Share card"}</span>
-          </button>
+          <Button variant="secondary" size="sm" leftIcon={<QrCode size={16} strokeWidth={2} />} onClick={() => setQrOpen(true)}>
+            Show QR
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            leftIcon={<Share2 size={16} strokeWidth={2} />}
+            onClick={handleShareCard}
+          >
+            {copied ? "Copied" : "Share card"}
+          </Button>
         </div>
       </header>
 
@@ -449,55 +493,58 @@ export default function YouPage() {
             <div className="persona-identity-row">
               <button
                 type="button"
-                className="persona-avatar-edit"
+                className="persona-avatar-edit avatar-edit-wrap"
                 onClick={() => setAvatarPickerOpen(true)}
                 aria-label="Change profile photo"
               >
                 <ProfileAvatar src={personaAvatarUrl} name={draft.name} />
+                <span className="avatar-edit-overlay">Edit</span>
               </button>
               <div className="persona-identity-fields">
+                <FieldLabel htmlFor="persona-name">Name</FieldLabel>
                 <Input
+                  id="persona-name"
                   value={draft.name}
                   onChange={(e) => updateDraft({ name: e.target.value })}
                   placeholder="Your name"
                   disabled={saving}
                 />
+                <FieldLabel htmlFor="persona-title">Title</FieldLabel>
                 <Input
+                  id="persona-title"
                   value={draft.title}
                   onChange={(e) => updateDraft({ title: e.target.value })}
                   placeholder="Title, role, or headline"
                   disabled={saving}
                 />
                 <div className="persona-mini-grid">
-                  <Input
-                    value={draft.organization}
-                    onChange={(e) => updateDraft({ organization: e.target.value })}
-                    placeholder="Company"
-                    disabled={saving}
-                  />
-                  <Input
-                    value={draft.location}
-                    onChange={(e) => updateDraft({ location: e.target.value })}
-                    placeholder="Location"
-                    disabled={saving}
-                  />
+                  <div>
+                    <FieldLabel htmlFor="persona-org">Company</FieldLabel>
+                    <Input
+                      id="persona-org"
+                      value={draft.organization}
+                      onChange={(e) => updateDraft({ organization: e.target.value })}
+                      placeholder="Company"
+                      disabled={saving}
+                    />
+                  </div>
+                  <div>
+                    <FieldLabel htmlFor="persona-location">Location</FieldLabel>
+                    <Input
+                      id="persona-location"
+                      value={draft.location}
+                      onChange={(e) => updateDraft({ location: e.target.value })}
+                      placeholder="Location"
+                      disabled={saving}
+                    />
+                  </div>
                 </div>
               </div>
-              <button
-                type="button"
-                className="persona-photo-link"
-                onClick={() => setAvatarPickerOpen(true)}
-              >
-                <Pencil size={15} strokeWidth={2} />
-                <span>Photo</span>
-              </button>
             </div>
           </div>
 
           <div className="persona-editor-section">
-            <label className="persona-field-label" htmlFor="persona-public-bio">
-              Bio - shown publicly
-            </label>
+            <FieldLabel htmlFor="persona-public-bio">Bio — shown publicly</FieldLabel>
             <Textarea
               id="persona-public-bio"
               value={draft.bio}
@@ -508,6 +555,7 @@ export default function YouPage() {
               disabled={saving}
               className="persona-bio-input"
             />
+            <p className="persona-char-count">{draft.bio.length}/220</p>
           </div>
 
           <div className="persona-editor-section">
@@ -517,17 +565,20 @@ export default function YouPage() {
             </p>
             <div className="persona-mini-grid">
               {SOCIAL_FIELDS.map((f) => (
-                <Input
-                  key={f.key}
-                  value={draft[f.key]}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setDraft((c) => ({ ...c, [f.key]: v }));
-                    setSaved(false);
-                  }}
-                  placeholder={`${f.label} — ${f.placeholder}`}
-                  disabled={saving}
-                />
+                <div key={f.key}>
+                  <FieldLabel htmlFor={`persona-social-${f.key}`}>{f.label}</FieldLabel>
+                  <Input
+                    id={`persona-social-${f.key}`}
+                    value={draft[f.key]}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setDraft((c) => ({ ...c, [f.key]: v }));
+                      setSaved(false);
+                    }}
+                    placeholder={f.placeholder}
+                    disabled={saving}
+                  />
+                </div>
               ))}
             </div>
           </div>
@@ -563,20 +614,23 @@ export default function YouPage() {
 
           <div className="persona-editor-section persona-memory-head">
             <div>
-              <h2>Memory &middot; {memoryCount} {memoryCount === 1 ? "entry" : "entries"}</h2>
+              <h2>Profile tags &middot; {memoryCount}</h2>
               <p className="persona-section-sub">
-                What {personaLabel} remembers about you. Add tags to extend.
+                What {personaLabel} leads with about you. Title, company, and location above
+                add tags automatically — add your own below too.
               </p>
             </div>
-            <button type="button" className="persona-text-action" onClick={handleRefreshTopics} disabled={refreshingTopics}>
-              {refreshingTopics ? "Refreshing..." : "Refresh from LinkedIn"}
-              <ArrowRight size={15} strokeWidth={2} />
+            <button type="button" className="text-link" onClick={handleRefreshTopics} disabled={refreshingTopics}>
+              {refreshingTopics ? "Refreshing…" : "Refresh from LinkedIn"}
+              <ArrowRight size={13} strokeWidth={2} />
             </button>
           </div>
+          {refreshError && <p className="persona-save-error">{refreshError}</p>}
+          {refreshedNotice && <p className="persona-save-success">Refreshed.</p>}
 
           <div className="persona-branch-row">
             {memoryBranches.map((branch) => (
-              <span key={branch.kind} className={`persona-branch persona-branch-${branch.tone}`}>
+              <span key={branch.kind} className={`persona-branch persona-branch-${branch.tone}`} title="Auto-added from Title/Company/Location above">
                 <span>{branch.kind}</span>
                 {branch.label}
               </span>
@@ -605,7 +659,7 @@ export default function YouPage() {
                 }
               }}
               onBlur={commitTag}
-              placeholder="+ Add branch"
+              placeholder="+ Add tag"
               disabled={saving}
             />
           </div>
@@ -651,7 +705,7 @@ export default function YouPage() {
       <section className="persona-account-card">
         <div>
           <h2>Account</h2>
-          <p>Deleting removes your brief, matches, meetings, and login.</p>
+          <p>Deleting removes your brief, matches, meetings, and login. It can&rsquo;t be undone.</p>
         </div>
         <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
           Delete account
@@ -659,7 +713,15 @@ export default function YouPage() {
       </section>
 
       {qrOpen && (
-        <div className="persona-modal-scrim" role="dialog" aria-modal="true" aria-label="Share QR code">
+        <div
+          className="modal-scrim"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Share QR code"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setQrOpen(false);
+          }}
+        >
           <div className="persona-qr-modal">
             <button type="button" className="persona-modal-close" onClick={() => setQrOpen(false)} aria-label="Close">
               <X size={18} strokeWidth={2} />
@@ -673,10 +735,9 @@ export default function YouPage() {
                 <span className="persona-section-sub">Saving your handle…</span>
               )}
             </div>
-            <button type="button" className="persona-pill-btn persona-pill-btn-dark" onClick={handleCopyLink}>
-              <Copy size={16} strokeWidth={2} />
-              <span>{copied ? "Copied" : "Copy link"}</span>
-            </button>
+            <Button variant="primary" leftIcon={<Copy size={16} strokeWidth={2} />} onClick={handleCopyLink}>
+              {copied ? "Copied" : "Copy link"}
+            </Button>
           </div>
         </div>
       )}
@@ -732,15 +793,16 @@ function PersonaPreviewCard({
       {subline && <p className="persona-preview-role">{subline}</p>}
       {bio && <p className="persona-preview-bio">&quot;{bio}&quot;</p>}
       <div className="persona-preview-actions">
-        <button type="button">
+        <button type="button" disabled title="Preview only — this is what visitors will see, not a live action here">
           <MessageSquare size={16} strokeWidth={2} />
           Chat with {personaLabel}
         </button>
-        <button type="button">
+        <button type="button" disabled title="Preview only — this is what visitors will see, not a live action here">
           <CalendarDays size={16} strokeWidth={2} />
           Book time
         </button>
       </div>
+      <p className="persona-preview-disclaimer">Preview only — buttons work on your live public card</p>
     </div>
   );
 }
@@ -755,7 +817,13 @@ function VisibilityToggle({
   label: string;
 }) {
   return (
-    <button type="button" className="persona-toggle-row" onClick={onChange}>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      className="persona-toggle-row"
+      onClick={onChange}
+    >
       <span className={`persona-toggle ${checked ? "is-on" : ""}`} aria-hidden>
         <span />
       </span>

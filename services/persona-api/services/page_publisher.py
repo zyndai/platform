@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import config
+from mcp.tools.error_utils import friendly_error, friendly_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +152,7 @@ def create_page(
             if "unique" in err or "duplicate" in err:
                 continue
             logger.exception("[page_publisher] create_page failed")
-            return {"success": False, "error": f"Could not create page: {e}"}
+            return friendly_error("publish the page", e)
 
     return {"success": False, "error": "Could not allocate a unique page slug — try again."}
 
@@ -278,11 +279,16 @@ def update_page(
         )
         row = result.data[0] if result.data else None
         if not row:
-            return {"success": False, "error": "Page not found or not owned by you."}
+            return {
+            "success": False,
+            "error": "Page not found or not owned by you.",
+            "error_message": "I couldn't find a page with that link that belongs to you.",
+            "hint": "Check the page link and try again.",
+        }
         return {"success": True, **_serialize(row)}
     except Exception as e:
         logger.warning(f"[page_publisher] update_page failed for {slug}: {e}")
-        return {"success": False, "error": f"Could not update page: {e}"}
+        return friendly_error("update the page", e)
 
 
 def delete_page(user_id: str, slug: str) -> dict[str, Any]:
@@ -298,7 +304,7 @@ def delete_page(user_id: str, slug: str) -> dict[str, Any]:
         return {"success": True, "slug": slug}
     except Exception as e:
         logger.warning(f"[page_publisher] delete_page failed for {slug}: {e}")
-        return {"success": False, "error": f"Could not delete page: {e}"}
+        return friendly_error("delete the page", e)
 
 
 def _serialize(row: dict[str, Any]) -> dict[str, Any]:

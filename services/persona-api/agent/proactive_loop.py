@@ -48,7 +48,8 @@ class ProactiveAgent:
             logger.info("[proactive] already running")
             return
 
-        if not config.MEMORY_LAYER_JWT_SECRET:
+        from agent.memory_client import is_enabled
+        if not is_enabled():
             logger.info("[proactive] memory layer not configured — skipping")
             return
 
@@ -115,24 +116,27 @@ class ProactiveAgent:
 
         # ── Morning brief: 6-10 AM local time ──
         if 6 <= user_hour < 10:
-            last = _last_morning_brief.get(user_id, 0)
+            last = _last_morning_brief.get(user_id) or await _get_last_sent(user_id, "morning_brief")
             if now.timestamp() - last > 14400:  # 4 hours — once per morning
                 await self._run_morning_brief(user_id, time_zone)
                 _last_morning_brief[user_id] = now.timestamp()
+                await _set_last_sent(user_id, "morning_brief", now.timestamp())
 
         # ── Midday nudge: 11 AM - 2 PM local time ──
         if 11 <= user_hour < 14:
-            last = _last_nudge_scan.get(user_id, 0)
+            last = _last_nudge_scan.get(user_id) or await _get_last_sent(user_id, "nudge_scan")
             if now.timestamp() - last > 10800:  # 3 hours
                 await self._run_nudge_scan(user_id, time_zone)
                 _last_nudge_scan[user_id] = now.timestamp()
+                await _set_last_sent(user_id, "nudge_scan", now.timestamp())
 
         # ── Evening recap: 6-9 PM local time ──
         if 18 <= user_hour < 21:
-            last = _last_evening_recap.get(user_id, 0)
+            last = _last_evening_recap.get(user_id) or await _get_last_sent(user_id, "evening_recap")
             if now.timestamp() - last > 14400:  # 4 hours
                 await self._run_evening_recap(user_id, time_zone)
                 _last_evening_recap[user_id] = now.timestamp()
+                await _set_last_sent(user_id, "evening_recap", now.timestamp())
 
     async def _run_morning_brief(self, user_id: str, time_zone: str | None) -> None:
         """Generate and push a morning brief for a user."""
@@ -166,6 +170,44 @@ class ProactiveAgent:
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
+
+
+async def _get_last_sent(user_id: str, kind: str) -> float:
+    """Durable per-user last-sent timestamp for a proactive push kind
+    ("morning_brief" | "nudge_scan" | "evening_recap").
+
+    The in-memory `_last_*` dicts are only a fast-path cache — they reset
+    to empty on every process restart (this process restarts often), so
+    relying on them alone would let a restart mid-window re-send the same
+    brief/nudge. This reads the durable copy from `persona_agents.profile`
+    (reusing the existing JSONB column, no schema change) whenever the
+    in-memory cache doesn't already have an answer.
+    """
+    try:
+        from agent.persona_manager import get_persona_status
+        persona = get_persona_status(user_id)
+        profile = persona.get("profile") if persona else None
+        if not isinstance(profile, dict):
+            return 0.0
+        return float(profile.get(f"last_{kind}_at") or 0)
+    except Exception as e:
+        logger.debug("[proactive] last-sent lookup failed for %s/%s: %s", user_id, kind, e)
+        return 0.0
+
+
+async def _set_last_sent(user_id: str, kind: str, ts: float) -> None:
+    """Persist the last-sent timestamp so it survives a restart. See `_get_last_sent`."""
+    try:
+        sb = config.get_supabase()
+        from agent.persona_manager import get_persona_status
+        persona = get_persona_status(user_id)
+        profile = persona.get("profile") if persona else None
+        if not isinstance(profile, dict):
+            profile = {}
+        profile[f"last_{kind}_at"] = ts
+        sb.table("persona_agents").update({"profile": profile}).eq("user_id", user_id).execute()
+    except Exception as e:
+        logger.warning("[proactive] failed to persist last-sent for %s/%s: %s", user_id, kind, e)
 
 
 def _get_user_local_hour(now: datetime, time_zone: str | None) -> int:

@@ -124,7 +124,10 @@ async def get_matches(user_id: str, exclude: Optional[str] = None, limit: int = 
             posts = row.get("raw_posts") or []
             if posts and isinstance(posts[0], dict):
                 first = posts[0]
-                recent_post = first.get("text") or first.get("content") or first.get("summary")
+                # harvestapi's linkedin-profile-posts actor puts post text
+                # under `content` — `text`/`summary` don't exist on real
+                # responses.
+                recent_post = first.get("content") or first.get("text") or first.get("summary")
 
         # Headline fallback: first sentence of description.
         if not headline:

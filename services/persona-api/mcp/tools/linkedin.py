@@ -15,6 +15,7 @@ import asyncio
 
 import config
 from services.token_store import get_tokens
+from mcp.tools.error_utils import friendly_error
 
 
 def _get_headers(user_id: str) -> dict:
@@ -77,9 +78,9 @@ def post_to_linkedin(user_id: str, text: str) -> dict:
             )
             if resp.status_code in (200, 201):
                 return {"success": True, "post_id": resp.json().get("id")}
-            return {"success": False, "error": resp.text}
+            return friendly_error("post to LinkedIn", Exception(f"LinkedIn returned HTTP {resp.status_code}"))
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return friendly_error("post to LinkedIn", e)
 
 
 def send_linkedin_dm(user_id: str, recipient: str, text: str) -> dict:
@@ -182,6 +183,96 @@ def _extract_profile_fields(raw_profile: dict) -> dict:
     return result
 
 
+def search_linkedin_people(user_id: str, query: str, location: str = "", top_k: int = 8) -> dict:
+    """
+    Search LinkedIn ITSELF for people matching a role, topic, or keyword —
+    e.g. "AI founders", "product designers in Berlin". This is a real,
+    paid LinkedIn scrape (via Apify), separate from and complementary to
+    `search_zynd_personas` / `search_zynd_network`, which only ever cover
+    people who already have a Zynd persona.
+
+    Use this when:
+      - the principal explicitly asks to find/search people "on LinkedIn", or
+      - a Zynd Network people search came back thin or empty and broadening
+        to LinkedIn is a reasonable next step — say what you're doing
+        ("I didn't find much on the network, checking LinkedIn too...")
+        rather than switching silently.
+
+    This calls a metered third-party API per search — do not call it
+    speculatively, and don't retry it repeatedly for the same ask; one
+    well-formed query is enough. Results are real public LinkedIn
+    profiles, NOT Zynd personas: you cannot `request_connection` or
+    `message_zynd_agent` them, only share/reference their profile_url.
+
+    Args:
+        user_id: Injected automatically by the orchestrator — do not pass it.
+        query: Role/topic/keyword phrase, e.g. "AI founder", "growth marketer".
+        location: Optional city/region/country to narrow by, e.g. "San Francisco".
+        top_k: Max people to return (1-15, default 8).
+
+    Returns {status, count, results: [{name, headline, location, profile_url,
+    current_company, match_reason}]}. If `warning` is present, the
+    underlying data came back thinner than expected (field-mapping may be
+    stale against the provider's current schema) — mention that
+    uncertainty rather than presenting a confident empty answer as "no one
+    matches."
+    """
+    top_k = max(1, min(int(top_k or 8), 15))
+    q = (query or "").strip()
+    if not q:
+        return {
+            "status": "error",
+            "error": "A search query is required.",
+            "error_message": "I need a role, topic, or keyword to search LinkedIn for — e.g. \"AI founders\" or \"product designers\".",
+            "hint": "Try again with a specific role or topic.",
+            "results": [],
+            "count": 0,
+        }
+
+    try:
+        import asyncio
+        from services.linkedin_scraper import search_people
+        items = asyncio.run(
+            search_people(query=q, locations=[location.strip()] if location.strip() else None, max_items=top_k)
+        )
+    except Exception as e:
+        return friendly_error("search LinkedIn for people", e)
+
+    results = []
+    fields_missing = 0
+    for item in items[:top_k]:
+        name = item.get("name") or f"{item.get('firstName', '')} {item.get('lastName', '')}".strip()
+        loc = item.get("location")
+        if isinstance(loc, dict):
+            loc = loc.get("linkedinText") or loc.get("text") or ""
+        current_position = item.get("currentPosition")
+        company = ""
+        if isinstance(current_position, list) and current_position:
+            first_pos = current_position[0]
+            if isinstance(first_pos, dict):
+                company = first_pos.get("companyName") or ""
+        profile_url = item.get("linkedinUrl") or item.get("profileUrl") or item.get("url") or ""
+        if not (name and profile_url):
+            fields_missing += 1
+        results.append({
+            "name": name,
+            "headline": item.get("headline") or "",
+            "location": loc or "",
+            "profile_url": profile_url,
+            "current_company": company,
+            "match_reason": f"LinkedIn search match for \"{q}\"" + (f" in {location}" if location else ""),
+        })
+
+    out = {"status": "success", "count": len(results), "results": results, "source": "linkedin"}
+    if items and fields_missing > len(results) / 2:
+        out["warning"] = (
+            "LinkedIn returned results but most are missing a name or profile link — "
+            "the field mapping may be out of date against the provider's current response shape. "
+            "Treat these results as unreliable rather than a confident match list."
+        )
+    return out
+
+
 def read_linkedin_profile(user_id: str) -> dict:
     """
     Read the principal's scraped LinkedIn profile data.
@@ -226,14 +317,28 @@ def read_linkedin_profile(user_id: str) -> dict:
 
     recent_posts = []
     for post in raw_posts[:10]:
-        text = post.get("text") or post.get("body") or ""
+        # harvestapi's linkedin-profile-posts actor puts post text under
+        # `content` and the URL under `linkedinUrl` — `text`/`body`/`postUrl`
+        # don't exist on real responses, which is why posts used to come
+        # back with a timestamp but no content.
+        text = post.get("content") or post.get("text") or post.get("body") or ""
         if len(text) > 500:
             text = text[:497] + "..."
+        posted_at_raw = post.get("postedAt")
+        if isinstance(posted_at_raw, dict):
+            # `postedAt` is a nested {timestamp, date} object, not a string.
+            posted_at = posted_at_raw.get("date") or posted_at_raw.get("timestamp") or ""
+        else:
+            posted_at = posted_at_raw or post.get("posted_at") or post.get("createdAt") or ""
+        engagement = post.get("engagement")
+        reaction_count = engagement.get("likes") if isinstance(engagement, dict) else None
+        if reaction_count is None:
+            reaction_count = post.get("reactionCount") or post.get("reactions_count") or 0
         recent_posts.append({
             "text": text,
-            "posted_at": post.get("postedAt") or post.get("posted_at") or post.get("createdAt") or "",
-            "url": post.get("postUrl") or post.get("url") or "",
-            "reaction_count": post.get("reactionCount") or post.get("reactions_count") or 0,
+            "posted_at": posted_at,
+            "url": post.get("linkedinUrl") or post.get("postUrl") or post.get("url") or "",
+            "reaction_count": reaction_count,
         })
     profile["recent_posts"] = recent_posts
 

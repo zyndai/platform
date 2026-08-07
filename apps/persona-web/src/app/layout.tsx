@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { GoogleAnalytics } from "@next/third-parties/google";
 import { Chakra_Petch, Fraunces, Geist, Geist_Mono, Instrument_Sans, Playfair_Display, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 
@@ -55,12 +56,42 @@ const chakraPetch = Chakra_Petch({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://persona.zynd.ai"),
-  title: "ZyndAI",
+  title: {
+    default: "ZyndAI — Your AI Networking Agent",
+    template: "%s · ZyndAI",
+  },
   description:
     "Your Persona finds people worth meeting, reaches out on your behalf, and books the times. You just show up.",
+  keywords: [
+    "AI agent",
+    "networking",
+    "personal AI",
+    "meeting scheduling",
+    "professional networking",
+    "AI persona",
+    "automated outreach",
+  ],
   robots: {
     index: true,
     follow: true,
+  },
+  openGraph: {
+    type: "website",
+    siteName: "ZyndAI",
+    title: "ZyndAI — Your AI Networking Agent",
+    description:
+      "Your Persona finds people worth meeting, reaches out on your behalf, and books the times. You just show up.",
+    url: "https://persona.zynd.ai",
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "ZyndAI — Your AI Networking Agent",
+    description:
+      "Your Persona finds people worth meeting, reaches out on your behalf, and books the times. You just show up.",
+  },
+  alternates: {
+    canonical: "/",
   },
 };
 
@@ -75,6 +106,27 @@ export default function RootLayout({
       className={`${fraunces.variable} ${geist.variable} ${geistMono.variable} ${instrumentSans.variable} ${playfairDisplay.variable} ${spaceGrotesk.variable} ${chakraPetch.variable}`}
     >
       <head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "WebSite",
+              name: "ZyndAI",
+              url: "https://persona.zynd.ai",
+              description:
+                "Your Persona finds people worth meeting, reaches out on your behalf, and books the times.",
+              potentialAction: {
+                "@type": "SearchAction",
+                target: {
+                  "@type": "EntryPoint",
+                  urlTemplate: "https://persona.zynd.ai/p/{userId}",
+                },
+                "query-input": "required name=userId",
+              },
+            }),
+          }}
+        />
         <link
           rel="preload"
           as="image"
@@ -96,6 +148,7 @@ export default function RootLayout({
         />
       </head>
       <body suppressHydrationWarning>{children}</body>
+      <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID || "G-1L9YDBKGRT"} />
     </html>
   );
 }

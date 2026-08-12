@@ -36,3 +36,43 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 2. Use `detect_changes` for code review.
 3. Use `get_affected_flows` to understand impact.
 4. Use `query_graph` pattern="tests_for" to check coverage.
+
+---
+
+## Deployment: prod + dev channels (PM2 + Caddy)
+
+Two copies of this repo run on this box, both tracking `main` on GitHub:
+
+| Channel | Code dir | pm2 apps | Backend | Web | URL |
+|---|---|---|---|---|---|
+| Prod | `/home/ubuntu/agent-persona` | `api`, `web` | 127.0.0.1:8000 | 127.0.0.1:3001 | https://persona.zynd.ai |
+| Dev | `/home/ubuntu/agent-persona-dev` | `api-dev`, `web-dev` | 127.0.0.1:8001 | 127.0.0.1:3002 | https://dev.persona.zynd.ai |
+
+- Caddy (`/etc/caddy/Caddyfile`) fronts both: `/api/*` → backend port, everything
+  else → web port. PM2 apps: prod from `ecosystem.config.js`, dev from
+  `ecosystem.dev.config.js`. After adding/removing apps: `pm2 save`.
+- Env files are gitignored; each copy has its own `.env` / `.env.local`
+  (dev's differs only in FRONTEND_URL, PUBLIC_PAGE_BASE_URL, NEXT_PUBLIC_API_URL
+  → dev URL; ZYND_WEBHOOK_BASE_URL and OAuth redirect URIs stay on prod).
+- Both copies share: Supabase project, LLM/API keys, memory layer, and the
+  Zynd identity keypair (`~/.zynd/developer.json`). Duplicate heartbeats from
+  the dev backend are expected and harmless at dev traffic levels.
+- **Telegram**: only prod may register the webhook (one URL per bot). Never
+  run `register_webhook()` on the dev backend. Inbound Telegram messages only
+  reach prod; outbound notify works from both.
+
+### Deploy flow (dev first, then prod)
+
+1. Commit + push to `main` on GitHub.
+2. **Dev copy** (`/home/ubuntu/agent-persona-dev`):
+   - `git pull`
+   - backend: `pip install -r requirements.txt` only if `requirements.txt` changed
+   - webapp: **`npm run build` is REQUIRED after every webapp pull** — `next start`
+     serves stale build artifacts otherwise; restart alone is not enough
+   - `pm2 restart api-dev web-dev`
+3. Smoke-test dev channel (chat turn, persona pages).
+4. **Prod copy** (`/home/ubuntu/agent-persona`): repeat step 2 with
+   `pm2 restart api web`.
+
+`pm2 restart all` restarts everything (prod + dev + deployer) — prefer the
+per-app names above.

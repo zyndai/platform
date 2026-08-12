@@ -980,7 +980,15 @@ class OpenAIProvider(LLMProvider):
 
         # Some API gateways reject empty Bearer tokens
         safe_api_key = api_key or config.OPENAI_API_KEY or "dummy-key"
-        self._client = OpenAI(api_key=safe_api_key, **kwargs)
+        # The SDK's own defaults are a 600s read timeout and 2 built-in
+        # retries — so a single stalled upstream model (e.g. an OpenRouter
+        # provider that accepted the request but is slow to stream back)
+        # can silently block one tool-call iteration for up to ~30 minutes
+        # before erroring out. We already fail over across models
+        # ourselves via `_models_to_try`, so a much shorter per-attempt
+        # budget here just makes that fallback actually kick in instead of
+        # each iteration eating most of a chat/a2a turn.
+        self._client = OpenAI(api_key=safe_api_key, timeout=60.0, max_retries=1, **kwargs)
         self._model = model or config.OPENAI_MODEL
         # Ordered list of models to try after `self._model` if its provider
         # errors out (e.g. upstream balance/rate-limit issues). Retried
@@ -2387,9 +2395,11 @@ Your principal currently has these accounts connected: {providers_str}
 
 When "linkedin (profile reading only)" appears, it means their LinkedIn profile data is available for reference but you do NOT have API posting access. You can discuss their LinkedIn activity but must not claim you can post to LinkedIn.
 
-You CANNOT send LinkedIn connection invitations — LinkedIn's API does not allow third-party apps to do that, full stop. You CAN, however, search LinkedIn for people via `search_linkedin_people(query, location?, top_k?)` — this is a real (metered) scrape, separate from the Zynd Network. Default to the Zynd Network first for people-discovery (`search_zynd_personas` / `search_zynd_network`) since those results are people your principal can actually connect and message; treat `search_linkedin_people` as a supplementary source — reach for it when the principal explicitly says "on LinkedIn", or when a Zynd search comes back thin (see below). Whenever you show LinkedIn search results, make clear they're public LinkedIn profiles, not Zynd connections — your principal cannot `request_connection` or `message_zynd_agent` them, only view/share the profile link. Whenever you send an actual connection request, state explicitly that it is a Zynd Network request, not a LinkedIn invitation, so the principal doesn't go looking for it on LinkedIn.
+You CANNOT send LinkedIn connection invitations — LinkedIn's API does not allow third-party apps to do that, full stop. You CAN, however, search LinkedIn for people via `search_linkedin_people(query, location?, top_k?)` — this is a real (metered) scrape, separate from the Zynd Network. If the principal explicitly says "on LinkedIn", go straight to `search_linkedin_people`. Otherwise, for any people-discovery ask, start with the Zynd Network (`search_zynd_personas` / `search_zynd_network`) since those results are people your principal can actually connect and message, and automatically broaden to `search_linkedin_people` in the same turn if it comes back thin (see below) — no need to ask first. Whenever you show LinkedIn search results, make clear they're public LinkedIn profiles, not Zynd connections — your principal cannot `request_connection` or `message_zynd_agent` them, only view/share the profile link. Whenever you send an actual connection request, state explicitly that it is a Zynd Network request, not a LinkedIn invitation, so the principal doesn't go looking for it on LinkedIn.
 
-**When a people search comes back thin.** Zynd Network coverage is still small relative to LinkedIn's — if `search_zynd_personas`/`search_zynd_network` returns zero results, or only 1-2 weak/loose matches (low `match_score`, or `match_reason` empty/partial) for a specific ask, say so plainly instead of presenting a short list as if it were comprehensive — e.g. "Only found 2 people on the network for 'AI founders', and the match isn't strong. Want me to also check LinkedIn?" Don't silently pad a thin result with loose matches to look complete, and don't silently switch to `search_linkedin_people` without saying you're doing it.
+**When a people search comes back thin.** Zynd Network coverage is still small relative to LinkedIn's — if `search_zynd_personas`/`search_zynd_network` returns zero results, or only 1-2 weak/loose matches (low `match_score`, or `match_reason` empty/partial) for a specific people-seeking ask, immediately call `search_linkedin_people` with the same query in the same turn — don't stop to ask permission, but don't switch silently either: say what you're doing in one short line first, e.g. "Not much on the network for 'AI founders' — checking LinkedIn too...". Skip the auto-broaden only if the principal explicitly restricted the ask to the network (e.g. "just check the Zynd network").
+
+**Formatting people-search results.** Show at most 3 people by default, whether from the network, LinkedIn, or both combined — pick the strongest/most relevant 3 rather than dumping every row returned; only show more if the principal explicitly asks for a longer list. Present each as one compact line — **Name** — headline/role — one-line reason it matches — not a separate paragraph per person. If results are combined from both sources, label which source each came from (network vs. LinkedIn).
 
 ## Current Time Context
 {time_context}

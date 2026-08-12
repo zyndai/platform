@@ -1766,14 +1766,18 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
 
     # Insert outbound to dm_messages BEFORE the send (M-1: persist before
     # dispatch). Both participants see it immediately via Supabase realtime.
+    inserted_message_id = None
     try:
-        sb.table("dm_messages").insert({
+        ins = sb.table("dm_messages").insert({
             "thread_id": thread_id,
             "sender_id": sender_agent_id,
             "sender_type": "agent",
             "channel": "agent",
             "content": message,
         }).execute()
+        rows = ins.data or []
+        if rows:
+            inserted_message_id = rows[0].get("id")
     except Exception as e:
         logger.warning(f"{log_prefix} sender-side dm_messages insert failed: {e}")
 
@@ -1781,6 +1785,21 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
     # this exchange". (Receiver's orchestrator may have created an
     # agent_tasks meeting row while serving the request.)
     send_time_iso = datetime.now(timezone.utc).isoformat()
+
+    def _rollback_optimistic_insert() -> None:
+        # A failed dispatch means the receiver never saw this message —
+        # the optimistic row above would otherwise linger as a phantom
+        # "sent" bubble in both UIs AND poison _message_exists_on_thread's
+        # dedup window, permanently blocking a corrected retry (e.g. after
+        # the LLM fixes a bad URL on the next attempt). Seen live: a first
+        # attempt with a hallucinated webhook URL failed pre-flight but had
+        # already persisted the row; 20s later the retry with the correct
+        # URL was silently swallowed as a "duplicate" and never dispatched.
+        if inserted_message_id is not None:
+            try:
+                sb.table("dm_messages").delete().eq("id", inserted_message_id).execute()
+            except Exception as e:
+                logger.warning(f"{log_prefix} rollback of optimistic dm_messages insert failed: {e}")
 
     # ── The actual A2A v3 call ──────────────────────────────────────
     delivery = _send_via_a2a_v3(
@@ -1794,6 +1813,7 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
     if "error" in delivery and "task" not in delivery:
         # Pre-flight failure (no v3 URL, missing keypair, etc.) — pass
         # the error to the LLM so it can explain to the user.
+        _rollback_optimistic_insert()
         delivery["thread_id"] = thread_id
         delivery["partner_agent_id"] = target_agent_id
         return delivery
@@ -1802,6 +1822,7 @@ def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent_id: s
     # (network or receiver-rejection); pass it through verbatim — the
     # LLM's prompts already know how to phrase those.
     if delivery.get("status") == "delivery_failed":
+        _rollback_optimistic_insert()
         return delivery
 
     task = delivery["task"]
@@ -2094,6 +2115,15 @@ def read_agent_channel(user_id: str, thread_id: str, limit: int = 20) -> dict:
             "error": "No deployed persona",
             "error_message": "I need an active persona to read agent-channel messages.",
             "hint": "Finish onboarding in the Zynd dashboard first.",
+        }
+
+    try:
+        uuid.UUID(str(thread_id))
+    except (ValueError, AttributeError, TypeError):
+        return {
+            "error": "Invalid thread ID",
+            "error_message": f"'{thread_id}' isn't a valid thread ID — it looks truncated or malformed.",
+            "hint": "Call list_my_connections to get the real thread_id, don't guess or reuse a shortened ID from earlier context.",
         }
 
     sb = _get_supabase()

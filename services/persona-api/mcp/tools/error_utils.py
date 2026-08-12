@@ -65,6 +65,17 @@ def _classify(raw: str, operation: str) -> tuple[str, str, str]:
             "Try again in a moment.",
         )
 
+    if (
+        "invalid input syntax" in lowered
+        or "22p02" in lowered
+        or ("invalid" in lowered and "uuid" in lowered)
+    ):
+        return (
+            f"That {provider} ID looks wrong",
+            "The ID passed in doesn't match the format the database expects — it's likely truncated or malformed, not a real record.",
+            "Look up the correct ID again rather than reusing a shortened or guessed one.",
+        )
+
     if "not found" in lowered or "404" in lowered or "doesn't exist" in lowered or "does not exist" in lowered:
         return (
             f"That {provider} item wasn't found",

@@ -40,6 +40,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Awaitable, Callable, Optional, Protocol
 
+import httpx
+
 from agent.a2a.client import A2AClient
 
 logger = logging.getLogger(__name__)
@@ -388,15 +390,36 @@ async def dispatch(
                 f"[a2a dispatch] row created cb={callback_id} PUSH → {peer_a2a_url} | "
                 f"push_url={push_url} token={push_token[:12]}..."
             )
-            task = await client.send(
-                peer_a2a_url,
-                context_id=context_id,
-                text=text,
-                data=data,
-                task_id=task_id,
-                push_url=push_url,
-                push_token=push_token,
-            )
+            try:
+                task = await client.send(
+                    peer_a2a_url,
+                    context_id=context_id,
+                    text=text,
+                    data=data,
+                    task_id=task_id,
+                    push_url=push_url,
+                    push_token=push_token,
+                )
+            except httpx.ReadTimeout as e:
+                # The request reached the peer (connect + write succeeded)
+                # but their orchestrator didn't finish within our client
+                # timeout — this is NOT a delivery failure, just a slow
+                # peer. The callback row is already registered (row-first,
+                # above) with its push_token, so a push the peer sends
+                # later still correlates correctly even though we never
+                # learned their peer_task_id. Report pending, not failed.
+                logger.info(
+                    "transport.dispatch: PUSH send to %s read-timed-out after registering "
+                    "cb=%s — peer likely still processing; leaving callback pending: %s",
+                    peer_a2a_url, callback_id, e,
+                )
+                return DispatchResult(
+                    transport=Transport.PUSH,
+                    task=None,
+                    callback_id=callback_id,
+                    push_url=push_url,
+                    push_token=push_token,
+                )
             peer_task_id = task.get("id") if isinstance(task, dict) else None
             print(
                 f"[a2a dispatch] peer ack: task_id={peer_task_id} "

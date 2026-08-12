@@ -870,11 +870,71 @@ def _maybe_fire_push(
         _deliver_push_for_task(user_id, task_id, push_url, push_token, event)
     )
 
+async def _finish_message_send_async(user_id: str, admitted: "_Admitted") -> None:
+    """Background completion for a push-mode message/send: run the handler
+    and fire the resulting push. `_run_handler_and_finalize` already wraps
+    the handler call in its own try/except and always persists a terminal
+    (or interrupted) state, so this wrapper only needs to guard against
+    something failing outside that — an uncaught exception here would
+    otherwise just be logged by asyncio as "Task exception was never
+    retrieved" and leave the a2a_tasks row stuck in 'working' forever."""
+    try:
+        next_state, _reply_text, _failure_reason, reply_msg, _artifact, now_iso = (
+            await _run_handler_and_finalize(user_id, admitted)
+        )
+        _maybe_fire_push(
+            user_id=user_id,
+            task_id=admitted.task_id,
+            context_id=admitted.context_id,
+            next_state=next_state,
+            reply_msg=reply_msg,
+            timestamp=now_iso,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(f"{admitted.log_prefix} background message/send completion crashed")
+
 async def _handle_message_send(user_id: str, addressee_agent_id: str, params: Any, req_id: Any) -> dict:
-    """Synchronous JSON-RPC: run admission gate, dispatch handler, return Task."""
+    """JSON-RPC entry for message/send: run the admission gate, then either
+    dispatch the handler inline (blocking SEND path) or ack immediately and
+    finish in the background (PUSH path).
+
+    Every persona card advertises pushNotifications=true, so PUSH is the
+    transport nearly every peer picks (see a2a.transport.pick_transport).
+    The sender's A2AClient marks these requests with `defer_to_push` for
+    exactly this reason — a slow orchestrator run (multi-step reasoning,
+    tool calls) can easily exceed the sender's client timeout if we hold
+    the connection open for the full run. Acking fast and delivering the
+    real result via the registered push callback (or the sender's 30s
+    fallback poll) keeps that from turning into a false 'delivery failed'
+    on their side.
+
+    The blocking SEND path (no push_url — the peer set
+    configuration.blocking=true instead) keeps running inline: it has no
+    push channel to deliver a background result through, so the response
+    IS the only delivery mechanism.
+
+    Continuations (resuming an interrupted task) also stay inline for now
+    — resuming is normally a quick clarification round-trip, and keeping
+    it synchronous avoids reworking the interrupted-state resume contract
+    at the same time as this change.
+    """
     admitted, err = await _admit_message_send(user_id, addressee_agent_id, params, req_id)
     if err is not None:
         return err
+
+    push_url, _push_token = _extract_push_config(params)
+    if push_url and not admitted.is_continuation:
+        _track_push_task(_finish_message_send_async(user_id, admitted))
+        task_obj: dict[str, Any] = {
+            "kind": "task",
+            "id": admitted.task_id,
+            "contextId": admitted.context_id,
+            "status": {
+                "state": "working",
+                "timestamp": _now_iso(),
+            },
+        }
+        return _rpc_result(req_id, task_obj)
 
     next_state, _reply_text, _failure_reason, reply_msg, artifact, now_iso = (
         await _run_handler_and_finalize(user_id, admitted)

@@ -31,7 +31,14 @@ module.exports = {
       // The heartbeat manager and persona rehydration hold in-process
       // state per worker. Multiple instances would duplicate the
       // outbound WebSockets to dns01.zynd.ai. Keep this at 1.
-      max_memory_restart: "1G",
+      // 1G was getting hit every 15-45min under normal chat traffic,
+      // killing in-flight requests (e.g. slow LinkedIn/Apify searches)
+      // mid-stream with no error logged. The box has 123G total / 96G
+      // free, so 1G was an arbitrarily tight ceiling, not a real
+      // constraint — raised to give the in-memory conversation cache
+      // (orchestrator.py's `_conversations`, never evicted) much more
+      // room before a forced restart is needed.
+      max_memory_restart: "4G",
       // PYTHONUNBUFFERED is essential — without it, print() output
       // never flushes to PM2's log buffer until the process exits.
       env: {

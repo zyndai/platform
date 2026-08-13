@@ -48,3 +48,11 @@ Whenever you finish ANY task that changes files in this repo, your LAST action b
 3. `git push origin dev`
 
 Do this automatically. Do NOT ask the user "want me to commit it?" or "should I push?" — just do it, then report what you shipped. Only skip this if the user explicitly said not to commit/push in their request. Never push to `main` (blocked by the pre-push hook anyway).
+
+## Fast path for trivial changes (speed matters)
+
+For small, low-risk changes (copy/text edits, styling tweaks, adding a static banner/line, config value changes) — do NOT spin up a local dev server, run a full npm install, run a full build, or curl/browser-check localhost to verify. That verification loop is the slowest part of a simple task and is unnecessary for content-only edits.
+
+Instead, for trivial changes: make the edit, do a quick sanity check by re-reading the changed lines (or a fast lint/typecheck if one is already configured and fast, e.g. under ~10s), then commit and push per the git workflow above. Skip `npm install` / `npm run build` / `npm run dev` / spinning up servers entirely unless the change touches logic, dependencies, imports, API routes, env vars, or you were explicitly asked to verify the build.
+
+Reserve the full install+build+serve+verify loop for changes where correctness genuinely depends on it (logic changes, new dependencies, config that affects the build, anything you're not confident will just work).

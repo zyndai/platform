@@ -311,6 +311,29 @@ async def forget_by_ref(user_id: str, predicate: str, obj: str) -> bool:
         return False
 
 
+async def declare_fact(user_id: str, predicate: str, value: str) -> bool:
+    """Write a user-authored PRIVATE memory fact directly (structured predicate/value).
+
+    Distinct from ingest_turns (which runs async extraction) — this is an
+    explicit, high-confidence declaration for the editable memory surface.
+    """
+    if not is_enabled():
+        return False
+    token = _make_jwt(user_id)
+    try:
+        async with _client() as client:
+            resp = await client.post(
+                "/me/memory/declare",
+                json={"predicate": predicate, "value": value},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            resp.raise_for_status()
+            return True
+    except Exception as exc:
+        logger.debug("[memory] /me/memory/declare failed for %s: %s", user_id, exc)
+        return False
+
+
 async def _find_fact_ref(user_id: str, fact_statement: str) -> tuple[str, str] | None:
     """Resolve a loose natural-language fact description to the
     (predicate, object) pair the API needs, by matching it against the

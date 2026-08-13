@@ -83,6 +83,7 @@ from mcp.tools.brief import (
 from mcp.tools.memory import (
     what_do_you_know_about_me,
     remember_this,
+    remember_this_structured,
     forget_this,
 )
 
@@ -198,12 +199,12 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(list_my_pages, name="list_my_pages", description="List the shareable pages the principal has already published. Use when they ask to see their pages, e.g. 'show my pages' or 'what pages have I made'.")
 
     # ── Brief tools (principal-private) ────────────────────────────
-    # These read/write the user's Brief Google Doc. Auto-init the doc
-    # on first append/replace. Never exposed to foreign agents.
-    mcp.register(read_my_brief, name="read_my_brief", description="Read the principal's Brief — the long-form context doc this persona uses to know its principal. Returns plain text + Google Doc URL. Use this whenever you need durable context about the user (preferences, role, ongoing projects).")
-    mcp.register(append_to_my_brief, name="append_to_my_brief", description="Append a line to the principal's Brief Google Doc. Use this when the user tells you something durable about themselves that you should remember across conversations. Creates the brief lazily if it doesn't exist yet.")
-    mcp.register(replace_my_brief, name="replace_my_brief", description="Replace the entire body of the principal's Brief Google Doc. Use only when the user explicitly asks to rewrite their brief — prefer append_to_my_brief for additions.")
-    mcp.register(clear_my_brief, name="clear_my_brief", description="Empty the principal's Brief Google Doc. Use only when the user explicitly asks to clear their brief.")
+    # These read/write the user's Brief (a plain-text field on the
+    # persona row). Never exposed to foreign agents.
+    mcp.register(read_my_brief, name="read_my_brief", description="Read the principal's Brief — the long-form context this persona uses to know its principal. Returns the plain-text body. Use this whenever you need durable context about the user (preferences, role, ongoing projects).")
+    mcp.register(append_to_my_brief, name="append_to_my_brief", description="Append a line to the principal's Brief. Use this when the user tells you something durable about themselves that you should remember across conversations.")
+    mcp.register(replace_my_brief, name="replace_my_brief", description="Replace the entire body of the principal's Brief. Use only when the user explicitly asks to rewrite their brief — prefer append_to_my_brief for additions.")
+    mcp.register(clear_my_brief, name="clear_my_brief", description="Empty the principal's Brief. Use only when the user explicitly asks to clear their brief.")
     mcp.register(add_todo, name="add_todo", description="Add an actionable todo to the principal's todo list. PREFER this tool over append_to_my_brief whenever the user explicitly asks to track a task — phrases like 'add a todo', 'remind me to', 'put X on my list', 'add this to my todos'. The item shows up immediately on the dashboard's Todos tab (no 5-minute extractor wait). For general profile facts ('I work at X', 'I prefer afternoons'), use append_to_my_brief instead.")
 
     # ── Default utility tools ──────────────────────
@@ -213,6 +214,7 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     # These query the ZYND memory layer for long-term recall.
     mcp.register(what_do_you_know_about_me, name="what_do_you_know_about_me", description="Query the persona's long-term memory about the principal. Use when the user asks what you remember about them, what they're working on, their goals, preferences, past conversations, or anything about their life. Provide a topic keyword for filtered results (e.g. 'startup', 'health', 'travel').")
     mcp.register(remember_this, name="remember_this", description="Persist a single fact the user explicitly wants remembered. Use when the user says 'remember that...', 'make a note...', or 'don't forget...'. The fact should be a clear statement (e.g. 'The principal is allergic to peanuts').")
+    mcp.register(remember_this_structured, name="remember_this_structured", description="Write a single structured PRIVATE memory fact as an explicit (predicate, value) declaration. Use for crisp durable facts that map to a known predicate — e.g. 'I'm building an AI startup' → predicate='is_building', value='an AI startup'. Predicates include is_building, is_working_on, is_learning, has_expertise_in, intends_to, fears, believes, values, is_located_in, has_collaborator, and more. Prefer remember_this (free text) when the fact doesn't map cleanly to a predicate.")
     mcp.register(forget_this, name="forget_this", description="Remove or decay a fact the user wants forgotten. Use when the user says 'forget that...', 'I don't actually...', or asks to remove something from memory.")
 
     # ── Digital Twin tools (principal-private) ──────────────────────

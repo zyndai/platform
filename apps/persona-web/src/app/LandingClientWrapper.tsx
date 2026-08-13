@@ -87,21 +87,6 @@ export function LandingClientWrapper() {
   return (
     <>
       <main className="zlanding">
-        <div
-          className="zlanding-test-banner"
-          style={{
-            width: "100%",
-            textAlign: "center",
-            padding: "0.75rem 1rem",
-            background: "#1a1a2e",
-            color: "#ffffff",
-            fontSize: "1rem",
-            fontWeight: 600,
-          }}
-        >
-          Hermes test v2
-        </div>
-
         <nav className="zlanding-nav">
           <div className="zlanding-nav-inner">
             <div className="zln-brand">
@@ -243,6 +228,7 @@ export function LandingClientWrapper() {
         </div>
 
         <footer className="zlanding-footer">
+          <span style={{ fontWeight: 600, color: "#0f172a" }}>Hermes test v3</span>
           <span>324 people met someone new on Zynd this week.</span>
           <div className="zlanding-footer-links">
             <a href="/terms">Terms</a>

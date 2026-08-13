@@ -366,6 +366,17 @@ async def declare_findability(req: DeclareRequest, user_id: str = Depends(curren
     return {"status": "declared", "predicate": req.predicate, "value": req.value}
 
 
+@app.post("/me/memory/declare")
+async def declare_memory_fact(req: DeclareRequest, user_id: str = Depends(current_user)) -> dict:
+    """User explicitly adds a PRIVATE memory fact (stays private, never matched)."""
+    from app.services.findability import declare_private
+    try:
+        await declare_private(get_pool(), user_id, req.predicate, req.value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "declared", "predicate": req.predicate, "value": req.value}
+
+
 @app.get("/export/{user_id}")
 async def export_context(user_id: str, auth_user: str = Depends(current_user)) -> dict:
     """Full active context as a portable JSON-LD packet (brief §11.1)."""

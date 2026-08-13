@@ -127,7 +127,7 @@ async def get_page_public(pool: asyncpg.Pool, slug: str) -> asyncpg.Record | Non
 async def list_pages(pool: asyncpg.Pool, user_id: str) -> list[dict[str, Any]]:
     """All pages owned by the user, newest first (metadata only, no content)."""
     rows = await pool.fetch(
-        """SELECT slug, title, format, visibility, created_at, updated_at
+        """SELECT slug, title, format, visibility, created_at, updated_at, expires_at
            FROM published_pages WHERE user_id = $1 ORDER BY created_at DESC""",
         user_id,
     )
@@ -165,7 +165,7 @@ async def update_page(
     row = await pool.fetchrow(
         f"""UPDATE published_pages SET {', '.join(sets)}
             WHERE slug = ${len(args) - 1} AND user_id = ${len(args)}
-            RETURNING slug, title, format, visibility, created_at, updated_at""",
+            RETURNING slug, title, format, visibility, created_at, updated_at, expires_at""",
         *args,
     )
     if not row:

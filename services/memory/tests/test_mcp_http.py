@@ -28,10 +28,14 @@ def test_tools_registered():
 
 
 async def test_oauth_protected_resource():
-    """FastMCP's RemoteAuthProvider exposes the well-known OAuth endpoint."""
+    """FastMCP's RemoteAuthProvider exposes the well-known OAuth endpoint.
+
+    The protected-resource metadata is path-scoped (RFC 9728 §3.1), so it is
+    served at /.well-known/oauth-protected-resource/<mcp path>.
+    """
     transport = httpx.ASGITransport(app=mcp_asgi)
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-        r = await c.get("/.well-known/oauth-protected-resource")
+        r = await c.get("/.well-known/oauth-protected-resource/mcp")
         assert r.status_code == 200
         data = r.json()
         assert "authorization_servers" in data

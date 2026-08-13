@@ -23,7 +23,6 @@ from api.telegram import router as telegram_router
 from api.linkedin import router as linkedin_router
 from api.approvals import router as approvals_router
 from api.matches import router as matches_router
-from api.brief import router as brief_router
 from api.todos import router as todos_router
 from api.memory import router as memory_router
 from api.groups import router as groups_router
@@ -129,7 +128,6 @@ app.include_router(telegram_router, prefix="/api/telegram", tags=["Telegram"])
 app.include_router(linkedin_router, prefix="/api/linkedin", tags=["LinkedIn"])
 app.include_router(approvals_router, prefix="/api/approvals", tags=["Approvals"])
 app.include_router(matches_router, prefix="/api/matches", tags=["Matches"])
-app.include_router(brief_router,   prefix="/api/brief",   tags=["Brief"])
 app.include_router(todos_router, prefix="/api/todos", tags=["Todos"])
 app.include_router(memory_router, prefix="/api/memory", tags=["Memory"])
 app.include_router(groups_router, prefix="/api/groups", tags=["Groups"])

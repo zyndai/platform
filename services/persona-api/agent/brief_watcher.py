@@ -1,23 +1,22 @@
 """
-Brief Watcher — polls each persona's Brief Google Doc for changes and
-extracts any new todo items the principal added.
+Brief Watcher — polls each persona's Brief text for changes and extracts
+any new todo items the principal added.
 
 Runs as a single async task started in main.py's lifespan, alongside
 the heartbeat manager. Pattern is deliberately the same: one task that
 iterates all personas instead of one task per user.
 
 Detection strategy (deterministic, no LLM cost):
-  - For each persona with a `brief_doc_id`, ask Drive API for the doc's
-    current `headRevisionId`.
-  - If it differs from the `brief_doc_revision_id` we have stored,
-    fetch the doc content and parse it for todo lines. Patterns we
-    recognise: "- [ ] thing", "[ ] thing", "TODO: thing".
+  - For each persona with a `brief_content` field, hash the current text.
+  - If the hash differs from what we saw last poll, parse the content for
+    todo lines. Patterns we recognise: "- [ ] thing", "[ ] thing",
+    "TODO: thing".
   - Insert any titles we haven't already stored as `brief_todos` rows
     for this user. Idempotent on title — re-extracting the same line
     won't create duplicates.
-  - Update `brief_doc_revision_id` so we won't re-process this revision.
+  - Remember the hash so we won't re-process this text.
 
-Removed lines: if the user deletes a "- [ ]" line from the doc, the
+Removed lines: if the user deletes a "- [ ]" line from the brief, the
 existing brief_todos row is LEFT ALONE. Two reasons:
   1. The user might have just been editing — deleting and re-adding.
   2. Marking it done automatically would be incorrect for the case
@@ -28,6 +27,7 @@ The Todos tab UI lets the user toggle / delete manually.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -38,9 +38,9 @@ import config
 logger = logging.getLogger(__name__)
 
 
-# Default poll interval — every 5 minutes. Each cycle hits Drive API
-# once per persona with a brief doc, so this is a tradeoff between
-# responsiveness and Google API quota.
+# Default poll interval — every 5 minutes. Each cycle reads the brief
+# text once per persona, so this is a tradeoff between responsiveness
+# and Supabase read volume.
 DEFAULT_POLL_INTERVAL_SECONDS = 300
 
 
@@ -181,6 +181,7 @@ class BriefWatcher:
         self._poll_interval = poll_interval_seconds
         self._task: asyncio.Task | None = None
         self._running = False
+        self._last_seen: dict[str, str] = {}
 
     async def start(self):
         if self._running:
@@ -219,13 +220,13 @@ class BriefWatcher:
         return config.get_supabase()
 
     def _poll_all(self):
-        """One full sweep across every persona that has a brief doc."""
+        """One full sweep across every persona that has a brief text field."""
         sb = self._supabase()
         rows = (
             sb.table("persona_agents")
-            .select("user_id,brief_doc_id,brief_doc_revision_id")
+            .select("user_id,brief_content")
             .eq("active", True)
-            .not_.is_("brief_doc_id", "null")
+            .not_.is_("brief_content", "null")
             .execute()
         )
         for row in rows.data or []:
@@ -238,41 +239,18 @@ class BriefWatcher:
 
     def _poll_one(self, sb, row: dict):
         user_id = row["user_id"]
-        doc_id = row["brief_doc_id"]
-        last_revision = row.get("brief_doc_revision_id")
-
-        from googleapiclient.discovery import build
-        from mcp.tools.google.common import get_google_creds
-        from mcp.tools.google.docs import read_document
-
-        try:
-            creds = get_google_creds(user_id)
-        except ValueError:
-            # User disconnected Google; nothing to poll.
+        content = (row.get("brief_content") or "").strip()
+        if not content:
             return
-
-        drive = build("drive", "v3", credentials=creds)
-        meta = drive.files().get(fileId=doc_id, fields="headRevisionId").execute()
-        current_revision = meta.get("headRevisionId")
-        if not current_revision:
-            return
-        if current_revision == last_revision:
-            return  # No new edits since last poll.
-
-        # Doc has changed — fetch full content and extract todos.
-        fetched = read_document(user_id=user_id, document_id=doc_id)
-        if not fetched.get("success"):
-            logger.warning(
-                f"[brief_watcher] read_document failed for {doc_id}: {fetched.get('error')}"
-            )
-            return
+        digest = hashlib.sha256(content.encode()).hexdigest()
+        if self._last_seen.get(user_id) == digest:
+            return  # unchanged since last extraction
 
         # LLM-first extraction. The LLM catches implicit todos the regex
         # would miss ("I need to follow up with Sarah" → "Follow up with
         # Sarah"). If the LLM call fails or returns malformed output we
         # fall back to the regex extractor so a transient LLM error
         # doesn't silently drop a polling cycle.
-        content = fetched.get("content") or ""
         llm_titles = extract_todo_titles_llm(content)
         if llm_titles is None:
             titles = extract_todo_titles(content)
@@ -282,15 +260,8 @@ class BriefWatcher:
             extractor = "llm"
         if titles:
             self._upsert_todos(sb, user_id, titles)
-
-        sb.table("persona_agents").update({
-            "brief_doc_revision_id": current_revision,
-            "brief_content": content or None,
-        }).eq("user_id", user_id).execute()
-        logger.info(
-            f"[brief_watcher] {user_id}: revision {last_revision} → {current_revision}, "
-            f"{len(titles)} todos via {extractor}"
-        )
+        self._last_seen[user_id] = digest
+        logger.info(f"[brief_watcher] {user_id}: {len(titles)} todos via {extractor}")
 
     def _upsert_todos(self, sb, user_id: str, titles: Iterable[str]):
         """

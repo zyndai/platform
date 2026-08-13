@@ -64,9 +64,9 @@ async def extract_todos_now(user: dict = Depends(get_current_user)):
     """
     Force an LLM extraction of todos from the user's current brief.
 
-    The background brief_watcher only acts when the doc's revision id
+    The background brief_watcher only acts when the brief text hash
     changes — useful for normal edit-driven flow, but it means a user
-    whose doc is unchanged never sees the extractor kick in on the
+    whose brief is unchanged never sees the extractor kick in on the
     current LLM-based code path. This endpoint runs the extractor
     inline so the Todos page's Refresh button always produces a
     meaningful result.
@@ -77,7 +77,6 @@ async def extract_todos_now(user: dict = Depends(get_current_user)):
         # Lazy imports — keep request-path imports cheap when the user
         # never hits this endpoint.
         from agent.persona_manager import get_persona_status
-        from mcp.tools.google.docs import read_document
         from agent.brief_watcher import (
             extract_todo_titles,
             extract_todo_titles_llm,
@@ -86,21 +85,13 @@ async def extract_todos_now(user: dict = Depends(get_current_user)):
         persona = get_persona_status(user_id)
         if not persona.get("deployed"):
             raise HTTPException(status_code=404, detail="No active persona.")
-        doc_id = persona.get("brief_doc_id")
-        if not doc_id:
+        content = (persona.get("brief_content") or "").strip()
+        if not content:
             raise HTTPException(
                 status_code=400,
-                detail="No brief doc yet — create one first.",
+                detail="Your brief is empty — add some text first.",
             )
 
-        fetched = read_document(user_id=user_id, document_id=doc_id)
-        if not fetched.get("success"):
-            raise HTTPException(
-                status_code=502,
-                detail=fetched.get("error") or "Couldn't read the brief.",
-            )
-
-        content = fetched.get("content") or ""
         titles = extract_todo_titles_llm(content)
         extractor = "llm"
         if titles is None:

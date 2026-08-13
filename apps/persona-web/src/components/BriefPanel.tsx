@@ -2,24 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDashboard } from "@/contexts/DashboardContext";
-import { apiGet, apiPatch, apiPost } from "@/lib/api";
-import { Button, EmptyState } from "@/components/ui";
+import { apiGet, apiPatch } from "@/lib/api";
+import { Button } from "@/components/ui";
 
 interface BriefState {
-  exists: boolean;
-  doc_id?: string;
-  url?: string;
   content?: string;
-  title?: string;
   fallback_description?: string;
-  error?: string;
 }
 
 export default function BriefPanel() {
   const { user } = useDashboard();
   const [brief, setBrief] = useState<BriefState | null>(null);
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchBrief = async () => {
@@ -38,20 +32,6 @@ export default function BriefPanel() {
     if (user?.id) fetchBrief();
   }, [user?.id]);
 
-  const handleCreate = async () => {
-    if (!user?.id) return;
-    setCreating(true);
-    setError(null);
-    try {
-      await apiPost(`/api/persona/${user.id}/brief/init`, {});
-      await fetchBrief();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create brief doc.");
-    } finally {
-      setCreating(false);
-    }
-  };
-
   if (loading) {
     return (
       <Shell>
@@ -68,40 +48,8 @@ export default function BriefPanel() {
     );
   }
 
-  if (!brief?.exists) {
-    return (
-      <Shell>
-        <EmptyState
-          title="Create your brief"
-          body="Your brief is the long-form context the AI agent uses to represent you. It lives as a single Google Doc — the agent can only see this one doc, never the rest of your Drive."
-          action={
-            <Button onClick={handleCreate} disabled={creating}>
-              {creating ? "Creating…" : "Create my brief"}
-            </Button>
-          }
-        />
-        {brief?.fallback_description && (
-          <div
-            style={{
-              maxWidth: "480px",
-              margin: "0 auto 32px",
-              padding: "12px 14px",
-              background: "var(--bg-surface)",
-              border: "1px solid var(--border-default)",
-              borderRadius: "var(--r-sm)",
-              fontSize: "13px",
-              color: "var(--text-secondary)",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            <p className="section-label" style={{ marginBottom: "6px" }}>
-              CURRENT SHORT BRIEF (will seed the doc)
-            </p>
-            {brief.fallback_description}
-          </div>
-        )}
-      </Shell>
-    );
+  if (!brief) {
+    return null;
   }
 
   return <BriefEditor brief={brief} onSaved={fetchBrief} />;
@@ -163,7 +111,7 @@ function BriefEditor({
       setSavedAt(Date.now());
       void onSaved();
     } catch (err) {
-      setSaveError(friendlySaveError(err));
+      setSaveError(err instanceof Error ? err.message : "Couldn't save right now. Try again in a moment.");
     } finally {
       setSaving(false);
     }
@@ -209,9 +157,7 @@ function BriefEditor({
           Your brief
         </h1>
         <p className="brief-page-lede">
-          The long-form context your agent uses to represent you. Lives as a single Google Doc
-          only your agent can see. Edit here or in Google Docs — your agent re-reads it whenever
-          it changes.
+          Your brief is the long-form context your agent uses to represent you. Edit here any time.
         </p>
 
         <div
@@ -235,17 +181,6 @@ function BriefEditor({
             className="brief-page-actions"
             style={{ display: "flex", gap: "8px", alignItems: "center" }}
           >
-            {brief.url && (
-              <a
-                href={brief.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-secondary brief-page-docs-link"
-                style={{ textDecoration: "none" }}
-              >
-                Open in Google Docs ↗
-              </a>
-            )}
             <Button
               onClick={() => {
                 setSaveError(null);
@@ -366,7 +301,7 @@ function SaveStatus({
   } else if (savedAt) {
     label = `Saved ${relativeTime(savedAt)}`;
   } else if (initialIsSynced) {
-    label = "Synced from Google Docs";
+    label = "Saved";
   } else {
     label = "Not saved yet";
   }
@@ -412,8 +347,8 @@ function SaveStatus({
 }
 
 function normalizeContent(s: string): string {
-  // A freshly created Google Doc returns "\n" for body. Treat single-newline
-  // as effectively empty so the editor doesn't show "Unsaved changes" on load.
+  // Treat a lone newline as effectively empty so the editor doesn't show
+  // "Unsaved changes" on load.
   return s === "\n" ? "" : s;
 }
 
@@ -425,36 +360,6 @@ function relativeTime(ts: number): string {
   if (min < 60) return `${min} min ago`;
   const hr = Math.round(min / 60);
   return `${hr}h ago`;
-}
-
-function friendlySaveError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err ?? "");
-  try {
-    const parsed = JSON.parse(raw);
-    const detail = parsed?.detail;
-    if (detail && typeof detail === "object" && typeof detail.message === "string") {
-      return detail.message;
-    }
-    if (typeof detail === "string") {
-      return summarizeRawGoogleError(detail);
-    }
-  } catch {
-    /* not JSON, fall through */
-  }
-  return summarizeRawGoogleError(raw);
-}
-
-function summarizeRawGoogleError(raw: string): string {
-  if (/SERVICE_DISABLED|has not been used in project/.test(raw)) {
-    return "Couldn't sync to Google Docs right now. Your edit isn't lost — try again in a moment.";
-  }
-  if (/PERMISSION_DENIED|insufficient/i.test(raw)) {
-    return "Google rejected the request. Try disconnecting and reconnecting Google in Settings → Accounts.";
-  }
-  if (/rateLimit|quotaExceeded/i.test(raw)) {
-    return "Google is rate-limiting us right now. Try again in a moment.";
-  }
-  return "Couldn't save right now. Try again in a moment.";
 }
 
 function Shell({ children }: { children: React.ReactNode }) {

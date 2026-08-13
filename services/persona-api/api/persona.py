@@ -21,7 +21,6 @@ from agent.persona_manager import (
     delete_persona,
     get_brief,
     get_persona_status,
-    init_brief_doc,
     purge_user_account,
     save_brief_content,
     update_persona_profile,
@@ -206,9 +205,9 @@ async def persona_public_card(user_id: str):
     Returns ONLY fields that are safe to display to anyone with the URL:
     the user-chosen name, description, capabilities, and the agent_id
     visitors need to start an agent-to-agent thread. We deliberately
-    omit webhook_url, public_key, brief_doc_id, brief_doc_url and the
-    profile blob — those are infrastructure or gated by per-thread
-    permissions in the in-app context.
+    omit webhook_url, public_key, brief_content and the profile blob —
+    those are infrastructure or gated by per-thread permissions in the
+    in-app context.
 
     Any lookup failure (missing persona, malformed UUID) returns 404 —
     we don't distinguish so attackers can't fingerprint the user_id
@@ -370,28 +369,10 @@ async def update_profile(user_id: str, req: PersonaProfileUpdate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ── Brief Google Doc ────────────────────────────────────────────────
-#
-# The persona's Brief is a Google Doc the agent maintains as the canonical
-# long-form context about its principal. Two endpoints:
-#   POST /api/persona/{user_id}/brief/init  — create the doc on first use
-#   GET  /api/persona/{user_id}/brief       — read current state + content
-# Both run under the agent's existing drive.file scope, so the agent can
-# only see this single doc — never the user's wider Drive.
-
-@router.post("/{user_id}/brief/init")
-async def init_brief(user_id: str):
-    """Create the user's Brief Google Doc, or return the existing one."""
-    try:
-        return init_brief_doc(user_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+# ── Brief (plain text) ─────────────────────────────────────────────
 @router.get("/{user_id}/brief")
 async def read_brief(user_id: str):
-    """Return the user's Brief metadata + current content fetched live from Google Docs."""
+    """Return the persona's brief text (single field, no Google Docs)."""
     try:
         return get_brief(user_id)
     except ValueError as e:
@@ -399,41 +380,23 @@ async def read_brief(user_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 class BriefSave(BaseModel):
     content: str
 
-def _classify_google_error(raw: str) -> dict:
-    """Map a raw Google HttpError string into a clean {code, message} pair the
-    UI can render without leaking the upstream stack trace."""
-    if "SERVICE_DISABLED" in raw or "has not been used in project" in raw:
-        # Platform-side config gap (GCP API not enabled). End user can't act
-        # on this — keep the message neutral and route the actionable detail
-        # to logs for the ops team.
-        print(f"[brief] SERVICE_DISABLED from Google Docs API — enable it in GCP for the project: {raw[:300]}")
-        return {
-            "code": "google_sync_unavailable",
-            "message": "Couldn't sync to Google Docs right now. Your edit isn't lost — try again in a moment.",
-        }
-    if "PERMISSION_DENIED" in raw or "insufficient" in raw.lower():
-        return {
-            "code": "google_permission_denied",
-            "message": "Google rejected the request. Try disconnecting and reconnecting Google in Settings → Accounts.",
-        }
-    if "rateLimitExceeded" in raw or "quotaExceeded" in raw:
-        return {"code": "google_rate_limited", "message": "Google is rate-limiting us right now. Try again in a moment."}
-    return {"code": "save_failed", "message": "Couldn't save to Google Docs right now. Try again in a moment."}
 
 @router.patch("/{user_id}/brief")
 async def save_brief(user_id: str, req: BriefSave):
-    """Replace the body of the persona's brief Google Doc."""
+    """Store the persona's brief body as plain text."""
     try:
         result = save_brief_content(user_id, req.content)
         if not result.get("success"):
-            err = _classify_google_error(str(result.get("error") or ""))
-            raise HTTPException(status_code=502, detail=err)
+            raise HTTPException(status_code=502, detail=result.get("error") or "Couldn't save the brief.")
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ── Agent-channel human send ─────────────────────────────────────────
 #

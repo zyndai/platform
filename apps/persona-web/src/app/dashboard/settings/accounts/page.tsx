@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { FileText, Calendar, Send, Mail } from "lucide-react";
+import { Calendar, Send, Mail } from "lucide-react";
 
 // Lucide dropped brand glyphs in v0.452 (trademark concerns), so the
 // LinkedIn mark is inlined here. Sized + stroked to match other icons.
@@ -26,7 +26,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 // Bot swapped 2026-05-20: was @zynd_persona_telegram_bot — now @zynd_brief_bot.
 const TELEGRAM_BOT = "zynd_brief_bot";
 
-type ConnId = "linkedin" | "brief" | "calendar" | "email" | "telegram";
+type ConnId = "linkedin" | "calendar" | "email" | "telegram";
 
 interface LinkedinPreview {
   headline?: string;
@@ -39,7 +39,6 @@ interface LinkedinPreview {
 
 interface ConnState {
   linkedin: { read: boolean; write: boolean; lastReadIso?: string } & LinkedinPreview;
-  brief: { connected: boolean };
   calendar: { connected: boolean };
   email: { connected: boolean };
   telegram: { connected: boolean };
@@ -47,7 +46,6 @@ interface ConnState {
 
 const EMPTY: ConnState = {
   linkedin: { read: false, write: false },
-  brief: { connected: false },
   calendar: { connected: false },
   email: { connected: false },
   telegram: { connected: false },
@@ -60,13 +58,12 @@ function hasRealLinkedinData(rawProfile: Record<string, unknown>): boolean {
 }
 
 /** Google features share one token; disconnecting one drops all of them. */
-function googleSiblingsNote(conn: ConnState, self: "brief" | "calendar" | "email"): string {
-  const label: Record<"brief" | "calendar" | "email", string> = {
-    brief: "brief",
+function googleSiblingsNote(conn: ConnState, self: "calendar" | "email"): string {
+  const label: Record<"calendar" | "email", string> = {
     calendar: "calendar",
     email: "email access",
   };
-  const others = (["brief", "calendar", "email"] as const)
+  const others = (["calendar", "email"] as const)
     .filter((k) => k !== self && conn[k].connected)
     .map((k) => label[k]);
   if (!others.length) return "";
@@ -170,7 +167,6 @@ export default function AccountsPage() {
         lastReadIso: linkedinLastReadIso,
         ...linkedinPreview,
       },
-      brief: { connected: google.connected && (scopes.includes("documents") || scopes.includes("drive")) },
       calendar: { connected: google.connected && scopes.includes("calendar") },
       email: { connected: google.connected && scopes.includes("gmail") },
       telegram,
@@ -277,12 +273,11 @@ export default function AccountsPage() {
     const sb = getSupabase();
     const { data: { session } } = await sb.auth.getSession();
     if (!session?.access_token) return null;
-    // Docs + Calendar are bundled behind one click so the user goes through
-    // Google's consent screen exactly once for those. Email is kept as its
-    // own explicit opt-in — like LinkedIn's read-vs-post split — since
-    // sending mail on the user's behalf is a higher-trust action. The
-    // backend unions this request with whatever scopes are already granted,
-    // so connecting one feature never revokes another.
+    // Calendar and Email are each their own explicit opt-in. Email is kept
+    // separate since sending mail on the user's behalf is a higher-trust
+    // action than reading free/busy blocks. The backend unions this request
+    // with whatever scopes are already granted, so connecting one feature
+    // never revokes another.
     return `${API}/api/oauth/google/authorize?features=${features}&token=${session.access_token}`;
   };
 
@@ -347,10 +342,10 @@ export default function AccountsPage() {
           method: "DELETE",
           headers: { Authorization: `Bearer ${jwt}` },
         });
-      } else if (which === "brief" || which === "calendar" || which === "email") {
-        // Brief, Calendar, and Email share the underlying Google token.
-        // Dropping any one drops all granted ones — we tell the user that
-        // in the inline confirm (see googleSiblingsNote).
+      } else if (which === "calendar" || which === "email") {
+        // Calendar and Email share the underlying Google token. Dropping
+        // either drops both granted ones — we tell the user that in the
+        // inline confirm (see googleSiblingsNote).
         await fetch(`${API}/api/connections/google`, {
           method: "DELETE",
           headers: { Authorization: `Bearer ${jwt}` },
@@ -384,7 +379,7 @@ export default function AccountsPage() {
       );
       return;
     }
-    const url = await buildGoogleConnect(id === "email" ? "gmail" : "docs,calendar");
+    const url = await buildGoogleConnect(id === "email" ? "gmail" : "calendar");
     if (url) window.location.href = url;
   };
 
@@ -402,7 +397,7 @@ export default function AccountsPage() {
       )}
       <div className="settings-header">
         <h1 className="display-s">Connections</h1>
-        <p className="body secondary">Five things your Persona can see. Nothing else.</p>
+        <p className="body secondary">Four things your Persona can see. Nothing else.</p>
       </div>
 
       <div className="connectors-grid">
@@ -510,24 +505,6 @@ export default function AccountsPage() {
               </div>
             </div>
           }
-        />
-
-        <ConnectorCard
-          id="brief"
-          icon={<FileText size={22} strokeWidth={1.5} />}
-          name="Brief"
-          connected={conn.brief.connected}
-          loading={loading}
-          working={working === "brief"}
-          confirming={confirming === "brief"}
-          description="Your Persona keeps a doc in your Drive where you tell it what's current. It re-reads automatically whenever it changes."
-          meta={conn.brief.connected ? "Connected to Google Drive" : undefined}
-          connectLabel="Let my Persona create my brief"
-          confirmNote={googleSiblingsNote(conn, "brief")}
-          onConnect={() => handleConnect("brief")}
-          onAskDisconnect={() => setConfirming("brief")}
-          onCancelConfirm={() => setConfirming(null)}
-          onConfirmDisconnect={() => disconnect("brief")}
         />
 
         <ConnectorCard

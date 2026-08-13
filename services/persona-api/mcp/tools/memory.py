@@ -100,3 +100,28 @@ async def forget_this(user_id: str, fact_statement: str) -> str:
     if not ok:
         return "I couldn't find that fact in my memory, or the memory layer is unreachable."
     return f"Forgotten — I've removed \"{fact_statement}\" from my memory."
+
+
+async def remember_this_structured(user_id: str, predicate: str, value: str) -> str:
+    """Write a single structured PRIVATE memory fact (predicate/value).
+
+    Distinct from `remember_this` (free-text ingest) — this declares an
+    explicit, high-confidence fact using a fixed predicate from the memory
+    taxonomy. Use when the user states a crisp, durable fact that maps
+    cleanly onto one of the supported predicates (e.g. "I'm building X" →
+    is_building, "I'm learning Y" → is_learning).
+
+    Args:
+        predicate: A memory predicate from the allowed set (e.g. is_building,
+                   is_working_on, is_learning, has_expertise_in, intends_to).
+        value: The object of the fact (e.g. "an AI startup", "Rust").
+    """
+    if not config.MEMORY_LAYER_JWT_SECRET:
+        return "Memory layer is not configured."
+
+    from agent.memory_client import declare_fact
+
+    ok = await declare_fact(user_id, predicate, value)
+    if not ok:
+        return "I couldn't save that memory fact, or the memory layer is unreachable."
+    return f"Remembered — {predicate} → \"{value}\" (private)."

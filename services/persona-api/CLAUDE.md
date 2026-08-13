@@ -36,3 +36,15 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 2. Use `detect_changes` for code review.
 3. Use `get_affected_flows` to understand impact.
 4. Use `query_graph` pattern="tests_for" to check coverage.
+
+## Git workflow (always follow, no exceptions)
+
+This repo is checked out on `dev`, which auto-deploys to dev.persona.zynd.ai via webhook the moment you push. `main` is prod and is manual-merge-only by humans.
+
+Whenever you finish ANY task that changes files in this repo, your LAST action before reporting done must be:
+
+1. `git add -A`
+2. `git commit -m "<short description>"`
+3. `git push origin dev`
+
+Do this automatically. Do NOT ask the user "want me to commit it?" or "should I push?" — just do it, then report what you shipped. Only skip this if the user explicitly said not to commit/push in their request. Never push to `main` (blocked by the pre-push hook anyway).

@@ -4,7 +4,7 @@ Brief §14.8: a new predicate requires a migration + prompt update + decay_fn.
 Adding one here (and to the extraction prompt) is that change in one place.
 """
 
-# Predicate -> decay half-life in days. None = no decay. (v2 predicate reference, 35 total.)
+# Predicate -> decay half-life in days. None = no decay. (v2 predicate reference, 36 total.)
 PREDICATE_HALFLIFE_DAYS: dict[str, int | None] = {
     # 1. Building & creating
     "is_building": 60,

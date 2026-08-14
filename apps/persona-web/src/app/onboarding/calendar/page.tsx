@@ -26,9 +26,9 @@ export default function CalendarStep() {
       setWorking(null);
       return;
     }
-    // Always request both scopes — Google's token rotation would wipe the
-    // brief's `docs` scope if we re-authed for calendar only.
-    const url = `${API_BASE}/api/oauth/google/authorize?features=calendar,docs&token=${encodeURIComponent(jwt)}`;
+    // Only request the calendar scope — the Brief is stored on Zynd (not
+    // Google Docs), so no `docs` scope is needed anymore.
+    const url = `${API_BASE}/api/oauth/google/authorize?features=calendar&token=${encodeURIComponent(jwt)}`;
     window.location.href = url;
   };
 

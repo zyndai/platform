@@ -648,6 +648,55 @@ def get_brief(user_id: str) -> dict:
         "fallback_description": persona.get("description") or "",
     }
 
+def _seed_brief_to_memory(user_id: str, content: str) -> None:
+    """Best-effort: ingest the brief text into the memory layer so its
+    substance becomes semantically recallable (Phase 5).
+
+    The brief's narrative stays verbatim in the system prompt; this makes the
+    same text extractable as facts for `what_do_you_know_about_me` / topic
+    recall. Fire-and-forget — never blocks the save, never raises. Idempotent
+    by content hash: an unchanged brief collides in the memory layer and is
+    skipped.
+    """
+    from agent.memory_client import ingest_turns, is_enabled
+
+    if not is_enabled():
+        return
+    text = (content or "").strip()
+    if len(text) < 40:  # below the memory layer's min-chunk floor, no signal
+        return
+
+    async def _run() -> None:
+        try:
+            await ingest_turns(
+                user_id=user_id,
+                turns=[{"role": "user", "content": text}],
+                source_system="brief_seeded",
+            )
+        except Exception as e:  # noqa: BLE001 — memory seeding must never break the save
+            logger.debug("[persona] brief→memory seed failed for %s: %s", user_id, e)
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None:
+        # Called on the event-loop thread (e.g. api/persona.py save_brief).
+        loop.create_task(_run())
+    else:
+        # Called from a worker thread (MCP tools run via asyncio.to_thread).
+        import threading
+
+        def _runner() -> None:
+            try:
+                asyncio.run(_run())
+            except Exception as e:  # noqa: BLE001
+                logger.debug("[persona] brief→memory seed failed for %s: %s", user_id, e)
+
+        threading.Thread(target=_runner, daemon=True).start()
+
+
 def save_brief_content(user_id: str, content: str) -> dict:
     """Store the persona's brief body as plain text on persona_agents.brief_content."""
     persona = get_persona_status(user_id)
@@ -658,6 +707,8 @@ def save_brief_content(user_id: str, content: str) -> dict:
     sb.table("persona_agents").update({
         "brief_content": content or None,
     }).eq("user_id", user_id).execute()
+
+    _seed_brief_to_memory(user_id, content)
 
     logger.info(f"[persona] saved brief for {user_id} ({len(content or '')} chars)")
     return {"success": True, "content": content}

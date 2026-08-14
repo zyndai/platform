@@ -83,11 +83,11 @@ export default function TermsPage() {
               Automated meeting scheduling through your Google Calendar.
             </li>
             <li>
-              A personal &ldquo;Brief&rdquo; document stored in Google Docs
-              for long-form notes, context, and AI-generated content.
+              A personal &ldquo;Brief&rdquo; stored securely in your Zynd
+              account for long-form notes, context, and AI-generated content.
             </li>
             <li>
-              File management limited to documents the Service creates or
+              File management limited to files the Service creates or
               that you explicitly select.
             </li>
           </ul>
@@ -109,16 +109,6 @@ export default function TermsPage() {
             coordination. More limited scopes are insufficient because the
             Service must modify calendar events to deliver its core
             scheduling functionality.
-          </Scope>
-
-          <Scope
-            scope=".../auth/documents"
-            label="Google Docs"
-          >
-            To create, read, and update your &ldquo;Brief&rdquo; documents
-            that store notes, context, and AI-generated content you own.
-            More limited scopes are insufficient because the Service must
-            update document contents to maintain your Brief.
           </Scope>
 
           <Scope

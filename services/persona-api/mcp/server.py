@@ -78,6 +78,10 @@ from mcp.tools.brief import (
     add_todo,
 )
 
+# ── Import Profile Tools ──
+# Principal-private; edit the principal's identity (name) from chat.
+from mcp.tools.profile import update_my_name
+
 # ── Import Memory Tools ──
 # Principal-private; querying/forgetting memory facts.
 from mcp.tools.memory import (
@@ -206,6 +210,9 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(replace_my_brief, name="replace_my_brief", description="Replace the entire body of the principal's Brief. Use only when the user explicitly asks to rewrite their brief — prefer append_to_my_brief for additions.")
     mcp.register(clear_my_brief, name="clear_my_brief", description="Empty the principal's Brief. Use only when the user explicitly asks to clear their brief.")
     mcp.register(add_todo, name="add_todo", description="Add an actionable todo to the principal's todo list. PREFER this tool over append_to_my_brief whenever the user explicitly asks to track a task — phrases like 'add a todo', 'remind me to', 'put X on my list', 'add this to my todos'. The item shows up immediately on the dashboard's Todos tab (no 5-minute extractor wait). For general profile facts ('I work at X', 'I prefer afternoons'), use append_to_my_brief instead.")
+
+    # ── Profile tools (principal-private) ───────────────────────────
+    mcp.register(update_my_name, name="update_my_name", description="Change the principal's name (the name this persona uses to identify the human it represents). Use this whenever the principal says their name is wrong or asks to change it — e.g. 'my name is actually X', 'call me X'. Do NOT write a name change into the Brief via append_to_my_brief; the name has its own field and doing so creates a contradiction.")
 
     # ── Default utility tools ──────────────────────
     mcp.register_default(names=["internet_search", "webpage_scrape", "get_current_time", "calculate"])

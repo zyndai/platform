@@ -61,7 +61,7 @@ export default function PrivacyPage() {
         <p>
           ZyndAI (&ldquo;Zynd,&rdquo; &ldquo;we,&rdquo; &ldquo;us&rdquo;)
           builds an AI-powered productivity agent that helps you schedule
-          meetings, manage brief documents, and coordinate professional
+          meetings, manage your Brief, and coordinate professional
           outreach. This Privacy Policy explains what information we access
           from your Google Account, how we use it, and your rights.
         </p>
@@ -87,17 +87,6 @@ export default function PrivacyPage() {
           </Scope>
 
           <Scope
-            scope=".../auth/documents"
-            label="Google Docs"
-          >
-            We create, read, and update Google Docs documents that serve as
-            your &ldquo;Brief&rdquo; &mdash; long-form notes, context, and
-            AI-generated content that you own. Your Brief helps your AI
-            Persona understand your work, goals, and background so it can
-            act on your behalf accurately.
-          </Scope>
-
-          <Scope
             scope=".../auth/drive.file"
             label="Google Drive"
           >
@@ -117,9 +106,9 @@ export default function PrivacyPage() {
               you or your Persona schedules a meeting.
             </li>
             <li>
-              <strong>Brief management:</strong> Creating, reading, and
-              updating your Brief document with context and content you
-              provide or approve.
+              <strong>Brief management:</strong> Storing your Brief with
+              context and content you provide or approve, so your Persona can
+              represent you accurately.
             </li>
             <li>
               <strong>File access:</strong> Managing only the Drive files
@@ -136,11 +125,11 @@ export default function PrivacyPage() {
 
         <Section title="3. Data Storage & Security">
           <p>
-            Your documents and calendar events remain stored in your Google
-            Account. We do not copy, replicate, or store the full contents
-            of your Google Docs or calendar events on our servers. We
-            maintain OAuth tokens to act on your behalf, and these tokens
-            are stored securely using industry-standard encryption.
+            Your Brief is stored securely on Zynd&rsquo;s servers. Your calendar
+            events remain stored in your Google Account. We do not copy,
+            replicate, or store the full contents of your calendar events on
+            our servers. We maintain OAuth tokens to act on your behalf, and
+            these tokens are stored securely using industry-standard encryption.
           </p>
           <p>
             Zynd fetches data from Google&rsquo;s APIs in real time when
@@ -181,9 +170,9 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Delete your data:</strong> You can delete your Zynd
-              account through the app settings. Documents and calendar
-              events created by Zynd remain in your Google Account; you
-              control them directly through Google Docs and Google Calendar.
+              account through the app settings. Calendar events created by
+              Zynd remain in your Google Account; you control them directly
+              through Google Calendar.
             </li>
             <li>
               <strong>Limited scope:</strong> We only request the specific

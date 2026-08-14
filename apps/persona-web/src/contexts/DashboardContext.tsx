@@ -26,7 +26,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
  * reference on a pure token refresh (same id + unchanged user_metadata) so
  * downstream effects don't re-run on every tab refocus. But ACCEPT the new
  * object when user_metadata changed — otherwise onboarding flags written via
- * updateUser (brief_created, pending_brief_create, …) never propagate to the
+ * updateUser (brief_created, skipped_brief, …) never propagate to the
  * live context, which strands the onboarding flow on a step it already
  * completed.
  */

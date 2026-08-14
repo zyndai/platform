@@ -22,7 +22,7 @@ export type OnboardingStep =
 export interface OnboardingMeta {
   /** True after the S2 reading animation has played to completion at least once. */
   reading_seen?: boolean;
-  /** True after the user's brief doc has been created in Drive. */
+  /** True after the user completed the brief step. */
   brief_created?: boolean;
   /** True if the user tapped "Edit later" on the brief step. */
   skipped_brief?: boolean;
@@ -30,9 +30,6 @@ export interface OnboardingMeta {
   skipped_calendar?: boolean;
   /** True after S6 matches were shown (ends onboarding). */
   matches_shown?: boolean;
-  /** Set right before redirecting to Google OAuth from the brief step.
-   *  When true, the brief page on its next mount auto-creates the doc. */
-  pending_brief_create?: boolean;
   /** True after the in-dashboard guided tour (sidebar spotlight walkthrough)
    *  has been completed or skipped at least once. Independent of the step
    *  machine above — the tour runs inside the dashboard shell, not as an

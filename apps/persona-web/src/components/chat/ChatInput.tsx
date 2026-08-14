@@ -589,7 +589,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                       </div>
                       {[
                         { label: "LinkedIn", desc: "Posts and profile", Icon: LinkedinIcon },
-                        { label: "Your brief", desc: "A doc in your Drive", Icon: FileText },
+                        { label: "Your brief", desc: "Your long-form context", Icon: FileText },
                         { label: "Calendar", desc: "Free / busy times", Icon: Calendar },
                         { label: "Telegram", desc: "Chat from your phone", Icon: Send },
                       ].map((c) => (

@@ -305,21 +305,22 @@ async def google_authorize(token: str, features: str = "calendar,docs"):
     user = await _validate_token(token)
 
     scopes = ["openid", "email", "profile"]
-    # `drive.file` is intentionally the only Drive scope: it limits the agent
-    # to files it created (or files the user explicitly opens via a Picker),
-    # so connecting Docs does NOT expose the user's entire Drive.
+    # The Google Docs `documents` scope is intentionally NOT requested — the
+    # Brief is stored platform-side (persona_agents.brief_content), not in
+    # Google Docs. `drive.file` is retained so the agent can still manage
+    # files it creates (or the user explicitly opens via a Picker).
     # Gmail is split into readonly + send (not gmail.modify/mail.google.com)
     # so the agent can search/read and send, but can't delete or manage labels.
     feature_map = {
         "calendar": "https://www.googleapis.com/auth/calendar",
-        "docs": "https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/drive.file",
+        "docs": "https://www.googleapis.com/auth/drive.file",
         "gmail": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send",
     }
 
     selected_features = [f.strip() for f in features.split(",") if f.strip() in feature_map]
     if not selected_features:
-        # Default to all if none provided or invalid
-        selected_features = ["calendar", "docs"]
+        # Default to calendar only if none provided or invalid
+        selected_features = ["calendar"]
 
     for feat in selected_features:
         scopes.append(feature_map[feat])

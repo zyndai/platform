@@ -261,6 +261,11 @@ def build_action_schema() -> dict:
                         "profile": {
                             "description": "Persona profile (name, agent_id, social links). Null if unavailable.",
                         },
+                        "brief": {
+                            "type": "string",
+                            "nullable": True,
+                            "description": "Free-form project brief from persona. Include in your understanding of the user. Null if not set.",
+                        },
                     },
                 },
                 "Fact": {

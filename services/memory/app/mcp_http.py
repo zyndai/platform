@@ -182,6 +182,22 @@ def _uid_opt(token: AccessToken = CurrentAccessToken()) -> str | None:
     return token.client_id
 
 
+async def _suid(uid: str = Depends(_uid)) -> str:
+    """Resolve memory-layer uid → Supabase user_id for OAuth-backed tools.
+
+    api_tokens (Google, Twitter, LinkedIn, Notion…) is keyed by the Supabase
+    user_id, not the memory-layer internal user_id. Without this conversion the
+    token lookup in get_tokens() comes back empty and every OAuth tool fails with
+    "Google not connected" even when the user connected their account in the
+    persona dashboard.
+    """
+    pool = await _get_pool()
+    row = await pool.fetchrow("SELECT supabase_user_id FROM users WHERE id = $1", uid)
+    if row and row["supabase_user_id"]:
+        return str(row["supabase_user_id"])
+    return uid
+
+
 # ── Auth: custom token verifier ─────────────────────────────────────────────────
 # Validates both ZYND HS256 JWTs (for existing clients) and OAuth opaque tokens
 # stored in the database (for Claude connectors). Also enforces per-user token
@@ -638,7 +654,8 @@ async def get_my_system_prompt(uid: str = Depends(_uid)) -> str:
 
     facts = await active_context(pool, uid, k=20)
 
-    brief_result = await brief_tools.read_my_brief(uid)
+    suid_for_brief = str(user["supabase_user_id"]) if (user and user["supabase_user_id"]) else uid
+    brief_result = await brief_tools.read_my_brief(suid_for_brief)
     brief = brief_result.get("content", "") if brief_result.get("success") else ""
 
     return _format_system_prompt(dict(user) if user else None, persona_status, facts, brief)
@@ -649,222 +666,222 @@ async def get_my_system_prompt(uid: str = Depends(_uid)) -> str:
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
 async def create_calendar_event(summary: str, start_time: str, end_time: str | None = None,
                                  description: str = "", location: str = "",
-                                 time_zone: str = "UTC", uid: str = Depends(_uid)) -> dict:
-    return await google_calendar.create_calendar_event(uid, summary, start_time, end_time, description, location, time_zone)
+                                 time_zone: str = "UTC", suid: str = Depends(_suid)) -> dict:
+    return await google_calendar.create_calendar_event(suid, summary, start_time, end_time, description, location, time_zone)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_calendar_events(max_results: int = 10, uid: str = Depends(_uid)) -> dict:
-    return await google_calendar.list_calendar_events(uid, max_results)
+async def list_calendar_events(max_results: int = 10, suid: str = Depends(_suid)) -> dict:
+    return await google_calendar.list_calendar_events(suid, max_results)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False})
-async def delete_calendar_event(event_id: str, uid: str = Depends(_uid)) -> dict:
-    return await google_calendar.delete_calendar_event(uid, event_id)
+async def delete_calendar_event(event_id: str, suid: str = Depends(_suid)) -> dict:
+    return await google_calendar.delete_calendar_event(suid, event_id)
 
 
 # ── Google Docs Tools ───────────────────────────────────────────────────────────
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def create_google_doc(title: str, uid: str = Depends(_uid)) -> dict:
-    return await google_docs.create_google_doc(uid, title)
+async def create_google_doc(title: str, suid: str = Depends(_suid)) -> dict:
+    return await google_docs.create_google_doc(suid, title)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def append_to_google_doc(document_id: str, text: str, uid: str = Depends(_uid)) -> dict:
-    return await google_docs.append_to_google_doc(uid, document_id, text)
+async def append_to_google_doc(document_id: str, text: str, suid: str = Depends(_suid)) -> dict:
+    return await google_docs.append_to_google_doc(suid, document_id, text)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def read_google_doc(document_id: str, uid: str = Depends(_uid)) -> dict:
-    return await google_docs.read_google_doc(uid, document_id)
+async def read_google_doc(document_id: str, suid: str = Depends(_suid)) -> dict:
+    return await google_docs.read_google_doc(suid, document_id)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_google_docs(max_results: int = 15, uid: str = Depends(_uid)) -> dict:
-    return await google_docs.list_google_docs(uid, max_results)
+async def list_google_docs(max_results: int = 15, suid: str = Depends(_suid)) -> dict:
+    return await google_docs.list_google_docs(suid, max_results)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def search_google_docs(query: str, uid: str = Depends(_uid)) -> dict:
-    return await google_docs.search_google_docs(uid, query)
+async def search_google_docs(query: str, suid: str = Depends(_suid)) -> dict:
+    return await google_docs.search_google_docs(suid, query)
 
 
 # ── Google Drive Tools ──────────────────────────────────────────────────────────
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
 async def create_google_drive_folder(folder_name: str, parent_id: str = "",
-                                      uid: str = Depends(_uid)) -> dict:
-    return await google_drive.create_google_drive_folder(uid, folder_name, parent_id or None)
+                                      suid: str = Depends(_suid)) -> dict:
+    return await google_drive.create_google_drive_folder(suid, folder_name, parent_id or None)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
 async def list_google_drive_files(query: str = "", pageSize: int = 15,
-                                   uid: str = Depends(_uid)) -> dict:
-    return await google_drive.list_google_drive_files(uid, query, pageSize)
+                                   suid: str = Depends(_suid)) -> dict:
+    return await google_drive.list_google_drive_files(suid, query, pageSize)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def move_google_drive_file(file_id: str, folder_id: str, uid: str = Depends(_uid)) -> dict:
-    return await google_drive.move_google_drive_file(uid, file_id, folder_id)
+async def move_google_drive_file(file_id: str, folder_id: str, suid: str = Depends(_suid)) -> dict:
+    return await google_drive.move_google_drive_file(suid, file_id, folder_id)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_google_drive_folder_contents(folder_id: str, uid: str = Depends(_uid)) -> dict:
-    return await google_drive.list_google_drive_folder_contents(uid, folder_id)
+async def list_google_drive_folder_contents(folder_id: str, suid: str = Depends(_suid)) -> dict:
+    return await google_drive.list_google_drive_folder_contents(suid, folder_id)
 
 
 # ── Gmail Tools ─────────────────────────────────────────────────────────────────
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def search_gmail_emails(query: str, max_results: int = 10, uid: str = Depends(_uid)) -> dict:
-    return await google_gmail.search_gmail_emails(uid, query, max_results)
+async def search_gmail_emails(query: str, max_results: int = 10, suid: str = Depends(_suid)) -> dict:
+    return await google_gmail.search_gmail_emails(suid, query, max_results)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def get_gmail_email_details(message_id: str, uid: str = Depends(_uid)) -> dict:
-    return await google_gmail.get_gmail_email_details(uid, message_id)
+async def get_gmail_email_details(message_id: str, suid: str = Depends(_suid)) -> dict:
+    return await google_gmail.get_gmail_email_details(suid, message_id)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def send_gmail_email(to: str, subject: str, body: str, uid: str = Depends(_uid)) -> dict:
-    return await google_gmail.send_gmail_email(uid, to, subject, body)
+async def send_gmail_email(to: str, subject: str, body: str, suid: str = Depends(_suid)) -> dict:
+    return await google_gmail.send_gmail_email(suid, to, subject, body)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_recent_gmail_threads(max_results: int = 10, uid: str = Depends(_uid)) -> dict:
-    return await google_gmail.list_recent_gmail_threads(uid, max_results)
+async def list_recent_gmail_threads(max_results: int = 10, suid: str = Depends(_suid)) -> dict:
+    return await google_gmail.list_recent_gmail_threads(suid, max_results)
 
 
 # ── Google Sheets Tools ─────────────────────────────────────────────────────────
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def create_google_sheet(title: str, uid: str = Depends(_uid)) -> dict:
-    return await google_sheets.create_google_sheet(uid, title)
+async def create_google_sheet(title: str, suid: str = Depends(_suid)) -> dict:
+    return await google_sheets.create_google_sheet(suid, title)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
 async def append_to_google_sheet(spreadsheet_id: str, values: list[list],
-                                  range_name: str = "Sheet1!A1", uid: str = Depends(_uid)) -> dict:
-    return await google_sheets.append_to_google_sheet(uid, spreadsheet_id, values, range_name)
+                                  range_name: str = "Sheet1!A1", suid: str = Depends(_suid)) -> dict:
+    return await google_sheets.append_to_google_sheet(suid, spreadsheet_id, values, range_name)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
 async def read_google_sheet_values(spreadsheet_id: str, range_name: str = "Sheet1!A:Z",
-                                    uid: str = Depends(_uid)) -> dict:
-    return await google_sheets.read_google_sheet_values(uid, spreadsheet_id, range_name)
+                                    suid: str = Depends(_suid)) -> dict:
+    return await google_sheets.read_google_sheet_values(suid, spreadsheet_id, range_name)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def search_google_spreadsheets(query: str = "", uid: str = Depends(_uid)) -> dict:
-    return await google_sheets.search_google_spreadsheets(uid, query)
+async def search_google_spreadsheets(query: str = "", suid: str = Depends(_suid)) -> dict:
+    return await google_sheets.search_google_spreadsheets(suid, query)
 
 
 # ── Twitter / X Tools ──────────────────────────────────────────────────────────
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def post_tweet(text: str, uid: str = Depends(_uid)) -> dict:
-    return await twitter_tools.post_tweet(uid, text)
+async def post_tweet(text: str, suid: str = Depends(_suid)) -> dict:
+    return await twitter_tools.post_tweet(suid, text)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def read_timeline(max_results: int = 10, uid: str = Depends(_uid)) -> dict:
-    return await twitter_tools.read_timeline(uid, max_results)
+async def read_timeline(max_results: int = 10, suid: str = Depends(_suid)) -> dict:
+    return await twitter_tools.read_timeline(suid, max_results)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def send_twitter_dm(recipient_username: str, text: str, uid: str = Depends(_uid)) -> dict:
-    return await twitter_tools.send_twitter_dm(uid, recipient_username, text)
+async def send_twitter_dm(recipient_username: str, text: str, suid: str = Depends(_suid)) -> dict:
+    return await twitter_tools.send_twitter_dm(suid, recipient_username, text)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def read_twitter_dms(max_results: int = 10, uid: str = Depends(_uid)) -> dict:
-    return await twitter_tools.read_twitter_dms(uid, max_results)
+async def read_twitter_dms(max_results: int = 10, suid: str = Depends(_suid)) -> dict:
+    return await twitter_tools.read_twitter_dms(suid, max_results)
 
 
 # ── LinkedIn Tools ─────────────────────────────────────────────────────────────
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def post_to_linkedin(text: str, uid: str = Depends(_uid)) -> dict:
-    return await linkedin_tools.post_to_linkedin(uid, text)
+async def post_to_linkedin(text: str, suid: str = Depends(_suid)) -> dict:
+    return await linkedin_tools.post_to_linkedin(suid, text)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def send_linkedin_dm(recipient: str, text: str, uid: str = Depends(_uid)) -> dict:
-    return await linkedin_tools.send_linkedin_dm(uid, recipient, text)
+async def send_linkedin_dm(recipient: str, text: str, suid: str = Depends(_suid)) -> dict:
+    return await linkedin_tools.send_linkedin_dm(suid, recipient, text)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def read_linkedin_dms(max_results: int = 10, uid: str = Depends(_uid)) -> dict:
-    return await linkedin_tools.read_linkedin_dms(uid, max_results)
+async def read_linkedin_dms(max_results: int = 10, suid: str = Depends(_suid)) -> dict:
+    return await linkedin_tools.read_linkedin_dms(suid, max_results)
 
 
 # ── Notion Tools ───────────────────────────────────────────────────────────────
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
-async def search_notion(query: str = "", filter_type: str = "", uid: str = Depends(_uid)) -> dict:
-    return await notion_tools.search_notion(uid, query, filter_type or None)
+async def search_notion(query: str = "", filter_type: str = "", suid: str = Depends(_suid)) -> dict:
+    return await notion_tools.search_notion(suid, query, filter_type or None)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def get_notion_database(database_id: str, uid: str = Depends(_uid)) -> dict:
-    return await notion_tools.get_notion_database(uid, database_id)
+async def get_notion_database(database_id: str, suid: str = Depends(_suid)) -> dict:
+    return await notion_tools.get_notion_database(suid, database_id)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
 async def query_notion_database(database_id: str, filter_data: dict | None = None,
-                                 sorts: list | None = None, uid: str = Depends(_uid)) -> dict:
-    return await notion_tools.query_notion_database(uid, database_id, filter_data, sorts)
+                                 sorts: list | None = None, suid: str = Depends(_suid)) -> dict:
+    return await notion_tools.query_notion_database(suid, database_id, filter_data, sorts)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
 async def create_notion_page(parent_id: str, properties: dict | None = None,
                               title: str | None = None, content: list | None = None,
-                              uid: str = Depends(_uid)) -> dict:
-    return await notion_tools.create_notion_page(uid, parent_id, properties, title, content)
+                              suid: str = Depends(_suid)) -> dict:
+    return await notion_tools.create_notion_page(suid, parent_id, properties, title, content)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
 async def update_notion_page(page_id: str, properties: dict | None = None,
-                              title: str | None = None, uid: str = Depends(_uid)) -> dict:
-    return await notion_tools.update_notion_page(uid, page_id, properties, title)
+                              title: str | None = None, suid: str = Depends(_suid)) -> dict:
+    return await notion_tools.update_notion_page(suid, page_id, properties, title)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def get_notion_page_content(page_id: str, uid: str = Depends(_uid)) -> dict:
-    return await notion_tools.get_notion_page_content(uid, page_id)
+async def get_notion_page_content(page_id: str, suid: str = Depends(_suid)) -> dict:
+    return await notion_tools.get_notion_page_content(suid, page_id)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
 async def create_notion_database(parent_page_id: str, title: str, schema: dict,
-                                  uid: str = Depends(_uid)) -> dict:
-    return await notion_tools.create_notion_database(uid, parent_page_id, title, schema)
+                                  suid: str = Depends(_suid)) -> dict:
+    return await notion_tools.create_notion_database(suid, parent_page_id, title, schema)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def append_notion_blocks(page_id: str, blocks: list[dict], uid: str = Depends(_uid)) -> dict:
-    return await notion_tools.append_notion_blocks(uid, page_id, blocks)
+async def append_notion_blocks(page_id: str, blocks: list[dict], suid: str = Depends(_suid)) -> dict:
+    return await notion_tools.append_notion_blocks(suid, page_id, blocks)
 
 
 # ── Scheduling Tools ───────────────────────────────────────────────────────────
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
 async def propose_meeting(thread_id: str, title: str, start_time: str, end_time: str,
-                           location: str = "", description: str = "", uid: str = Depends(_uid)) -> dict:
-    return await scheduling_tools.propose_meeting(uid, thread_id, title, start_time, end_time, location, description)
+                           location: str = "", description: str = "", suid: str = Depends(_suid)) -> dict:
+    return await scheduling_tools.propose_meeting(suid, thread_id, title, start_time, end_time, location, description)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
 async def respond_to_meeting(task_id: str, action: str, title: str = "",
                               start_time: str = "", end_time: str = "",
                               location: str = "", description: str = "",
-                              uid: str = Depends(_uid)) -> dict:
-    return await scheduling_tools.respond_to_meeting(uid, task_id, action, title, start_time, end_time, location, description)
+                              suid: str = Depends(_suid)) -> dict:
+    return await scheduling_tools.respond_to_meeting(suid, task_id, action, title, start_time, end_time, location, description)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_pending_meetings(uid: str = Depends(_uid)) -> dict:
-    return await scheduling_tools.list_pending_meetings(uid)
+async def list_pending_meetings(suid: str = Depends(_suid)) -> dict:
+    return await scheduling_tools.list_pending_meetings(suid)
 
 
 # ── Zynd Network Tools ─────────────────────────────────────────────────────────
@@ -939,28 +956,28 @@ async def call_zynd_service(entity_id: str, text: str = "", data: dict | None = 
 # ── Brief & Todo Tools ─────────────────────────────────────────────────────────
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def read_my_brief(uid: str = Depends(_uid)) -> dict:
-    return await brief_tools.read_my_brief(uid)
+async def read_my_brief(suid: str = Depends(_suid)) -> dict:
+    return await brief_tools.read_my_brief(suid)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
-async def append_to_my_brief(text: str, uid: str = Depends(_uid)) -> dict:
-    return await brief_tools.append_to_my_brief(uid, text)
+async def append_to_my_brief(text: str, suid: str = Depends(_suid)) -> dict:
+    return await brief_tools.append_to_my_brief(suid, text)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
-async def replace_my_brief(content: str, uid: str = Depends(_uid)) -> dict:
-    return await brief_tools.replace_my_brief(uid, content)
+async def replace_my_brief(content: str, suid: str = Depends(_suid)) -> dict:
+    return await brief_tools.replace_my_brief(suid, content)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False})
-async def clear_my_brief(uid: str = Depends(_uid)) -> dict:
-    return await brief_tools.clear_my_brief(uid)
+async def clear_my_brief(suid: str = Depends(_suid)) -> dict:
+    return await brief_tools.clear_my_brief(suid)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
-async def add_todo(title: str, uid: str = Depends(_uid)) -> dict:
-    return await brief_tools.add_todo(uid, title)
+async def add_todo(title: str, suid: str = Depends(_suid)) -> dict:
+    return await brief_tools.add_todo(suid, title)
 
 
 # ── ASGI app ────────────────────────────────────────────────────────────────────

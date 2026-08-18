@@ -61,12 +61,13 @@ async def active_context(pool: asyncpg.Pool, user_id: str, k: int = 20) -> list[
     about me?'. The topic-less counterpart of context_slice (used by MCP get_my_context
     when no topic is supplied)."""
     rows = await pool.fetch(
-        """SELECT a.predicate, e.canonical_name AS object, e.entity_type AS object_type,
+        """SELECT DISTINCT ON (a.predicate, e.canonical_name)
+                  a.predicate, e.canonical_name AS object, e.entity_type AS object_type,
                   a.confidence, a.observed_at
              FROM assertions a
              LEFT JOIN entities e ON e.id = a.object_entity_id
             WHERE a.user_id = $1 AND a.valid_until IS NULL
-            ORDER BY a.confidence DESC
+            ORDER BY a.predicate, e.canonical_name, a.confidence DESC
             LIMIT $2""",
         user_id, k,
     )
@@ -92,14 +93,15 @@ async def context_slice(pool: asyncpg.Pool, user_id: str, topic: str, k: int = 2
     """
     topic_vector = to_pgvector(await embed(topic))
     rows = await pool.fetch(
-        """SELECT a.predicate, e.canonical_name AS object, e.entity_type AS object_type,
+        """SELECT DISTINCT ON (a.predicate, e.canonical_name)
+                  a.predicate, e.canonical_name AS object, e.entity_type AS object_type,
                   a.confidence, a.observed_at,
                   1 - (e.embedding <=> $2::vector) AS relevance
              FROM assertions a
              JOIN entities e ON e.id = a.object_entity_id
             WHERE a.user_id = $1 AND a.valid_until IS NULL
               AND a.confidence > $3 AND e.embedding IS NOT NULL
-            ORDER BY e.embedding <=> $2::vector
+            ORDER BY a.predicate, e.canonical_name, e.embedding <=> $2::vector
             LIMIT $4""",
         user_id, topic_vector, CONTEXT_CONFIDENCE_FLOOR, k,
     )

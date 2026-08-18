@@ -101,6 +101,10 @@ async def current_user(authorization: str = Header(default="")) -> str:
 
     Two accepted tokens: the per-user OAuth JWT (M2, what ChatGPT sends) and the
     shared dev token (local testing only). JWT is tried first.
+
+    Canonicalizes to the memory-layer internal uid so assertions written by persona
+    chat (whose JWTs carry the Supabase UUID as sub) and by GPT/MCP (whose JWTs
+    carry the internal uid) land in the same user_id namespace in the DB.
     """
     scheme, _, value = authorization.partition(" ")  # RFC 6750: scheme is case-insensitive
     token = value.strip() if scheme.lower() == "bearer" else ""
@@ -115,6 +119,13 @@ async def current_user(authorization: str = Header(default="")) -> str:
     from app.services.sessions import tokens_revoked
     if await tokens_revoked(get_pool(), user_id, issued_at):
         raise HTTPException(status_code=401, detail="session was signed out — please sign in again")
+    # Persona chat JWTs carry the Supabase UUID; GPT/MCP JWTs carry the internal uid.
+    # Resolve Supabase UUID → internal uid so all surfaces share one assertion namespace.
+    row = await get_pool().fetchrow(
+        "SELECT id FROM users WHERE supabase_user_id = $1", user_id
+    )
+    if row:
+        return str(row["id"])
     return user_id
 
 

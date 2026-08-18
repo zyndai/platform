@@ -230,6 +230,7 @@ async def my_context(k: int = 20, user_id: str = Depends(current_user)) -> dict:
     """
     from app.services.export import active_context
     from app.services.persona import PersonaError, get_status
+    from app.tools import brief as brief_tools
 
     pool = get_pool()
     assertions = await active_context(pool, user_id, k)
@@ -243,7 +244,10 @@ async def my_context(k: int = 20, user_id: str = Depends(current_user)) -> dict:
         except PersonaError as exc:
             logging.getLogger("zynd.api").warning("persona unavailable for %s: %s", user_id, exc)
 
-    return {"assertions": assertions, "profile": profile}
+    brief_result = await brief_tools.read_my_brief(user_id)
+    brief = brief_result.get("content") or None if brief_result.get("success") else None
+
+    return {"assertions": assertions, "profile": profile, "brief": brief}
 
 
 @app.get("/users/{user_id}/graph", response_model=list[AssertionView])

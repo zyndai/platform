@@ -520,7 +520,7 @@ async def book_meeting(thread_id: str, title: str, start_time: str, end_time: st
     return await _social(social.book_meeting, uid, thread_id, payload)
 
 
-def _format_system_prompt(user: dict | None, persona_status: dict | None, facts: list[dict]) -> str:
+def _format_system_prompt(user: dict | None, persona_status: dict | None, facts: list[dict], brief: str = "") -> str:
     display_name = (user.get("display_name") or "the user") if user else "the user"
     persona_name = (persona_status.get("name") or display_name) if persona_status else display_name
     profile = (persona_status.get("profile") or {}) if persona_status else {}
@@ -584,6 +584,10 @@ def _format_system_prompt(user: dict | None, persona_status: dict | None, facts:
             if stmt:
                 lines.append(f"- {stmt}")
 
+    if brief:
+        lines.append("\n== PROJECT BRIEF ==")
+        lines.append(brief)
+
     lines.extend([
         "\n== YOUR ZYND TOOLKIT ==",
         "You have ZYND tools available through MCP. Use them proactively.",
@@ -634,7 +638,10 @@ async def get_my_system_prompt(uid: str = Depends(_uid)) -> str:
 
     facts = await active_context(pool, uid, k=20)
 
-    return _format_system_prompt(dict(user) if user else None, persona_status, facts)
+    brief_result = await brief_tools.read_my_brief(uid)
+    brief = brief_result.get("content", "") if brief_result.get("success") else ""
+
+    return _format_system_prompt(dict(user) if user else None, persona_status, facts, brief)
 
 
 # ── Google Calendar Tools ──────────────────────────────────────────────────────

@@ -220,6 +220,32 @@ async def my_graph(user_id: str = Depends(current_user)) -> list[AssertionView]:
     return await _active_graph(user_id)
 
 
+@app.get("/me/context")
+async def my_context(k: int = 20, user_id: str = Depends(current_user)) -> dict:
+    """Combined context packet — ZYND facts + persona profile.
+
+    Single endpoint for ChatGPT to call at conversation start so every reply is
+    grounded. Persona fetch is best-effort: network failures return profile=null
+    but assertions are always returned.
+    """
+    from app.services.export import active_context
+    from app.services.persona import PersonaError, get_status
+
+    pool = get_pool()
+    assertions = await active_context(pool, user_id, k)
+
+    row = await pool.fetchrow("SELECT supabase_user_id FROM users WHERE id = $1", user_id)
+    supabase_uid = row["supabase_user_id"] if row else None
+    profile = None
+    if supabase_uid:
+        try:
+            profile = await get_status(supabase_uid)
+        except PersonaError as exc:
+            logging.getLogger("zynd.api").warning("persona unavailable for %s: %s", user_id, exc)
+
+    return {"assertions": assertions, "profile": profile}
+
+
 @app.get("/users/{user_id}/graph", response_model=list[AssertionView])
 async def get_graph(user_id: str, auth_user: str = Depends(current_user)) -> list[AssertionView]:
     if user_id != auth_user:

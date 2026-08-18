@@ -66,6 +66,32 @@ def build_action_schema() -> dict:
                     },
                 }
             },
+            "/me/context": {
+                "get": {
+                    "operationId": "getContextWithProfile",
+                    "summary": "Get the user's ZYND memory and persona profile in one call.",
+                    "description": "Call at conversation start to ground every reply in what ZYND "
+                                   "knows. Returns `assertions` (show `statement` values verbatim) "
+                                   "and `profile` (persona name + social links). Never invent facts "
+                                   "about the user — only reference what appears here.",
+                    "security": [{"OAuth2": ["ingest"]}],
+                    "parameters": [
+                        {"name": "k", "in": "query", "required": False,
+                         "schema": {"type": "integer", "default": 20,
+                                    "description": "Max facts to return"}},
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Context packet",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/ContextPacket"}
+                                }
+                            },
+                        }
+                    },
+                }
+            },
             "/me/matches": {
                 "get": {
                     "operationId": "findMatches",
@@ -222,6 +248,19 @@ def build_action_schema() -> dict:
                         "status": {"type": "string"},
                         "chunks_inserted": {"type": "integer"},
                         "chunks_skipped": {"type": "integer"},
+                    },
+                },
+                "ContextPacket": {
+                    "type": "object",
+                    "properties": {
+                        "assertions": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/Fact"},
+                            "description": "What ZYND knows — show `statement` values to the user.",
+                        },
+                        "profile": {
+                            "description": "Persona profile (name, agent_id, social links). Null if unavailable.",
+                        },
                     },
                 },
                 "Fact": {

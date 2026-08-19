@@ -310,7 +310,7 @@ export default function ConnectPage() {
 }
 
 /* ── Styles ── */
-const page: CSSProperties = { padding: "24px 32px 48px", maxWidth: 860 };
+const page: CSSProperties = { padding: "24px 32px 48px", maxWidth: 860, margin: "0 auto" };
 const eyebrow: CSSProperties = { fontSize: 13, color: "var(--ink-secondary)", margin: "0 0 14px" };
 
 /* Tab bar */

@@ -71,7 +71,7 @@ const CLIENTS: Client[] = [
   {
     id: "claudecode",
     name: "Claude Code",
-    logoUrl: "https://claude.ai/favicon.ico",
+    logoUrl: "https://anthropic.gallerycdn.vsassets.io/extensions/anthropic/claude-code/2.1.235/1787085642251/Microsoft.VisualStudio.Services.Icons.Default",
     color: "#C96442", initial: "C",
     snippetStep: 0, snippetLabel: "terminal",
     steps: [

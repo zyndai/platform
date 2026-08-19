@@ -1,0 +1,7 @@
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="white" aria-hidden="true">
+  <!-- Document with folded corner -->
+  <path fill-rule="evenodd" clip-rule="evenodd" d="M6.5 2.75A1.75 1.75 0 004.75 4.5v15A1.75 1.75 0 006.5 21.25h9A1.75 1.75 0 0017.25 19.5V9.06a1.75 1.75 0 00-.513-1.238l-4.56-4.56A1.75 1.75 0 0011 2.75H6.5z"/>
+  <!-- Broadcast dot + ring — reads as "live at a URL" -->
+  <circle cx="18" cy="18" r="1.6"/>
+  <path d="M15.55 15.55a3.45 3.45 0 010 4.9.75.75 0 11-1.06-1.06 1.95 1.95 0 000-2.78.75.75 0 111.06-1.06z" opacity="0.6"/>
+</svg>

@@ -96,6 +96,7 @@ export function LandingClientWrapper() {
             </div>
             <div className="zln-links">
               <a href="#how" onClick={scrollTo("how")}>How it works</a>
+              <a href="#connect" onClick={scrollTo("connect")}>Connect anywhere</a>
               <a href="#why" onClick={scrollTo("why")}>Why Zynd</a>
               <a href="#start" onClick={scrollTo("start")}>Get started</a>
             </div>
@@ -210,6 +211,92 @@ export function LandingClientWrapper() {
                   You approve a time, your Persona puts it on your calendar.
                 </p>
               </article>
+            </div>
+          </section>
+
+          <section className="zfeatures zmcp" id="connect">
+            <div className="zfeatures-head">
+              <div className="zfeatures-pill">
+                <img src="/highlights/mcp-badge.svg" alt="" loading="lazy" />
+                <span>PLUGS INTO YOUR AI</span>
+              </div>
+              <h2 className="zfeatures-title">
+                Your Persona, wherever
+                <span className="zfeatures-title-em">you already talk to AI.</span>
+              </h2>
+              <p className="zfeatures-sub">
+                Connect once over MCP and Claude, Cursor, Windsurf, or any AI client can check
+                your calendar, draft the follow-up, or reach out on your behalf — without you
+                switching tabs.
+              </p>
+            </div>
+            <div className="zfeatures-grid zmcp-grid">
+              <article className="zfeature">
+                <div className="zfeature-icon zfeature-icon-4">
+                  <img src="/highlights/icon-4.svg" alt="" loading="lazy" />
+                </div>
+                <h3 className="zfeature-title">One connection, your whole toolkit</h3>
+                <p className="zfeature-body">
+                  Calendar, Gmail, Docs, Notion, LinkedIn — all reachable through a single MCP
+                  server, so there&apos;s nothing extra to log into.
+                </p>
+              </article>
+              <article className="zfeature">
+                <div className="zfeature-icon zfeature-icon-5">
+                  <img src="/highlights/icon-5.svg" alt="" loading="lazy" />
+                </div>
+                <h3 className="zfeature-title">Ask the AI you already use</h3>
+                <p className="zfeature-body">
+                  Claude, Cursor, Windsurf, Cline — point any MCP client at Zynd and it&apos;s
+                  talking straight to your Persona, not a generic plugin.
+                </p>
+              </article>
+              <article className="zfeature">
+                <div className="zfeature-icon zfeature-icon-6">
+                  <img src="/highlights/icon-6.svg" alt="" loading="lazy" />
+                </div>
+                <h3 className="zfeature-title">Agents that talk to agents</h3>
+                <p className="zfeature-body">
+                  Your Persona can reach someone else&apos;s Persona directly over MCP — the
+                  outreach happens agent to agent, before either of you says a word.
+                </p>
+              </article>
+              <article className="zfeature">
+                <div className="zfeature-icon zfeature-icon-7">
+                  <img src="/highlights/icon-7.svg" alt="" loading="lazy" />
+                </div>
+                <h3 className="zfeature-title">Publish pages straight from chat</h3>
+                <p className="zfeature-body">
+                  Ask it to write something up and it&apos;s live at a shareable URL in seconds —
+                  public, unlisted, or just for you. No hosting, no deploy.
+                </p>
+              </article>
+            </div>
+            <div className="zmcp-clients">
+              <span className="zmcp-clients-label">Connect from</span>
+              <div className="zmcp-clients-row">
+                <span className="zmcp-client-chip">
+                  <span className="zmcp-client-chip-mark" style={{ background: "#C96442" }}>C</span>
+                  Claude
+                </span>
+                <span className="zmcp-client-chip">
+                  <span className="zmcp-client-chip-mark" style={{ background: "#1a1a1a" }}>C</span>
+                  Cursor
+                </span>
+                <span className="zmcp-client-chip">
+                  <span className="zmcp-client-chip-mark" style={{ background: "#00897B" }}>W</span>
+                  Windsurf
+                </span>
+                <span className="zmcp-client-chip">
+                  <span className="zmcp-client-chip-mark" style={{ background: "#2563EB" }}>C</span>
+                  Cline
+                </span>
+                <span className="zmcp-client-chip">
+                  <span className="zmcp-client-chip-mark" style={{ background: "#EA580C" }}>O</span>
+                  OpenCode
+                </span>
+                <span className="zmcp-client-chip zmcp-client-chip-more">+ any MCP client</span>
+              </div>
             </div>
           </section>
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Zap, X } from "lucide-react";
+import { Zap, X, Plug, MessageSquareText, Waypoints, FileOutput } from "lucide-react";
 import { getSupabase } from "@/lib/supabase";
 import { captureZyndOAuthReq } from "@/lib/zynd-oauth";
 import { Monogram } from "@/components/ui";
@@ -217,7 +217,7 @@ export function LandingClientWrapper() {
           <section className="zfeatures zmcp" id="connect">
             <div className="zfeatures-head">
               <div className="zfeatures-pill">
-                <img src="/highlights/mcp-badge.svg" alt="" loading="lazy" />
+                <Plug size={16} color="#6366f1" strokeWidth={2.25} />
                 <span>PLUGS INTO YOUR AI</span>
               </div>
               <h2 className="zfeatures-title">
@@ -233,7 +233,7 @@ export function LandingClientWrapper() {
             <div className="zfeatures-grid zmcp-grid">
               <article className="zfeature">
                 <div className="zfeature-icon zfeature-icon-4">
-                  <img src="/highlights/icon-4.svg" alt="" loading="lazy" />
+                  <Plug size={30} color="#ffffff" strokeWidth={1.75} />
                 </div>
                 <h3 className="zfeature-title">One connection, your whole toolkit</h3>
                 <p className="zfeature-body">
@@ -243,7 +243,7 @@ export function LandingClientWrapper() {
               </article>
               <article className="zfeature">
                 <div className="zfeature-icon zfeature-icon-5">
-                  <img src="/highlights/icon-5.svg" alt="" loading="lazy" />
+                  <MessageSquareText size={30} color="#ffffff" strokeWidth={1.75} />
                 </div>
                 <h3 className="zfeature-title">Ask the AI you already use</h3>
                 <p className="zfeature-body">
@@ -253,7 +253,7 @@ export function LandingClientWrapper() {
               </article>
               <article className="zfeature">
                 <div className="zfeature-icon zfeature-icon-6">
-                  <img src="/highlights/icon-6.svg" alt="" loading="lazy" />
+                  <Waypoints size={30} color="#ffffff" strokeWidth={1.75} />
                 </div>
                 <h3 className="zfeature-title">Agents that talk to agents</h3>
                 <p className="zfeature-body">
@@ -263,7 +263,7 @@ export function LandingClientWrapper() {
               </article>
               <article className="zfeature">
                 <div className="zfeature-icon zfeature-icon-7">
-                  <img src="/highlights/icon-7.svg" alt="" loading="lazy" />
+                  <FileOutput size={30} color="#ffffff" strokeWidth={1.75} />
                 </div>
                 <h3 className="zfeature-title">Publish pages straight from chat</h3>
                 <p className="zfeature-body">

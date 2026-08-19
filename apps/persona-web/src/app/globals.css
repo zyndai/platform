@@ -8374,6 +8374,8 @@ textarea.input { resize: vertical; min-height: 88px; }
 
 .zmcp-grid { grid-template-columns: repeat(4, 1fr); }
 .zmcp-grid .zfeature { min-height: 280px; }
+.zmcp-grid .zfeature-icon { margin-bottom: 24px; }
+.zmcp-grid .zfeature-title { margin-top: 0; }
 @media (max-width: 1100px) {
   .zmcp-grid { grid-template-columns: repeat(2, 1fr); }
 }

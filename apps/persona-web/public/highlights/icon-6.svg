@@ -1,8 +1,0 @@
-<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="white" aria-hidden="true">
-  <!-- Two linked nodes — agents talking to other agents, not just humans -->
-  <circle cx="5.5" cy="7" r="3"/>
-  <circle cx="18.5" cy="17" r="3"/>
-  <path d="M8.2 8.7a1 1 0 011.4.1l4.8 5.4a1 1 0 01-.1 1.4 1 1 0 01-1.4-.1L8.1 10.1a1 1 0 01.1-1.4z"/>
-  <circle cx="18.5" cy="7" r="2" opacity="0.6"/>
-  <circle cx="5.5" cy="17" r="2" opacity="0.6"/>
-</svg>

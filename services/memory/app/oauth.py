@@ -22,12 +22,15 @@ OAuth is just another way to obtain the exact same JWT that MCP clients use.
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urlsplit
 
+import httpx
 import jwt
 from fastapi import APIRouter, Body, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -100,6 +103,126 @@ def _check_dcr_redirect_uri(redirect_uri: str, allowed_uris: list[str]) -> bool:
         if parsed.path == allowed_parsed.path or parsed.path.startswith(allowed_parsed.path.rstrip("/") + "/"):
             return True
     return False
+
+
+# ── Client ID Metadata Document (draft-parecki-oauth-client-id-metadata-document) ──
+# Spec: the client_id is a URL; the authorization server fetches that URL to
+# obtain the client's metadata. The document MUST declare a client_id field that
+# equals the URL it was fetched from (self-consistency) and a redirect_uris list.
+#
+# Security: the fetch URL comes from an unauthenticated caller → SSRF-shaped.
+# We restrict to https://, block private/loopback hostnames by literal and IP,
+# use a short timeout with no redirects, and cap the response at 64 KB.
+
+_METADATA_FETCH_TIMEOUT = 5.0  # seconds
+_METADATA_MAX_BYTES = 65_536   # 64 KB hard cap before JSON parsing
+_METADATA_CACHE_TTL = 300      # 5 minutes — short enough to pick up revoked redirect_uris
+_METADATA_CACHE_MAX = 256      # max entries; evict expired then oldest
+
+# {url: (expires_monotonic, document_dict)}
+_metadata_cache: dict[str, tuple[float, dict]] = {}
+
+# Private/loopback IP ranges that must not be reachable via a metadata fetch.
+_BLOCKED_NETWORKS: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
+    ipaddress.ip_network("127.0.0.0/8"),       # loopback
+    ipaddress.ip_network("10.0.0.0/8"),         # RFC 1918
+    ipaddress.ip_network("172.16.0.0/12"),      # RFC 1918
+    ipaddress.ip_network("192.168.0.0/16"),     # RFC 1918
+    ipaddress.ip_network("169.254.0.0/16"),     # link-local
+    ipaddress.ip_network("100.64.0.0/10"),      # shared address space
+    ipaddress.ip_network("::1/128"),            # IPv6 loopback
+    ipaddress.ip_network("fc00::/7"),           # IPv6 ULA
+    ipaddress.ip_network("fe80::/10"),          # IPv6 link-local
+]
+
+
+def _hostname_is_private(hostname: str) -> bool:
+    """True for loopback/private hostnames that must not be reached server-side."""
+    if hostname.lower() in ("localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"):
+        return True
+    try:
+        addr = ipaddress.ip_address(hostname)
+        return any(addr in net for net in _BLOCKED_NETWORKS)
+    except ValueError:
+        return False   # domain name — DNS happens at connect time; scheme+name check is sufficient
+
+
+async def _fetch_metadata_document(client_id_url: str) -> dict:
+    """Fetch and validate an OAuth Client ID Metadata Document.
+
+    Enforces:
+    - HTTPS scheme only (no HTTP, no other schemes).
+    - Non-private, non-loopback hostname.
+    - Short connect+read timeout with no redirects.
+    - 64 KB hard cap on the response body.
+    - JSON Content-Type.
+    - document.client_id must equal client_id_url (prevents relay attacks).
+    - document.redirect_uris must be a non-empty list.
+    """
+    parsed = urlsplit(client_id_url)
+    if parsed.scheme != "https":
+        raise HTTPException(status_code=400, detail="client_id must be an https:// URL")
+    if not parsed.hostname:
+        raise HTTPException(status_code=400, detail="client_id URL has no hostname")
+    if _hostname_is_private(parsed.hostname):
+        raise HTTPException(status_code=400, detail="client_id URL must not point to a private host")
+
+    now = time.monotonic()
+    cached = _metadata_cache.get(client_id_url)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(_METADATA_FETCH_TIMEOUT),
+            follow_redirects=False,
+            max_redirects=0,
+        ) as client:
+            resp = await client.get(client_id_url, headers={"Accept": "application/json"})
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=400, detail="client_id metadata fetch timed out") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=400, detail="client_id metadata document unreachable") from exc
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=400, detail=f"client_id metadata fetch returned {resp.status_code}")
+
+    ct = resp.headers.get("content-type", "")
+    if "json" not in ct.lower():
+        raise HTTPException(status_code=400, detail="client_id metadata document is not JSON")
+
+    if len(resp.content) > _METADATA_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="client_id metadata document exceeds size limit")
+
+    try:
+        doc = resp.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="client_id metadata document is not valid JSON") from exc
+
+    if not isinstance(doc, dict):
+        raise HTTPException(status_code=400, detail="client_id metadata document must be a JSON object")
+
+    # Self-consistency: document must declare client_id equal to the URL it was fetched from.
+    # Without this check an attacker at https://evil.com/meta could claim client_id of
+    # https://trusted.example/meta.
+    if doc.get("client_id") != client_id_url:
+        raise HTTPException(status_code=400, detail="client_id metadata document client_id mismatch")
+
+    redirect_uris = doc.get("redirect_uris")
+    if not isinstance(redirect_uris, list) or not redirect_uris:
+        raise HTTPException(status_code=400, detail="client_id metadata document missing redirect_uris")
+
+    # Cache the validated document. Evict expired entries first; if still at cap,
+    # remove the oldest (dict insertion order is preserved in Python 3.7+).
+    if len(_metadata_cache) >= _METADATA_CACHE_MAX:
+        expired = [k for k, (exp, _) in _metadata_cache.items() if exp <= now]
+        for k in expired:
+            _metadata_cache.pop(k, None)
+        if len(_metadata_cache) >= _METADATA_CACHE_MAX:
+            _metadata_cache.pop(next(iter(_metadata_cache)), None)
+
+    _metadata_cache[client_id_url] = (now + _METADATA_CACHE_TTL, doc)
+    return doc
 
 
 def _oauth_clients() -> dict[str, str]:
@@ -352,15 +475,25 @@ async def authorize(
         dest = settings.persona_login_url.rstrip("/") + "/?" + urlencode({"zynd_oauth": req})
         return RedirectResponse(dest, status_code=302)
 
-    # ── DCR-registered client (Claude) → Supabase Auth directly ──
-    row = await get_pool().fetchrow(
-        "SELECT allowed_redirect_uris FROM oauth_clients WHERE client_id = $1",
-        client_id,
-    )
-    if not row:
-        raise HTTPException(status_code=400, detail="unknown client_id")
-    if not _check_dcr_redirect_uri(redirect_uri, row["allowed_redirect_uris"]):
-        _check_redirect_uri(redirect_uri)
+    # ── Client ID Metadata Document (Claude.ai / MCP clients using a URL client_id) ──
+    # RFC 9728 / draft-parecki-oauth-client-id-metadata-document: when client_id is
+    # an https:// URL, fetch the document at that URL, verify self-consistency, and
+    # validate redirect_uri against the document's declared redirect_uris. Then
+    # continue into the same Supabase-direct PKCE path as DCR clients.
+    if client_id.startswith("https://"):
+        meta = await _fetch_metadata_document(client_id)
+        if not _check_dcr_redirect_uri(redirect_uri, meta["redirect_uris"]):
+            _check_redirect_uri(redirect_uri)
+    else:
+        # ── DCR-registered client (Claude Desktop via /oauth/register) ──
+        row = await get_pool().fetchrow(
+            "SELECT allowed_redirect_uris FROM oauth_clients WHERE client_id = $1",
+            client_id,
+        )
+        if not row:
+            raise HTTPException(status_code=400, detail="unknown client_id")
+        if not _check_dcr_redirect_uri(redirect_uri, row["allowed_redirect_uris"]):
+            _check_redirect_uri(redirect_uri)
 
     # Store the OAuth params in Redis so /oauth/complete can retrieve them
     # after Supabase Auth sends the user back.
@@ -561,6 +694,10 @@ async def token(
     is_chatgpt = hmac.compare_digest(client_id, settings.oauth_client_id)
     if is_chatgpt:
         _check_client(client_id, client_secret)
+    elif client_id.startswith("https://"):
+        # Metadata-document client: public PKCE client — no secret required.
+        # The auth code + code_verifier (verified below) provide the security.
+        pass
     else:
         row = await get_pool().fetchrow(
             "SELECT id FROM oauth_clients WHERE client_id = $1", client_id,

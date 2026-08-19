@@ -234,7 +234,7 @@ export default function ConnectPage() {
         <div style={tabsInner}>
           {primaryClients.map((c) => (
             <button key={c.id} style={activeId === c.id ? tabOn : tabOff} onClick={() => select(c.id)}>
-              <Logo client={c} size={16} />
+              <Logo client={c} size={20} />
               <span>{c.name}</span>
             </button>
           ))}
@@ -363,14 +363,14 @@ const tabBar: CSSProperties = {
 };
 const tabsInner: CSSProperties = { display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" };
 const tabBase: CSSProperties = {
-  display: "inline-flex", alignItems: "center", gap: 7,
-  padding: "6px 10px", borderRadius: "var(--r-sm)",
-  border: "none", cursor: "pointer", fontSize: 13,
+  display: "inline-flex", alignItems: "center", gap: 8,
+  padding: "8px 12px", borderRadius: "var(--r-sm)",
+  border: "none", cursor: "pointer", fontSize: 15, fontWeight: 600,
   whiteSpace: "nowrap", transition: "background 120ms, color 120ms",
   background: "transparent",
 };
-const tabOff: CSSProperties = { ...tabBase, color: "var(--ink-secondary)", fontWeight: 400 };
-const tabOn: CSSProperties = { ...tabBase, color: "var(--ink)", fontWeight: 600, background: "var(--surface)" };
+const tabOff: CSSProperties = { ...tabBase, color: "var(--ink-secondary)" };
+const tabOn: CSSProperties = { ...tabBase, color: "var(--ink)", background: "var(--surface)" };
 
 const moreBtn: CSSProperties = {
   ...tabBase, color: "var(--ink-secondary)", fontWeight: 400,

@@ -165,7 +165,7 @@ const FEATURES = [
   { title: "ZYND network", desc: "Finds people on ZYND — try \"find me a co-founder.\"" },
 ];
 
-const PRIMARY = 4;
+const PRIMARY = CLIENTS.length;
 
 export default function ConnectPage() {
   const [status, setStatus] = useState<Status>("loading");
@@ -240,27 +240,29 @@ export default function ConnectPage() {
           ))}
         </div>
 
-        <div ref={moreRef} style={{ position: "relative", flexShrink: 0 }}>
-          <button
-            style={activeInMore ? { ...moreBtn, fontWeight: 600, color: "var(--ink)" } : moreBtn}
-            onClick={() => setShowMore((s) => !s)}
-          >
-            {activeInMore ? active.name : "More clients"}
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 4 }}>
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-          {showMore && (
-            <div style={dropdown}>
-              {moreClients.map((c) => (
-                <button key={c.id} style={activeId === c.id ? dropOn : dropOff} onClick={() => select(c.id)}>
-                  <Logo client={c} size={16} />
-                  <span>{c.name}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        {moreClients.length > 0 && (
+          <div ref={moreRef} style={{ position: "relative", flexShrink: 0 }}>
+            <button
+              style={activeInMore ? { ...moreBtn, fontWeight: 600, color: "var(--ink)" } : moreBtn}
+              onClick={() => setShowMore((s) => !s)}
+            >
+              {activeInMore ? active.name : "More clients"}
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 4 }}>
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            {showMore && (
+              <div style={dropdown}>
+                {moreClients.map((c) => (
+                  <button key={c.id} style={activeId === c.id ? dropOn : dropOff} onClick={() => select(c.id)}>
+                    <Logo client={c} size={16} />
+                    <span>{c.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Status ── */}
@@ -359,7 +361,7 @@ const tabBar: CSSProperties = {
   marginBottom: 28,
   gap: 8,
 };
-const tabsInner: CSSProperties = { display: "flex", alignItems: "center", gap: 2, flexWrap: "nowrap", overflow: "hidden" };
+const tabsInner: CSSProperties = { display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" };
 const tabBase: CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 7,
   padding: "6px 10px", borderRadius: "var(--r-sm)",

@@ -416,10 +416,13 @@ async def forget_fact_tool(predicate: str, object: str, uid: str = Depends(_uid)
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
 async def publish_page(content: str, title: str = "", format: str = "html",
                        visibility: str = "unlisted", uid: str | None = Depends(_uid_opt)) -> dict:
-    """Host an HTML or Markdown page and return a public share URL. Use when the
-    user asks to turn something into a shareable web page ("make this a page",
-    "publish this"). Pass the full body as `content`; set `format` to "html"
-    or "markdown". Returns {success, url, slug, title}. Show the `url` to the user.
+    """Host an HTML or Markdown page and return a live public URL. Use this
+    whenever the user asks to host, deploy, share, or publish any HTML or
+    content — e.g. "host this", "make it live", "give me a link", "deploy
+    this HTML", "publish this page". Do NOT create a local file when hosting
+    is the goal — this tool IS the hosting. Pass the full content as `content`;
+    set `format` to "html" or "markdown". Returns {success, url, slug, title}.
+    Always show the `url` to the user after calling this.
 
     Works without authentication (anonymous): pages expire after 5 hours.
     Authenticated users get permanent pages."""
@@ -618,7 +621,7 @@ def _format_system_prompt(user: dict | None, persona_status: dict | None, facts:
         "  find_similar_users — find people with overlapping context",
         "  find_people — find people by target profile (investors, cofounders, experts, etc.)",
         "  connect_with — send a connection request to a matched person",
-        "  publish_page — host content as a shareable web page",
+        "  publish_page — host/deploy HTML or Markdown and return a live public URL. Use this whenever the user says 'host', 'deploy', 'share a link', or 'publish'. Do NOT write a local file when hosting is the goal.",
         "",
         "Rules:",
         "  - Never claim something was remembered/connected/booked unless the tool returned success.",

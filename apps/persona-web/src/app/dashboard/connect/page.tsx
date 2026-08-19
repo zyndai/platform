@@ -20,18 +20,29 @@ interface Client {
   snippet: (token: string, url: string) => string;
 }
 
-function Logo({ client }: { client: Client }) {
+function Logo({ client, size = 28 }: { client: Client; size?: number }) {
   const [err, setErr] = useState(false);
-  if (!client.logoUrl || err) {
-    return <span style={{ ...logoFallback, background: client.color }}>{client.initial}</span>;
-  }
+  const box: CSSProperties = {
+    width: size,
+    height: size,
+    borderRadius: 7,
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: client.color,
+    color: "#fff",
+    fontSize: size * 0.45,
+    fontWeight: 700,
+  };
+  if (!client.logoUrl || err) return <span style={box}>{client.initial}</span>;
   return (
     <img
       src={client.logoUrl}
       alt=""
-      width={24}
-      height={24}
-      style={logoImg}
+      width={size}
+      height={size}
+      style={{ width: size, height: size, borderRadius: 7, objectFit: "contain", flexShrink: 0 }}
       onError={() => setErr(true)}
     />
   );
@@ -103,7 +114,7 @@ const CLIENTS: Client[] = [
   },
   {
     id: "cline",
-    name: "Cline / Continue",
+    name: "Cline",
     logoUrl: "https://cline.bot/favicon.ico",
     color: "#2563EB",
     initial: "C",
@@ -205,161 +216,125 @@ export default function ConnectPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // 3-step clients: code block in middle step (index 1). 1–2 step: first step (index 0).
+  // 3-step clients: code block goes in middle step (index 1). 1–2 step: first step (index 0).
   const codeStepIndex = active.steps.length === 3 ? 1 : 0;
-
-  const codeBlock = (
-    <div style={codeWrap}>
-      <div style={codeBar}>
-        <span style={codeTag}>{active.label}</span>
-        <button style={copyBtn} onClick={copy}>{copied ? "✓ Copied" : "Copy"}</button>
-      </div>
-      <pre style={pre}>{snippet}</pre>
-    </div>
-  );
 
   return (
     <div style={page}>
-      <div style={pageHead}>
-        <h1 style={h1}>Connect your AI tool</h1>
-        <p style={sub}>Pick your tool. Your token is pre-filled.</p>
-      </div>
+      <h1 style={h1}>Connect your AI tool</h1>
+      <p style={sub}>Pick your tool. Your token is pre-filled.</p>
 
       {status === "loading" && (
-        <div style={stateCard}>
-          <span style={{ color: "var(--ink-muted)", fontSize: 13 }}>Creating your connection…</span>
-        </div>
+        <p style={{ fontSize: 13, color: "var(--ink-muted)", marginTop: 20 }}>Creating your connection…</p>
       )}
 
       {status === "error" && (
-        <div style={stateCard}>
-          <p style={{ color: "var(--danger)", fontSize: 13, marginBottom: 12 }}>{error}</p>
+        <div style={{ marginTop: 20 }}>
+          <p style={{ fontSize: 13, color: "var(--danger)", marginBottom: 10 }}>{error}</p>
           <button style={btnPrimary} onClick={() => setReload((k) => k + 1)}>Retry</button>
         </div>
       )}
 
       {status === "ready" && result && (
-        <div style={split}>
-          {/* Tool list */}
-          <nav style={sidebar}>
+        <>
+          {/* Tool selector chips */}
+          <div style={chipRow}>
             {CLIENTS.map((c) => (
               <button
                 key={c.id}
-                style={activeId === c.id ? sideItemOn : sideItemOff}
+                style={activeId === c.id ? chipOn : chipOff}
                 onClick={() => { setActiveId(c.id); setCopied(false); }}
               >
-                <Logo client={c} />
-                <span style={sideLabel}>{c.name}</span>
+                {c.name}
               </button>
             ))}
-          </nav>
+          </div>
 
-          {/* Steps panel */}
-          <div style={panel}>
-            <div style={emailRow}>
+          {/* Content card */}
+          <div style={card}>
+            {/* Card header: logo + tool name + email */}
+            <div style={cardHead}>
+              <Logo client={active} size={32} />
+              <div style={{ flex: 1 }}>
+                <p style={toolName}>{active.name}</p>
+                <p style={toolLabel}>{active.label}</p>
+              </div>
               <span style={emailBadge}>{result.email}</span>
             </div>
 
-            <div style={stepsCol}>
-              {active.steps.map((text, i) => (
-                <div key={i} style={stepRow}>
-                  <div style={stepNum}>{i + 1}</div>
-                  <div style={{ flex: 1 }}>
-                    <p style={stepText}>{text}</p>
-                    {i === codeStepIndex && codeBlock}
-                  </div>
+            <div style={divider} />
+
+            {/* Steps */}
+            {active.steps.map((text, i) => (
+              <div key={i} style={stepRow}>
+                <span style={stepNum}>{i + 1}</span>
+                <div style={{ flex: 1 }}>
+                  <p style={stepText}>{text}</p>
+                  {i === codeStepIndex && (
+                    <div style={codeWrap}>
+                      <div style={codeBar}>
+                        <span style={codeTag}>{active.label}</span>
+                        <button style={copyBtn} onClick={copy}>
+                          {copied ? "✓ Copied" : "Copy"}
+                        </button>
+                      </div>
+                      <pre style={pre}>{snippet}</pre>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Features */}
+          <div style={featBox}>
+            <p style={featTitle}>What ZYND gives your AI</p>
+            <div style={featGrid}>
+              {FEATURES.map((f) => (
+                <div key={f} style={featItem}>
+                  <span style={check}>✓</span>
+                  {f}
                 </div>
               ))}
             </div>
-
-            <div style={featBox}>
-              <p style={featTitle}>What ZYND gives your AI</p>
-              <div style={featGrid}>
-                {FEATURES.map((f) => (
-                  <div key={f} style={featItem}>
-                    <span style={check}>✓</span>
-                    {f}
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
 }
 
 /* ── Styles ── */
-const page: CSSProperties = { maxWidth: 860, margin: "0 auto", padding: "28px 20px 48px" };
-const pageHead: CSSProperties = { marginBottom: 24 };
-const h1: CSSProperties = { fontSize: 20, fontWeight: 600, color: "var(--ink)", margin: "0 0 4px" };
-const sub: CSSProperties = { fontSize: 13, color: "var(--ink-muted)", margin: 0 };
+const page: CSSProperties = { maxWidth: 600, padding: "28px 0 48px" };
+const h1: CSSProperties = { fontSize: 18, fontWeight: 600, color: "var(--ink)", margin: "0 0 4px" };
+const sub: CSSProperties = { fontSize: 13, color: "var(--ink-muted)", margin: "0 0 20px" };
 
-const stateCard: CSSProperties = {
-  background: "var(--surface-raised)",
-  border: "1px solid var(--border-default)",
-  borderRadius: "var(--r-lg)",
-  padding: 20,
-};
-
-const split: CSSProperties = { display: "flex", gap: 16, alignItems: "flex-start" };
-
-const sidebar: CSSProperties = {
-  width: 188,
-  flexShrink: 0,
-  display: "flex",
-  flexDirection: "column",
-  gap: 1,
-};
-
-const sideBase: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 10,
-  padding: "8px 10px",
-  borderRadius: "var(--r-md)",
-  border: "1px solid transparent",
+const chipRow: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 };
+const chipBase: CSSProperties = {
+  padding: "5px 12px",
+  borderRadius: 99,
+  fontSize: 12,
+  fontWeight: 500,
   cursor: "pointer",
-  textAlign: "left",
-  width: "100%",
-  background: "transparent",
-  transition: "background 120ms",
+  border: "none",
+  lineHeight: 1.4,
+  transition: "background 120ms, color 120ms",
 };
-const sideItemOff: CSSProperties = { ...sideBase };
-const sideItemOn: CSSProperties = {
-  ...sideBase,
-  background: "var(--accent-soft-bg)",
-  borderColor: "var(--border-strong)",
-};
+const chipOff: CSSProperties = { ...chipBase, background: "var(--surface-raised)", color: "var(--ink-secondary)" };
+const chipOn: CSSProperties = { ...chipBase, background: "var(--accent)", color: "#fff" };
 
-const sideLabel: CSSProperties = { fontSize: 13, fontWeight: 500, color: "var(--ink)", lineHeight: 1.3 };
-
-const logoFallback: CSSProperties = {
-  width: 24,
-  height: 24,
-  borderRadius: 6,
-  display: "flex" as const,
-  alignItems: "center",
-  justifyContent: "center",
-  color: "#fff",
-  fontSize: 11,
-  fontWeight: 700,
-  flexShrink: 0,
-};
-const logoImg: CSSProperties = { width: 24, height: 24, borderRadius: 6, objectFit: "contain", flexShrink: 0 };
-
-const panel: CSSProperties = {
-  flex: 1,
-  minWidth: 0,
+const card: CSSProperties = {
   background: "var(--surface)",
   border: "1px solid var(--border-default)",
   borderRadius: "var(--r-lg)",
-  padding: 20,
+  padding: "16px 18px",
   boxShadow: "var(--shadow-card)",
+  marginBottom: 12,
 };
 
-const emailRow: CSSProperties = { display: "flex", justifyContent: "flex-end", marginBottom: 18 };
+const cardHead: CSSProperties = { display: "flex", alignItems: "center", gap: 12, marginBottom: 14 };
+const toolName: CSSProperties = { fontSize: 14, fontWeight: 600, color: "var(--ink)", margin: 0 };
+const toolLabel: CSSProperties = { fontSize: 11, color: "var(--ink-muted)", margin: "1px 0 0", fontFamily: "var(--font-geist-mono), ui-monospace, monospace" };
 const emailBadge: CSSProperties = {
   fontSize: 11,
   color: "var(--ink-muted)",
@@ -367,16 +342,18 @@ const emailBadge: CSSProperties = {
   border: "1px solid var(--border-subtle)",
   borderRadius: "var(--r-sm)",
   padding: "2px 8px",
+  whiteSpace: "nowrap",
 };
 
-const stepsCol: CSSProperties = { display: "flex", flexDirection: "column" };
-const stepRow: CSSProperties = { display: "flex", gap: 14, paddingBottom: 20 };
+const divider: CSSProperties = { height: 1, background: "var(--border-subtle)", margin: "0 0 16px" };
+
+const stepRow: CSSProperties = { display: "flex", gap: 12, paddingBottom: 16 };
 const stepNum: CSSProperties = {
-  width: 24,
-  height: 24,
+  width: 22,
+  height: 22,
   borderRadius: "50%",
-  border: "1px solid var(--border-default)",
   background: "var(--surface-raised)",
+  border: "1px solid var(--border-default)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -386,13 +363,13 @@ const stepNum: CSSProperties = {
   flexShrink: 0,
   marginTop: 1,
 };
-const stepText: CSSProperties = { fontSize: 13.5, color: "var(--ink-secondary)", margin: 0, lineHeight: 1.55 };
+const stepText: CSSProperties = { fontSize: 13, color: "var(--ink-secondary)", margin: 0, lineHeight: 1.55 };
 
 const codeWrap: CSSProperties = {
   marginTop: 10,
+  border: "1px solid var(--border-default)",
   borderRadius: "var(--r-md)",
   overflow: "hidden",
-  border: "1px solid var(--border-default)",
 };
 const codeBar: CSSProperties = {
   display: "flex",
@@ -406,14 +383,13 @@ const codeTag: CSSProperties = {
   fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
   fontSize: 10,
   color: "var(--ink-muted)",
-  letterSpacing: "0.03em",
 };
 const copyBtn: CSSProperties = {
   background: "none",
   border: "1px solid var(--border-default)",
-  borderRadius: "var(--r-sm)",
+  borderRadius: "var(--r-xs)",
   cursor: "pointer",
-  padding: "2px 9px",
+  padding: "2px 8px",
   color: "var(--ink-muted)",
   fontSize: 11,
   fontWeight: 500,
@@ -432,7 +408,6 @@ const pre: CSSProperties = {
 };
 
 const featBox: CSSProperties = {
-  marginTop: 8,
   padding: "14px 16px",
   background: "var(--surface-raised)",
   borderRadius: "var(--r-md)",
@@ -446,9 +421,9 @@ const featTitle: CSSProperties = {
   letterSpacing: "0.07em",
   margin: "0 0 10px",
 };
-const featGrid: CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 20px" };
+const featGrid: CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 16px" };
 const featItem: CSSProperties = { fontSize: 12.5, color: "var(--ink-secondary)", display: "flex", alignItems: "center", gap: 6 };
-const check: CSSProperties = { color: "var(--accent)", fontSize: 12, fontWeight: 700 };
+const check: CSSProperties = { color: "var(--accent)", fontWeight: 700, fontSize: 12 };
 
 const btnPrimary: CSSProperties = {
   background: "var(--accent)",

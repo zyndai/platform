@@ -279,7 +279,7 @@ export default function ConnectPage() {
         <div style={split}>
           <div style={mainCol}>
             <div style={toolHeader}>
-              <Logo client={active} size={40} />
+              <Logo client={active} size={26} />
               <h2 style={toolName}>{active.name}</h2>
               <span style={emailBadge}>{result.email}</span>
             </div>
@@ -389,8 +389,8 @@ const split: CSSProperties = { display: "flex", gap: 40, alignItems: "flex-start
 const mainCol: CSSProperties = { flex: 1, minWidth: 0 };
 
 /* Tool header */
-const toolHeader: CSSProperties = { display: "flex", alignItems: "center", gap: 14, marginBottom: 28 };
-const toolName: CSSProperties = { fontSize: 26, fontWeight: 700, color: "var(--ink)", margin: 0, flex: 1 };
+const toolHeader: CSSProperties = { display: "flex", alignItems: "center", gap: 11, marginBottom: 28 };
+const toolName: CSSProperties = { fontSize: 18, fontWeight: 700, color: "var(--ink)", margin: 0, flex: 1 };
 const emailBadge: CSSProperties = {
   fontSize: 12, color: "var(--ink-muted)",
   background: "var(--surface-raised)", border: "1px solid var(--border-subtle)",
@@ -400,17 +400,17 @@ const emailBadge: CSSProperties = {
 /* Steps */
 const stepsWrap: CSSProperties = {};
 const stepOuter: CSSProperties = { display: "flex", gap: 18, alignItems: "stretch" };
-const stepLeft: CSSProperties = { display: "flex", flexDirection: "column", alignItems: "center", width: 36, flexShrink: 0 };
+const stepLeft: CSSProperties = { display: "flex", flexDirection: "column", alignItems: "center", width: 32, flexShrink: 0 };
 const stepNum: CSSProperties = {
-  width: 36, height: 36, borderRadius: "50%",
+  width: 32, height: 32, borderRadius: "50%",
   background: "var(--surface-raised)", border: "1px solid var(--border-default)",
   display: "flex", alignItems: "center", justifyContent: "center",
-  fontSize: 14, fontWeight: 600, color: "var(--ink-secondary)", flexShrink: 0,
+  fontSize: 13, fontWeight: 600, color: "var(--ink-secondary)", flexShrink: 0,
 };
 const stepLine: CSSProperties = { width: 1, background: "var(--border-default)", flex: 1, minHeight: 16, marginTop: 4 };
 
-const stepTitle: CSSProperties = { fontSize: 16.5, fontWeight: 600, color: "var(--ink)", margin: "6px 0 7px", lineHeight: 1.35, maxWidth: 560 };
-const stepDesc: CSSProperties = { fontSize: 14.5, color: "var(--ink-secondary)", margin: "0 0 0", lineHeight: 1.6, maxWidth: 560 };
+const stepTitle: CSSProperties = { fontSize: 14.5, fontWeight: 600, color: "var(--ink)", margin: "4px 0 6px", lineHeight: 1.35, maxWidth: 560 };
+const stepDesc: CSSProperties = { fontSize: 13, color: "var(--ink-secondary)", margin: "0 0 0", lineHeight: 1.55, maxWidth: 560 };
 
 /* Side panel */
 const sideCol: CSSProperties = {

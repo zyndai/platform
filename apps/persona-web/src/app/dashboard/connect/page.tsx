@@ -157,12 +157,12 @@ const CLIENTS: Client[] = [
 ];
 
 const FEATURES = [
-  "Persistent memory across all tools",
-  "Google Calendar & Gmail",
-  "LinkedIn search & profiles",
-  "Notion read & write",
-  "Publish live web pages",
-  "ZYND network — find people",
+  { title: "Persistent memory", desc: "Remembers facts, preferences, and context across every AI tool you use it from." },
+  { title: "Google Calendar & Gmail", desc: "Checks your schedule, books meetings, and reads or sends email on your behalf." },
+  { title: "LinkedIn search & profiles", desc: "Searches LinkedIn for people by role or topic and pulls their full profile." },
+  { title: "Notion read & write", desc: "Reads and writes pages directly in your connected Notion workspace." },
+  { title: "Publish live web pages", desc: "Spins up a shareable public web page from a chat, in seconds." },
+  { title: "ZYND network", desc: "Finds and connects you with other people on the ZYND network by role or topic — e.g. \"find me a co-founder.\"" },
 ];
 
 const PRIMARY = 4;
@@ -319,9 +319,12 @@ export default function ConnectPage() {
             <p style={featTitle}>What ZYND gives your AI</p>
             <div style={featList}>
               {FEATURES.map((f) => (
-                <div key={f} style={featItem}>
+                <div key={f.title} style={featItem}>
                   <span style={check}>✓</span>
-                  {f}
+                  <div>
+                    <p style={featItemTitle}>{f.title}</p>
+                    <p style={featItemDesc}>{f.desc}</p>
+                  </div>
                 </div>
               ))}
             </div>
@@ -411,18 +414,20 @@ const stepDesc: CSSProperties = { fontSize: 14.5, color: "var(--ink-secondary)",
 
 /* Side panel */
 const sideCol: CSSProperties = {
-  width: 280, flexShrink: 0,
+  width: 320, flexShrink: 0,
   background: "var(--surface-raised)", border: "1px solid var(--border-subtle)",
-  borderRadius: "var(--r-lg)", padding: "22px 20px",
+  borderRadius: "var(--r-lg)", padding: "28px 26px",
   position: "sticky", top: 24,
 };
 const featTitle: CSSProperties = {
-  fontSize: 11, fontWeight: 600, color: "var(--ink-muted)",
-  textTransform: "uppercase", letterSpacing: "0.07em", margin: "0 0 16px",
+  fontSize: 12, fontWeight: 600, color: "var(--ink-muted)",
+  textTransform: "uppercase", letterSpacing: "0.07em", margin: "0 0 24px",
 };
-const featList: CSSProperties = { display: "flex", flexDirection: "column", gap: 13 };
-const featItem: CSSProperties = { fontSize: 13.5, color: "var(--ink-secondary)", display: "flex", alignItems: "center", gap: 9, lineHeight: 1.4 };
-const check: CSSProperties = { color: "var(--accent)", fontSize: 13, fontWeight: 700, flexShrink: 0 };
+const featList: CSSProperties = { display: "flex", flexDirection: "column", gap: 22 };
+const featItem: CSSProperties = { display: "flex", alignItems: "flex-start", gap: 11 };
+const check: CSSProperties = { color: "var(--accent)", fontSize: 14, fontWeight: 700, flexShrink: 0, marginTop: 2 };
+const featItemTitle: CSSProperties = { fontSize: 14.5, fontWeight: 600, color: "var(--ink)", margin: "0 0 4px", lineHeight: 1.3 };
+const featItemDesc: CSSProperties = { fontSize: 13, color: "var(--ink-secondary)", margin: 0, lineHeight: 1.55 };
 
 /* Code block */
 const codeBlock: CSSProperties = {

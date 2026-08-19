@@ -7,119 +7,101 @@ const MEMORY_API = (process.env.NEXT_PUBLIC_MEMORY_API_URL || "https://api.zynd.
 
 type Exchange = { token: string; mcp_url: string; email: string };
 type Status = "loading" | "ready" | "error";
-type ClientId = "claudecode" | "claudedesktop" | "opencode" | "cursor" | "windsurf" | "cline";
+type ClientId = "claudecode" | "claudedesktop" | "opencode" | "openclaw" | "cursor" | "windsurf" | "cline" | "hermes";
 
 interface Client {
   id: ClientId;
   name: string;
-  kind: "command" | "json";
-  instruction: string;
+  label: string;
+  steps: string[];
   snippet: (token: string, url: string) => string;
 }
+
+const mcpRemoteBlock = (token: string, url: string) =>
+  JSON.stringify(
+    {
+      mcpServers: {
+        zynd: {
+          command: "npx",
+          args: ["-y", "mcp-remote", url, "--header", `Authorization: Bearer ${token}`],
+        },
+      },
+    },
+    null,
+    2,
+  );
 
 const CLIENTS: Client[] = [
   {
     id: "claudecode",
     name: "Claude Code",
-    kind: "command",
-    instruction: "Run this in your terminal — one command, done.",
+    label: "terminal",
+    steps: ["Run this in your terminal — your token is pre-filled.", "Verify: type /mcp — ZYND should appear."],
     snippet: (token, url) =>
       `claude mcp add --scope user --transport http zynd ${url} --header "Authorization: Bearer ${token}"`,
   },
   {
     id: "claudedesktop",
     name: "Claude Desktop",
-    kind: "json",
-    instruction: 'Open Settings → Developer → Edit Config and merge this into the "mcpServers" object.',
-    snippet: (token, url) =>
-      JSON.stringify(
-        {
-          mcpServers: {
-            zynd: {
-              command: "npx",
-              args: ["-y", "mcp-remote", url, "--header", `Authorization: Bearer ${token}`],
-            },
-          },
-        },
-        null,
-        2,
-      ),
+    label: "url",
+    steps: [
+      "Open Settings → Connectors.",
+      "Click Add custom connector and paste this URL.",
+      "A browser window will open — sign in to authorize.",
+    ],
+    snippet: (_token, url) => url,
   },
   {
     id: "opencode",
     name: "OpenCode",
-    kind: "json",
-    instruction: 'Merge this into your ~/.config/opencode/opencode.jsonc under the top-level "mcp" key.',
+    label: "prompt",
+    steps: ["Paste this prompt into OpenCode. The AI configures itself — no file editing needed."],
     snippet: (token, url) =>
-      JSON.stringify(
-        {
-          mcp: {
-            zynd: {
-              command: "npx",
-              args: ["-y", "mcp-remote", url, "--header", `Authorization: Bearer ${token}`],
-            },
-          },
-        },
-        null,
-        2,
-      ),
+      `Add a new MCP server called "zynd" with transport type HTTP.\nUse the URL ${url} and add the header\n"Authorization: Bearer ${token}".`,
+  },
+  {
+    id: "openclaw",
+    name: "OpenClaw",
+    label: "prompt",
+    steps: ["Paste this prompt into OpenClaw. The AI configures itself — no file editing needed."],
+    snippet: (token, url) =>
+      `Add a new MCP server called "zynd" with transport type HTTP.\nUse the URL ${url} and add the header\n"Authorization: Bearer ${token}".`,
+  },
+  {
+    id: "hermes",
+    name: "Hermes",
+    label: "url",
+    steps: [
+      "Open Hermes settings → Integrations.",
+      "Add a new MCP server and paste this URL.",
+      "A browser window will open — sign in to authorize.",
+    ],
+    snippet: (_token, url) => url,
   },
   {
     id: "cursor",
     name: "Cursor",
-    kind: "json",
-    instruction: "Open Settings → MCP → Add new global MCP server and paste this.",
-    snippet: (token, url) =>
-      JSON.stringify(
-        {
-          mcpServers: {
-            zynd: {
-              command: "npx",
-              args: ["-y", "mcp-remote", url, "--header", `Authorization: Bearer ${token}`],
-            },
-          },
-        },
-        null,
-        2,
-      ),
+    label: "~/.cursor/mcp.json",
+    steps: ["Open Settings → MCP → Add new global MCP server.", "Paste this into the config file that opens.", "Restart Cursor."],
+    snippet: mcpRemoteBlock,
   },
   {
     id: "windsurf",
     name: "Windsurf",
-    kind: "json",
-    instruction: "Merge this into ~/.codeium/windsurf/mcp_config.json under the mcpServers key.",
-    snippet: (token, url) =>
-      JSON.stringify(
-        {
-          mcpServers: {
-            zynd: {
-              command: "npx",
-              args: ["-y", "mcp-remote", url, "--header", `Authorization: Bearer ${token}`],
-            },
-          },
-        },
-        null,
-        2,
-      ),
+    label: "~/.codeium/windsurf/mcp_config.json",
+    steps: [
+      "Go to Windsurf Settings → Cascade → MCP Servers → Add Server.",
+      "Merge this into the config file that opens.",
+      "Restart Windsurf.",
+    ],
+    snippet: mcpRemoteBlock,
   },
   {
     id: "cline",
     name: "Cline / Continue",
-    kind: "json",
-    instruction: "Add this to the mcpServers block in your Cline or Continue settings file.",
-    snippet: (token, url) =>
-      JSON.stringify(
-        {
-          mcpServers: {
-            zynd: {
-              command: "npx",
-              args: ["-y", "mcp-remote", url, "--header", `Authorization: Bearer ${token}`],
-            },
-          },
-        },
-        null,
-        2,
-      ),
+    label: "cline_mcp_settings.json",
+    steps: ["In Cline, click the MCP icon in the sidebar → Edit MCP Settings.", 'Merge this into the "mcpServers" object.', "Restart your editor."],
+    snippet: mcpRemoteBlock,
   },
 ];
 
@@ -173,11 +155,27 @@ export default function ConnectPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // 3-step clients (Desktop/Cursor/Windsurf/Cline): code block goes in middle step (index 1).
+  // 1- or 2-step clients (OpenCode/Claude Code): code block goes in first step (index 0).
+  const codeStepIndex = active.steps.length === 3 ? 1 : 0;
+
+  const codeBlock = (
+    <div style={{ marginTop: 10 }}>
+      <div style={codeHeader}>
+        <span style={codeLabel}>{active.label}</span>
+        <button style={copyBtn} onClick={copy}>
+          {copied ? "✓ Copied" : "Copy"}
+        </button>
+      </div>
+      <pre style={pre}>{snippet}</pre>
+    </div>
+  );
+
   return (
-    <div style={{ maxWidth: 720, margin: "0 auto", padding: "32px 20px" }}>
+    <div style={{ maxWidth: 680, margin: "0 auto", padding: "32px 20px" }}>
       <h1 style={h1}>Connect your AI tool</h1>
       <p style={subtitle}>
-        Pick your tool below. Your personal token is pre-filled — one copy, one paste.
+        Pick your tool. Your token is pre-filled.
       </p>
 
       {status === "loading" && (
@@ -213,30 +211,22 @@ export default function ConnectPage() {
             ))}
           </div>
 
-          {/* Snippet card */}
+          {/* Steps */}
           <div style={card}>
-            <div style={metaRow}>
-              <span style={label}>{active.kind === "command" ? "Terminal command" : "Config snippet"}</span>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
               <span style={emailBadge}>{result.email}</span>
             </div>
-
-            <p style={instruction}>{active.instruction}</p>
-
-            <div style={{ position: "relative" }}>
-              <pre style={pre}>{snippet}</pre>
-              <button style={{ ...btnPrimary, position: "absolute", top: 10, right: 10 }} onClick={copy}>
-                {copied ? "✓ Copied" : "Copy"}
-              </button>
+            <div style={stepsContainer}>
+              {active.steps.map((text, i) => (
+                <div key={i} style={stepRow}>
+                  <div style={stepNum}>{i + 1}</div>
+                  <div style={{ flex: 1 }}>
+                    <p style={stepText_}>{text}</p>
+                    {i === codeStepIndex && codeBlock}
+                  </div>
+                </div>
+              ))}
             </div>
-
-            {active.kind === "command" && (
-              <p style={hint}>
-                Then type <code style={code}>/mcp</code> in Claude Code to confirm ZYND appears.
-              </p>
-            )}
-            {active.kind === "json" && (
-              <p style={hint}>Restart the app after saving. Your token never expires.</p>
-            )}
           </div>
 
           {/* What you get */}
@@ -268,12 +258,7 @@ export default function ConnectPage() {
 const h1: CSSProperties = { fontSize: 22, fontWeight: 700, color: "var(--ink)", margin: "0 0 6px" };
 const subtitle: CSSProperties = { fontSize: 14, color: "var(--ink-secondary)", margin: "0 0 24px", lineHeight: 1.6 };
 
-const tabBar: CSSProperties = {
-  display: "flex",
-  gap: 6,
-  flexWrap: "wrap",
-  marginBottom: 12,
-};
+const tabBar: CSSProperties = { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 };
 const tabBase: CSSProperties = {
   padding: "7px 14px",
   borderRadius: 8,
@@ -286,12 +271,7 @@ const tabBase: CSSProperties = {
   transition: "all 0.1s",
 };
 const tab: CSSProperties = { ...tabBase };
-const tabActive: CSSProperties = {
-  ...tabBase,
-  background: "var(--accent)",
-  color: "#fff",
-  border: "1px solid var(--accent)",
-};
+const tabActive: CSSProperties = { ...tabBase, background: "var(--accent)", color: "#fff", border: "1px solid var(--accent)" };
 
 const card: CSSProperties = {
   background: "var(--bg-surface)",
@@ -299,19 +279,7 @@ const card: CSSProperties = {
   borderRadius: 14,
   padding: 20,
 };
-const metaRow: CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  marginBottom: 10,
-};
-const label: CSSProperties = {
-  fontSize: 11,
-  fontWeight: 600,
-  letterSpacing: "0.06em",
-  textTransform: "uppercase",
-  color: "var(--ink-muted)",
-};
+
 const emailBadge: CSSProperties = {
   fontSize: 12,
   color: "var(--ink-secondary)",
@@ -320,18 +288,56 @@ const emailBadge: CSSProperties = {
   borderRadius: 6,
   padding: "2px 8px",
 };
-const instruction: CSSProperties = {
-  fontSize: 13,
+
+const stepsContainer: CSSProperties = { display: "flex", flexDirection: "column", gap: 0 };
+const stepRow: CSSProperties = { display: "flex", gap: 14, paddingBottom: 20 };
+const stepNum: CSSProperties = {
+  width: 26,
+  height: 26,
+  borderRadius: "50%",
+  border: "1px solid var(--border-default)",
+  background: "var(--bg-void)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontSize: 12,
+  fontWeight: 600,
   color: "var(--ink-secondary)",
-  margin: "0 0 12px",
-  lineHeight: 1.6,
+  flexShrink: 0,
+  marginTop: 1,
+};
+const stepText_: CSSProperties = { fontSize: 14, color: "var(--ink-secondary)", margin: 0, lineHeight: 1.6 };
+
+const codeHeader: CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  padding: "6px 12px",
+  background: "var(--bg-void)",
+  border: "1px solid var(--border-subtle)",
+  borderBottom: "none",
+  borderRadius: "8px 8px 0 0",
+};
+const codeLabel: CSSProperties = {
+  fontFamily: "ui-monospace, Menlo, monospace",
+  fontSize: 11,
+  color: "var(--ink-muted)",
+};
+const copyBtn: CSSProperties = {
+  background: "none",
+  border: "1px solid var(--border-default)",
+  borderRadius: 6,
+  cursor: "pointer",
+  padding: "3px 10px",
+  color: "var(--ink-muted)",
+  fontSize: 12,
 };
 const pre: CSSProperties = {
   margin: 0,
-  padding: "14px 56px 14px 16px",
+  padding: "14px 16px",
   background: "var(--bg-void)",
   border: "1px solid var(--border-subtle)",
-  borderRadius: 10,
+  borderRadius: "0 0 8px 8px",
   fontFamily: "ui-monospace, Menlo, monospace",
   fontSize: 12,
   color: "var(--ink)",
@@ -340,20 +346,7 @@ const pre: CSSProperties = {
   wordBreak: "break-all",
   lineHeight: 1.7,
 };
-const hint: CSSProperties = {
-  margin: "10px 0 0",
-  fontSize: 12,
-  color: "var(--ink-muted)",
-  lineHeight: 1.6,
-};
-const code: CSSProperties = {
-  fontFamily: "ui-monospace, Menlo, monospace",
-  background: "var(--bg-void)",
-  border: "1px solid var(--border-subtle)",
-  borderRadius: 4,
-  padding: "1px 5px",
-  fontSize: 11,
-};
+
 const btnPrimary: CSSProperties = {
   background: "var(--accent)",
   color: "#fff",
@@ -373,14 +366,5 @@ const sectionLabel: CSSProperties = {
   letterSpacing: "0.06em",
   margin: "0 0 12px",
 };
-const featureGrid: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "1fr 1fr",
-  gap: "6px 16px",
-};
-const featureItem: CSSProperties = {
-  fontSize: 13,
-  color: "var(--ink-secondary)",
-  display: "flex",
-  alignItems: "center",
-};
+const featureGrid: CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px" };
+const featureItem: CSSProperties = { fontSize: 13, color: "var(--ink-secondary)", display: "flex", alignItems: "center" };

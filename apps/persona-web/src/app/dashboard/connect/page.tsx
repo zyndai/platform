@@ -133,7 +133,7 @@ const CLIENTS: Client[] = [
   {
     id: "openclaw",
     name: "OpenClaw",
-    logoUrl: "",
+    logoUrl: "https://openclaw.ai/apple-touch-icon.png",
     color: "#7C3AED", initial: "O",
     snippetStep: 0, snippetLabel: "prompt",
     steps: [

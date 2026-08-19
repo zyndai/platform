@@ -58,7 +58,7 @@ const CLIENTS: Client[] = [
   {
     id: "claudedesktop",
     name: "Claude Desktop",
-    logoUrl: "https://cdn.simpleicons.org/anthropic/C96442",
+    logoUrl: "https://claude.ai/favicon.ico",
     color: "#C96442", initial: "C",
     snippetStep: 1, snippetLabel: "MCP URL",
     steps: [
@@ -71,7 +71,7 @@ const CLIENTS: Client[] = [
   {
     id: "claudecode",
     name: "Claude Code",
-    logoUrl: "https://cdn.simpleicons.org/anthropic/C96442",
+    logoUrl: "https://claude.ai/favicon.ico",
     color: "#C96442", initial: "C",
     snippetStep: 0, snippetLabel: "terminal",
     steps: [
@@ -83,7 +83,7 @@ const CLIENTS: Client[] = [
   {
     id: "cursor",
     name: "Cursor",
-    logoUrl: "https://www.cursor.com/favicon.ico",
+    logoUrl: "https://cursor.com/favicon.ico",
     color: "#1a1a1a", initial: "C",
     snippetStep: 1, snippetLabel: "~/.cursor/mcp.json",
     steps: [
@@ -109,7 +109,7 @@ const CLIENTS: Client[] = [
   {
     id: "cline",
     name: "Cline",
-    logoUrl: "https://cline.bot/favicon.ico",
+    logoUrl: "https://avatars.githubusercontent.com/u/184127137?v=4",
     color: "#2563EB", initial: "C",
     snippetStep: 1, snippetLabel: "cline_mcp_settings.json",
     steps: [

@@ -156,6 +156,15 @@ const CLIENTS: Client[] = [
   },
 ];
 
+const FEATURES = [
+  "Persistent memory across all tools",
+  "Google Calendar & Gmail",
+  "LinkedIn search & profiles",
+  "Notion read & write",
+  "Publish live web pages",
+  "ZYND network — find people",
+];
+
 const PRIMARY = 4;
 
 export default function ConnectPage() {
@@ -267,51 +276,65 @@ export default function ConnectPage() {
 
       {/* ── Content ── */}
       {status === "ready" && result && (
-        <>
-          <div style={toolHeader}>
-            <Logo client={active} size={32} />
-            <h2 style={toolName}>{active.name}</h2>
-            <span style={emailBadge}>{result.email}</span>
+        <div style={split}>
+          <div style={mainCol}>
+            <div style={toolHeader}>
+              <Logo client={active} size={40} />
+              <h2 style={toolName}>{active.name}</h2>
+              <span style={emailBadge}>{result.email}</span>
+            </div>
+
+            <div style={stepsWrap}>
+              {active.steps.map((step, i) => {
+                const isLast = i === active.steps.length - 1;
+                return (
+                  <div key={i} style={stepOuter}>
+                    {/* Left: number + line */}
+                    <div style={stepLeft}>
+                      <div style={stepNum}>{i + 1}</div>
+                      {!isLast && <div style={stepLine} />}
+                    </div>
+
+                    {/* Right: content */}
+                    <div style={{ flex: 1, paddingBottom: isLast ? 0 : 32 }}>
+                      <p style={stepTitle}>{step.title}</p>
+                      <p style={stepDesc}>{step.desc}</p>
+                      {i === active.snippetStep && (
+                        <div style={codeBlock}>
+                          <span style={codeLabel}>{active.snippetLabel}</span>
+                          <pre style={codeText}>{snippet}</pre>
+                          <button style={copyIconBtn} onClick={copy} title="Copy">
+                            {copied ? <span style={{ fontSize: 12, color: "var(--accent)" }}>✓</span> : <CopyIcon />}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
-          <div style={stepsWrap}>
-            {active.steps.map((step, i) => {
-              const isLast = i === active.steps.length - 1;
-              return (
-                <div key={i} style={stepOuter}>
-                  {/* Left: number + line */}
-                  <div style={stepLeft}>
-                    <div style={stepNum}>{i + 1}</div>
-                    {!isLast && <div style={stepLine} />}
-                  </div>
-
-                  {/* Right: content */}
-                  <div style={{ flex: 1, paddingBottom: isLast ? 0 : 28 }}>
-                    <p style={stepTitle}>{step.title}</p>
-                    <p style={stepDesc}>{step.desc}</p>
-                    {i === active.snippetStep && (
-                      <div style={codeBlock}>
-                        <span style={codeLabel}>{active.snippetLabel}</span>
-                        <pre style={codeText}>{snippet}</pre>
-                        <button style={copyIconBtn} onClick={copy} title="Copy">
-                          {copied ? <span style={{ fontSize: 12, color: "var(--accent)" }}>✓</span> : <CopyIcon />}
-                        </button>
-                      </div>
-                    )}
-                  </div>
+          <aside style={sideCol}>
+            <p style={featTitle}>What ZYND gives your AI</p>
+            <div style={featList}>
+              {FEATURES.map((f) => (
+                <div key={f} style={featItem}>
+                  <span style={check}>✓</span>
+                  {f}
                 </div>
-              );
-            })}
-          </div>
-        </>
+              ))}
+            </div>
+          </aside>
+        </div>
       )}
     </div>
   );
 }
 
 /* ── Styles ── */
-const page: CSSProperties = { padding: "24px 32px 48px", maxWidth: 860, margin: "0 auto" };
-const eyebrow: CSSProperties = { fontSize: 13, color: "var(--ink-secondary)", margin: "0 0 14px" };
+const page: CSSProperties = { padding: "32px 40px 56px", maxWidth: 1080, margin: "0 auto" };
+const eyebrow: CSSProperties = { fontSize: 14, color: "var(--ink-secondary)", margin: "0 0 16px" };
 
 /* Tab bar */
 const tabBar: CSSProperties = {
@@ -358,29 +381,48 @@ const dropBase: CSSProperties = {
 const dropOff: CSSProperties = { ...dropBase, color: "var(--ink-secondary)" };
 const dropOn: CSSProperties = { ...dropBase, color: "var(--ink)", fontWeight: 600, background: "var(--accent-soft-bg)" };
 
+/* Two-column layout */
+const split: CSSProperties = { display: "flex", gap: 40, alignItems: "flex-start" };
+const mainCol: CSSProperties = { flex: 1, minWidth: 0 };
+
 /* Tool header */
-const toolHeader: CSSProperties = { display: "flex", alignItems: "center", gap: 12, marginBottom: 24 };
-const toolName: CSSProperties = { fontSize: 22, fontWeight: 700, color: "var(--ink)", margin: 0, flex: 1 };
+const toolHeader: CSSProperties = { display: "flex", alignItems: "center", gap: 14, marginBottom: 28 };
+const toolName: CSSProperties = { fontSize: 26, fontWeight: 700, color: "var(--ink)", margin: 0, flex: 1 };
 const emailBadge: CSSProperties = {
-  fontSize: 11, color: "var(--ink-muted)",
+  fontSize: 12, color: "var(--ink-muted)",
   background: "var(--surface-raised)", border: "1px solid var(--border-subtle)",
-  borderRadius: "var(--r-sm)", padding: "2px 8px", whiteSpace: "nowrap",
+  borderRadius: "var(--r-sm)", padding: "3px 9px", whiteSpace: "nowrap",
 };
 
 /* Steps */
 const stepsWrap: CSSProperties = {};
-const stepOuter: CSSProperties = { display: "flex", gap: 16, alignItems: "stretch" };
-const stepLeft: CSSProperties = { display: "flex", flexDirection: "column", alignItems: "center", width: 32, flexShrink: 0 };
+const stepOuter: CSSProperties = { display: "flex", gap: 18, alignItems: "stretch" };
+const stepLeft: CSSProperties = { display: "flex", flexDirection: "column", alignItems: "center", width: 36, flexShrink: 0 };
 const stepNum: CSSProperties = {
-  width: 32, height: 32, borderRadius: "50%",
+  width: 36, height: 36, borderRadius: "50%",
   background: "var(--surface-raised)", border: "1px solid var(--border-default)",
   display: "flex", alignItems: "center", justifyContent: "center",
-  fontSize: 13, fontWeight: 600, color: "var(--ink-secondary)", flexShrink: 0,
+  fontSize: 14, fontWeight: 600, color: "var(--ink-secondary)", flexShrink: 0,
 };
 const stepLine: CSSProperties = { width: 1, background: "var(--border-default)", flex: 1, minHeight: 16, marginTop: 4 };
 
-const stepTitle: CSSProperties = { fontSize: 15, fontWeight: 600, color: "var(--ink)", margin: "5px 0 6px", lineHeight: 1.35 };
-const stepDesc: CSSProperties = { fontSize: 13.5, color: "var(--ink-secondary)", margin: "0 0 0", lineHeight: 1.6 };
+const stepTitle: CSSProperties = { fontSize: 16.5, fontWeight: 600, color: "var(--ink)", margin: "6px 0 7px", lineHeight: 1.35, maxWidth: 560 };
+const stepDesc: CSSProperties = { fontSize: 14.5, color: "var(--ink-secondary)", margin: "0 0 0", lineHeight: 1.6, maxWidth: 560 };
+
+/* Side panel */
+const sideCol: CSSProperties = {
+  width: 280, flexShrink: 0,
+  background: "var(--surface-raised)", border: "1px solid var(--border-subtle)",
+  borderRadius: "var(--r-lg)", padding: "22px 20px",
+  position: "sticky", top: 24,
+};
+const featTitle: CSSProperties = {
+  fontSize: 11, fontWeight: 600, color: "var(--ink-muted)",
+  textTransform: "uppercase", letterSpacing: "0.07em", margin: "0 0 16px",
+};
+const featList: CSSProperties = { display: "flex", flexDirection: "column", gap: 13 };
+const featItem: CSSProperties = { fontSize: 13.5, color: "var(--ink-secondary)", display: "flex", alignItems: "center", gap: 9, lineHeight: 1.4 };
+const check: CSSProperties = { color: "var(--accent)", fontSize: 13, fontWeight: 700, flexShrink: 0 };
 
 /* Code block */
 const codeBlock: CSSProperties = {

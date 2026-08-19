@@ -6,6 +6,10 @@ api.zynd.ai {
 	handle /mcp* {
 		reverse_proxy mcp:8090
 	}
+	# OAuth protected-resource metadata (RFC 9728) — served by FastMCP, not the API.
+	handle /.well-known/oauth-protected-resource* {
+		reverse_proxy mcp:8090
+	}
 	handle {
 		reverse_proxy api:8000
 	}

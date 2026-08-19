@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     # Browser origins allowed to call the API (dashboard + persona front-door, which
     # POSTs the session to /oauth/complete from the browser) — comma-separated.
     cors_origins: str = (
-        "https://zynd.ai,https://www.zynd.ai,https://persona.zynd.ai,http://localhost:3000"
+        "https://zynd.ai,https://www.zynd.ai,https://persona.zynd.ai,https://dev.persona.zynd.ai,http://localhost:3000"
     )
 
     @property

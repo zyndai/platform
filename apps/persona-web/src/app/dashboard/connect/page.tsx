@@ -157,12 +157,12 @@ const CLIENTS: Client[] = [
 ];
 
 const FEATURES = [
-  { title: "Persistent memory", desc: "Remembers facts, preferences, and context across every AI tool you use it from." },
-  { title: "Google Calendar & Gmail", desc: "Checks your schedule, books meetings, and reads or sends email on your behalf." },
-  { title: "LinkedIn search & profiles", desc: "Searches LinkedIn for people by role or topic and pulls their full profile." },
-  { title: "Notion read & write", desc: "Reads and writes pages directly in your connected Notion workspace." },
-  { title: "Publish live web pages", desc: "Spins up a shareable public web page from a chat, in seconds." },
-  { title: "ZYND network", desc: "Finds and connects you with other people on the ZYND network by role or topic — e.g. \"find me a co-founder.\"" },
+  { title: "Persistent memory", desc: "Remembers what you tell it, across every tool." },
+  { title: "Google Calendar & Gmail", desc: "Checks your calendar, books meetings, sends email." },
+  { title: "LinkedIn search & profiles", desc: "Looks people up on LinkedIn by role or topic." },
+  { title: "Notion read & write", desc: "Reads and edits your connected Notion pages." },
+  { title: "Publish live web pages", desc: "Turns a chat into a shareable web page." },
+  { title: "ZYND network", desc: "Finds people on ZYND — try \"find me a co-founder.\"" },
 ];
 
 const PRIMARY = 4;
@@ -328,7 +328,7 @@ export default function ConnectPage() {
             <div style={featList}>
               {FEATURES.map((f) => (
                 <div key={f.title} style={featItem}>
-                  <span style={check}>✓</span>
+                  <span style={check}>•</span>
                   <div>
                     <p style={featItemTitle}>{f.title}</p>
                     <p style={featItemDesc}>{f.desc}</p>
@@ -442,7 +442,7 @@ const featTitle: CSSProperties = {
 };
 const featList: CSSProperties = { display: "flex", flexDirection: "column", gap: 22 };
 const featItem: CSSProperties = { display: "flex", alignItems: "flex-start", gap: 11 };
-const check: CSSProperties = { color: "var(--accent)", fontSize: 14, fontWeight: 700, flexShrink: 0, marginTop: 2 };
+const check: CSSProperties = { color: "var(--accent)", fontSize: 20, lineHeight: 1, fontWeight: 700, flexShrink: 0, marginTop: -1 };
 const featItemTitle: CSSProperties = { fontSize: 14.5, fontWeight: 600, color: "var(--ink)", margin: "0 0 4px", lineHeight: 1.3 };
 const featItemDesc: CSSProperties = { fontSize: 13, color: "var(--ink-secondary)", margin: 0, lineHeight: 1.55 };
 

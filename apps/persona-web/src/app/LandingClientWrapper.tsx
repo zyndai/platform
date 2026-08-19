@@ -2,12 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Zap, X, Plug, MessageSquareText, Waypoints, FileOutput } from "lucide-react";
+import { X, Plug, MessageSquareText, Waypoints, FileOutput } from "lucide-react";
 import { getSupabase } from "@/lib/supabase";
 import { captureZyndOAuthReq } from "@/lib/zynd-oauth";
 import { Monogram } from "@/components/ui";
 
-type OAuthProvider = "linkedin_oidc" | "google";
+type OAuthProvider = "linkedin_oidc";
+
+function LinkedInLogo({ size = 20 }: { size?: number }) {
+  return (
+    <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24">
+      <path fill="#0A66C2" d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.13 1.45-2.13 2.94v5.67H9.36V9h3.41v1.56h.05c.48-.91 1.65-1.85 3.4-1.85 3.64 0 4.31 2.4 4.31 5.51v6.23zM5.34 7.43a2.06 2.06 0 11.01-4.13 2.06 2.06 0 010 4.13zM7.12 20.45H3.56V9h3.56v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0z" />
+    </svg>
+  );
+}
 
 const MCP_CLIENTS = [
   { name: "Claude", logoUrl: "https://anthropic.gallerycdn.vsassets.io/extensions/anthropic/claude-code/2.1.235/1787085642251/Microsoft.VisualStudio.Services.Icons.Default", color: "#C96442", initial: "C" },
@@ -154,20 +162,12 @@ export function LandingClientWrapper() {
                 type="button"
                 className="zhero-cta primary"
                 disabled={pending !== null}
-                onClick={() => handleOAuth("google")}
-              >
-                <Zap />
-                <span>
-                  {pending === "google" && slow ? "still going…" : "Continue with Google"}
-                </span>
-              </button>
-              <button
-                type="button"
-                className="zhero-cta secondary"
-                disabled={pending !== null}
                 onClick={() => handleOAuth("linkedin_oidc")}
               >
-                {pending === "linkedin_oidc" && slow ? "still going…" : "Continue with LinkedIn"}
+                <LinkedInLogo size={18} />
+                <span>
+                  {pending === "linkedin_oidc" && slow ? "still going…" : "Continue with LinkedIn"}
+                </span>
               </button>
             </div>
 
@@ -355,34 +355,16 @@ export function LandingClientWrapper() {
                 Welcome back
               </h2>
               <p className="zln-modal-sub">
-                Pick how you&apos;d like to sign in. We&apos;ll only ever read what you let us.
+                Continue with your LinkedIn account. We&apos;ll only ever read what you let us.
               </p>
               <div className="zln-modal-options">
                 <button
                   type="button"
                   className="zln-modal-option"
                   disabled={pending !== null}
-                  onClick={() => handleOAuth("google")}
-                >
-                  <svg aria-hidden="true" width="20" height="20" viewBox="0 0 48 48">
-                    <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
-                    <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3 0 5.7 1.1 7.8 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.7z" />
-                    <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.5-4.5 2.4-7.2 2.4-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z" />
-                    <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.6l6.2 5.2C40.3 36 44 30.5 44 24c0-1.3-.1-2.4-.4-3.5z" />
-                  </svg>
-                  <span>
-                    {pending === "google" && slow ? "Still going…" : "Continue with Google"}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="zln-modal-option"
-                  disabled={pending !== null}
                   onClick={() => handleOAuth("linkedin_oidc")}
                 >
-                  <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="#0A66C2">
-                    <path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.13 1.45-2.13 2.94v5.67H9.36V9h3.41v1.56h.05c.48-.91 1.65-1.85 3.4-1.85 3.64 0 4.31 2.4 4.31 5.51v6.23zM5.34 7.43a2.06 2.06 0 11.01-4.13 2.06 2.06 0 010 4.13zM7.12 20.45H3.56V9h3.56v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0z" />
-                  </svg>
+                  <LinkedInLogo />
                   <span>
                     {pending === "linkedin_oidc" && slow ? "Still going…" : "Continue with LinkedIn"}
                   </span>

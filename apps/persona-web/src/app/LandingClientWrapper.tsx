@@ -315,8 +315,8 @@ export function LandingClientWrapper() {
         </div>
 
         <footer className="zlanding-footer">
-          <span style={{ fontWeight: 600, color: "#0f172a" }}>Hermes test v4</span>
-          <span>324 people met someone new on Zynd this week.</span>
+          <span style={{ fontWeight: 600, color: "#0f172a" }}>ZyndAI Persona</span>
+          <span>Built for the networking you&apos;d actually enjoy.</span>
           <div className="zlanding-footer-links">
             <a href="/terms">Terms</a>
             <span>·</span>

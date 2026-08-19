@@ -58,7 +58,7 @@ const CLIENTS: Client[] = [
   {
     id: "claudedesktop",
     name: "Claude Desktop",
-    logoUrl: "https://claude.ai/favicon.ico",
+    logoUrl: "https://cdn.simpleicons.org/anthropic/C96442",
     color: "#C96442", initial: "C",
     snippetStep: 1, snippetLabel: "MCP URL",
     steps: [
@@ -71,7 +71,7 @@ const CLIENTS: Client[] = [
   {
     id: "claudecode",
     name: "Claude Code",
-    logoUrl: "https://claude.ai/favicon.ico",
+    logoUrl: "https://cdn.simpleicons.org/anthropic/C96442",
     color: "#C96442", initial: "C",
     snippetStep: 0, snippetLabel: "terminal",
     steps: [
@@ -310,7 +310,7 @@ export default function ConnectPage() {
 }
 
 /* ── Styles ── */
-const page: CSSProperties = { padding: "24px 0 48px" };
+const page: CSSProperties = { padding: "24px 32px 48px", maxWidth: 860 };
 const eyebrow: CSSProperties = { fontSize: 13, color: "var(--ink-secondary)", margin: "0 0 14px" };
 
 /* Tab bar */

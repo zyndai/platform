@@ -165,6 +165,10 @@ def _resolve_action_summary(final_reply: str, actions_taken: list[dict]) -> tupl
     tag_summary, cleaned = _extract_action_summary_tag(final_reply)
     if tag_summary:
         return tag_summary, cleaned
+    # Tags were present but produced no parseable items — still strip them so
+    # raw XML never reaches the frontend.
+    if cleaned != final_reply:
+        return _build_action_summary(actions_taken, final_reply), cleaned
     return _build_action_summary(actions_taken, final_reply), final_reply
 
 

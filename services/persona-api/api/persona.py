@@ -266,6 +266,7 @@ async def persona_public_card(user_id: str):
         "title": profile.get("title") or None,
         "organization": profile.get("organization") or None,
         "location": profile.get("location") or None,
+        "visibility": profile.get("visibility") or {},
     }
 
 def _fetch_auth_user_avatar(user_id: str) -> Optional[str]:

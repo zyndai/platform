@@ -8,6 +8,12 @@ export interface PublicPersona {
   title?: string | null;
   organization?: string | null;
   location?: string | null;
+  visibility?: {
+    publicProfile?: boolean;
+    calendar?: boolean;
+    chat?: boolean;
+    contact?: boolean;
+  };
 }
 
 export function normalizeAvatar(url: string | null | undefined): string | null {

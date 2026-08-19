@@ -238,9 +238,12 @@ def search_linkedin_people(user_id: str, query: str, location: str = "", top_k: 
     except Exception as e:
         return friendly_error("search LinkedIn for people", e)
 
+    # Query tokens used for headline relevance filtering below.
+    query_tokens = set(w.lower() for w in q.split() if len(w) > 2)
+
     results = []
     fields_missing = 0
-    for item in items[:top_k]:
+    for item in items[:top_k * 3]:  # overscan so filtering doesn't starve top_k
         name = item.get("name") or f"{item.get('firstName', '')} {item.get('lastName', '')}".strip()
         loc = item.get("location")
         if isinstance(loc, dict):
@@ -252,16 +255,28 @@ def search_linkedin_people(user_id: str, query: str, location: str = "", top_k: 
             if isinstance(first_pos, dict):
                 company = first_pos.get("companyName") or ""
         profile_url = item.get("linkedinUrl") or item.get("profileUrl") or item.get("url") or ""
+        headline = item.get("headline") or ""
+
+        # Drop profiles whose headline shares no words with the query — these are
+        # Apify returning tangentially matched profiles (LinkedIn's own algo
+        # sometimes ranks for profile activity or network proximity rather than role).
+        if query_tokens and headline:
+            headline_words = set(w.lower() for w in headline.split())
+            if not query_tokens & headline_words:
+                continue
+
         if not (name and profile_url):
             fields_missing += 1
         results.append({
             "name": name,
-            "headline": item.get("headline") or "",
+            "headline": headline,
             "location": loc or "",
             "profile_url": profile_url,
             "current_company": company,
             "match_reason": f"LinkedIn search match for \"{q}\"" + (f" in {location}" if location else ""),
         })
+        if len(results) >= top_k:
+            break
 
     out = {"status": "success", "count": len(results), "results": results, "source": "linkedin"}
     if items and fields_missing > len(results) / 2:

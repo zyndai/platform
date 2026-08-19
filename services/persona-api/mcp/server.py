@@ -1,6 +1,6 @@
 """
 MCP Server — wraps the existing ContextAware framework and registers
-all social/calendar/google/notion tools so the agent can discover and call them.
+calendar/google/notion/linkedin/network tools so the agent can discover and call them.
 """
 
 import sys
@@ -14,7 +14,6 @@ if _ctx_path not in sys.path:
 from ContextAware import ContextAware  # noqa: E402
 
 # ── Import Social Tools ──
-from mcp.tools.twitter import post_tweet, read_timeline, send_dm, read_dms
 from mcp.tools.linkedin import post_to_linkedin, send_linkedin_dm, read_linkedin_dms, read_linkedin_profile, search_linkedin_people
 
 # ── Import Google Workspace Tools ──
@@ -117,12 +116,6 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
 
     if disable_security:
         mcp.security(disable=True)
-
-    # ── Twitter / X tools ────────────────────────────────────────────
-    mcp.register(post_tweet, name="post_tweet", description="Post a tweet to X / Twitter")
-    mcp.register(read_timeline, name="read_timeline", description="Read tweets from X timeline")
-    mcp.register(send_dm, name="send_twitter_dm", description="Send a DM on X / Twitter")
-    mcp.register(read_dms, name="read_twitter_dms", description="Read recent DMs on X / Twitter")
 
     # ── LinkedIn tools ───────────────────────────────────────────────
     mcp.register(post_to_linkedin, name="post_to_linkedin", description="Share a post on LinkedIn feed")

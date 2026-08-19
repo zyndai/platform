@@ -41,6 +41,7 @@ export function PersonaCardClient({ persona, userId }: PersonaCardClientProps) {
   const personaLabel = `${firstName}'s persona`;
   const subline = [persona.title, persona.organization].filter(Boolean).join(" · ");
   const bio = persona.description?.trim() || "";
+  const showBooking = persona.visibility?.calendar !== false;
 
   const publicHref = typeof window !== "undefined" && userId
     ? new URL(`/p/${userId}`, window.location.origin).toString()
@@ -143,7 +144,7 @@ export function PersonaCardClient({ persona, userId }: PersonaCardClientProps) {
           <span className="public-agent-orb" aria-hidden />
           <div>
             <strong>Chat with {personaLabel}</strong>
-            <span>Ask about my work - book time</span>
+            <span>{showBooking ? "Ask about my work - book time" : "Ask about my work"}</span>
           </div>
           <button
             type="button"
@@ -167,16 +168,18 @@ export function PersonaCardClient({ persona, userId }: PersonaCardClientProps) {
       <section className="public-quick-actions">
         <p className="public-kicker">Quick actions</p>
         <div className="public-quick-grid">
-          <button
-            type="button"
-            onClick={handleConnect}
-            disabled={connecting}
-            aria-label={`Book a call with ${firstName}`}
-          >
-            <span><CalendarDays size={22} strokeWidth={2} /></span>
-            <strong>Book a call</strong>
-            <em>Find a slot together</em>
-          </button>
+          {showBooking && (
+            <button
+              type="button"
+              onClick={handleConnect}
+              disabled={connecting}
+              aria-label={`Book a call with ${firstName}`}
+            >
+              <span><CalendarDays size={22} strokeWidth={2} /></span>
+              <strong>Book a call</strong>
+              <em>Find a slot together</em>
+            </button>
+          )}
           <button
             type="button"
             onClick={handleConnect}

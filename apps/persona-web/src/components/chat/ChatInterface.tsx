@@ -836,14 +836,22 @@ export default function ChatInterface() {
           ) {
             setConversationId(event.conversation_id);
           }
-          updateStreaming((m) => ({
-            ...m,
-            content: (event.reply as string) || m.content,
-            actions: event.actions_taken as ChatMessage["actions"],
-            actionSummary: event.action_summary as ChatMessage["actionSummary"],
-            toolCalls: [],
-            streaming: false,
-          }));
+          updateStreaming((m) => {
+            const rawReply = event.reply as string | null | undefined;
+            // Strip any leaked <action_summary> tags the backend may not have cleaned,
+            // then prefer the server reply over streamed content unless reply is absent.
+            const cleanReply = rawReply != null
+              ? rawReply.replace(/<action_summary>[\s\S]*?<\/action_summary>/gi, "").trim()
+              : null;
+            return {
+              ...m,
+              content: cleanReply != null ? cleanReply : m.content,
+              actions: event.actions_taken as ChatMessage["actions"],
+              actionSummary: event.action_summary as ChatMessage["actionSummary"],
+              toolCalls: [],
+              streaming: false,
+            };
+          });
           break;
       }
     },

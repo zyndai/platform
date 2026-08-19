@@ -313,6 +313,14 @@ export default function ConnectPage() {
                 );
               })}
             </div>
+
+            <div style={tipBox}>
+              <p style={tipTitle}>Try it</p>
+              <p style={tipText}>
+                Once connected, ask your AI to remember something about you, check your calendar, or search
+                &ldquo;find me a co-founder&rdquo; to see the ZYND network in action.
+              </p>
+            </div>
           </div>
 
           <aside style={sideCol}>
@@ -411,6 +419,15 @@ const stepLine: CSSProperties = { width: 1, background: "var(--border-default)",
 
 const stepTitle: CSSProperties = { fontSize: 14.5, fontWeight: 600, color: "var(--ink)", margin: "4px 0 6px", lineHeight: 1.35, maxWidth: 560 };
 const stepDesc: CSSProperties = { fontSize: 13, color: "var(--ink-secondary)", margin: "0 0 0", lineHeight: 1.55, maxWidth: 560 };
+
+/* Try-it tip */
+const tipBox: CSSProperties = {
+  marginTop: 36, padding: "20px 22px", maxWidth: 560,
+  background: "var(--surface-raised)", border: "1px solid var(--border-subtle)",
+  borderRadius: "var(--r-md)",
+};
+const tipTitle: CSSProperties = { fontSize: 13, fontWeight: 600, color: "var(--ink)", margin: "0 0 7px" };
+const tipText: CSSProperties = { fontSize: 13, color: "var(--ink-secondary)", margin: 0, lineHeight: 1.6 };
 
 /* Side panel */
 const sideCol: CSSProperties = {

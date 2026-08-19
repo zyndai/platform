@@ -9,6 +9,25 @@ import { Monogram } from "@/components/ui";
 
 type OAuthProvider = "linkedin_oidc" | "google";
 
+const MCP_CLIENTS = [
+  { name: "Claude", logoUrl: "https://anthropic.gallerycdn.vsassets.io/extensions/anthropic/claude-code/2.1.235/1787085642251/Microsoft.VisualStudio.Services.Icons.Default", color: "#C96442", initial: "C" },
+  { name: "Cursor", logoUrl: "https://cursor.com/favicon.ico", color: "#1a1a1a", initial: "C" },
+  { name: "Windsurf", logoUrl: "https://windsurf.com/favicon.ico", color: "#00897B", initial: "W" },
+  { name: "Cline", logoUrl: "https://avatars.githubusercontent.com/u/184127137?v=4", color: "#2563EB", initial: "C" },
+  { name: "OpenCode", logoUrl: "https://opencode.ai/favicon.ico", color: "#EA580C", initial: "O" },
+];
+
+function ClientMark({ logoUrl, color, initial }: { logoUrl: string; color: string; initial: string }) {
+  const [err, setErr] = useState(false);
+  if (!logoUrl || err) {
+    return <span className="zmcp-client-chip-mark" style={{ background: color }}>{initial}</span>;
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={logoUrl} alt="" className="zmcp-client-chip-mark-img" onError={() => setErr(true)} />
+  );
+}
+
 export function LandingClientWrapper() {
   const router = useRouter();
 
@@ -275,26 +294,12 @@ export function LandingClientWrapper() {
             <div className="zmcp-clients">
               <span className="zmcp-clients-label">Connect from</span>
               <div className="zmcp-clients-row">
-                <span className="zmcp-client-chip">
-                  <span className="zmcp-client-chip-mark" style={{ background: "#C96442" }}>C</span>
-                  Claude
-                </span>
-                <span className="zmcp-client-chip">
-                  <span className="zmcp-client-chip-mark" style={{ background: "#1a1a1a" }}>C</span>
-                  Cursor
-                </span>
-                <span className="zmcp-client-chip">
-                  <span className="zmcp-client-chip-mark" style={{ background: "#00897B" }}>W</span>
-                  Windsurf
-                </span>
-                <span className="zmcp-client-chip">
-                  <span className="zmcp-client-chip-mark" style={{ background: "#2563EB" }}>C</span>
-                  Cline
-                </span>
-                <span className="zmcp-client-chip">
-                  <span className="zmcp-client-chip-mark" style={{ background: "#EA580C" }}>O</span>
-                  OpenCode
-                </span>
+                {MCP_CLIENTS.map((c) => (
+                  <span className="zmcp-client-chip" key={c.name}>
+                    <ClientMark logoUrl={c.logoUrl} color={c.color} initial={c.initial} />
+                    {c.name}
+                  </span>
+                ))}
                 <span className="zmcp-client-chip zmcp-client-chip-more">+ any MCP client</span>
               </div>
             </div>

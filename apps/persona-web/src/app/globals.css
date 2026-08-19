@@ -8430,6 +8430,14 @@ textarea.input { resize: vertical; min-height: 88px; }
   font-weight: 700;
   flex-shrink: 0;
 }
+.zmcp-client-chip-mark-img {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  object-fit: contain;
+  flex-shrink: 0;
+  display: block;
+}
 .zmcp-client-chip-more {
   border-style: dashed;
   color: #64748b;

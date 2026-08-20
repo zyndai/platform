@@ -18,6 +18,7 @@ import {
   type OnboardingStep,
 } from "@/lib/onboarding";
 import { completeZyndOAuth } from "@/lib/zynd-oauth";
+import { captureSignupMeta } from "@/lib/signup-meta";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -199,6 +200,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (user) {
       void recomputeOnboarding(user);
+      // Silent one-time signup metadata capture (IP/geo/browser/OS/device).
+      // Fire-and-forget; guarded by localStorage + user_metadata.signup_meta.
+      void captureSignupMeta(user);
     }
   }, [user, recomputeOnboarding]);
 

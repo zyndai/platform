@@ -141,6 +141,16 @@ const CLIENTS: Client[] = [
       { title: "Restart Codex", desc: "Restart Codex to pick up the new server." },
     ],
     snippet: (token, url) => `[mcp_servers.zynd]\nurl = "${url}"\nhttp_headers = { "Authorization" = "Bearer ${token}" }`,
+    altMethod: {
+      label: "Ask Codex to do it",
+      steps: [
+        { title: "Paste this into Codex's chat", desc: "Codex can edit its own config file — paste this and it'll make the edit for you." },
+        { title: "Restart Codex", desc: "Restart Codex to pick up the new server." },
+      ],
+      snippetStep: 0,
+      snippetLabel: "prompt",
+      snippet: (token, url) => `Edit my Codex config so the ZYND MCP server is available.\nEdit "~/.codex/config.toml" (or ".codex/config.toml" in this project for a scoped setup), creating the file and any parent directories if they don't exist.\nAdd the following without removing any existing "[mcp_servers.*]" entries:\n\n[mcp_servers.zynd]\nurl = "${url}"\nhttp_headers = { "Authorization" = "Bearer ${token}" }\n\nThen tell me to restart Codex to pick up the new server.`,
+    },
   },
   {
     id: "opencode",

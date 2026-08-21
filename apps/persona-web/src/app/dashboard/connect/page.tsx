@@ -421,7 +421,10 @@ const tabBar: CSSProperties = {
   marginBottom: 28,
   gap: 8,
 };
-const tabsInner: CSSProperties = { display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" };
+const tabsInner: CSSProperties = {
+  display: "flex", alignItems: "center", gap: 2, flexWrap: "nowrap",
+  flex: "1 1 auto", minWidth: 0, overflowX: "auto",
+};
 const tabBase: CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 8,
   padding: "8px 12px", borderRadius: "var(--r-sm)",

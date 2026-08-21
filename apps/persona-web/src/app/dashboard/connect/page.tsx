@@ -7,7 +7,7 @@ const MEMORY_API = (process.env.NEXT_PUBLIC_MEMORY_API_URL || "https://api.zynd.
 
 type Exchange = { token: string; mcp_url: string; email: string };
 type Status = "loading" | "ready" | "error";
-type ClientId = "claudedesktop" | "claudecode" | "cursor" | "windsurf" | "cline" | "opencode" | "openclaw" | "hermes";
+type ClientId = "claudedesktop" | "claudecode" | "cursor" | "windsurf" | "cline" | "codex" | "opencode" | "openclaw" | "hermes";
 
 interface Step { title: string; desc: string; }
 
@@ -128,6 +128,19 @@ const CLIENTS: Client[] = [
       { title: "Restart your editor", desc: "Restart your editor to activate the new MCP server." },
     ],
     snippet: mcpRemoteBlock,
+  },
+  {
+    id: "codex",
+    name: "Codex",
+    logoUrl: "https://openai.com/favicon.ico",
+    color: "#10A37F", initial: "C",
+    snippetStep: 1, snippetLabel: "~/.codex/config.toml",
+    steps: [
+      { title: "Open your config file", desc: "Edit ~/.codex/config.toml in your home directory, or .codex/config.toml in your project for a scoped setup." },
+      { title: "Add the ZYND server", desc: "Add this block to your config." },
+      { title: "Restart Codex", desc: "Restart Codex to pick up the new server." },
+    ],
+    snippet: (token, url) => `[mcp_servers.zynd]\nurl = "${url}"\nhttp_headers = { "Authorization" = "Bearer ${token}" }`,
   },
   {
     id: "opencode",

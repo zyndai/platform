@@ -185,7 +185,7 @@ async def _get_last_sent(user_id: str, kind: str) -> float:
     """
     try:
         from agent.persona_manager import get_persona_status
-        persona = get_persona_status(user_id)
+        persona = await asyncio.to_thread(get_persona_status, user_id)
         profile = persona.get("profile") if persona else None
         if not isinstance(profile, dict):
             return 0.0
@@ -200,12 +200,14 @@ async def _set_last_sent(user_id: str, kind: str, ts: float) -> None:
     try:
         sb = config.get_supabase()
         from agent.persona_manager import get_persona_status
-        persona = get_persona_status(user_id)
+        persona = await asyncio.to_thread(get_persona_status, user_id)
         profile = persona.get("profile") if persona else None
         if not isinstance(profile, dict):
             profile = {}
         profile[f"last_{kind}_at"] = ts
-        sb.table("persona_agents").update({"profile": profile}).eq("user_id", user_id).execute()
+        await asyncio.to_thread(
+            lambda: sb.table("persona_agents").update({"profile": profile}).eq("user_id", user_id).execute()
+        )
     except Exception as e:
         logger.warning("[proactive] failed to persist last-sent for %s/%s: %s", user_id, kind, e)
 
@@ -226,8 +228,8 @@ async def _get_active_users() -> list[tuple[str, str | None]]:
     """Fetch all active users with deployed personas and their timezones."""
     try:
         sb = config.get_supabase()
-        rows = (
-            sb.table("persona_agents")
+        rows = await asyncio.to_thread(
+            lambda: sb.table("persona_agents")
             .select("user_id, profile")
             .eq("active", True)
             .execute()

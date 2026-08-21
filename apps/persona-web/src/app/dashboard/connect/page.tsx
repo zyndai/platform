@@ -85,7 +85,8 @@ const CLIENTS: Client[] = [
     snippetStep: 0, snippetLabel: "terminal",
     steps: [
       { title: "Run the setup command", desc: "Run this in your terminal — your token is pre-filled." },
-      { title: "Verify the connection", desc: "Type /mcp in Claude Code. ZYND should appear in the server list." },
+      { title: "Authorize the connection", desc: 'Type /mcp in Claude Code, select "zynd", and complete the sign-in. Required even though the token is pre-filled.' },
+      { title: "Be specific when you ask", desc: "Claude Code has its own tools for things like hosting a page — say something like \"publish this as a ZYND page\" so it uses the zynd MCP tool instead of its own (e.g. Vercel)." },
     ],
     snippet: (token, url) => `claude mcp add --scope user --transport http zynd ${url} --header "Authorization: Bearer ${token}"`,
   },

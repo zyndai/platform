@@ -10,7 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 import config
 from api.auth import get_current_user
-from services.linkedin_scraper import scrape_user
+from services.linkedin_scraper import scrape_user, scrape_profile_only, scrape_posts_only
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -30,12 +30,29 @@ async def _safe_scrape(user_id: str, full_name: str, profile_url: str | None = N
         logger.error(f"[linkedin] background scrape crashed for {user_id}: {e}")
 
 
+async def _safe_scrape_profile_only(user_id: str, profile_url: str) -> None:
+    try:
+        result = await scrape_profile_only(user_id, profile_url)
+        logger.info(f"[linkedin] background profile-only scrape done for {user_id}: {result}")
+    except Exception as e:
+        logger.error(f"[linkedin] background profile-only scrape crashed for {user_id}: {e}")
+
+
+async def _safe_scrape_posts_only(user_id: str, profile_url: str) -> None:
+    try:
+        result = await scrape_posts_only(user_id, profile_url)
+        logger.info(f"[linkedin] background posts-only scrape done for {user_id}: {result}")
+    except Exception as e:
+        logger.error(f"[linkedin] background posts-only scrape crashed for {user_id}: {e}")
+
+
 @router.post("/scrape")
 async def trigger_scrape(
     background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
     force: bool = False,
     profile_url: str | None = None,
+    fast: bool = False,
 ):
     """
     Kick off a LinkedIn scrape for the current user. Returns immediately;
@@ -56,6 +73,14 @@ async def trigger_scrape(
     search-by-name is the only option when the user doesn't supply this.
     For a common name that guess can (and does) land on a stranger's
     profile; this is the only way to guarantee we scrape the right one.
+
+    `fast=True` (onboarding's LinkedIn step) scrapes just the profile
+    actor, skipping posts — the profile+posts actors run in parallel in
+    the normal path, so the wait is bounded by whichever is slower, for
+    data (headline/summary/skills) the onboarding form doesn't need posts
+    for. Posts are backfilled the next time this is called without `fast`
+    (see the has_posts branch below), once a later onboarding step
+    (matches/brief) actually needs them.
     """
     metadata = user.get("user_metadata") or {}
     full_name = metadata.get("full_name") or metadata.get("name") or ""
@@ -73,12 +98,15 @@ async def trigger_scrape(
             {"user_id": user["id"], "profile_url": profile_url},
             on_conflict="user_id",
         ).execute()
+        if fast:
+            background_tasks.add_task(_safe_scrape_profile_only, user["id"], profile_url)
+            return {"status": "started", "source": "user_provided_url_fast"}
         background_tasks.add_task(_safe_scrape, user["id"], full_name, profile_url)
         return {"status": "started", "source": "user_provided_url"}
 
     existing = (
         sb.table("linkedin_profiles")
-        .select("scraped_at, profile_url, raw_profile")
+        .select("scraped_at, profile_url, raw_profile, raw_posts")
         .eq("user_id", user["id"])
         .execute()
     )
@@ -96,8 +124,14 @@ async def trigger_scrape(
             key in raw_profile
             for key in ("headline", "experience", "education", "skills", "summary")
         )
-        if not force and row.get("scraped_at") and has_real_data:
+        has_posts = bool(row.get("raw_posts"))
+        if not force and row.get("scraped_at") and has_real_data and has_posts:
             return {"status": "cached", "scraped_at": row["scraped_at"]}
+        # Profile came in via the fast onboarding path but posts never got
+        # backfilled — fetch just those instead of redoing the profile scrape.
+        if not force and has_real_data and not has_posts and row.get("profile_url"):
+            background_tasks.add_task(_safe_scrape_posts_only, user["id"], row["profile_url"])
+            return {"status": "started", "source": "posts_backfill"}
         # If we have a profile_url from OAuth but no scrape data yet, use it.
         if row.get("profile_url"):
             background_tasks.add_task(_safe_scrape, user["id"], full_name, row["profile_url"])

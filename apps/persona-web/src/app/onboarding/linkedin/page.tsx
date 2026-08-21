@@ -42,10 +42,11 @@ export default function LinkedInStep() {
       data: { session },
     } = await sb.auth.getSession();
     const jwt = session?.access_token;
-    if (jwt) {
-      const params = profileUrl ? `?profile_url=${encodeURIComponent(profileUrl)}` : "";
-      // Fire and forget, same as the reading step's scrape kick-off — the
-      // result lands in linkedin_profiles long after the user has moved on.
+    if (jwt && profileUrl) {
+      // fast=true: profile actor only (no posts) — the "you" step polls
+      // for this and needs it back quickly. Posts get backfilled later,
+      // once matches/brief actually need them (see trigger_scrape).
+      const params = `?profile_url=${encodeURIComponent(profileUrl)}&fast=true`;
       await fetch(`${API_BASE}/api/linkedin/scrape${params}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${jwt}` },

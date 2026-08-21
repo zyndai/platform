@@ -989,6 +989,5 @@ async def add_todo(title: str, suid: str = Depends(_suid)) -> dict:
 
 app = mcp.http_app(
     stateless_http=True,
-    json_response=True,
     allowed_hosts=[urlsplit(settings.mcp_public_base_url).hostname],
 )

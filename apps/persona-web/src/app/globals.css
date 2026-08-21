@@ -3478,6 +3478,9 @@ textarea.input { resize: vertical; min-height: 88px; }
 
 .people-presets::-webkit-scrollbar { display: none; }
 
+.connect-tabs-scroll { scrollbar-width: none; }
+.connect-tabs-scroll::-webkit-scrollbar { display: none; }
+
 .people-preset {
   display: inline-flex;
   align-items: center;

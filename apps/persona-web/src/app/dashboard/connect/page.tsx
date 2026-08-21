@@ -102,6 +102,16 @@ const CLIENTS: Client[] = [
       { title: "Restart Cursor", desc: "Restart Cursor to activate the new MCP server." },
     ],
     snippet: mcpRemoteBlock,
+    altMethod: {
+      label: "Ask Cursor to do it",
+      steps: [
+        { title: "Paste this into Cursor's chat", desc: "Cursor can edit its own config file — paste this and it'll make the edit for you." },
+        { title: "Restart Cursor", desc: "Restart Cursor to pick up the new server." },
+      ],
+      snippetStep: 0,
+      snippetLabel: "prompt",
+      snippet: (token, url) => `Edit my Cursor MCP config so the ZYND MCP server is available.\nEdit "~/.cursor/mcp.json" (create the file and the ~/.cursor directory if they don't exist), or ".cursor/mcp.json" in this project for a project-scoped setup.\nMerge the following into the "mcpServers" key without removing any existing entries there (create the key if it doesn't exist):\n\n{\n  "zynd": {\n    "command": "npx",\n    "args": ["-y", "mcp-remote", "${url}", "--header", "Authorization: Bearer ${token}"]\n  }\n}\n\nThen tell me to restart Cursor to pick up the new server.`,
+    },
   },
   {
     id: "windsurf",
@@ -115,6 +125,16 @@ const CLIENTS: Client[] = [
       { title: "Restart Windsurf", desc: "Restart Windsurf to activate the new MCP server." },
     ],
     snippet: mcpRemoteBlock,
+    altMethod: {
+      label: "Ask Windsurf to do it",
+      steps: [
+        { title: "Paste this into Windsurf's chat", desc: "Windsurf's Cascade can edit its own config file — paste this and it'll make the edit for you." },
+        { title: "Restart Windsurf", desc: "Restart Windsurf to pick up the new server." },
+      ],
+      snippetStep: 0,
+      snippetLabel: "prompt",
+      snippet: (token, url) => `Edit my Windsurf MCP config so the ZYND MCP server is available.\nEdit "~/.codeium/windsurf/mcp_config.json" (create the file and any parent directories if they don't exist).\nMerge the following into the "mcpServers" key without removing any existing entries there (create the key if it doesn't exist):\n\n{\n  "zynd": {\n    "command": "npx",\n    "args": ["-y", "mcp-remote", "${url}", "--header", "Authorization: Bearer ${token}"]\n  }\n}\n\nThen tell me to restart Windsurf to pick up the new server.`,
+    },
   },
   {
     id: "cline",
@@ -128,6 +148,16 @@ const CLIENTS: Client[] = [
       { title: "Restart your editor", desc: "Restart your editor to activate the new MCP server." },
     ],
     snippet: mcpRemoteBlock,
+    altMethod: {
+      label: "Ask Cline to do it",
+      steps: [
+        { title: "Paste this into Cline's chat", desc: "Cline can edit its own MCP settings file — paste this and it'll make the edit for you." },
+        { title: "Restart your editor", desc: "Restart your editor to activate the new MCP server." },
+      ],
+      snippetStep: 0,
+      snippetLabel: "prompt",
+      snippet: (token, url) => `Edit your own MCP settings (cline_mcp_settings.json) so the ZYND MCP server is available — you should know where that file lives for this install.\nMerge the following into the "mcpServers" key without removing any existing entries there (create the key if it doesn't exist):\n\n{\n  "zynd": {\n    "command": "npx",\n    "args": ["-y", "mcp-remote", "${url}", "--header", "Authorization: Bearer ${token}"]\n  }\n}\n\nThen tell me to restart my editor to pick up the new server.`,
+    },
   },
   {
     id: "codex",
@@ -187,6 +217,16 @@ const CLIENTS: Client[] = [
       { title: "Restart OpenClaw", desc: "Restart OpenClaw to pick up the new server." },
     ],
     snippet: mcpRemoteBlock,
+    altMethod: {
+      label: "Ask OpenClaw to do it",
+      steps: [
+        { title: "Paste this into OpenClaw's chat", desc: "OpenClaw can edit its own config file — paste this and it'll make the edit for you." },
+        { title: "Restart OpenClaw", desc: "Restart OpenClaw to pick up the new server." },
+      ],
+      snippetStep: 0,
+      snippetLabel: "prompt",
+      snippet: (token, url) => `Edit your own MCP config so the ZYND MCP server is available — you should know where that config file lives for this install (project or home directory).\nMerge the following into the "mcpServers" key without removing any existing entries there (create the key if it doesn't exist):\n\n{\n  "zynd": {\n    "command": "npx",\n    "args": ["-y", "mcp-remote", "${url}", "--header", "Authorization: Bearer ${token}"]\n  }\n}\n\nThen tell me to restart OpenClaw to pick up the new server.`,
+    },
   },
   {
     id: "hermes",
@@ -280,7 +320,7 @@ export default function ConnectPage() {
 
       {/* ── Tab bar ── */}
       <div style={tabBar}>
-        <div style={tabsInner}>
+        <div style={tabsInner} className="connect-tabs-scroll">
           {primaryClients.map((c) => (
             <button key={c.id} style={activeId === c.id ? tabOn : tabOff} onClick={() => select(c.id)}>
               <Logo client={c} size={20} />

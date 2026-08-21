@@ -11,6 +11,14 @@ type ClientId = "claudedesktop" | "claudecode" | "cursor" | "windsurf" | "cline"
 
 interface Step { title: string; desc: string; }
 
+interface AltMethod {
+  label: string;
+  steps: Step[];
+  snippetStep: number;
+  snippetLabel: string;
+  snippet: (token: string, url: string) => string;
+}
+
 interface Client {
   id: ClientId;
   name: string;
@@ -21,6 +29,7 @@ interface Client {
   snippetStep: number;
   snippetLabel: string;
   snippet: (token: string, url: string) => string;
+  altMethod?: AltMethod;
 }
 
 function Logo({ client, size = 18 }: { client: Client; size?: number }) {
@@ -131,6 +140,16 @@ const CLIENTS: Client[] = [
       { title: "Restart OpenCode", desc: "Restart OpenCode to pick up the new server." },
     ],
     snippet: (token, url) => JSON.stringify({ mcp: { zynd: { command: "npx", args: ["-y", "mcp-remote", url, "--header", `Authorization: Bearer ${token}`] } } }, null, 2),
+    altMethod: {
+      label: "Ask OpenCode to do it",
+      steps: [
+        { title: "Paste this into OpenCode's chat", desc: "OpenCode can edit its own config file — paste this and it'll make the edit for you." },
+        { title: "Restart OpenCode", desc: "Restart OpenCode to pick up the new server." },
+      ],
+      snippetStep: 0,
+      snippetLabel: "prompt",
+      snippet: (token, url) => `Edit my OpenCode config so the ZYND MCP server is available.\nIf "opencode.json" exists in this project root, edit that one; otherwise create or edit "~/.config/opencode/config.json" for a global setup (create the file and any parent directories if they don't exist).\nMerge the following into the "mcp" key without removing any existing entries there (create the "mcp" key if it doesn't exist):\n\n{\n  "zynd": {\n    "command": "npx",\n    "args": ["-y", "mcp-remote", "${url}", "--header", "Authorization: Bearer ${token}"]\n  }\n}\n\nThen tell me to restart OpenCode to pick up the new server.`,
+    },
   },
   {
     id: "openclaw",
@@ -179,6 +198,7 @@ export default function ConnectPage() {
   const [copied, setCopied] = useState(false);
   const [reload, setReload] = useState(0);
   const [showMore, setShowMore] = useState(false);
+  const [useAlt, setUseAlt] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -216,12 +236,13 @@ export default function ConnectPage() {
   }, [reload]);
 
   const active = CLIENTS.find((c) => c.id === activeId)!;
-  const snippet = result ? active.snippet(result.token, result.mcp_url) : "";
+  const method: Client | AltMethod = useAlt && active.altMethod ? active.altMethod : active;
+  const snippet = result ? method.snippet(result.token, result.mcp_url) : "";
   const primaryClients = CLIENTS.slice(0, PRIMARY);
   const moreClients = CLIENTS.slice(PRIMARY);
   const activeInMore = moreClients.some((c) => c.id === activeId);
 
-  const select = (id: ClientId) => { setActiveId(id); setCopied(false); setShowMore(false); };
+  const select = (id: ClientId) => { setActiveId(id); setCopied(false); setShowMore(false); setUseAlt(false); };
 
   const copy = () => {
     navigator.clipboard.writeText(snippet);
@@ -290,9 +311,20 @@ export default function ConnectPage() {
               <span style={emailBadge}>{result.email}</span>
             </div>
 
+            {active.altMethod && (
+              <div style={methodToggle}>
+                <button style={!useAlt ? methodPillOn : methodPillOff} onClick={() => setUseAlt(false)}>
+                  Edit config file
+                </button>
+                <button style={useAlt ? methodPillOn : methodPillOff} onClick={() => setUseAlt(true)}>
+                  {active.altMethod.label}
+                </button>
+              </div>
+            )}
+
             <div style={stepsWrap}>
-              {active.steps.map((step, i) => {
-                const isLast = i === active.steps.length - 1;
+              {method.steps.map((step, i) => {
+                const isLast = i === method.steps.length - 1;
                 return (
                   <div key={i} style={stepOuter}>
                     {/* Left: number + line */}
@@ -305,9 +337,9 @@ export default function ConnectPage() {
                     <div style={{ flex: 1, paddingBottom: isLast ? 0 : 32 }}>
                       <p style={stepTitle}>{step.title}</p>
                       <p style={stepDesc}>{step.desc}</p>
-                      {i === active.snippetStep && (
+                      {i === method.snippetStep && (
                         <div style={codeBlock}>
-                          <span style={codeLabel}>{active.snippetLabel}</span>
+                          <span style={codeLabel}>{method.snippetLabel}</span>
                           <pre style={codeText}>{snippet}</pre>
                           <button style={copyIconBtn} onClick={copy} title="Copy">
                             {copied ? <span style={{ fontSize: 12, color: "var(--accent)" }}>✓</span> : <CopyIcon />}
@@ -410,6 +442,20 @@ const emailBadge: CSSProperties = {
   background: "var(--surface-raised)", border: "1px solid var(--border-subtle)",
   borderRadius: "var(--r-sm)", padding: "3px 9px", whiteSpace: "nowrap",
 };
+
+/* Method toggle */
+const methodToggle: CSSProperties = {
+  display: "flex", gap: 6, marginBottom: 24,
+  background: "var(--surface-raised)", border: "1px solid var(--border-default)",
+  borderRadius: "var(--r-sm)", padding: 4, width: "fit-content",
+};
+const methodPillBase: CSSProperties = {
+  padding: "6px 12px", borderRadius: "var(--r-sm)", border: "none",
+  cursor: "pointer", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap",
+  transition: "background 120ms, color 120ms",
+};
+const methodPillOff: CSSProperties = { ...methodPillBase, color: "var(--ink-secondary)", background: "transparent" };
+const methodPillOn: CSSProperties = { ...methodPillBase, color: "var(--ink)", background: "var(--surface)" };
 
 /* Steps */
 const stepsWrap: CSSProperties = {};

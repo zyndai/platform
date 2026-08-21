@@ -17,7 +17,7 @@ const PROFILE_RE = /^https?:\/\/([\w-]+\.)?linkedin\.com\/in\/[\w-]+\/?$/i;
 
 // Lucide dropped brand glyphs in v0.452 (trademark concerns), so the
 // LinkedIn mark is inlined here — same path used on the Accounts page.
-function LinkedinIcon({ size = 32 }: { size?: number }) {
+function LinkedinIcon({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M20.45 20.45h-3.55v-5.57c0-1.33-.03-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.94v5.67H9.35V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zm1.78 13.02H3.55V9h3.57v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.73v20.54C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.73V1.73C24 .77 23.2 0 22.22 0z" />
@@ -77,21 +77,29 @@ export default function LinkedInStep() {
 
   return (
     <section className="s-linkedin">
+      <h2 className="stage-title">Got a LinkedIn?</h2>
+      <p className="stage-subtitle">
+        Paste your profile link and I&apos;ll pull in your experience, photo, and skills — so
+        you don&apos;t have to fill it all in by hand.
+      </p>
+
       <Card className="li-card">
-        <div className="li-icon">
-          <LinkedinIcon size={28} />
-        </div>
-        <h2 className="display-s" style={{ marginBottom: 12 }}>
-          Got a LinkedIn? Let&apos;s pull in your profile.
-        </h2>
-        <p className="body secondary" style={{ marginBottom: 20 }}>
-          Paste your profile link and I&apos;ll read your experience, so you don&apos;t have to
-          type it all out.
-        </p>
-        <Button variant="secondary" fullWidth onClick={openMyProfile} style={{ marginBottom: 14 }}>
+        <Button
+          variant="secondary"
+          fullWidth
+          onClick={openMyProfile}
+          leftIcon={<LinkedinIcon />}
+        >
           Open my LinkedIn profile ↗
         </Button>
-        <FieldLabel htmlFor="li-url">Then copy the link from your address bar and paste it here</FieldLabel>
+
+        <div className="li-connector">
+          <span />
+          then paste the link below
+          <span />
+        </div>
+
+        <FieldLabel htmlFor="li-url">Your LinkedIn profile link</FieldLabel>
         <Input
           id="li-url"
           placeholder="https://www.linkedin.com/in/your-name"
@@ -102,24 +110,21 @@ export default function LinkedInStep() {
           }}
           disabled={working !== null}
         />
-        {error && (
-          <p className="body" style={{ color: "var(--danger)", fontSize: 13, marginTop: 8 }}>
-            {error}
-          </p>
-        )}
-        <Button fullWidth onClick={continueClick} disabled={working !== null} style={{ marginTop: 16 }}>
-          {working === "continue" ? "One sec…" : "Continue"}
+        {error && <p className="li-error">{error}</p>}
+
+        <Button fullWidth onClick={continueClick} disabled={working !== null} style={{ marginTop: 18 }}>
+          {working === "continue" ? "One sec…" : "Continue →"}
         </Button>
+
         <div className="trust">
           <Shield />
           <span>We only read your public profile — nothing gets posted on your behalf.</span>
         </div>
-        <div style={{ marginTop: 16, textAlign: "center" }}>
-          <Button variant="tertiary" onClick={skip} disabled={working !== null}>
-            {working === "skip" ? "One sec…" : "Skip for now"}
-          </Button>
-        </div>
       </Card>
+
+      <Button variant="tertiary" onClick={skip} disabled={working !== null}>
+        {working === "skip" ? "One sec…" : "Skip for now"}
+      </Button>
     </section>
   );
 }

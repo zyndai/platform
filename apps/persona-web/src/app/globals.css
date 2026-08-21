@@ -2647,26 +2647,59 @@ textarea.input { resize: vertical; min-height: 88px; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: 12vh;
+  padding-top: 9vh;
+}
+.s-linkedin .stage-title {
+  font-family: var(--font-instrument-sans), 'Instrument Sans', system-ui, sans-serif;
+  font-size: clamp(28px, 3.6vw, 38px);
+  font-weight: 600;
+  letter-spacing: -1px;
+  line-height: 1.1;
+  color: var(--ink);
+  margin-bottom: 12px;
+  text-align: center;
+  max-width: 560px;
+}
+.s-linkedin .stage-subtitle {
+  font-family: var(--font-instrument-sans), 'Instrument Sans', system-ui, sans-serif;
+  color: var(--ink-secondary);
+  font-size: 16px;
+  line-height: 1.55;
+  margin-bottom: 32px;
+  text-align: center;
+  max-width: 480px;
 }
 .s-linkedin .li-card {
-  max-width: 520px;
+  max-width: 440px;
   width: 100%;
   text-align: left;
-  padding: 36px;
+  padding: 28px;
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: 20px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02), 0 12px 32px rgba(15, 23, 42, 0.05);
+  margin-bottom: 20px;
 }
-.s-linkedin .li-icon {
-  width: 40px;
-  height: 40px;
-  padding: 6px;
-  border-radius: 12px;
-  background: var(--accent-soft-bg);
-  color: var(--accent);
-  margin-bottom: 18px;
+.s-linkedin .li-connector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0;
+  font-family: var(--font-instrument-sans), 'Instrument Sans', system-ui, sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+.s-linkedin .li-connector span {
+  height: 1px;
+  flex: 1;
+  background: var(--border-subtle);
+}
+.s-linkedin .li-error {
+  font-size: 13px;
+  color: var(--danger);
+  margin-top: 8px;
 }
 .s-linkedin .trust {
   display: flex;

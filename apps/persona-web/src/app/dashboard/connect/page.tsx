@@ -212,7 +212,7 @@ const FEATURES = [
   { title: "ZYND network", desc: "Finds people on ZYND — try \"find me a co-founder.\"" },
 ];
 
-const PRIMARY = CLIENTS.length;
+const PRIMARY = CLIENTS.length - 2;
 
 export default function ConnectPage() {
   const [status, setStatus] = useState<Status>("loading");

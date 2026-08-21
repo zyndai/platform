@@ -13,7 +13,26 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 // LinkedIn's OAuth login only hands us a name — no profile URL, which needs
 // partner-tier API access we don't have. Asking for it here, once, replaces
 // the fragile "guess by name" scrape fallback with the pasted URL.
-const PROFILE_RE = /^https?:\/\/([\w-]+\.)?linkedin\.com\/in\/[\w-]+\/?$/i;
+//
+// Parses the URL properly rather than matching a single regex against the
+// whole string — LinkedIn's own /in/me redirect (and most copy-pasted
+// profile links) land with tracking query params attached (?trk=...,
+// ?originalSubdomain=...), which a regex anchored right after the slug
+// rejects outright. Mirrors the backend's _normalize_linkedin_url.
+function normalizeLinkedInUrl(raw: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  const host = parsed.hostname.toLowerCase();
+  if (host !== "linkedin.com" && !host.endsWith(".linkedin.com")) return null;
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  if (parts.length !== 2 || parts[0].toLowerCase() !== "in" || !parts[1]) return null;
+  return `https://www.linkedin.com/in/${parts[1]}`;
+}
 
 // Lucide dropped brand glyphs in v0.452 (trademark concerns), so the
 // LinkedIn mark is inlined here — same path used on the Accounts page.
@@ -59,15 +78,19 @@ export default function LinkedInStep() {
 
   const continueClick = async () => {
     const trimmed = url.trim();
-    if (trimmed && !PROFILE_RE.test(trimmed)) {
-      setError(
-        "That doesn't look like a LinkedIn profile URL — expected something like https://www.linkedin.com/in/your-name.",
-      );
-      return;
+    let normalized: string | undefined;
+    if (trimmed) {
+      normalized = normalizeLinkedInUrl(trimmed) || undefined;
+      if (!normalized) {
+        setError(
+          "That doesn't look like a LinkedIn profile URL — expected something like https://www.linkedin.com/in/your-name.",
+        );
+        return;
+      }
     }
     setError("");
     setWorking("continue");
-    await finish(trimmed || undefined);
+    await finish(normalized);
   };
 
   const skip = async () => {

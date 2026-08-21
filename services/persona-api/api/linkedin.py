@@ -4,7 +4,7 @@ stored result for the frontend.
 """
 
 import logging
-import re
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
@@ -15,7 +15,33 @@ from services.linkedin_scraper import scrape_user, scrape_profile_only, scrape_p
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_LINKEDIN_PROFILE_RE = re.compile(r"^https?://([\w-]+\.)?linkedin\.com/in/[\w\-%]+/?$", re.IGNORECASE)
+
+def _normalize_linkedin_url(raw: str) -> str | None:
+    """Parse a pasted LinkedIn profile URL into a clean canonical form
+    (https://www.linkedin.com/in/<slug>), or return None if it doesn't
+    look like one.
+
+    LinkedIn's own /in/me redirect (and most copy-pasted profile links)
+    land with tracking query params attached (?trk=..., ?originalSubdomain=...),
+    which a regex anchored on `$` right after the slug rejects outright —
+    that's what was actually happening when a real, valid profile link
+    came back "doesn't look like a LinkedIn profile URL". Parsing the URL
+    properly and only checking scheme/host/path means the query string
+    and any fragment are simply dropped, not treated as invalid.
+    """
+    try:
+        parsed = urlparse(raw.strip())
+    except ValueError:
+        return None
+    if parsed.scheme not in ("http", "https"):
+        return None
+    host = (parsed.hostname or "").lower()
+    if host != "linkedin.com" and not host.endswith(".linkedin.com"):
+        return None
+    parts = [p for p in parsed.path.split("/") if p]
+    if len(parts) != 2 or parts[0].lower() != "in" or not parts[1]:
+        return None
+    return f"https://www.linkedin.com/in/{parts[1]}"
 
 
 def _get_supabase():
@@ -88,12 +114,13 @@ async def trigger_scrape(
     sb = _get_supabase()
 
     if profile_url:
-        profile_url = profile_url.strip()
-        if not _LINKEDIN_PROFILE_RE.match(profile_url):
+        normalized = _normalize_linkedin_url(profile_url)
+        if not normalized:
             raise HTTPException(
                 status_code=400,
                 detail="That doesn't look like a LinkedIn profile URL — expected something like https://www.linkedin.com/in/your-name.",
             )
+        profile_url = normalized
         sb.table("linkedin_profiles").upsert(
             {"user_id": user["id"], "profile_url": profile_url},
             on_conflict="user_id",

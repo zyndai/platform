@@ -291,8 +291,16 @@ async def scrape_user(user_id: str, full_name: str, profile_url: str | None = No
     )
 
     if isinstance(profile, Exception):
+        # An exception here means the actor call itself failed (network
+        # error, Apify billing/rate limit, etc.) — distinct from "the actor
+        # ran fine and found nothing" (a genuinely empty/restricted
+        # profile). Converting this to an empty dict and writing it below
+        # used to stamp scraped_at on a row with no real data, making a
+        # failed scrape indistinguishable from a completed-but-empty one —
+        # nothing would ever retry it since scraped_at looked legitimate.
+        # Abort without touching the DB so the next call retries cleanly.
         logger.warning(f"[linkedin] profile scrape failed for {user_id}: {profile}")
-        profile = {}
+        return {"status": "error", "stage": "profile", "detail": str(profile)}
     if isinstance(posts, Exception):
         logger.warning(f"[linkedin] posts scrape failed for {user_id}: {posts}")
         posts = []

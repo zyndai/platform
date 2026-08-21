@@ -262,7 +262,7 @@ export default function ConnectPage() {
   const [copied, setCopied] = useState(false);
   const [reload, setReload] = useState(0);
   const [showMore, setShowMore] = useState(false);
-  const [useAlt, setUseAlt] = useState(false);
+  const [useAlt, setUseAlt] = useState(true);
   const moreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -306,7 +306,7 @@ export default function ConnectPage() {
   const moreClients = CLIENTS.slice(PRIMARY);
   const activeInMore = moreClients.some((c) => c.id === activeId);
 
-  const select = (id: ClientId) => { setActiveId(id); setCopied(false); setShowMore(false); setUseAlt(false); };
+  const select = (id: ClientId) => { setActiveId(id); setCopied(false); setShowMore(false); setUseAlt(true); };
 
   const copy = () => {
     navigator.clipboard.writeText(snippet);

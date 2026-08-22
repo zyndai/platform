@@ -22,7 +22,7 @@ Sitemap: https://persona.zynd.ai/sitemap.xml
 
 **File:** `webapp/public/sitemap.xml`
 
-Static XML listing `/`, `/terms`, `/privacy` with `<lastmod>` and `<priority>`.
+Static XML listing `/`, `/terms`, `/privacy`, `/data-deletion`, `/security`, `/contact` with `<lastmod>` and `<priority>`.
 
 ---
 

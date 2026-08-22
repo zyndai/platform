@@ -9,6 +9,7 @@ import { BootLoader, Monogram, type BootStage } from "@/components/ui";
 // Steps where "Edit later" in the topbar doesn't make sense (user would
 // just be bounced back here). On those, show nothing on the right side.
 const STEPS_WITH_NO_SKIP = new Set([
+  "/onboarding/linkedin",
   "/onboarding/reading",
   "/onboarding/you",
   "/onboarding/matches",

@@ -12,6 +12,7 @@
 import { getSupabase } from "./supabase";
 
 export type OnboardingStep =
+  | "linkedin"
   | "reading"
   | "you"
   | "brief"
@@ -20,6 +21,10 @@ export type OnboardingStep =
   | "done";
 
 export interface OnboardingMeta {
+  /** True after the user has seen (and submitted or skipped) the LinkedIn
+   *  profile-URL step, which runs before the reading animation so the
+   *  scrape can use the pasted URL instead of a risky search-by-name guess. */
+  linkedin_step_seen?: boolean;
   /** True after the S2 reading animation has played to completion at least once. */
   reading_seen?: boolean;
   /** True after the user completed the brief step. */
@@ -49,6 +54,7 @@ export function computeOnboardingStep(
   const { meta, hasPersona, calendarConnected } = inputs;
 
   if (!hasPersona) {
+    if (!meta.linkedin_step_seen) return "linkedin";
     return meta.reading_seen ? "you" : "reading";
   }
   if (!meta.brief_created && !meta.skipped_brief) return "brief";

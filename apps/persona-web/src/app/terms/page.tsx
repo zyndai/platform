@@ -55,16 +55,16 @@ export default function TermsPage() {
             letterSpacing: "0.2px",
           }}
         >
-          Last updated: July 27, 2026
+          Last updated: August 22, 2026
         </p>
 
         <Section title="1. Acceptance of Terms">
           <p>
             By accessing or using Zynd (&ldquo;the Service&rdquo;), a
-            product of ZyndAI (&ldquo;Zynd,&rdquo; &ldquo;we,&rdquo;
-            &ldquo;us&rdquo;), you agree to be bound by these Terms of
-            Service (&ldquo;Terms&rdquo;). If you do not agree, do not use
-            the Service.
+            product of Zynd AI Inc (&ldquo;Zynd,&rdquo; &ldquo;we,&rdquo;
+            &ldquo;us&rdquo;), a Delaware corporation, you agree to be bound
+            by these Terms of Service (&ldquo;Terms&rdquo;). If you do not
+            agree, do not use the Service.
           </p>
         </Section>
 
@@ -75,13 +75,17 @@ export default function TermsPage() {
             The Service includes:
           </p>
           <ul>
-            <li>
-              An AI &ldquo;Persona&rdquo; that represents you in
-              professional outreach, scheduling, and coordination.
-            </li>
-            <li>
-              Automated meeting scheduling through your Google Calendar.
-            </li>
+              <li>
+                An AI &ldquo;Persona&rdquo; that represents you in
+                professional outreach, scheduling, and coordination.
+              </li>
+              <li>
+                Automated meeting scheduling through your Google Calendar.
+              </li>
+              <li>
+                Professional context and profile enrichment through your
+                LinkedIn account, when you connect it.
+              </li>
             <li>
               A personal &ldquo;Brief&rdquo; stored securely in your Zynd
               account for long-form notes, context, and AI-generated content.
@@ -93,11 +97,11 @@ export default function TermsPage() {
           </ul>
         </Section>
 
-        <Section title="3. Google API Services">
+        <Section title="3. Google & LinkedIn API Services">
           <p>
-            Zynd uses Google APIs to provide its core functionality. When
-            you connect your Google Account, you authorize the following
-            OAuth scopes:
+            Zynd uses Google and LinkedIn APIs to provide its core
+            functionality. When you connect either account, you authorize the
+            following OAuth scopes:
           </p>
 
           <Scope
@@ -121,6 +125,17 @@ export default function TermsPage() {
             list, or read your other Drive files.
           </Scope>
 
+          <Scope
+            scope="openid profile email w_member_social"
+            label="LinkedIn"
+          >
+            To access the LinkedIn profile information and posts you authorize
+            through LinkedIn&rsquo;s consent screen, so your Persona can
+            understand your professional background and activity. If you
+            approve posting, your Persona may share content to LinkedIn on
+            your behalf.
+          </Scope>
+
           <p>
             All Google API access is initiated by you and limited to
             providing the features described above. Zynd&rsquo;s use of
@@ -129,6 +144,13 @@ export default function TermsPage() {
               Google API Services User Data Policy
             </a>
             , including the Limited Use requirements.
+          </p>
+          <p>
+            Zynd&rsquo;s use of information received from LinkedIn APIs is
+            limited to providing the features you request. LinkedIn data is
+            stored separately and is not obtained through scraping or
+            crawling. Your use of LinkedIn is also subject to LinkedIn&rsquo;s
+            own terms and policies.
           </p>
         </Section>
 
@@ -243,15 +265,16 @@ export default function TermsPage() {
         <Section title="11. Governing Law">
           <p>
             These Terms shall be governed by and construed in accordance
-            with the laws of the State of California, without regard to
-            its conflict of law provisions.
+            with the laws of the State of Delaware, without regard to its
+            conflict of law provisions.
           </p>
         </Section>
 
         <Section title="12. Contact">
           <p>
             For questions about these Terms, contact us at{' '}
-            <a href="mailto:tech@zynd.ai">tech@zynd.ai</a>.
+            <a href="mailto:contact@zynd.ai">contact@zynd.ai</a> or by mail
+            at Zynd AI Inc, 8 The Green STE A, Dover, DE 19901.
           </p>
         </Section>
       </article>
@@ -268,9 +291,15 @@ export default function TermsPage() {
           flexWrap: "wrap",
         }}
       >
-        <span>&copy; ZyndAI</span>
+        <span>&copy; Zynd AI Inc</span>
         <span>&middot;</span>
         <a href="/privacy">Privacy Policy</a>
+        <span>&middot;</span>
+        <a href="/data-deletion">Data Deletion</a>
+        <span>&middot;</span>
+        <a href="/security">Security</a>
+        <span>&middot;</span>
+        <a href="/contact">Contact</a>
       </footer>
     </main>
   );

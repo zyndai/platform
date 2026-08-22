@@ -441,6 +441,35 @@ export default function YouPage() {
     }
   };
 
+  const handleDownloadData = async () => {
+    if (!user) return;
+    try {
+      const sb = getSupabase();
+      const { data: { session } } = await sb.auth.getSession();
+      const res = await fetch(`${API}/api/persona/${user.id}/export`, {
+        headers: session?.access_token
+          ? { Authorization: `Bearer ${session.access_token}` }
+          : {},
+      });
+      if (!res.ok) {
+        throw new Error((await res.text()) || "Couldn't export your data.");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "zynd-data.json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setDeleteError(
+        e instanceof Error ? e.message : "Couldn't export your data.",
+      );
+    }
+  };
+
   if (loading) {
     return (
       <div className="persona-workbench">
@@ -707,9 +736,14 @@ export default function YouPage() {
           <h2>Account</h2>
           <p>Deleting removes your brief, matches, meetings, and login. It can&rsquo;t be undone.</p>
         </div>
-        <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
-          Delete account
-        </Button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button variant="secondary" onClick={handleDownloadData}>
+            Download my data
+          </Button>
+          <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
+            Delete account
+          </Button>
+        </div>
       </section>
 
       {qrOpen && (

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends
 from api.auth import get_current_user
 from services.token_store import list_connected_providers, delete_tokens
 from services import telegram_store
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -65,3 +66,27 @@ async def disconnect(provider: str, user: dict = Depends(get_current_user)):
         
     delete_tokens(user_id=user["id"], provider=provider)
     return {"status": "disconnected", "provider": provider}
+
+
+@router.delete("/{provider}/data")
+async def delete_provider_data(provider: str, user: dict = Depends(get_current_user)):
+    """Delete stored data for a provider while keeping the user's account.
+
+    Removes OAuth tokens and, where applicable, stored provider content
+    (e.g. the scraped LinkedIn profile). This is the granular "delete my
+    <provider> data" compliance action, distinct from a full disconnect."""
+    if provider not in PROVIDERS:
+        return {"error": f"Unknown provider: {provider}"}
+
+    if provider == "telegram":
+        chat_id = telegram_store.get_chat_id_for_user(user["id"])
+        if chat_id:
+            telegram_store.unlink_chat(chat_id)
+        return {"status": "deleted", "provider": provider}
+
+    delete_tokens(user_id=user["id"], provider=provider)
+
+    if provider == "linkedin":
+        config.get_supabase().table("linkedin_profiles").delete().eq("user_id", user["id"]).execute()
+
+    return {"status": "deleted", "provider": provider}

@@ -17,11 +17,14 @@ short enough that a logout or role change propagates promptly.
 
 import asyncio
 import hashlib
+import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 import config
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -111,3 +114,72 @@ def invalidate_user_token(token: str) -> None:
 async def me(user: dict = Depends(get_current_user)):
     """Return the currently logged-in user."""
     return user
+
+
+@router.post("/signup-meta")
+async def signup_meta(
+    request: Request,
+    payload: dict = Body(default={}),
+    user: dict = Depends(get_current_user),
+):
+    """Capture non-intrusive signup metadata (IP, geo, browser/OS/device).
+
+    The frontend fires this silently once per user right after sign-in with
+    a few client-only facts (language, timezone, screen size, platform,
+    touch, referrer). The backend adds the client IP, the parsed User-Agent,
+    and a best-effort IP geolocation, then merges everything into
+    ``auth.users.user_metadata.signup_meta`` via the admin API.
+
+    Idempotent: if ``signup_meta`` already exists for the user, nothing is
+    written and the stored record is returned. Failures are logged and
+    reported as 500 — the caller treats the whole call as best-effort.
+
+    See services/user_meta.py for the capture/parsing logic.
+    """
+    from services.user_meta import (
+        build_signup_meta,
+        client_ip_from_request,
+        lookup_geo,
+    )
+
+    ip = client_ip_from_request(request)
+    geo = await lookup_geo(ip) if ip else None
+    payload = dict(payload or {})
+    payload["_accept_language"] = request.headers.get("accept-language", "")
+    meta = build_signup_meta(
+        ip=ip,
+        geo=geo,
+        user_agent=request.headers.get("user-agent", ""),
+        client_payload=payload,
+    )
+
+    def _persist() -> dict[str, Any]:
+        sb = config.get_supabase()
+        resp = sb.auth.admin.get_user_by_id(user["id"])
+        existing_meta = (resp.user.user_metadata or {}).get("signup_meta")
+        if existing_meta:
+            return {"captured": False, "existing": True, "meta": existing_meta}
+
+        # Read-merge-write: send the full metadata dict back so a replace-
+        # semantics server can't clobber the onboarding flags the frontend
+        # writes concurrently through updateUser().
+        merged = dict(resp.user.user_metadata or {})
+        merged["signup_meta"] = meta
+        sb.auth.admin.update_user_by_id(user["id"], {"user_metadata": merged})
+        return {"captured": True, "existing": False, "meta": meta}
+
+    try:
+        result = await asyncio.to_thread(_persist)
+    except Exception as e:
+        logger.warning("[signup-meta] capture failed for %s: %s", user["id"], e)
+        raise HTTPException(status_code=500, detail="signup-meta capture failed")
+
+    logger.info(
+        "[signup-meta] %s for %s (ip=%s, geo=%s, device=%s)",
+        "no-op" if result["existing"] else "captured",
+        user["id"],
+        meta.get("ip"),
+        "yes" if meta.get("geo") else "no",
+        (meta.get("device") or {}).get("device_type"),
+    )
+    return result

@@ -119,6 +119,91 @@ async def scrape_profile(profile_url: str) -> dict:
     return items[0] if items else {}
 
 
+async def scrape_profile_only(user_id: str, profile_url: str) -> dict:
+    """
+    Fetch just the profile actor (headline/summary/skills/experience/etc,
+    no posts) and persist it.
+
+    Used by onboarding's autofill step, which needs this data back fast —
+    running it alongside the posts actor (as scrape_user does) makes the
+    user wait on whichever of the two is slower, for data the onboarding
+    form doesn't even use yet. Posts are backfilled separately by
+    scrape_posts_only once the user reaches a later onboarding step that
+    actually needs them (matches/brief).
+    """
+    logger.info(f"[linkedin] starting profile-only scrape for {user_id} ({profile_url})")
+    try:
+        profile = await scrape_profile(profile_url)
+    except Exception as e:
+        logger.warning(f"[linkedin] profile-only scrape failed for {user_id}: {e}")
+        return {"status": "error", "detail": str(e)}
+
+    sb = _get_supabase()
+
+    # Same "don't overwrite good data with an empty scrape" guard as scrape_user.
+    profile_empty = not profile or not any(
+        key in (profile or {})
+        for key in ("headline", "experience", "education", "skills", "summary")
+    )
+    if profile_empty:
+        existing = (
+            sb.table("linkedin_profiles")
+            .select("raw_profile")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if existing.data and existing.data[0].get("raw_profile"):
+            existing_profile = existing.data[0]["raw_profile"]
+            if existing_profile and any(
+                key in (existing_profile or {})
+                for key in ("headline", "experience", "education", "skills", "summary")
+            ):
+                logger.warning(
+                    f"[linkedin] skipping profile-only upsert for {user_id} — new scrape "
+                    f"returned empty, and existing data is still good"
+                )
+                return {"status": "skipped", "reason": "empty_scrape_preserved_existing"}
+
+    sb.table("linkedin_profiles").upsert(
+        {
+            "user_id": user_id,
+            "profile_url": profile_url,
+            "scraped_at": datetime.now(timezone.utc).isoformat(),
+            "raw_profile": profile,
+        },
+        on_conflict="user_id",
+    ).execute()
+
+    logger.info(f"[linkedin] stored profile-only for {user_id} ({profile_url})")
+    return {"status": "ok", "profile_url": profile_url}
+
+
+async def scrape_posts_only(user_id: str, profile_url: str) -> dict:
+    """
+    Backfill raw_posts for a user whose profile was already stored via
+    scrape_profile_only. Runs independently so nothing in onboarding waits
+    on it. A partial upsert (only user_id/profile_url/raw_posts in the
+    payload) — PostgREST's upsert only touches the columns present in the
+    payload, so raw_profile/scraped_at from the earlier profile-only
+    upsert are left untouched.
+    """
+    logger.info(f"[linkedin] starting posts-only scrape for {user_id} ({profile_url})")
+    try:
+        posts = await scrape_recent_posts(profile_url)
+    except Exception as e:
+        logger.warning(f"[linkedin] posts-only scrape failed for {user_id}: {e}")
+        return {"status": "error", "detail": str(e)}
+
+    sb = _get_supabase()
+    sb.table("linkedin_profiles").upsert(
+        {"user_id": user_id, "profile_url": profile_url, "raw_posts": posts},
+        on_conflict="user_id",
+    ).execute()
+
+    logger.info(f"[linkedin] stored {len(posts)} posts for {user_id} ({profile_url})")
+    return {"status": "ok", "posts_count": len(posts)}
+
+
 async def search_people(
     query: str = "",
     locations: list[str] | None = None,
@@ -206,8 +291,16 @@ async def scrape_user(user_id: str, full_name: str, profile_url: str | None = No
     )
 
     if isinstance(profile, Exception):
+        # An exception here means the actor call itself failed (network
+        # error, Apify billing/rate limit, etc.) — distinct from "the actor
+        # ran fine and found nothing" (a genuinely empty/restricted
+        # profile). Converting this to an empty dict and writing it below
+        # used to stamp scraped_at on a row with no real data, making a
+        # failed scrape indistinguishable from a completed-but-empty one —
+        # nothing would ever retry it since scraped_at looked legitimate.
+        # Abort without touching the DB so the next call retries cleanly.
         logger.warning(f"[linkedin] profile scrape failed for {user_id}: {profile}")
-        profile = {}
+        return {"status": "error", "stage": "profile", "detail": str(profile)}
     if isinstance(posts, Exception):
         logger.warning(f"[linkedin] posts scrape failed for {user_id}: {posts}")
         posts = []

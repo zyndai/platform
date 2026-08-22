@@ -18,6 +18,21 @@ const STATIC_PAGES: { title: string; path: string; description: string }[] = [
     path: "/privacy",
     description: "ZyndAI privacy policy",
   },
+  {
+    title: "Data Deletion",
+    path: "/data-deletion",
+    description: "How to delete your Google and LinkedIn data",
+  },
+  {
+    title: "Security",
+    path: "/security",
+    description: "How Zynd protects your data",
+  },
+  {
+    title: "Contact",
+    path: "/contact",
+    description: "Contact Zynd AI Inc",
+  },
 ];
 
 export async function GET() {

@@ -967,6 +967,7 @@ class OpenAIProvider(LLMProvider):
         model: str | None = None,
         default_headers: dict | None = None,
         fallback_models: list[str] | None = None,
+        fallback_api_key: str | None = None,
     ):
         from openai import OpenAI
         kwargs = {}
@@ -1005,18 +1006,30 @@ class OpenAIProvider(LLMProvider):
         # guaranteed to fail over regardless of OpenRouter's internal
         # provider-routing behavior for the primary model.
         self._fallback_models = fallback_models or []
+        # Fallback models default to the primary client/key. But a gateway
+        # key-level cap (checked before model routing) fails every model on
+        # that key identically — switching models alone can't route around
+        # it, so an operator can point fallback_api_key at a separate key.
+        if fallback_api_key and fallback_api_key != safe_api_key:
+            self._fallback_client = OpenAI(
+                api_key=fallback_api_key, timeout=60.0, max_retries=1, **kwargs
+            )
+        else:
+            self._fallback_client = self._client
 
-    def _models_to_try(self) -> list[str]:
-        return [self._model, *self._fallback_models]
+    def _models_to_try(self) -> list[tuple[str, "OpenAI"]]:
+        attempts = [(self._model, self._client)]
+        attempts += [(m, self._fallback_client) for m in self._fallback_models]
+        return attempts
 
     def chat_with_tools(self, messages, tools):
         openai_tools = self._convert_tools(tools)
 
         last_exc: Exception | None = None
         response = None
-        for model in self._models_to_try():
+        for model, client in self._models_to_try():
             try:
-                response = self._client.chat.completions.create(
+                response = client.chat.completions.create(
                     model=model,
                     messages=messages,
                     tools=openai_tools if openai_tools else None,
@@ -1072,9 +1085,9 @@ class OpenAIProvider(LLMProvider):
         # model without risk of duplicating already-streamed text.
         last_exc: Exception | None = None
         stream = None
-        for model in self._models_to_try():
+        for model, client in self._models_to_try():
             try:
-                stream = self._client.chat.completions.create(
+                stream = client.chat.completions.create(
                     model=model,
                     messages=messages,
                     tools=openai_tools if openai_tools else None,
@@ -1600,6 +1613,7 @@ def _get_provider() -> LLMProvider:
                 "X-Title": "Zynd",
             },
             fallback_models=fallback_models,
+            fallback_api_key=config.OPENROUTER_FALLBACK_API_KEY or None,
         )
     elif provider_name == "custom":
         return OpenAIProvider(

@@ -327,7 +327,13 @@ export function LandingClientWrapper() {
             <span>·</span>
             <a href="/privacy">Privacy</a>
             <span>·</span>
-            <span>© Zynd</span>
+            <a href="/data-deletion">Data Deletion</a>
+            <span>·</span>
+            <a href="/security">Security</a>
+            <span>·</span>
+            <a href="/contact">Contact</a>
+            <span>·</span>
+            <span>© Zynd AI Inc</span>
           </div>
         </footer>
 

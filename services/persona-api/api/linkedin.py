@@ -196,3 +196,18 @@ async def disconnect_linkedin(user: dict = Depends(get_current_user)):
     sb = _get_supabase()
     sb.table("linkedin_profiles").delete().eq("user_id", user["id"]).execute()
     return {"status": "disconnected"}
+
+
+@router.delete("/data")
+async def delete_linkedin_data(user: dict = Depends(get_current_user)):
+    """Delete the user's stored LinkedIn data while keeping their Zynd
+    account and persona. Removes the scraped profile (linkedin_profiles) and
+    the LinkedIn OAuth tokens (api_tokens). This is the granular "delete my
+    LinkedIn data" compliance action — distinct from a full disconnect,
+    though the underlying DB writes are the same."""
+    from services.token_store import delete_tokens
+
+    sb = _get_supabase()
+    sb.table("linkedin_profiles").delete().eq("user_id", user["id"]).execute()
+    delete_tokens(user_id=user["id"], provider="linkedin")
+    return {"status": "deleted"}

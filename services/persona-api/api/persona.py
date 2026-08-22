@@ -11,11 +11,12 @@ terminal/interrupted states, so the band-aids aren't needed.
 from __future__ import annotations
 
 import asyncio
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Any, List
 
 import config
+from api.auth import get_current_user
 from agent.persona_manager import (
     create_persona,
     delete_persona,
@@ -355,6 +356,73 @@ async def purge_account(user_id: str):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{user_id}/export")
+async def export_account(user_id: str, user: dict = Depends(get_current_user)):
+    """
+    Return a JSON bundle of the user's own data for the "Download my data"
+    compliance action. Read-only and never includes OAuth tokens or any
+    third-party (non-user) data.
+    """
+    if user["id"] != user_id:
+        raise HTTPException(status_code=403, detail="Not your account")
+
+    sb = config.get_supabase()
+
+    status = get_persona_status(user_id)
+
+    brief: dict = {}
+    try:
+        brief = get_brief(user_id)
+    except Exception:
+        brief = {}
+
+    chat_messages: list = []
+    try:
+        chat_rows = (
+            sb.table("chat_messages")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at")
+            .execute()
+        )
+        chat_messages = chat_rows.data or []
+    except Exception:
+        chat_messages = []
+
+    linkedin: dict = {"connected": False}
+    try:
+        li_rows = (
+            sb.table("linkedin_profiles")
+            .select("scraped_at, profile_url")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if li_rows.data:
+            linkedin = {
+                "connected": True,
+                "scraped_at": li_rows.data[0].get("scraped_at"),
+                "profile_url": li_rows.data[0].get("profile_url"),
+            }
+    except Exception:
+        pass
+
+    providers: list = []
+    try:
+        from services.token_store import list_connected_providers
+
+        providers = [p.get("provider") for p in list_connected_providers(user_id)]
+    except Exception:
+        providers = []
+
+    return {
+        "user_id": user_id,
+        "persona": status,
+        "brief": brief,
+        "chat_messages": chat_messages,
+        "linkedin": linkedin,
+        "connected_providers": providers,
+    }
 
 # ── Profile Update ───────────────────────────────────────────────────
 

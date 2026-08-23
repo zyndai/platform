@@ -642,6 +642,48 @@ def test_discover_personas_uses_cache_on_second_call():
     assert r2.get("from_cache") is True
 
 
+# ── zynd_network: search_zynd_network merges local personas ──────────────────
+
+async def test_search_zynd_network_any_merges_local_personas():
+    # kind="any" (default) must surface people from the local persona directory,
+    # not just the registry (whose personas often have empty summaries -> 0 matches).
+    from app.tools import zynd_network as zn
+    with patch("app.tools.zynd_network._call_registry_search", return_value=([], None)):
+        with patch("app.tools.zynd_network.discover_personas", return_value={
+            "status": "success", "count": 1,
+            "results": [{"name": "Abhinav Gupta", "agent_id": "zns:abhinav", "description": "community builder"}],
+        }):
+            with patch("app.tools.zynd_network._merge_deployer_entities", side_effect=lambda r, k, q: r):
+                result = await zn.search_zynd_network("community manager", top_k=8, kind="any", user_id="")
+
+    assert result["status"] == "success"
+    assert result["count"] >= 1
+    assert any(r.get("name") == "Abhinav Gupta" and r.get("source") == "local" for r in result["results"])
+
+
+async def test_search_zynd_network_any_enriches_empty_registry_persona():
+    # a registry persona with an empty summary should get the local description
+    from app.tools import zynd_network as zn
+    registry = [{"entity_id": "zns:abhinav", "name": "Abhinav Gupta", "summary": "No bio yet.", "category": "persona", "tags": ["persona"]}]
+    with patch("app.tools.zynd_network._call_registry_search", return_value=(registry, None)):
+        with patch("app.tools.zynd_network.discover_personas", return_value={
+            "results": [{"name": "Abhinav Gupta", "agent_id": "zns:abhinav", "description": "community builder"}],
+        }):
+            with patch("app.tools.zynd_network._merge_deployer_entities", side_effect=lambda r, k, q: r):
+                result = await zn.search_zynd_network("community manager", top_k=8, kind="any", user_id="")
+
+    r = next(x for x in result["results"] if x.get("entity_id") == "zns:abhinav")
+    assert (r.get("summary") or r.get("description")) == "community builder"
+
+
+async def test_search_zynd_network_persona_returns_discover_directly():
+    from app.tools import zynd_network as zn
+    with patch("app.tools.zynd_network.discover_personas", return_value={"status": "success", "count": 1, "results": []}) as dp:
+        result = await zn.search_zynd_network("founder", top_k=8, kind="persona", user_id="")
+    assert dp.call_count == 1
+    assert result["status"] == "success"
+
+
 # ── OAuth discovery endpoint ───────────────────────────────────────────────────
 
 async def test_oauth_protected_resource():

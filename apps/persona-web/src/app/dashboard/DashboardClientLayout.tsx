@@ -22,7 +22,6 @@ import {
   UsersRound,
   Globe,
   Plug,
-  Compass,
   X,
 } from "lucide-react";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
@@ -34,7 +33,6 @@ import { ChatProvider } from "@/contexts/ChatContext";
 import TaskToasts from "@/components/TaskToasts";
 import { Monogram, Avatar, BootLoader, type BootStage } from "@/components/ui";
 import { stepToPath } from "@/lib/onboarding";
-import { startGuidedTour } from "@/lib/tour";
 import AppTopBar from "@/components/AppTopBar";
 import RightRail from "@/components/RightRail";
 import GuidedTour from "@/components/GuidedTour";
@@ -345,17 +343,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
         <div className="sidebar-footer">
           {renderItem(YOU_NAV.find(i => i.label === "Settings")!)}
-          <div className="sidebar-footer-row">
-            <button
-              type="button"
-              className="tour-replay-btn"
-              onClick={() => startGuidedTour()}
-              title="Take the tour"
-              aria-label="Replay the guided tour"
-            >
-              <Compass size={14} strokeWidth={1.5} />
-            </button>
-          </div>
           <div className="user-card" data-tour="tour-user-card">
           <Link
             href="/dashboard/settings/you"

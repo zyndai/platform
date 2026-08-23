@@ -164,7 +164,7 @@ async def get_zynd_service_card(entity_id: str) -> dict:
     return _card_to_result(resp.json() or {}, eid)
 
 
-async def call_zynd_service(entity_id: str, text: str = "", data: dict = None, user_id: str = "") -> dict:
+async def call_zynd_service(entity_id: str, text: str = "", data: dict | None = None, user_id: str = "") -> dict:
     eid = (entity_id or "").strip()
     if not eid:
         return {"status": "error", "error": "entity_id is required."}

@@ -684,6 +684,64 @@ async def test_search_zynd_network_persona_returns_discover_directly():
     assert result["status"] == "success"
 
 
+# ── matching: enrich names + dedup identities (find_people/find_similar_users) ─
+
+class _FakePool:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def fetch(self, query, *args):
+        return self._rows
+
+
+async def test_enrich_and_dedup_collapses_ghost_onto_named_duplicate():
+    # ghost row (id == Abhinav's supabase_user_id) + named persona-linked row share
+    # the same identity -> keep the named row (with socials), drop the ghost.
+    from app.services import matching as mg
+    results = [
+        {"user_id": "3689ceaf-49ce-484e-9149-ff825bd2ceac", "display_name": "zynd-3689ceaf", "similarity": 0.56, "assertion_count": 4},
+        {"user_id": "bd07ba99-09dc-4e29-a66f-2ec20904035b", "display_name": "Abhinav Gupta", "similarity": 0.47, "assertion_count": 6, "socials": {"linkedin": "https://x"}},
+    ]
+    pool = _FakePool([
+        {"id": "3689ceaf-49ce-484e-9149-ff825bd2ceac", "supabase_user_id": None},
+        {"id": "bd07ba99-09dc-4e29-a66f-2ec20904035b", "supabase_user_id": "3689ceaf-49ce-484e-9149-ff825bd2ceac"},
+    ])
+    with patch.object(mg, "_persona_names", return_value={"3689ceaf-49ce-484e-9149-ff825bd2ceac": "Abhinav Gupta"}):
+        out = await mg._enrich_and_dedup(pool, results)
+
+    assert len(out) == 1
+    assert out[0]["display_name"] == "Abhinav Gupta"
+    assert out[0].get("socials")
+
+
+async def test_enrich_and_dedup_names_ghost_without_duplicate():
+    # a ghost whose users.id == Supabase user id and has a persona, but no separate
+    # named row -> the fallback name gets replaced with the persona name.
+    from app.services import matching as mg
+    results = [
+        {"user_id": "01fb569b-de8a-4e7d-b6a0-b225ff44aa24", "display_name": "zynd-01fb569b", "similarity": 0.44, "assertion_count": 6},
+    ]
+    pool = _FakePool([{"id": "01fb569b-de8a-4e7d-b6a0-b225ff44aa24", "supabase_user_id": None}])
+    with patch.object(mg, "_persona_names", return_value={"01fb569b-de8a-4e7d-b6a0-b225ff44aa24": "Vikram"}):
+        out = await mg._enrich_and_dedup(pool, results)
+
+    assert len(out) == 1
+    assert out[0]["display_name"] == "Vikram"
+
+
+async def test_enrich_and_dedup_drops_unresolvable_anonymous():
+    # no persona anywhere -> still anonymous, and therefore not findable -> dropped.
+    from app.services import matching as mg
+    results = [
+        {"user_id": "e603070a-e568-4d32-a4f2-bc2a3144bb19", "display_name": "zynd-e603070a", "similarity": 0.5, "assertion_count": 3},
+    ]
+    pool = _FakePool([{"id": "e603070a-e568-4d32-a4f2-bc2a3144bb19", "supabase_user_id": None}])
+    with patch.object(mg, "_persona_names", return_value={}):
+        out = await mg._enrich_and_dedup(pool, results)
+
+    assert out == []
+
+
 # ── OAuth discovery endpoint ───────────────────────────────────────────────────
 
 async def test_oauth_protected_resource():

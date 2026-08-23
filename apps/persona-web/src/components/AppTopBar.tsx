@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { History, MessageSquarePlus } from "lucide-react";
 import { useChat } from "@/contexts/ChatContext";
+import ThemeToggle from "@/components/ThemeToggle";
 
 const TITLES: Record<string, string> = {
   "/dashboard/inbox":    "Inbox",
@@ -56,6 +57,7 @@ export default function AppTopBar() {
             </button>
           </>
         )}
+        <ThemeToggle />
       </div>
     </div>
   );

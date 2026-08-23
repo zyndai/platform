@@ -10,8 +10,6 @@ function readInitialTheme(): Theme {
   if (typeof window === "undefined") return "light";
   const stored = window.localStorage.getItem(STORAGE_KEY) as Theme | null;
   if (stored === "light" || stored === "dark") return stored;
-  // Default to light regardless of system preference. Users who want dark
-  // toggle it explicitly via this component.
   return "light";
 }
 
@@ -23,24 +21,17 @@ export default function ThemeToggle() {
     try { window.localStorage.setItem(STORAGE_KEY, theme); } catch { /* ignore */ }
   }, [theme]);
 
+  const toggle = () => setTheme((t) => (t === "light" ? "dark" : "light"));
+
   return (
-    <div className="theme-toggle" role="group" aria-label="Theme">
-      <button
-        type="button"
-        className={theme === "light" ? "active" : ""}
-        onClick={() => setTheme("light")}
-        aria-pressed={theme === "light"}
-      >
-        <Sun /> Light
-      </button>
-      <button
-        type="button"
-        className={theme === "dark" ? "active" : ""}
-        onClick={() => setTheme("dark")}
-        aria-pressed={theme === "dark"}
-      >
-        <Moon /> Dark
-      </button>
-    </div>
+    <button
+      type="button"
+      className="icon-btn"
+      onClick={toggle}
+      aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+      title={theme === "light" ? "Dark mode" : "Light mode"}
+    >
+      {theme === "light" ? <Moon size={16} strokeWidth={1.7} /> : <Sun size={16} strokeWidth={1.7} />}
+    </button>
   );
 }

@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui";
 import { useDashboard } from "@/contexts/DashboardContext";
 import { patchOnboardingMeta, readOnboardingMeta } from "@/lib/onboarding";
-import { DASHBOARD_TOUR_STEPS, START_TOUR_EVENT, type TourPlacement } from "@/lib/tour";
+import { getDashboardTourSteps, getSearchShortcut, START_TOUR_EVENT, type TourPlacement } from "@/lib/tour";
 
 /** Below this viewport width the sidebar is a slide-in drawer, not a
  *  persistent rail — the tour only makes sense on wider screens. */
@@ -70,8 +70,10 @@ export default function GuidedTour({ sidebarCollapsed, onExpandSidebar }: Guided
   const cardRef = useRef<HTMLDivElement>(null);
   const autoTried = useRef(false);
 
-  const step = active ? DASHBOARD_TOUR_STEPS[stepIndex] : null;
-  const isLast = stepIndex === DASHBOARD_TOUR_STEPS.length - 1;
+  const tourSteps = useMemo(() => getDashboardTourSteps(getSearchShortcut()), []);
+
+  const step = active ? tourSteps[stepIndex] : null;
+  const isLast = stepIndex === tourSteps.length - 1;
 
   const finish = useCallback((markSeen: boolean) => {
     setActive(false);
@@ -80,7 +82,7 @@ export default function GuidedTour({ sidebarCollapsed, onExpandSidebar }: Guided
 
   const next = useCallback(() => {
     setStepIndex((i) => {
-      if (i >= DASHBOARD_TOUR_STEPS.length - 1) {
+      if (i >= tourSteps.length - 1) {
         finish(true);
         return i;
       }
@@ -212,7 +214,7 @@ export default function GuidedTour({ sidebarCollapsed, onExpandSidebar }: Guided
               </button>
             )}
             <div className="tour-dots" aria-hidden="true">
-              {DASHBOARD_TOUR_STEPS.map((s, i) => (
+              {tourSteps.map((s, i) => (
                 <span key={s.target} className={`tour-dot ${i === stepIndex ? "active" : ""}`} />
               ))}
             </div>

@@ -14,11 +14,21 @@ export interface TourStep {
   placement: TourPlacement;
 }
 
-export const DASHBOARD_TOUR_STEPS: TourStep[] = [
+/** Returns the platform-appropriate search shortcut label. */
+export function getSearchShortcut(): string {
+  if (typeof navigator === "undefined") return "⌘K";
+  // navigator.platform is deprecated but has universal support and zero overhead.
+  // Apple reports "MacIntel", "MacPPC", "iPhone", "iPad" — all start with "Mac" or "iP".
+  const p = navigator.platform.toLowerCase();
+  return p.startsWith("mac") || p.startsWith("ip") ? "⌘K" : "Ctrl+K";
+}
+
+export function getDashboardTourSteps(shortcutKey: string): TourStep[] {
+  return [
   {
     target: "tour-search",
     title: "Jump to anything",
-    body: "Press ⌘K to search people, threads, and meetings without leaving the keyboard.",
+    body: `Press ${shortcutKey} to search people, threads, and meetings without leaving the keyboard.`,
     placement: "right",
   },
   {
@@ -69,7 +79,8 @@ export const DASHBOARD_TOUR_STEPS: TourStep[] = [
     body: "Your profile, public agent card, and sign-out — you're all set.",
     placement: "top",
   },
-];
+  ];
+}
 
 /** Dispatched by any "replay tour" affordance; GuidedTour listens for this. */
 export const START_TOUR_EVENT = "zynd:start-tour";

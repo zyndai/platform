@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -23,6 +23,7 @@ import {
   Globe,
   Plug,
   Compass,
+  X,
 } from "lucide-react";
 import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
 import {
@@ -36,8 +37,8 @@ import { stepToPath } from "@/lib/onboarding";
 import { startGuidedTour } from "@/lib/tour";
 import AppTopBar from "@/components/AppTopBar";
 import RightRail from "@/components/RightRail";
-import ThemeToggle from "@/components/ThemeToggle";
 import GuidedTour from "@/components/GuidedTour";
+import { getSearchShortcut } from "@/lib/tour";
 
 type NavTone = "indigo" | "violet" | "sky" | "emerald" | "amber" | "rose" | "slate";
 
@@ -81,6 +82,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { counts } = useDashboardActivity();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchShortcut = useMemo(() => getSearchShortcut(), []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -107,6 +112,35 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       router.replace(stepToPath(onboardingStep));
     }
   }, [loading, onboardingLoading, onboardingStep, router]);
+
+  // ⌘K / Ctrl+K — focus sidebar search, expand sidebar if collapsed
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        if (sidebarCollapsed) setSidebarCollapsed(false);
+        setTimeout(() => searchInputRef.current?.focus(), 60);
+      }
+      if (e.key === "Escape" && searchQuery) {
+        setSearchQuery("");
+        searchInputRef.current?.blur();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [sidebarCollapsed, searchQuery]);
+
+  const ALL_NAV = useMemo(() => [...ARIA_NAV, ...YOU_NAV], []);
+
+  const searchResults = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return [];
+    return ALL_NAV.filter(
+      (item) =>
+        item.label.toLowerCase().includes(q) ||
+        item.href.toLowerCase().includes(q),
+    );
+  }, [searchQuery, ALL_NAV]);
 
   // Returning, already-onboarded users (cached) only wait on the fast local
   // auth check — the shell renders immediately and the persona/calendar fetches
@@ -223,23 +257,80 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
 
         <div className="sidebar-body">
-          <label
-            className="sidebar-search"
-            aria-label="Search"
-            title={sidebarCollapsed ? "Search" : undefined}
-            data-tour="tour-search"
-            onClick={() => {
-              if (sidebarCollapsed) setSidebarCollapsed(false);
-            }}
-          >
-            <Search />
-            <input
-              type="text"
-              placeholder="Search"
+          <div className="sidebar-search-wrap">
+            <label
+              className="sidebar-search"
               aria-label="Search"
-            />
-            <span className="kbd">⌘K</span>
-          </label>
+              title={sidebarCollapsed ? `Search (${searchShortcut})` : undefined}
+              data-tour="tour-search"
+              onClick={() => {
+                if (sidebarCollapsed) {
+                  setSidebarCollapsed(false);
+                  setTimeout(() => searchInputRef.current?.focus(), 60);
+                }
+              }}
+            >
+              <Search />
+              <input
+                ref={searchInputRef}
+                type="text"
+                placeholder="Search"
+                aria-label="Search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setTimeout(() => setSearchFocused(false), 150)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setSearchQuery("");
+                    searchInputRef.current?.blur();
+                  }
+                  if (e.key === "Enter" && searchResults.length > 0) {
+                    router.push(searchResults[0].href);
+                    setSearchQuery("");
+                    setSidebarOpen(false);
+                    searchInputRef.current?.blur();
+                  }
+                }}
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  className="sidebar-search-clear"
+                  onMouseDown={(e) => { e.preventDefault(); setSearchQuery(""); }}
+                  aria-label="Clear search"
+                >
+                  <X size={12} strokeWidth={2} />
+                </button>
+              ) : (
+                <span className="kbd">{searchShortcut}</span>
+              )}
+            </label>
+
+            {searchFocused && searchResults.length > 0 && (
+              <div className="sidebar-search-dropdown" role="listbox">
+                {searchResults.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.href}
+                      type="button"
+                      role="option"
+                      className="sidebar-search-result"
+                      onMouseDown={() => {
+                        router.push(item.href);
+                        setSearchQuery("");
+                        setSidebarOpen(false);
+                      }}
+                    >
+                      <Icon size={14} strokeWidth={1.7} />
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           <div className="nav-group-label">Persona</div>
           <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -255,7 +346,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         <div className="sidebar-footer">
           {renderItem(YOU_NAV.find(i => i.label === "Settings")!)}
           <div className="sidebar-footer-row">
-            <ThemeToggle />
             <button
               type="button"
               className="tour-replay-btn"

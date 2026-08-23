@@ -7,7 +7,7 @@ const MEMORY_API = (process.env.NEXT_PUBLIC_MEMORY_API_URL || "https://api.zynd.
 
 type Exchange = { token: string; mcp_url: string; email: string };
 type Status = "loading" | "ready" | "error";
-type ClientId = "claudedesktop" | "claudecode" | "cursor" | "windsurf" | "cline" | "codex" | "opencode" | "openclaw" | "hermes";
+type ClientId = "claudedesktop" | "claudecode" | "cursor" | "windsurf" | "antigravity" | "cline" | "codex" | "opencode" | "openclaw" | "hermes";
 
 interface Step { title: string; desc: string; }
 
@@ -134,6 +134,29 @@ const CLIENTS: Client[] = [
       snippetStep: 0,
       snippetLabel: "prompt",
       snippet: (token, url) => `Edit my Windsurf MCP config so the ZYND MCP server is available.\nEdit "~/.codeium/windsurf/mcp_config.json" (create the file and any parent directories if they don't exist).\nMerge the following into the "mcpServers" key without removing any existing entries there (create the key if it doesn't exist):\n\n{\n  "zynd": {\n    "command": "npx",\n    "args": ["-y", "mcp-remote", "${url}", "--header", "Authorization: Bearer ${token}"]\n  }\n}\n\nThen tell me to restart Windsurf to pick up the new server.`,
+    },
+  },
+  {
+    id: "antigravity",
+    name: "Antigravity",
+    logoUrl: "https://antigravity.google/favicon.ico",
+    color: "#4285F4", initial: "A",
+    snippetStep: 1, snippetLabel: "~/.gemini/config/mcp_config.json",
+    steps: [
+      { title: "Open MCP settings", desc: "Click the ••• menu in the agent panel → MCP Servers → Manage MCP Servers → View raw config." },
+      { title: "Add the configuration", desc: "Paste this into the config file that opens." },
+      { title: "Restart Antigravity", desc: "Restart Antigravity to activate the new MCP server." },
+    ],
+    snippet: (token, url) => JSON.stringify({ mcpServers: { zynd: { serverUrl: url, headers: { Authorization: `Bearer ${token}` } } } }, null, 2),
+    altMethod: {
+      label: "Ask Antigravity to do it",
+      steps: [
+        { title: "Paste this into Antigravity's chat", desc: "Antigravity can edit its own config file — paste this and it'll make the edit for you." },
+        { title: "Restart Antigravity", desc: "Restart Antigravity to pick up the new server." },
+      ],
+      snippetStep: 0,
+      snippetLabel: "prompt",
+      snippet: (token, url) => `Edit my Antigravity MCP config so the ZYND MCP server is available.\nEdit "~/.gemini/config/mcp_config.json" (create the file and any parent directories if they don't exist), or ".agents/mcp_config.json" in this project for a workspace-scoped setup.\nMerge the following into the "mcpServers" key without removing any existing entries there (create the key if it doesn't exist):\n\n{\n  "zynd": {\n    "serverUrl": "${url}",\n    "headers": { "Authorization": "Bearer ${token}" }\n  }\n}\n\nThen tell me to restart Antigravity to pick up the new server.`,
     },
   },
   {

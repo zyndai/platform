@@ -339,11 +339,18 @@ async def get_persona_profile(agent_id: str) -> dict:
 async def list_my_connections(user_id: str) -> dict:
     sb = _get_supabase()
     try:
-        r = sb.table("dm_threads").select("id,initiator_id,receiver_id,status,created_at").or_(f"initiator_id.eq.{user_id},receiver_id.eq.{user_id}").in_("status", ["pending", "accepted"]).execute()
+        # persona_agents.user_id is the Supabase user_id; resolve it to an agent_id
+        # before querying dm_threads, which stores agent_id values in initiator/receiver columns.
+        me = sb.table("persona_agents").select("agent_id").eq("user_id", user_id).eq("active", True).execute()
+        if not me.data:
+            return {"status": "success", "connections": [], "count": 0}
+        my_agent_id = me.data[0]["agent_id"]
+
+        r = sb.table("dm_threads").select("id,initiator_id,receiver_id,status,created_at").or_(f"initiator_id.eq.{my_agent_id},receiver_id.eq.{my_agent_id}").in_("status", ["pending", "accepted"]).execute()
         connections = r.data or []
         enriched = []
         for c in connections:
-            other_id = c["receiver_id"] if c["initiator_id"] == user_id else c["initiator_id"]
+            other_id = c["receiver_id"] if c["initiator_id"] == my_agent_id else c["initiator_id"]
             persona = sb.table("persona_agents").select("name,agent_handle,description").eq("agent_id", other_id).eq("active", True).execute()
             name = other_id
             if persona.data:
@@ -433,7 +440,7 @@ async def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent
         return {"status": "error", "error": str(e)}
 
 
-async def call_zynd_agent(entity_id: str, text: str = "", data: dict = None, user_id: str = "", conversation_id: str = "") -> dict:
+async def call_zynd_agent(entity_id: str, text: str = "", data: dict | None = None, user_id: str = "", conversation_id: str = "") -> dict:
     eid = (entity_id or "").strip()
     if not eid:
         return {"status": "error", "error": "entity_id is required."}

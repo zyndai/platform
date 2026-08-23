@@ -237,11 +237,14 @@ class ZyndTokenVerifier(TokenVerifier):
 
         # 2) OAuth opaque access token — fallback for non-JWT tokens
         #    (used if the OAuth /token endpoint issues opaque tokens instead of JWTs)
-        pool = await _get_pool()
-        row = await pool.fetchrow(
-            "SELECT user_id, scopes FROM oauth_access_tokens WHERE token = $1 AND expires_at > NOW()",
-            token,
-        )
+        try:
+            pool = await _get_pool()
+            row = await pool.fetchrow(
+                "SELECT user_id, scopes FROM oauth_access_tokens WHERE token = $1 AND expires_at > NOW()",
+                token,
+            )
+        except Exception:
+            return None
         if row:
             return AccessToken(
                 token=token,
@@ -493,7 +496,10 @@ async def get_my_socials(uid: str = Depends(_uid)) -> dict:
     row = await pool.fetchrow("SELECT supabase_user_id FROM users WHERE id = $1", uid)
     if not (row and row["supabase_user_id"]):
         return {"links": {}, "note": "no persona linked — connect your persona first"}
-    status = await persona.get_status(row["supabase_user_id"])
+    try:
+        status = await persona.get_status(row["supabase_user_id"])
+    except Exception:
+        return {"links": {}, "note": "persona service unavailable — try again later"}
     profile = (status.get("profile") or {}) if status else {}
     social_keys = ["linkedin", "instagram", "twitter", "github", "website"]
     links = {k: profile[k] for k in social_keys if profile.get(k, "").strip()}
@@ -906,19 +912,19 @@ async def get_persona_profile(agent_id: str) -> dict:
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_my_connections(uid: str = Depends(_uid)) -> dict:
-    return await zynd_network_tools.list_my_connections(uid)
+async def list_my_connections(suid: str = Depends(_suid)) -> dict:
+    return await zynd_network_tools.list_my_connections(suid)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
 async def request_connection(target_agent_id: str, target_name: str = "Network Agent",
-                              uid: str = Depends(_uid)) -> dict:
-    return await zynd_network_tools.request_connection(uid, target_agent_id, target_name)
+                              suid: str = Depends(_suid)) -> dict:
+    return await zynd_network_tools.request_connection(suid, target_agent_id, target_name)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def check_connection_status(target_agent_id: str, uid: str = Depends(_uid)) -> dict:
-    return await zynd_network_tools.check_connection_status(uid, target_agent_id)
+async def check_connection_status(target_agent_id: str, suid: str = Depends(_suid)) -> dict:
+    return await zynd_network_tools.check_connection_status(suid, target_agent_id)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})

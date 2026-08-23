@@ -148,6 +148,7 @@ CREATE TABLE IF NOT EXISTS published_pages (
   updated_at  timestamptz NOT NULL DEFAULT now(),
   expires_at  timestamptz  -- NULL = permanent; non-null = auto-expired by cron
 );
+ALTER TABLE published_pages ADD COLUMN IF NOT EXISTS expires_at timestamptz;
 CREATE INDEX IF NOT EXISTS published_pages_slug_idx ON published_pages (slug);
 CREATE INDEX IF NOT EXISTS published_pages_user_idx ON published_pages (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS published_pages_expires_idx ON published_pages (expires_at) WHERE expires_at IS NOT NULL;

@@ -1,0 +1,31 @@
+ZYND MCP TEST PROMPTS
+=====================
+
+1. MEMORY READ
+   What do you know about me? Use get_my_context
+
+2. MEMORY WRITE
+   Remember that I prefer TypeScript over JavaScript for all new projects
+
+3. VERIFY WRITE
+   What are my coding preferences? Use get_my_context
+
+4. CALENDAR
+   List my calendar events for this week
+
+5. GMAIL
+   Show my last 5 emails
+
+6. LINKEDIN SEARCH
+   Search LinkedIn for AI founders in San Francisco
+
+7. ZYND NETWORK SEARCH
+   Search the Zynd network for product designers
+
+8. BRIEF
+   Read my brief using read_my_brief
+
+9. CROSS-SURFACE SYNC (most important)
+   Step 1 — in OpenCode:      Remember that I'm currently working on ZYND memory sync
+   Step 2 — in Claude Desktop: What am I working on right now?
+   Pass = Claude Desktop returns the fact written in OpenCode

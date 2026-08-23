@@ -160,7 +160,20 @@ export default function PeoplePage() {
     [user],
   );
   const firstName = useMemo(() => String(myName).split(/\s+/)[0] || "there", [myName]);
-  const sections = useMemo(() => buildPeopleSections(results), [results]);
+
+  // Instant local filter for light-speed UX while the debounced API catches up.
+  // Falls back to full results when query matches the last completed search.
+  const displayResults = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q || q === activeQuery.trim().toLowerCase()) return results;
+    return results.filter(
+      (p) =>
+        p.name?.toLowerCase().includes(q) ||
+        p.description?.toLowerCase().includes(q),
+    );
+  }, [results, query, activeQuery]);
+
+  const sections = useMemo(() => buildPeopleSections(displayResults), [displayResults]);
 
   const sendIntro = useCallback(
     async (message: string): Promise<string> => {
@@ -296,7 +309,7 @@ export default function PeoplePage() {
             ))}
           </ul>
         </section>
-      ) : results.length === 0 ? (
+      ) : displayResults.length === 0 ? (
         <EmptyState
           illustration={<Users />}
           title={activeQuery ? "Nobody matched that search." : "Quiet on the network today."}
@@ -316,9 +329,15 @@ export default function PeoplePage() {
       ) : (
         <>
           <div className="people-count">
-            <span>{results.length} {results.length === 1 ? "agent" : "agents"}</span>
+            <span>
+              {searchMeta?.count ?? displayResults.length}{" "}
+              {(searchMeta?.count ?? displayResults.length) === 1 ? "person" : "people"}
+            </span>
+            {searchMeta?.count != null && displayResults.length < searchMeta.count && (
+              <em>showing {displayResults.length}</em>
+            )}
             {activeQuery && activeQuery !== "persona" && (
-              <em>matching {activeQuery}</em>
+              <em>matching &quot;{activeQuery}&quot;</em>
             )}
             {searchMeta?.from_cache && <small>cached</small>}
           </div>
@@ -415,25 +434,34 @@ function PeopleCard({
   onIntro: (hit: PersonaHit) => void;
 }) {
   const name = hit.name || "Someone on the network";
+  const profileHref = isMe && userId ? `/p/${userId}` : `/p/${hit.agent_id}`;
   return (
     <li className={`people-card ${featured ? "people-card-featured" : ""}`}>
-      <Avatar
-        size="xl"
-        name={name}
-        src={hit.avatar_url || undefined}
-        variant="accent"
-      />
-      <div className="people-card-body">
-        <div className="people-card-name-row">
-          <span className="people-card-name">{name}</span>
-          {isMe && <span className="people-card-you">you</span>}
+      <Link
+        href={profileHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="people-card-link"
+        aria-label={`View ${name}'s profile`}
+      >
+        <Avatar
+          size="xl"
+          name={name}
+          src={hit.avatar_url || undefined}
+          variant="accent"
+        />
+        <div className="people-card-body">
+          <div className="people-card-name-row">
+            <span className="people-card-name">{name}</span>
+            {isMe && <span className="people-card-you">you</span>}
+          </div>
+          {hit.description ? (
+            <p className="people-card-desc">{hit.description}</p>
+          ) : (
+            <p className="people-card-desc people-card-desc-empty">No bio yet.</p>
+          )}
         </div>
-        {hit.description ? (
-          <p className="people-card-desc">{hit.description}</p>
-        ) : (
-          <p className="people-card-desc people-card-desc-empty">No bio yet.</p>
-        )}
-      </div>
+      </Link>
       <div className="people-card-cta-wrap">
         {isMe && userId ? (
           <Link

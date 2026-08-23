@@ -36,7 +36,6 @@ import { stepToPath } from "@/lib/onboarding";
 import { startGuidedTour } from "@/lib/tour";
 import AppTopBar from "@/components/AppTopBar";
 import RightRail from "@/components/RightRail";
-import ThemeToggle from "@/components/ThemeToggle";
 import GuidedTour from "@/components/GuidedTour";
 
 type NavTone = "indigo" | "violet" | "sky" | "emerald" | "amber" | "rose" | "slate";
@@ -255,7 +254,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         <div className="sidebar-footer">
           {renderItem(YOU_NAV.find(i => i.label === "Settings")!)}
           <div className="sidebar-footer-row">
-            <ThemeToggle />
             <button
               type="button"
               className="tour-replay-btn"

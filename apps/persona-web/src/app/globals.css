@@ -6517,7 +6517,7 @@ textarea.input { resize: vertical; min-height: 88px; }
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  margin: 0 2px 16px;
+  margin: 0 2px 16px; /* overridden when inside .sidebar-search-wrap */
   background: var(--v2-surface-raised);
   border: 1px solid var(--v2-border-subtle);
   border-radius: 10px;
@@ -6551,6 +6551,76 @@ textarea.input { resize: vertical; min-height: 88px; }
   color: var(--v2-ink-muted);
   letter-spacing: 0.4px;
   flex-shrink: 0;
+}
+
+.app-shell-v2 .app-sidebar .sidebar-search-wrap {
+  position: relative;
+  margin: 0 2px 16px;
+}
+
+.app-shell-v2 .app-sidebar .sidebar-search-wrap .sidebar-search {
+  margin: 0;
+}
+
+.app-shell-v2 .app-sidebar .sidebar-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  background: var(--v2-border-subtle);
+  border: none;
+  border-radius: 50%;
+  color: var(--v2-ink-muted);
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--t-micro), color var(--t-micro);
+}
+
+.app-shell-v2 .app-sidebar .sidebar-search-clear:hover {
+  background: var(--v2-border-default);
+  color: var(--v2-ink);
+}
+
+.app-shell-v2 .app-sidebar .sidebar-search-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: var(--v2-surface);
+  border: 1px solid var(--v2-border-default);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-shell-v2 .app-sidebar .sidebar-search-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  color: var(--v2-ink-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-micro), color var(--t-micro);
+}
+
+.app-shell-v2 .app-sidebar .sidebar-search-result:hover {
+  background: var(--v2-surface-raised);
+  color: var(--v2-ink);
+}
+
+.app-shell-v2 .app-sidebar .sidebar-search-result svg {
+  flex-shrink: 0;
+  color: var(--v2-ink-muted);
 }
 
 .app-shell-v2 .app-sidebar .nav-group-label {

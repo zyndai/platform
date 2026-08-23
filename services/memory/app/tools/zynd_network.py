@@ -118,13 +118,28 @@ def _discover_local(q: str, top_k: int, avatars: dict[str, str]) -> list[dict]:
         result = sb.table("persona_agents").select("agent_id,name,description").eq("active", True).order("updated_at", desc=True).limit(top_k).execute()
         rows_data = result.data or []
     else:
+        rows_data = []
         try:
             result = sb.rpc("search_personas_fts", {"query_text": q, "result_limit": top_k}).execute()
             rows_data = result.data or []
         except Exception:
+            rows_data = []
+        # FTS can miss role keywords (e.g. "founder" buried in a long description,
+        # or a multi-word role like "community manager"). When it under-fills, fall
+        # back to a substring match and merge, so the caller gets matches instead of
+        # a misleading empty list.
+        if len(rows_data) < top_k:
             pattern = f"%{q}%"
-            result = sb.table("persona_agents").select("agent_id,name,description").eq("active", True).or_(f"name.ilike.{pattern},description.ilike.{pattern},brief_content.ilike.{pattern}").limit(top_k).execute()
-            rows_data = result.data or []
+            try:
+                result = sb.table("persona_agents").select("agent_id,name,description").eq("active", True).or_(f"name.ilike.{pattern},description.ilike.{pattern},brief_content.ilike.{pattern}").limit(top_k).execute()
+                extra = result.data or []
+            except Exception:
+                extra = []
+            seen = {r.get("agent_id") for r in rows_data}
+            for r in extra:
+                if r.get("agent_id") and r.get("agent_id") not in seen:
+                    rows_data.append(r)
+                    seen.add(r.get("agent_id"))
 
     return [{"name": r.get("name") or "", "agent_id": r.get("agent_id") or "", "description": r.get("description") or "", "avatar_url": avatars.get(r.get("agent_id") or "")} for r in rows_data if r.get("agent_id")]
 
@@ -311,16 +326,59 @@ async def search_zynd_network(query: str, top_k: int = 8, kind: str = "any", use
     if not q:
         q = "persona"
     normalized = _normalize_query(q)
+
+    # Persona queries must hit the local Supabase directory — roles/descriptions
+    # live in persona_agents, while registry personas mostly carry empty summaries
+    # ("No bio yet."), so a registry-only role query (e.g. "community manager")
+    # returns 0 even when matching people exist.
+    if kind == "persona":
+        return discover_personas(q, top_k)
+
     registry_results, err = _call_registry_search(normalized, kind, top_k)
     if err:
-        return {"status": "error", "error": err, "results": [], "count": 0}
+        registry_results = []
 
-    if kind == "persona":
-        local = discover_personas(q, top_k)
-        return local
+    results = list(registry_results)
 
-    results = _merge_deployer_entities(registry_results, kind, q)
-    return {"status": "success", "count": len(results), "results": results[:top_k], "total_found": len(results), "source": "registry+deployer" if any(r.get("source") == "deployer" for r in results) else "registry"}
+    if kind == "any":
+        # Default "search the whole network": merge the local persona directory
+        # (rich role/description data) with registry + deployer entities. Dedup by
+        # id, preferring the local copy when the registry entry has an empty summary.
+        local_personas = discover_personas(q, top_k).get("results", [])
+        by_id = {r.get("entity_id"): r for r in results if r.get("entity_id")}
+        seen = set(by_id.keys())
+        for p in local_personas:
+            pid = p.get("agent_id") or ""
+            if not pid:
+                continue
+            if pid in by_id:
+                r = by_id[pid]
+                # The local persona description is authoritative; the registry copy
+                # usually carries a placeholder ("No bio yet."), so overwrite it.
+                if p.get("description"):
+                    r["summary"] = p.get("description")
+                    r["description"] = p.get("description")
+                r["avatar_url"] = r.get("avatar_url") or p.get("avatar_url")
+                continue
+            if pid in seen:
+                continue
+            results.append({
+                "entity_id": pid,
+                "name": p.get("name") or "",
+                "summary": p.get("description") or "",
+                "description": p.get("description") or "",
+                "category": "persona",
+                "tags": ["persona"],
+                "avatar_url": p.get("avatar_url") or None,
+                "source": "local",
+            })
+            seen.add(pid)
+
+    results = _merge_deployer_entities(results, kind, q)
+    total = len(results)
+    results = results[:top_k]
+    sources = sorted({r.get("source") or "registry" for r in results})
+    return {"status": "success", "count": len(results), "results": results, "total_found": total, "source": "+".join(sources) or "none"}
 
 
 async def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:

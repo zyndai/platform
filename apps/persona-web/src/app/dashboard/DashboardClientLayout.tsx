@@ -38,6 +38,7 @@ import { startGuidedTour } from "@/lib/tour";
 import AppTopBar from "@/components/AppTopBar";
 import RightRail from "@/components/RightRail";
 import GuidedTour from "@/components/GuidedTour";
+import { getSearchShortcut } from "@/lib/tour";
 
 type NavTone = "indigo" | "violet" | "sky" | "emerald" | "amber" | "rose" | "slate";
 
@@ -84,6 +85,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchShortcut = useMemo(() => getSearchShortcut(), []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -259,7 +261,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             <label
               className="sidebar-search"
               aria-label="Search"
-              title={sidebarCollapsed ? "Search (⌘K)" : undefined}
+              title={sidebarCollapsed ? `Search (${searchShortcut})` : undefined}
               data-tour="tour-search"
               onClick={() => {
                 if (sidebarCollapsed) {
@@ -301,7 +303,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
                   <X size={12} strokeWidth={2} />
                 </button>
               ) : (
-                <span className="kbd">⌘K</span>
+                <span className="kbd">{searchShortcut}</span>
               )}
             </label>
 

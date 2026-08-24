@@ -21,6 +21,7 @@ import {
   X,
   Sparkles,
   Share2,
+  ListChecks,
 } from "lucide-react";
 import { Avatar, Button } from "@/components/ui";
 import { defaultGroupStyle, generateAvatarDataUri } from "@/lib/dicebear";
@@ -94,9 +95,9 @@ export default function GroupChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [openPanel, setOpenPanel] = useState<"people" | "brief" | "schedule" | "memory" | null>(null);
+  const [openPanel, setOpenPanel] = useState<"people" | "brief" | "schedule" | "memory" | "tasks" | null>(null);
 
-  const togglePanel = (tab: "people" | "brief" | "schedule" | "memory") => {
+  const togglePanel = (tab: "people" | "brief" | "schedule" | "memory" | "tasks") => {
     setOpenPanel((prev) => (prev === tab ? null : tab));
   };
 
@@ -141,6 +142,57 @@ export default function GroupChatPage() {
         if (!el) return;
         el.focus();
         el.setSelectionRange(cmd.insertText.length, cmd.insertText.length);
+        resizeComposerInput(el);
+      });
+    },
+    [resizeComposerInput],
+  );
+
+  // ── "/todo" picker — lists MY OWN open todos so I can paste one into
+  // the draft and address it to a group member. Purely a compose-time
+  // text insertion; nothing is created/mutated until the message sends
+  // and goes through the normal @mention dispatch.
+  const todoPickerOpen = draft === "/todo";
+  const [todoSuggestions, setTodoSuggestions] = useState<
+    { id: string; title: string; done: boolean }[]
+  >([]);
+  const [todoPickerLoading, setTodoPickerLoading] = useState(false);
+  const [todoIndex, setTodoIndex] = useState(0);
+
+  useEffect(() => {
+    if (!todoPickerOpen) return;
+    let cancelled = false;
+    setTodoPickerLoading(true);
+    apiGet<{ todos: { id: string; title: string; done: boolean }[] }>("/api/todos/", {
+      noCache: true,
+    })
+      .then((data) => {
+        if (!cancelled) setTodoSuggestions(data.todos.filter((t) => !t.done));
+      })
+      .catch(() => {
+        if (!cancelled) setTodoSuggestions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTodoPickerLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [todoPickerOpen]);
+
+  useEffect(() => {
+    if (todoIndex >= todoSuggestions.length) setTodoIndex(0);
+  }, [todoSuggestions.length, todoIndex]);
+
+  const pickTodoSuggestion = useCallback(
+    (t: { title: string }) => {
+      const next = `${t.title} `;
+      setDraft(next);
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(next.length, next.length);
         resizeComposerInput(el);
       });
     },
@@ -664,6 +716,16 @@ export default function GroupChatPage() {
             <Sparkle size={15} strokeWidth={1.75} />
             <span className="group-panel-tab-label">Memory</span>
           </button>
+          <button
+            type="button"
+            role="tab"
+            className={`group-panel-tab ${openPanel === "tasks" ? "is-active" : ""}`}
+            aria-selected={openPanel === "tasks"}
+            onClick={() => togglePanel("tasks")}
+          >
+            <ListChecks size={15} strokeWidth={1.75} />
+            <span className="group-panel-tab-label">Tasks</span>
+          </button>
         </div>
         {isManager && (
           <Link
@@ -848,6 +910,35 @@ export default function GroupChatPage() {
             ))}
           </ul>
         )}
+        {todoPickerOpen && (
+          <ul className="slash-picker" role="listbox" aria-label="Your todos">
+            {todoPickerLoading ? (
+              <li className="slash-picker-row" style={{ cursor: "default" }}>
+                <span className="slash-picker-desc">Loading your todos…</span>
+              </li>
+            ) : todoSuggestions.length === 0 ? (
+              <li className="slash-picker-row" style={{ cursor: "default" }}>
+                <span className="slash-picker-desc">No open todos — add one on the Todos tab.</span>
+              </li>
+            ) : (
+              todoSuggestions.map((t, i) => (
+                <li
+                  key={t.id}
+                  role="option"
+                  aria-selected={i === todoIndex}
+                  className={`slash-picker-row ${i === todoIndex ? "is-active" : ""}`}
+                  onMouseEnter={() => setTodoIndex(i)}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    pickTodoSuggestion(t);
+                  }}
+                >
+                  <span className="slash-picker-desc">{t.title}</span>
+                </li>
+              ))
+            )}
+          </ul>
+        )}
         <div className={`chat-input-v2 group-chat-input-v2 ${draft.trim() ? "has-text" : ""}`}>
           <div className="chat-input-v2-inner">
             <div className="row-1">
@@ -876,6 +967,34 @@ export default function GroupChatPage() {
                     if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
                       e.preventDefault();
                       pickSlashCommand(slashSuggestions[slashIndex]);
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setDraft("");
+                      return;
+                    }
+                  }
+                  if (todoPickerOpen) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      if (todoSuggestions.length > 0) {
+                        setTodoIndex((i) => (i + 1) % todoSuggestions.length);
+                      }
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      if (todoSuggestions.length > 0) {
+                        setTodoIndex(
+                          (i) => (i - 1 + todoSuggestions.length) % todoSuggestions.length,
+                        );
+                      }
+                      return;
+                    }
+                    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                      e.preventDefault();
+                      if (todoSuggestions[todoIndex]) pickTodoSuggestion(todoSuggestions[todoIndex]);
                       return;
                     }
                     if (e.key === "Escape") {
@@ -1171,7 +1290,7 @@ function GroupRightRail({
   isManager: boolean;
   isOwner: boolean;
   open: boolean;
-  tab: "people" | "brief" | "schedule" | "memory";
+  tab: "people" | "brief" | "schedule" | "memory" | "tasks";
   onClose: () => void;
 }) {
   const [brief, setBrief] = useState<GroupBriefData | null>(null);
@@ -1258,10 +1377,11 @@ function GroupRightRail({
     brief: "Brief",
     schedule: "Schedule",
     memory: "Memory",
+    tasks: "Tasks",
   };
 
   return (
-    <aside className={`group-chat-roster ${open ? "is-open" : ""}`}>
+    <aside className={`group-chat-roster ${tab === "tasks" ? "group-chat-roster--wide" : ""} ${open ? "is-open" : ""}`}>
       <div className="group-rail-header">
         <span className="group-rail-title">{PANEL_TITLE[tab]}</span>
         <button
@@ -1321,6 +1441,8 @@ function GroupRightRail({
         <GroupSchedulePane groupId={groupId} canUseSchedule={canUseSchedule} />
       ) : tab === "memory" ? (
         <GroupMemoryPane groupId={groupId} canEdit={isManager} />
+      ) : tab === "tasks" ? (
+        <GroupTasksPane groupId={groupId} />
       ) : !canReadGroupBrief ? (
         <div className="group-brief-pane">
           <div className="group-brief-empty">
@@ -1961,6 +2083,73 @@ function GroupMemoryPane({
             {adding ? "Adding…" : "Add rule"}
           </Button>
         </div>
+      )}
+    </div>
+  );
+}
+
+interface GroupTodo {
+  id: string;
+  title: string;
+  done: boolean;
+  user_id: string;
+  assignee_name: string;
+  assigned_by_name?: string | null;
+}
+
+function GroupTasksPane({ groupId }: { groupId: string }) {
+  const [todos, setTodos] = useState<GroupTodo[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!groupId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await apiGet<{ todos: GroupTodo[] }>(`/api/groups/${groupId}/todos`);
+        if (!cancelled) setTodos(r.todos);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Couldn't load tasks.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [groupId]);
+
+  return (
+    <div className="group-memory-pane">
+      <p className="group-memory-intro">
+        Tasks assigned in this group, visible to every member. Mention
+        someone with a task (e.g. &ldquo;write the outline, assign it to
+        @Name&rdquo;) to add one.
+      </p>
+
+      {error && (
+        <div className="group-composer-error" style={{ margin: "8px 0" }}>{error}</div>
+      )}
+
+      {todos === null ? (
+        <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</p>
+      ) : todos.length === 0 ? (
+        <p className="group-memory-empty">No tasks assigned yet.</p>
+      ) : (
+        <ul className="group-memory-sublist">
+          {todos.map((t) => (
+            <li key={t.id} className="group-memory-row">
+              <span
+                className="group-memory-text"
+                style={{ textDecoration: t.done ? "line-through" : "none" }}
+              >
+                {t.title}
+              </span>
+              <span className="group-roster-role" style={{ flexShrink: 0 }}>
+                {t.assignee_name}
+                {t.assigned_by_name ? ` · from ${t.assigned_by_name}` : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

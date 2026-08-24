@@ -21,7 +21,7 @@ export type SlashCommand =
   | { kind: "help" }
   | { kind: "invalid"; raw: string; hint: string };
 
-const VALID_NAMES = ["agents", "services", "card", "help"] as const;
+const VALID_NAMES = ["agents", "services", "card", "help", "todo"] as const;
 
 export function parseSlashCommand(input: string): SlashCommand | null {
   const trimmed = input.trim();
@@ -256,6 +256,13 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
     description: "List every slash command and what it does.",
     example: "/help",
     insertText: "/help",
+  },
+  {
+    name: "todo",
+    args: "",
+    description: "Pick one of your open todos and drop it into the message.",
+    example: "/todo",
+    insertText: "/todo",
   },
 ];
 

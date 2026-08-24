@@ -124,18 +124,47 @@ export default function GroupChatPage() {
   const [mentionStart, setMentionStart] = useState<number>(0);
   const [mentionIndex, setMentionIndex] = useState(0);
 
+  // ── "/todo" picker state — declared ahead of the slash-command block
+  // below since it needs to know todoPickerOpen to decide whether the
+  // generic "/" popover should still render. See the full comment further
+  // down, next to the effects that drive this picker.
+  const [todoPickerOpen, setTodoPickerOpen] = useState(false);
+  const [todoSuggestions, setTodoSuggestions] = useState<
+    { id: string; title: string; done: boolean }[]
+  >([]);
+  const [todoPickerLoading, setTodoPickerLoading] = useState(false);
+  const [todoIndex, setTodoIndex] = useState(0);
+  const [selectedTodoIds, setSelectedTodoIds] = useState<Set<string>>(new Set());
+  const [todoInsert, setTodoInsert] = useState<{ prefix: string; suffix: string } | null>(null);
+
+  const detectTodoTrigger = useCallback((text: string, caret: number) => {
+    let i = caret - 1;
+    while (i >= 0 && !/\s/.test(text[i])) i -= 1;
+    const tokenStart = i + 1;
+    if (text.slice(tokenStart, caret) !== "/todo") return null;
+    return { prefix: text.slice(0, tokenStart), suffix: text.slice(caret) };
+  }, []);
+
   // ── Slash-command autocomplete state ──────────────────────────────
   // Slash suggestions only fire when the draft starts with `/` and no
   // space has been typed yet. Mutually exclusive with the @-mention
   // picker (which never triggers at position 0 with `/`).
   const slashSuggestions: SlashCommandDef[] = suggestSlashCommands(draft) || [];
-  const slashOpen = slashSuggestions.length > 0;
+  // Once the todo picker takes over (see below), it owns the popover UI.
+  const slashOpen = slashSuggestions.length > 0 && !todoPickerOpen;
   const [slashIndex, setSlashIndex] = useState(0);
   useEffect(() => {
     if (slashIndex >= slashSuggestions.length) setSlashIndex(0);
   }, [slashSuggestions.length, slashIndex]);
   const pickSlashCommand = useCallback(
     (cmd: SlashCommandDef) => {
+      if (cmd.name === "todo") {
+        setTodoInsert({ prefix: "", suffix: "" });
+        setTodoPickerOpen(true);
+        setSelectedTodoIds(new Set());
+        setDraft("");
+        return;
+      }
       setDraft(cmd.insertText);
       requestAnimationFrame(() => {
         const el = inputRef.current;
@@ -148,17 +177,17 @@ export default function GroupChatPage() {
     [resizeComposerInput],
   );
 
-  // ── "/todo" picker — lists MY OWN open todos so I can paste one into
-  // the draft and address it to a group member. Purely a compose-time
-  // text insertion; nothing is created/mutated until the message sends
-  // and goes through the normal @mention dispatch.
-  const todoPickerOpen = draft === "/todo";
-  const [todoSuggestions, setTodoSuggestions] = useState<
-    { id: string; title: string; done: boolean }[]
-  >([]);
-  const [todoPickerLoading, setTodoPickerLoading] = useState(false);
-  const [todoIndex, setTodoIndex] = useState(0);
-
+  // ── "/todo" picker — lists MY OWN open todos with a checkbox per row so
+  // I can select several at once. Typing "/todo" ANYWHERE in the draft
+  // (not just as the whole message) triggers it — detectTodoTrigger above
+  // walks back from the caret to the start of the current whitespace-
+  // delimited token and checks it's exactly "/todo". `todoInsert`
+  // remembers what came before/after that token so the picker can splice
+  // the picked-items summary back into the same spot instead of
+  // clobbering the rest of the message. Every toggle re-renders the draft
+  // as "1. first title, 3. third title …" (numbered by list position).
+  // Purely a compose-time text insertion; nothing is created/mutated
+  // until the message sends and goes through the normal @mention dispatch.
   useEffect(() => {
     if (!todoPickerOpen) return;
     let cancelled = false;
@@ -184,19 +213,48 @@ export default function GroupChatPage() {
     if (todoIndex >= todoSuggestions.length) setTodoIndex(0);
   }, [todoSuggestions.length, todoIndex]);
 
-  const pickTodoSuggestion = useCallback(
-    (t: { title: string }) => {
-      const next = `${t.title} `;
-      setDraft(next);
+  // While the picker is open, the "/todo" spot IS the checked-items
+  // summary — kept in sync live as boxes are (un)checked, with the rest of
+  // the message (todoInsert.prefix/suffix) left untouched. Once closed
+  // (Enter/Tab/Escape) this stops running, so the user is free to edit.
+  useEffect(() => {
+    if (!todoPickerOpen || !todoInsert) return;
+    const parts = todoSuggestions
+      .map((t, i) => ({ t, num: i + 1 }))
+      .filter(({ t }) => selectedTodoIds.has(t.id))
+      .map(({ t, num }) => `${num}. ${t.title}`);
+    const summary = parts.length ? parts.join(", ") + " " : "";
+    setDraft(todoInsert.prefix + summary + todoInsert.suffix);
+    const caretPos = todoInsert.prefix.length + summary.length;
+    requestAnimationFrame(() => {
+      inputRef.current?.setSelectionRange(caretPos, caretPos);
+      resizeComposerInput();
+    });
+  }, [selectedTodoIds, todoSuggestions, todoPickerOpen, todoInsert, resizeComposerInput]);
+
+  const toggleTodoSelection = useCallback((id: string) => {
+    setSelectedTodoIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const closeTodoPicker = useCallback(
+    (cancel: boolean) => {
+      setTodoPickerOpen(false);
+      if (cancel && todoInsert) {
+        setSelectedTodoIds(new Set());
+        setDraft(todoInsert.prefix + todoInsert.suffix);
+      }
+      setTodoInsert(null);
       requestAnimationFrame(() => {
-        const el = inputRef.current;
-        if (!el) return;
-        el.focus();
-        el.setSelectionRange(next.length, next.length);
-        resizeComposerInput(el);
+        inputRef.current?.focus();
+        resizeComposerInput();
       });
     },
-    [resizeComposerInput],
+    [resizeComposerInput, todoInsert],
   );
 
   // ── "X's persona is replying…" indicator ──────────────────────────
@@ -243,6 +301,17 @@ export default function GroupChatPage() {
       return;
     }
     const caret = el.selectionStart ?? value.length;
+    if (!todoPickerOpen) {
+      const trigger = detectTodoTrigger(value, caret);
+      if (trigger) {
+        setTodoInsert(trigger);
+        setTodoPickerOpen(true);
+        setSelectedTodoIds(new Set());
+        setDraft(trigger.prefix + trigger.suffix);
+        setMentionQuery(null);
+        return;
+      }
+    }
     // Walk back from the caret looking for an `@` un-broken by whitespace.
     // If we find a whitespace before an `@`, no mention is active.
     let i = caret - 1;
@@ -272,7 +341,7 @@ export default function GroupChatPage() {
     setMentionStart(i);
     setMentionQuery(query);
     setMentionIndex(0);
-  }, []);
+  }, [todoPickerOpen, detectTodoTrigger]);
 
   const insertMention = useCallback(
     (member: Member) => {
@@ -551,12 +620,25 @@ export default function GroupChatPage() {
 
   const handleSend = useCallback(async () => {
     if (!groupId || !user) return;
-    const content = draft.trim();
-    if (!content) return;
+    const originalContent = draft.trim();
+    if (!originalContent) return;
     setError(null);
 
     // Slash commands run locally; never POSTed to the group.
-    if (await tryHandleSlashCommand(content)) return;
+    if (await tryHandleSlashCommand(originalContent)) return;
+
+    // Wrap every picked-from-/todo title still present in the text so it
+    // renders as a highlighted chip (and is recognized server-side as an
+    // unambiguous task title) — only for titles the user hasn't since
+    // edited away.
+    const pickedTitles = todoSuggestions
+      .filter((s) => selectedTodoIds.has(s.id))
+      .map((s) => s.title);
+    let content = originalContent;
+    for (const title of pickedTitles) {
+      if (content.includes(title)) content = content.replace(title, `{{todo::${title}}}`);
+    }
+    setSelectedTodoIds(new Set());
 
     // Optimistic append — render the message instantly so the chat
     // feels snappy. We tag the id with `local-` so the realtime
@@ -617,12 +699,12 @@ export default function GroupChatPage() {
       // Rollback — drop the optimistic message and restore the draft so
       // the user can fix and retry without retyping.
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
-      setDraft(content);
+      setDraft(originalContent);
       setError(e instanceof Error ? e.message : "Couldn't send the message.");
     } finally {
       setSending(false);
     }
-  }, [groupId, draft, user, myMembership, tryHandleSlashCommand]);
+  }, [groupId, draft, user, myMembership, tryHandleSlashCommand, todoSuggestions, selectedTodoIds]);
 
   if (notFound) {
     return (
@@ -911,7 +993,17 @@ export default function GroupChatPage() {
           </ul>
         )}
         {todoPickerOpen && (
-          <ul className="slash-picker" role="listbox" aria-label="Your todos">
+          <div className="todo-picker-popover">
+            <button
+              type="button"
+              className="todo-picker-close"
+              aria-label="Close todo picker"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => closeTodoPicker(false)}
+            >
+              <X size={13} strokeWidth={2} />
+            </button>
+          <ul className="slash-picker" role="listbox" aria-label="Your todos" aria-multiselectable="true">
             {todoPickerLoading ? (
               <li className="slash-picker-row" style={{ cursor: "default" }}>
                 <span className="slash-picker-desc">Loading your todos…</span>
@@ -925,19 +1017,29 @@ export default function GroupChatPage() {
                 <li
                   key={t.id}
                   role="option"
-                  aria-selected={i === todoIndex}
-                  className={`slash-picker-row ${i === todoIndex ? "is-active" : ""}`}
+                  aria-selected={selectedTodoIds.has(t.id)}
+                  className={`slash-picker-row todo-picker-row ${i === todoIndex ? "is-active" : ""}`}
                   onMouseEnter={() => setTodoIndex(i)}
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    pickTodoSuggestion(t);
+                    toggleTodoSelection(t.id);
                   }}
                 >
-                  <span className="slash-picker-desc">{t.title}</span>
+                  <input
+                    type="checkbox"
+                    readOnly
+                    checked={selectedTodoIds.has(t.id)}
+                    className="todo-picker-checkbox"
+                    tabIndex={-1}
+                  />
+                  <span className="slash-picker-desc">
+                    {i + 1}. {t.title}
+                  </span>
                 </li>
               ))
             )}
           </ul>
+          </div>
         )}
         <div className={`chat-input-v2 group-chat-input-v2 ${draft.trim() ? "has-text" : ""}`}>
           <div className="chat-input-v2-inner">
@@ -992,14 +1094,19 @@ export default function GroupChatPage() {
                       }
                       return;
                     }
-                    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                    if (e.key === "Tab") {
                       e.preventDefault();
-                      if (todoSuggestions[todoIndex]) pickTodoSuggestion(todoSuggestions[todoIndex]);
+                      if (todoSuggestions[todoIndex]) toggleTodoSelection(todoSuggestions[todoIndex].id);
+                      return;
+                    }
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      closeTodoPicker(false);
                       return;
                     }
                     if (e.key === "Escape") {
                       e.preventDefault();
-                      setDraft("");
+                      closeTodoPicker(true);
                       return;
                     }
                   }
@@ -1031,6 +1138,9 @@ export default function GroupChatPage() {
                     e.preventDefault();
                     void handleSend();
                   }
+                }}
+                onBlur={() => {
+                  if (todoPickerOpen) closeTodoPicker(false);
                 }}
                 disabled={!canPost || sending}
                 rows={1}
@@ -1085,6 +1195,19 @@ export default function GroupChatPage() {
 // highlighted mention is what the dispatcher will actually fire on.
 const MENTION_RE = /@([A-Z][A-Za-z0-9_]{0,30}(?:\s+[A-Z][A-Za-z0-9_]{0,30})?)/g;
 
+// A todo picked from the "/todo" composer picker is wrapped in this marker
+// before send (see handleSend above) so it renders as a highlighted
+// chip instead of raw text — same idea as @mentions above. Also recognized
+// server-side by backend/agent/group_dispatch.py's extract_unambiguous_task,
+// which treats it as an even stronger signal than a quoted phrase.
+const TODO_MARKER_RE = /\{\{todo::([^}]+)\}\}/g;
+// Combined token matcher used only for rendering — walks the content once,
+// picking out whichever of the two token shapes appears at each position.
+const RENDER_TOKEN_RE = new RegExp(
+  `${MENTION_RE.source}|${TODO_MARKER_RE.source}`,
+  "g",
+);
+
 function renderWithMentions(
   content: string,
   members: Member[],
@@ -1094,23 +1217,33 @@ function renderWithMentions(
   const lower = (s: string | null | undefined) => (s || "").toLowerCase();
   let cursor = 0;
   let key = 0;
-  for (const match of content.matchAll(MENTION_RE)) {
+  for (const match of content.matchAll(RENDER_TOKEN_RE)) {
     const idx = match.index ?? 0;
     if (idx > cursor) {
       nodes.push(<span key={key++}>{content.slice(cursor, idx)}</span>);
     }
-    const raw = match[1];
-    // Lookup the resolved member so we can flag "@you" vs others differently.
-    const target = members.find((m) => lower(m.display_name) === raw.toLowerCase());
-    const isMe = !!target && target.user_id === myUserId;
-    nodes.push(
-      <span
-        key={key++}
-        className={`group-mention ${isMe ? "is-me" : ""} ${target ? "" : "is-unresolved"}`}
-      >
-        @{raw}
-      </span>,
-    );
+    const mentionRaw = match[1];
+    const todoTitle = match[2];
+    if (todoTitle !== undefined) {
+      nodes.push(
+        <span key={key++} className="group-todo-chip">
+          {todoTitle}
+        </span>,
+      );
+    } else {
+      const raw = mentionRaw;
+      // Lookup the resolved member so we can flag "@you" vs others differently.
+      const target = members.find((m) => lower(m.display_name) === raw.toLowerCase());
+      const isMe = !!target && target.user_id === myUserId;
+      nodes.push(
+        <span
+          key={key++}
+          className={`group-mention ${isMe ? "is-me" : ""} ${target ? "" : "is-unresolved"}`}
+        >
+          @{raw}
+        </span>,
+      );
+    }
     cursor = idx + match[0].length;
   }
   if (cursor < content.length) {

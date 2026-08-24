@@ -729,6 +729,42 @@ async def list_members(group_id: str, user: dict = Depends(get_current_user)):
         m["avatar_url"] = avatar
     return {"members": members}
 
+
+@router.get("/{group_id}/todos")
+async def list_group_todos(group_id: str, user: dict = Depends(get_current_user)):
+    """List every todo assigned inside this group — visible to any member,
+    not just the assignee (unlike GET /api/todos/, which is owner-only).
+    Read-only: marking done still requires being the assignee, via the
+    existing PATCH /api/todos/{id} ownership check."""
+    sb = _supabase()
+    _require_member(sb, group_id, user["id"])
+
+    rows = (
+        sb.table("brief_todos")
+        .select("id, user_id, title, done, done_at, created_at, assigned_by_user_id")
+        .eq("group_id", group_id)
+        .order("done")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    todos = rows.data or []
+    if not todos:
+        return {"todos": []}
+
+    person_ids = {t["user_id"] for t in todos} | {
+        t["assigned_by_user_id"] for t in todos if t.get("assigned_by_user_id")
+    }
+    personas = (
+        sb.table("persona_agents").select("user_id, name").in_("user_id", list(person_ids)).execute()
+    )
+    name_by_uid = {p["user_id"]: p["name"] for p in (personas.data or [])}
+
+    for t in todos:
+        t["assignee_name"] = name_by_uid.get(t["user_id"]) or "Someone"
+        if t.get("assigned_by_user_id"):
+            t["assigned_by_name"] = name_by_uid.get(t["assigned_by_user_id"])
+    return {"todos": todos}
+
 @router.post("/{group_id}/members")
 async def add_member(
     group_id: str,

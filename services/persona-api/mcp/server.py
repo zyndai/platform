@@ -75,6 +75,7 @@ from mcp.tools.brief import (
     replace_my_brief,
     clear_my_brief,
     add_todo,
+    list_my_todos,
 )
 
 # ── Import Profile Tools ──
@@ -202,7 +203,8 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(append_to_my_brief, name="append_to_my_brief", description="Append a line to the principal's Brief. Use this when the user tells you something durable about themselves that you should remember across conversations.")
     mcp.register(replace_my_brief, name="replace_my_brief", description="Replace the entire body of the principal's Brief. Use only when the user explicitly asks to rewrite their brief — prefer append_to_my_brief for additions.")
     mcp.register(clear_my_brief, name="clear_my_brief", description="Empty the principal's Brief. Use only when the user explicitly asks to clear their brief.")
-    mcp.register(add_todo, name="add_todo", description="Add an actionable todo to the principal's todo list. PREFER this tool over append_to_my_brief whenever the user explicitly asks to track a task — phrases like 'add a todo', 'remind me to', 'put X on my list', 'add this to my todos'. The item shows up immediately on the dashboard's Todos tab (no 5-minute extractor wait). For general profile facts ('I work at X', 'I prefer afternoons'), use append_to_my_brief instead.")
+    mcp.register(add_todo, name="add_todo", description="Add an actionable todo to the principal's todo list. PREFER this tool over append_to_my_brief whenever the user explicitly asks to track a task — phrases like 'add a todo', 'remind me to', 'put X on my list', 'add this to my todos'. The item shows up immediately on the dashboard's Todos tab (no 5-minute extractor wait). For general profile facts ('I work at X', 'I prefer afternoons'), use append_to_my_brief instead. Also available when @mentioned in a Persona Group with a task assigned to you — group_id and assigned_by_user_id are auto-injected in that case, tagging the todo with where it came from.")
+    mcp.register(list_my_todos, name="list_my_todos", description="List the principal's todos from the dashboard's Todos tab — open items by default. Use this whenever the user asks what's on their todo list, what they have to do, or to show their tasks.")
 
     # ── Profile tools (principal-private) ───────────────────────────
     mcp.register(update_my_name, name="update_my_name", description="Change the principal's name (the name this persona uses to identify the human it represents). Use this whenever the principal says their name is wrong or asks to change it — e.g. 'my name is actually X', 'call me X'. Do NOT write a name change into the Brief via append_to_my_brief; the name has its own field and doing so creates a contradiction.")

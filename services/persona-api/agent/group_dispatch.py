@@ -71,6 +71,33 @@ def extract_mentions(content: str) -> list[str]:
     return out
 
 
+# ── Deterministic task-assignment extraction ────────────────────────────
+# The LLM tool-calling path for add_todo is unreliable in practice — it
+# sometimes replies "Done" without actually invoking the tool (confirmed by
+# direct reproduction; see agent/group_dispatch.py's task_hint prompt for
+# the mitigation attempt, which reduces but doesn't eliminate this). Every
+# real usage observed follows the same shape: the word "assign" plus
+# exactly one double-quoted task title. When that pattern matches
+# unambiguously, extract and record the task ourselves in plain Python —
+# no LLM tool call in the loop at all — so creation doesn't depend on model
+# reliability. Messages that don't match this shape (multi-task-in-one-
+# message, or no quotes) still fall back to the LLM path.
+_ASSIGN_KEYWORD_RE = re.compile(r"\bassign\b", re.IGNORECASE)
+_QUOTED_RE = re.compile(r'"([^"]+)"')
+
+
+def extract_unambiguous_task(content: str) -> str | None:
+    """Return the task title if `content` unambiguously assigns ONE task
+    (the word "assign" plus exactly one quoted phrase), else None."""
+    if not content or not _ASSIGN_KEYWORD_RE.search(content):
+        return None
+    matches = _QUOTED_RE.findall(content)
+    if len(matches) != 1:
+        return None
+    title = matches[0].strip()
+    return title or None
+
+
 def resolve_mentions_to_members(mentions: list[str], members: list[dict]) -> list[dict]:
     """
     Map raw mention names → group-member rows. The match is case-insensitive
@@ -398,17 +425,72 @@ async def dispatch_group_mention(
         f" ({time_zone})" if time_zone and time_zone != "UTC" else " UTC"
     )
 
+    # Deterministic-first: don't depend on the LLM reliably choosing to
+    # call add_todo (it doesn't — confirmed by direct reproduction, it
+    # sometimes replies "Done" without invoking the tool at all). When the
+    # message unambiguously assigns one task (see extract_unambiguous_task),
+    # record it directly here in plain Python, then tell the LLM it's
+    # already done so it doesn't also try (which would create a dupe).
+    deterministic_title = extract_unambiguous_task(user_message)
+    task_already_recorded = False
+    if deterministic_title:
+        try:
+            from mcp.tools.brief import add_todo as _add_todo_direct
+            result = _add_todo_direct(
+                user_id=target_uid,
+                title=deterministic_title,
+                group_id=group_id,
+                assigned_by_user_id=asker_user_id,
+            )
+            task_already_recorded = bool(result.get("success"))
+        except Exception as e:
+            logger.warning(f"[group-dispatch] deterministic add_todo failed: {e}")
+
+    if task_already_recorded:
+        task_hint = (
+            f"\n[A task assignment was detected in the message below and has "
+            f"ALREADY been recorded automatically as: \"{deterministic_title}\". "
+            f"Do NOT call add_todo yourself for this — that would create a "
+            f"duplicate. Just acknowledge it naturally in your reply (e.g. "
+            f"\"Done — '{deterministic_title}' is on my principal's todo "
+            f"list.\").]"
+        )
+    else:
+        task_hint = (
+            f"\n[If the message below assigns YOU (as {target_display}) a specific "
+            f"task — e.g. 'assign it to @{target_display}' or similar — you MUST "
+            f"call add_todo THIS TURN with a short title for just your piece, "
+            f"before replying. It's automatically tagged with this group and "
+            f"{asker_display_name} as the assigner. If the message assigns "
+            f"different tasks to other people too, ignore those — only record "
+            f"the one meant for you. If nothing is assigned to you, don't call "
+            f"add_todo at all.\n"
+            f"IMPORTANT: the 'Recent visible group context' below may show an "
+            f"earlier, similar-looking task request and your own past 'Done' "
+            f"reply to it. That earlier exchange is NOT evidence that the "
+            f"CURRENT task (the message after all the context blocks, at the "
+            f"very end of this prompt) has been recorded. Every distinct "
+            f"task-assignment message needs its OWN fresh add_todo call, even "
+            f"if an earlier one looks identical or you already said 'Done' "
+            f"before — never reuse a past reply's confirmation for a new "
+            f"request without actually calling the tool again this turn.]"
+        )
+
     prefixed_message = (
         f"[Group room context — you were @-mentioned by {asker_display_name} "
         f"in a private group. Reply as your principal's persona would, in 1–3 "
         f"sentences. The other group members will see your reply.\n"
         f"Current local time for the asker: {time_str}\n"
         f"{privacy_hint}]"
+        f"{task_hint}"
         f"{group_reply_mode}"
         f"{recent_group_context}"
         f"{constraints_block}"
         f"{brief_context}"
         f"\n\n{user_message}"
+        f"\n\n[Reminder: if the message directly above assigns YOU a task, "
+        f"call add_todo now, in this turn, before writing your reply — "
+        f"don't just describe it as done.]"
     )
 
     external_perms = _group_perms_to_external(asker_permissions)

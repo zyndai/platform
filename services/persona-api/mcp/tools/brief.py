@@ -140,7 +140,12 @@ def clear_my_brief(user_id: str) -> dict:
     return replace_my_brief(user_id, "")
 
 
-def add_todo(user_id: str, title: str) -> dict:
+def add_todo(
+    user_id: str,
+    title: str,
+    group_id: str | None = None,
+    assigned_by_user_id: str | None = None,
+) -> dict:
     """Add an actionable todo to the user's todo list.
 
     Direct write into the `brief_todos` table — bypasses the
@@ -151,10 +156,21 @@ def add_todo(user_id: str, title: str) -> dict:
     to record general profile facts — those belong in the Brief via
     `append_to_my_brief`.
 
+    When called during a Persona Group @mention, `group_id` and
+    `assigned_by_user_id` are auto-injected by the orchestrator — if the
+    group message assigned YOU a specific task, call this with just the
+    title for your piece; the todo will automatically be tagged with the
+    group it came from and who assigned it. Ignore tasks the message
+    assigns to other people.
+
     Args:
         user_id: Injected automatically by the orchestrator.
         title: Short imperative phrase, ~3–12 words. The function
             trims whitespace and caps overly-long input.
+        group_id: Injected automatically when this call happens inside a
+            Persona Group @mention. Never pass this yourself.
+        assigned_by_user_id: Injected automatically alongside `group_id` —
+            the user who assigned the task. Never pass this yourself.
     """
     if not isinstance(title, str) or not title.strip():
         return friendly_error_message(
@@ -169,14 +185,20 @@ def add_todo(user_id: str, title: str) -> dict:
 
     import config
 
+    row_data = {
+        "user_id": user_id,
+        "title": cleaned,
+        "source_text": cleaned,
+        "done": False,
+    }
+    if group_id:
+        row_data["group_id"] = group_id
+    if assigned_by_user_id:
+        row_data["assigned_by_user_id"] = assigned_by_user_id
+
     try:
         sb = config.get_supabase()
-        row = sb.table("brief_todos").insert({
-            "user_id": user_id,
-            "title": cleaned,
-            "source_text": cleaned,
-            "done": False,
-        }).execute()
+        row = sb.table("brief_todos").insert(row_data).execute()
         inserted_id = row.data[0]["id"] if row.data else None
     except Exception as e:
         logger.warning(f"[brief] add_todo failed: {e}")
@@ -186,4 +208,37 @@ def add_todo(user_id: str, title: str) -> dict:
         "success": True,
         "todo_id": inserted_id,
         "title": cleaned,
+    }
+
+
+def list_my_todos(user_id: str, include_done: bool = False) -> dict:
+    """List the principal's todos — open items first, newest first.
+
+    Use this whenever the user asks what's on their todo list / task list,
+    e.g. 'what are my todos', 'what do I have to do', 'show my tasks'.
+    These are the same items shown on the dashboard's Todos tab (both
+    manually added and extracted from the Brief).
+
+    Args:
+        user_id: Injected automatically by the orchestrator.
+        include_done: If true, also include completed todos. Defaults to
+            false so the list only shows what's still outstanding.
+    """
+    import config
+
+    try:
+        sb = config.get_supabase()
+        query = sb.table("brief_todos").select("id,title,done,created_at").eq("user_id", user_id)
+        if not include_done:
+            query = query.eq("done", False)
+        rows = query.order("done").order("created_at", desc=True).execute()
+    except Exception as e:
+        logger.warning(f"[brief] list_my_todos failed: {e}")
+        return friendly_error("list your todos", e)
+
+    todos = rows.data or []
+    return {
+        "success": True,
+        "count": len(todos),
+        "todos": [{"id": t["id"], "title": t["title"], "done": t["done"]} for t in todos],
     }

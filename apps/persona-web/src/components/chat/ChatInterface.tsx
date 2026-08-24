@@ -34,6 +34,7 @@ import {
 } from "./helpers";
 import GenUiResult, { LongResponseCard, isLongResponse } from "./GenUiResult";
 import ChatInput, { type ChatInputHandle } from "./ChatInput";
+import PublishHtmlModal from "./PublishHtmlModal";
 import ChatThreadSkeleton from "./ChatThreadSkeleton";
 import ChatHistorySidebar from "./ChatHistorySidebar";
 import MatchCard from "./MatchCard";
@@ -512,6 +513,7 @@ export default function ChatInterface() {
   const [introTarget, setIntroTarget] = useState<PersonaHit | null>(null);
   const [myPersonaName, setMyPersonaName] = useState<string>("");
   const [toast, setToast] = useState<string | null>(null);
+  const [publishHtmlOpen, setPublishHtmlOpen] = useState(false);
 
   // Pending approvals — orchestrator stages commitment-class tool calls
   // here, surfaced as sticky cards above the chat thread.
@@ -1418,6 +1420,7 @@ export default function ChatInterface() {
           onStop={stopStreaming}
           streaming={loading}
           disabled={loading}
+          onPublishHtml={() => setPublishHtmlOpen(true)}
         />
       </div>
 
@@ -1431,6 +1434,10 @@ export default function ChatInterface() {
           onSent={onIntroSent}
           send={sendIntro}
         />
+      )}
+
+      {publishHtmlOpen && (
+        <PublishHtmlModal onClose={() => setPublishHtmlOpen(false)} />
       )}
 
       {toast && <div className="toast" role="status">{toast}</div>}

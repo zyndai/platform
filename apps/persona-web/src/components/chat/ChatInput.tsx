@@ -21,6 +21,7 @@ import {
   Send,
   Square,
   ArrowUpRight,
+  Code2,
 } from "lucide-react";
 import { QUICK_PROMPTS } from "./quickPrompts";
 import { getSupabase } from "@/lib/supabase";
@@ -71,6 +72,9 @@ interface ChatInputProps {
   pills?: SuggestPill[];
   placeholder?: string;
   variant?: "v1" | "v2";
+  /** Opens the "Publish HTML" dialog — lets the user paste a full page
+   *  without the chat message's character cap. Only rendered in v2. */
+  onPublishHtml?: () => void;
 }
 
 /** Imperative handle so the parent can clear/focus the box without owning the
@@ -91,6 +95,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     pills,
     placeholder = "Ask your agent anything…  Try /services <query>",
     variant = "v2",
+    onPublishHtml,
   }: ChatInputProps,
   ref,
 ) {
@@ -606,6 +611,16 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                     </div>
                   )}
                 </div>
+                {onPublishHtml && (
+                  <button
+                    type="button"
+                    className="tool-btn"
+                    onClick={onPublishHtml}
+                    title="Paste and publish a full HTML page — no character limit"
+                  >
+                    <Code2 /> Publish HTML
+                  </button>
+                )}
               </div>
               <button
                 type="button"

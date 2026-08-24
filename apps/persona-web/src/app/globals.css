@@ -9594,6 +9594,9 @@ textarea.input { resize: vertical; min-height: 88px; }
 .group-chat-roster.is-open {
   transform: translateX(0);
 }
+.group-chat-roster--wide {
+  width: 460px;
+}
 .group-roster-title {
   margin: 0 0 10px;
   font-family: var(--font-geist), system-ui, sans-serif;
@@ -12813,6 +12816,64 @@ textarea.input { resize: vertical; min-height: 88px; }
   .dashboard-pages-info h3 {
     white-space: normal;
   }
+}
+
+/* Publish/edit HTML page modal */
+.intro-modal-body .publish-title-input {
+  min-height: 0;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: var(--r-sm);
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+.publish-html-textarea {
+  font-family: var(--font-geist-mono), "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  min-height: 280px;
+}
+.publish-visibility-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+.publish-visibility-row label {
+  font-family: var(--font-geist), sans-serif;
+  font-size: 12.5px;
+  color: var(--ink-secondary);
+}
+.publish-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.publish-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-sm);
+  padding: 8px 34px 8px 12px;
+  font-family: var(--font-geist), sans-serif;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--t-micro) var(--ease-out),
+              box-shadow var(--t-micro) var(--ease-out);
+}
+.publish-select:focus {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.publish-select:disabled { opacity: 0.6; cursor: not-allowed; }
+.publish-select-chevron {
+  position: absolute;
+  right: 10px;
+  color: var(--ink-secondary);
+  pointer-events: none;
 }
 
 /* Inline cards shown in the chat thread */

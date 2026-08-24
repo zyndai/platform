@@ -709,9 +709,18 @@ def _maybe_stage_approval(
         print(f"[orchestrator] ⚠ couldn't stage approval for {fn_name}: {e}")
         return None
 
-def _allowed_external_tools(permissions: dict | None) -> set[str]:
+# Tools allowed for group-dispatched personas specifically, on top of
+# EXTERNAL_DEFAULT_ALLOWED. Group members are a materially more trusted
+# relationship than an arbitrary A2A peer, and add_todo only ever writes
+# into the CALLING persona's own owner's list — it can't touch anyone
+# else's data — so it's safe to allow unconditionally in group context.
+GROUP_CONTEXT_DEFAULT_ALLOWED: set[str] = {"add_todo"}
+
+def _allowed_external_tools(permissions: dict | None, is_group_context: bool = False) -> set[str]:
     """Compute the full external-mode tool allowlist for a given permission set."""
     allowed = set(EXTERNAL_DEFAULT_ALLOWED)
+    if is_group_context:
+        allowed |= GROUP_CONTEXT_DEFAULT_ALLOWED
     if not permissions:
         return allowed
     for key, tools in EXTERNAL_PERMISSION_GATES.items():
@@ -1923,7 +1932,7 @@ Use this as factual background about the human you serve. Do not adopt their ide
 
     if is_external and is_group_context:
         perms = external_permissions or {}
-        allowed_tools = _allowed_external_tools(perms)
+        allowed_tools = _allowed_external_tools(perms, is_group_context=True)
         allowlist_block = ", ".join(sorted(allowed_tools)) or "(none)"
         can_propose_meeting = "propose_group_meeting" in allowed_tools
         can_check_calendar = "list_calendar_events" in allowed_tools
@@ -2596,7 +2605,7 @@ async def handle_user_message(
     tools = _capabilities_to_generic_tools()
     external_allowlist: set[str] | None = None
     if is_external:
-        external_allowlist = _allowed_external_tools(external_permissions)
+        external_allowlist = _allowed_external_tools(external_permissions, is_group_context)
         tools = _filter_tools_by_allowlist(tools, external_allowlist)
 
     # Get LLM provider
@@ -2737,6 +2746,20 @@ async def handle_user_message(
                     derived_gid = _group_id_from_conv(conversation_id)
                     if derived_gid:
                         fn_args["group_id"] = derived_gid
+                # Auto-inject assigned_by_user_id (who assigned a group
+                # todo) by resolving the asker's sender_agent_id → user_id,
+                # the same lookup the propose_meeting direction-fix below
+                # already does. Not threaded through conversation_id since
+                # that id is deliberately shared across different askers
+                # for the same target's thread (_conversation_id_for).
+                if "assigned_by_user_id" in param_names and "assigned_by_user_id" not in fn_args and sender_agent_id:
+                    try:
+                        sb = config.get_supabase()
+                        r = sb.table("persona_agents").select("user_id").eq("agent_id", sender_agent_id).execute()
+                        if r.data:
+                            fn_args["assigned_by_user_id"] = r.data[0]["user_id"]
+                    except Exception:
+                        pass
 
             # External-mode propose_meeting direction fix: when a foreign
             # agent asks us to formalize a meeting, the proposal should be
@@ -3119,6 +3142,20 @@ async def handle_user_message_stream(
                     derived_gid = _group_id_from_conv(conversation_id)
                     if derived_gid:
                         fn_args["group_id"] = derived_gid
+                # Auto-inject assigned_by_user_id (who assigned a group
+                # todo) by resolving the asker's sender_agent_id → user_id,
+                # the same lookup the propose_meeting direction-fix below
+                # already does. Not threaded through conversation_id since
+                # that id is deliberately shared across different askers
+                # for the same target's thread (_conversation_id_for).
+                if "assigned_by_user_id" in param_names and "assigned_by_user_id" not in fn_args and sender_agent_id:
+                    try:
+                        sb = config.get_supabase()
+                        r = sb.table("persona_agents").select("user_id").eq("agent_id", sender_agent_id).execute()
+                        if r.data:
+                            fn_args["assigned_by_user_id"] = r.data[0]["user_id"]
+                    except Exception:
+                        pass
 
             # External-mode propose_meeting direction fix
             if is_external and fn_name == "propose_meeting" and sender_agent_id:

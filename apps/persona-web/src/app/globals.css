@@ -10225,6 +10225,35 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 .slash-picker-row.is-active,
 .slash-picker-row:hover { background: var(--surface-raised); }
+.todo-picker-row { align-items: center; white-space: normal; }
+.todo-picker-checkbox {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--success, #5e8c61);
+  cursor: pointer;
+}
+.todo-picker-popover { position: relative; }
+.todo-picker-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--t-micro);
+}
+.todo-picker-close:hover { background: var(--surface-raised); color: var(--text-default); }
+.todo-picker-popover .slash-picker { padding-right: 24px; }
 .slash-picker-name {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-weight: 600;
@@ -10269,6 +10298,17 @@ textarea.input { resize: vertical; min-height: 88px; }
   background: transparent;
   color: var(--text-muted);
   font-weight: 500;
+}
+
+/* ── In-bubble todo chips (picked via the "/todo" composer picker) ── */
+.group-todo-chip,
+.chat-todo-chip {
+  display: inline;
+  padding: 1px 4px;
+  border-radius: 5px;
+  background: var(--success-soft, rgba(94, 140, 97, 0.1));
+  color: var(--success, #5e8c61);
+  font-weight: 600;
 }
 
 /* ── Typing indicator bubbles above composer ────────────────────── */

@@ -289,6 +289,36 @@ function HandoffCards({
 /** Patch the last "call"-kind message matching `entityId`. Matching on
  *  entityId (not just "the last call message") keeps two open call forms
  *  for different agents from clobbering each other. */
+// A todo picked from the "/todo" composer picker (ChatInput.tsx) is wrapped
+// in this marker before send so it renders as a highlighted chip instead of
+// raw text. Matches the equivalent regex in
+// webapp/src/app/dashboard/groups/[id]/page.tsx and backend/agent/group_dispatch.py.
+const TODO_MARKER_RE = /\{\{todo::([^}]+)\}\}/g;
+// Separate non-global regex for presence checks — .test() on a `g`-flagged
+// regex mutates lastIndex across calls, which would break repeated use.
+const HAS_TODO_MARKER_RE = /\{\{todo::([^}]+)\}\}/;
+
+/** Plain inline render (no markdown) that highlights any {{todo::…}} marker
+ *  as a chip — used only for messages containing the marker so the chip
+ *  stays inline with the surrounding text. */
+function renderWithTodoChips(content: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  let cursor = 0;
+  let key = 0;
+  for (const match of content.matchAll(TODO_MARKER_RE)) {
+    const idx = match.index ?? 0;
+    if (idx > cursor) nodes.push(<span key={key++}>{content.slice(cursor, idx)}</span>);
+    nodes.push(
+      <span key={key++} className="chat-todo-chip">
+        {match[1]}
+      </span>,
+    );
+    cursor = idx + match[0].length;
+  }
+  if (cursor < content.length) nodes.push(<span key={key++}>{content.slice(cursor)}</span>);
+  return nodes.length ? nodes : [<span key={0}>{content}</span>];
+}
+
 function updateLastCall(
   prev: ChatMessage[],
   entityId: string,
@@ -391,9 +421,13 @@ function MessageRowInner({
               />
             ) : (
               <div className="markdown-content">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {message.content}
-                </ReactMarkdown>
+                {HAS_TODO_MARKER_RE.test(message.content) ? (
+                  renderWithTodoChips(message.content)
+                ) : (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {message.content}
+                  </ReactMarkdown>
+                )}
               </div>
             ))}
           {message.error && (

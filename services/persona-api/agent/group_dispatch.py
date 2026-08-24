@@ -84,13 +84,23 @@ def extract_mentions(content: str) -> list[str]:
 # message, or no quotes) still fall back to the LLM path.
 _ASSIGN_KEYWORD_RE = re.compile(r"\bassign\b", re.IGNORECASE)
 _QUOTED_RE = re.compile(r'"([^"]+)"')
+# Wraps a title the webapp composer inserted via its "/todo" picker
+# (see webapp/src/components/chat/ChatInput.tsx and the group chat page) —
+# an even stronger signal than a quoted phrase since it names an exact,
+# already-known todo rather than free text the user happened to quote.
+_TODO_MARKER_RE = re.compile(r"\{\{todo::([^}]+)\}\}")
 
 
 def extract_unambiguous_task(content: str) -> str | None:
     """Return the task title if `content` unambiguously assigns ONE task
-    (the word "assign" plus exactly one quoted phrase), else None."""
+    (the word "assign" plus exactly one quoted phrase or "/todo"-picked
+    marker), else None."""
     if not content or not _ASSIGN_KEYWORD_RE.search(content):
         return None
+    marker_matches = _TODO_MARKER_RE.findall(content)
+    if len(marker_matches) == 1:
+        title = marker_matches[0].strip()
+        return title or None
     matches = _QUOTED_RE.findall(content)
     if len(matches) != 1:
         return None

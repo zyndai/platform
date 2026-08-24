@@ -22,9 +22,11 @@ import {
   Square,
   ArrowUpRight,
   Code2,
+  X,
 } from "lucide-react";
 import { QUICK_PROMPTS } from "./quickPrompts";
 import { getSupabase } from "@/lib/supabase";
+import { apiGet } from "@/lib/api";
 import { suggestSlashCommands, type SlashCommandDef } from "@/lib/services-commands";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -312,18 +314,39 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   }, [value]);
 
   const handleSend = () => {
-    const t = value.trim();
+    let t = value.trim();
     if (!t || disabled) return;
+    const pickedTitles = todoSuggestions
+      .filter((s) => selectedTodoIds.has(s.id))
+      .map((s) => s.title);
+    for (const title of pickedTitles) {
+      if (t.includes(title)) t = t.replace(title, `{{todo::${title}}}`);
+    }
+    setSelectedTodoIds(new Set());
     onSend(t);
     setValue("");
   };
+
+  // ── "/todo" picker state — declared ahead of the slash-command block
+  // below since it needs to know todoPickerOpen to decide whether the
+  // generic "/" popover should still render. See the full comment further
+  // down, next to the effects that drive this picker.
+  const [todoPickerOpen, setTodoPickerOpen] = useState(false);
+  const [todoSuggestions, setTodoSuggestions] = useState<
+    { id: string; title: string; done: boolean }[]
+  >([]);
+  const [todoPickerLoading, setTodoPickerLoading] = useState(false);
+  const [todoIndex, setTodoIndex] = useState(0);
+  const [selectedTodoIds, setSelectedTodoIds] = useState<Set<string>>(new Set());
+  const [todoInsert, setTodoInsert] = useState<{ prefix: string; suffix: string } | null>(null);
 
   // ── Slash-command autocomplete ────────────────────────────────────
   // When the input starts with `/` and the user is still typing the command
   // name (no space yet), show a small popover above the input listing the
   // matching commands. Arrow keys + Enter/Tab to pick; Esc to dismiss.
   const slashSuggestions: SlashCommandDef[] = suggestSlashCommands(value) || [];
-  const slashOpen = slashSuggestions.length > 0;
+  // Once the todo picker takes over (see below), it owns the popover UI.
+  const slashOpen = slashSuggestions.length > 0 && !todoPickerOpen;
   const [slashIndex, setSlashIndex] = useState(0);
   useEffect(() => {
     // Reset the highlight whenever the suggestion list changes (e.g., the
@@ -334,6 +357,13 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
 
   const pickSlashCommand = useCallback(
     (cmd: SlashCommandDef) => {
+      if (cmd.name === "todo") {
+        setTodoInsert({ prefix: "", suffix: "" });
+        setTodoPickerOpen(true);
+        setSelectedTodoIds(new Set());
+        setValue("");
+        return;
+      }
       setValue(cmd.insertText);
       // Move the caret to end of inserted text so the user can immediately
       // type the argument. requestAnimationFrame gives React a tick to
@@ -346,6 +376,91 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
       });
     },
     [],
+  );
+
+  // ── "/todo" picker — lists my open todos with a checkbox per row so I
+  // can select several at once. Typing "/todo" ANYWHERE in the draft (not
+  // just as the whole message) triggers it — same detection shape as the
+  // "@" mention scan in the group composer: walk back from the caret to
+  // the start of the current whitespace-delimited token and check it's
+  // exactly "/todo". `todoInsert` remembers what came before/after that
+  // token so the picker can splice the picked-items summary back into the
+  // same spot instead of clobbering the rest of the message. Every toggle
+  // re-renders the draft as "1. first title, 3. third title …" (numbered
+  // by list position so it's clear which items were picked). Mirrors the
+  // group chat's composer picker (webapp/src/app/dashboard/groups/[id]/page.tsx).
+  const detectTodoTrigger = useCallback((text: string, caret: number) => {
+    let i = caret - 1;
+    while (i >= 0 && !/\s/.test(text[i])) i -= 1;
+    const tokenStart = i + 1;
+    if (text.slice(tokenStart, caret) !== "/todo") return null;
+    return { prefix: text.slice(0, tokenStart), suffix: text.slice(caret) };
+  }, []);
+
+  useEffect(() => {
+    if (!todoPickerOpen) return;
+    let cancelled = false;
+    setTodoPickerLoading(true);
+    apiGet<{ todos: { id: string; title: string; done: boolean }[] }>("/api/todos/", {
+      noCache: true,
+    })
+      .then((data) => {
+        if (!cancelled) setTodoSuggestions(data.todos.filter((t) => !t.done));
+      })
+      .catch(() => {
+        if (!cancelled) setTodoSuggestions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTodoPickerLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [todoPickerOpen]);
+
+  useEffect(() => {
+    if (todoIndex >= todoSuggestions.length) setTodoIndex(0);
+  }, [todoSuggestions.length, todoIndex]);
+
+  // While the picker is open, the "/todo" spot IS the checked-items summary
+  // — kept in sync live as boxes are (un)checked, with the rest of the
+  // message (todoInsert.prefix/suffix) left untouched. Once closed
+  // (Enter/Tab/Escape) this stops running, so the user is free to edit.
+  useEffect(() => {
+    if (!todoPickerOpen || !todoInsert) return;
+    const parts = todoSuggestions
+      .map((t, i) => ({ t, num: i + 1 }))
+      .filter(({ t }) => selectedTodoIds.has(t.id))
+      .map(({ t, num }) => `${num}. ${t.title}`);
+    const summary = parts.length ? parts.join(", ") + " " : "";
+    const nextValue = todoInsert.prefix + summary + todoInsert.suffix;
+    setValue(nextValue);
+    const caretPos = todoInsert.prefix.length + summary.length;
+    requestAnimationFrame(() => {
+      textareaRef.current?.setSelectionRange(caretPos, caretPos);
+    });
+  }, [selectedTodoIds, todoSuggestions, todoPickerOpen, todoInsert]);
+
+  const toggleTodoSelection = useCallback((id: string) => {
+    setSelectedTodoIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const closeTodoPicker = useCallback(
+    (cancel: boolean) => {
+      setTodoPickerOpen(false);
+      if (cancel && todoInsert) {
+        setSelectedTodoIds(new Set());
+        setValue(todoInsert.prefix + todoInsert.suffix);
+      }
+      setTodoInsert(null);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    },
+    [todoInsert],
   );
 
   if (variant === "v1") {
@@ -460,6 +575,55 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
             ))}
           </ul>
         )}
+        {todoPickerOpen && (
+          <div className="todo-picker-popover">
+            <button
+              type="button"
+              className="todo-picker-close"
+              aria-label="Close todo picker"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => closeTodoPicker(false)}
+            >
+              <X size={13} strokeWidth={2} />
+            </button>
+          <ul className="slash-picker" role="listbox" aria-label="Your todos" aria-multiselectable="true">
+            {todoPickerLoading ? (
+              <li className="slash-picker-row" style={{ cursor: "default" }}>
+                <span className="slash-picker-desc">Loading your todos…</span>
+              </li>
+            ) : todoSuggestions.length === 0 ? (
+              <li className="slash-picker-row" style={{ cursor: "default" }}>
+                <span className="slash-picker-desc">No open todos — add one on the Todos tab.</span>
+              </li>
+            ) : (
+              todoSuggestions.map((t, i) => (
+                <li
+                  key={t.id}
+                  role="option"
+                  aria-selected={selectedTodoIds.has(t.id)}
+                  className={`slash-picker-row todo-picker-row ${i === todoIndex ? "is-active" : ""}`}
+                  onMouseEnter={() => setTodoIndex(i)}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    toggleTodoSelection(t.id);
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    readOnly
+                    checked={selectedTodoIds.has(t.id)}
+                    className="todo-picker-checkbox"
+                    tabIndex={-1}
+                  />
+                  <span className="slash-picker-desc">
+                    {i + 1}. {t.title}
+                  </span>
+                </li>
+              ))
+            )}
+          </ul>
+          </div>
+        )}
         <div className={`chat-input-v2 ${hasText ? "has-text" : ""}`}>
           <div className="chat-input-v2-inner">
             <div className="row-1">
@@ -469,7 +633,17 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                 value={value}
                 onChange={(e) => {
                   const next = e.target.value.slice(0, MAX_CHARS);
+                  const caret = e.target.selectionStart ?? next.length;
                   setValue(next);
+                  if (!todoPickerOpen) {
+                    const trigger = detectTodoTrigger(next, caret);
+                    if (trigger) {
+                      setTodoInsert(trigger);
+                      setTodoPickerOpen(true);
+                      setSelectedTodoIds(new Set());
+                      setValue(trigger.prefix + trigger.suffix);
+                    }
+                  }
                 }}
                 onKeyDown={(e) => {
                   if (slashOpen) {
@@ -499,10 +673,46 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                       return;
                     }
                   }
+                  if (todoPickerOpen) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      if (todoSuggestions.length > 0) {
+                        setTodoIndex((i) => (i + 1) % todoSuggestions.length);
+                      }
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      if (todoSuggestions.length > 0) {
+                        setTodoIndex(
+                          (i) => (i - 1 + todoSuggestions.length) % todoSuggestions.length,
+                        );
+                      }
+                      return;
+                    }
+                    if (e.key === "Tab") {
+                      e.preventDefault();
+                      if (todoSuggestions[todoIndex]) toggleTodoSelection(todoSuggestions[todoIndex].id);
+                      return;
+                    }
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      closeTodoPicker(false);
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      closeTodoPicker(true);
+                      return;
+                    }
+                  }
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     handleSend();
                   }
+                }}
+                onBlur={() => {
+                  if (todoPickerOpen) closeTodoPicker(false);
                 }}
                 placeholder={placeholder}
                 disabled={disabled}

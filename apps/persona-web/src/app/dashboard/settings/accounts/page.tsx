@@ -91,7 +91,9 @@ interface ConnState {
   calendar: { connected: boolean };
   email: { connected: boolean };
   telegram: { connected: boolean };
-  twitter: SocialConn;
+  /** Twitter is username-based, not OAuth: the handle is stored in the
+   *  persona profile (profile.twitter), same place the "You" page edits it. */
+  twitter: { username: string };
   github: SocialConn;
   reddit: SocialConn;
 }
@@ -101,7 +103,7 @@ const EMPTY: ConnState = {
   calendar: { connected: false },
   email: { connected: false },
   telegram: { connected: false },
-  twitter: { connected: false },
+  twitter: { username: "" },
   github: { connected: false },
   reddit: { connected: false },
 };
@@ -138,6 +140,20 @@ function timeAgo(iso: string | undefined): string {
   return `${d} day${d === 1 ? "" : "s"} ago`;
 }
 
+/** Accepts "@handle", "handle", or a profile URL like
+ *  https://x.com/handle — returns the bare handle. */
+function normalizeTwitterHandle(raw: string): string {
+  let v = raw.trim().replace(/^@/, "");
+  if (/^https?:\/\//i.test(v)) {
+    try {
+      v = new URL(v).pathname.split("/").filter(Boolean).pop() ?? v;
+    } catch {
+      // not a parseable URL — keep the raw value as-is
+    }
+  }
+  return v.replace(/[/\s]+$/, "");
+}
+
 export default function AccountsPage() {
   const { user } = useDashboard();
   const [conn, setConn] = useState<ConnState>(EMPTY);
@@ -161,6 +177,12 @@ export default function AccountsPage() {
   // name — this is a correction path, reachable whether or not they're
   // already "connected".
   const [linkedinUrlInput, setLinkedinUrlInput] = useState("");
+  // Twitter is username-based: the handle lives in the persona profile
+  // (profile.twitter), not in an OAuth token. The whole profile blob is
+  // kept so saves can merge the twitter key without clobbering anything
+  // else the user set (same pattern as the "You" page).
+  const [twitterUsernameInput, setTwitterUsernameInput] = useState("");
+  const [personaProfile, setPersonaProfile] = useState<Record<string, unknown>>({});
 
   const refresh = useCallback(async () => {
     const sb = getSupabase();
@@ -168,19 +190,21 @@ export default function AccountsPage() {
     const jwt = session?.access_token;
     if (!jwt) return;
 
-    const [connRes, linkedinRes] = await Promise.all([
+    const [connRes, linkedinRes, personaRes] = await Promise.all([
       fetch(`${API}/api/connections/`, {
         headers: { Authorization: `Bearer ${jwt}` },
       }),
       fetch(`${API}/api/linkedin/me`, {
         headers: { Authorization: `Bearer ${jwt}` },
       }),
+      session?.user?.id
+        ? fetch(`${API}/api/persona/${session.user.id}/status`)
+        : Promise.resolve(null),
     ]);
 
     let google = { connected: false, scopes: "" };
     let linkedinOauth = false;
     let telegram = { connected: false };
-    let twitter: SocialConn = { connected: false };
     let github: SocialConn = { connected: false };
     let reddit: SocialConn = { connected: false };
     if (connRes.ok) {
@@ -188,9 +212,16 @@ export default function AccountsPage() {
       google = data.connections?.google ?? google;
       linkedinOauth = data.connections?.linkedin?.connected ?? false;
       telegram = data.connections?.telegram ?? telegram;
-      twitter = data.connections?.twitter ?? twitter;
       github = data.connections?.github ?? github;
       reddit = data.connections?.reddit ?? reddit;
+    }
+
+    let twitterUsername = "";
+    if (personaRes && personaRes.ok) {
+      const data = await personaRes.json();
+      const profile = (data?.profile || {}) as Record<string, unknown>;
+      setPersonaProfile(profile);
+      twitterUsername = String(profile.twitter || "");
     }
 
     let linkedinRead = false;
@@ -231,7 +262,7 @@ export default function AccountsPage() {
       calendar: { connected: google.connected && scopes.includes("calendar") },
       email: { connected: google.connected && scopes.includes("gmail") },
       telegram,
-      twitter,
+      twitter: { username: twitterUsername },
       github,
       reddit,
     });
@@ -382,6 +413,28 @@ export default function AccountsPage() {
     }).catch(() => setWorking(null));
   };
 
+  // Twitter has no OAuth — the handle is saved straight into the persona
+  // profile (profile.twitter), merged with the rest of the profile blob so
+  // nothing else the user set gets clobbered.
+  const saveTwitterUsername = async () => {
+    const handle = normalizeTwitterHandle(twitterUsernameInput);
+    if (!user || !handle) return;
+    setWorking("twitter");
+    try {
+      const res = await fetch(`${API}/api/persona/${user.id}/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile: { ...personaProfile, twitter: handle } }),
+      });
+      if (res.ok) {
+        setTwitterUsernameInput("");
+        await refresh();
+      }
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const disconnect = async (which: ConnId) => {
     setWorking(which);
     try {
@@ -406,7 +459,13 @@ export default function AccountsPage() {
           method: "DELETE",
           headers: { Authorization: `Bearer ${jwt}` },
         });
-      } else if (which === "twitter" || which === "github" || which === "reddit") {
+      } else if (which === "twitter") {
+        await fetch(`${API}/api/persona/${session.user.id}/profile`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ profile: { ...personaProfile, twitter: "" } }),
+        });
+      } else if (which === "github" || which === "reddit") {
         await fetch(`${API}/api/connections/${which}`, {
           method: "DELETE",
           headers: { Authorization: `Bearer ${jwt}` },
@@ -448,7 +507,12 @@ export default function AccountsPage() {
       );
       return;
     }
-    if (id === "twitter" || id === "github" || id === "reddit") {
+    if (id === "twitter") {
+      // No OAuth for Twitter — jump the user to the username input.
+      document.getElementById("twitter-username-input")?.focus();
+      return;
+    }
+    if (id === "github" || id === "reddit") {
       // OAuth-only connect: redirect to the backend authorize endpoint,
       // which bounces to the provider and back to this page with a flash.
       setWorking(id);
@@ -647,24 +711,50 @@ export default function AccountsPage() {
           id="twitter"
           icon={<XIcon size={22} />}
           name="X (Twitter)"
-          connected={conn.twitter.connected}
+          connected={!!conn.twitter.username}
           loading={loading}
           working={working === "twitter"}
           confirming={confirming === "twitter"}
-          description="Your Persona connects to your X account to learn who you are there. We only read your username — no posting or DM permissions."
+          description="Your Persona reads your X profile to learn what you're into. We only read your public profile — nothing gets posted on your behalf."
           meta={
-            conn.twitter.connected
-              ? conn.twitter.username
-                ? `Connected as @${conn.twitter.username}`
-                : "Connected"
+            conn.twitter.username
+              ? `Connected as @${conn.twitter.username}`
               : undefined
           }
-          connectLabel="Connect my X account"
-          confirmNote="Your Persona will lose access to your X account."
+          connectLabel="Add my username"
+          confirmNote="This clears your saved username."
           onConnect={() => handleConnect("twitter")}
           onAskDisconnect={() => setConfirming("twitter")}
           onCancelConfirm={() => setConfirming(null)}
           onConfirmDisconnect={() => disconnect("twitter")}
+          footer={
+            <div className="linkedin-url-footer">
+              <FieldLabel htmlFor="twitter-username-input">Twitter / X username</FieldLabel>
+              <p className="field-hint">
+                {conn.twitter.username
+                  ? "Wrong handle above? Paste your exact handle to fix it."
+                  : "Know your handle? Paste it — we'll read your public X profile from there."}
+              </p>
+              <div className="linkedin-url-row">
+                <Input
+                  id="twitter-username-input"
+                  type="text"
+                  placeholder="@handle or https://x.com/handle"
+                  value={twitterUsernameInput}
+                  onChange={(e) => setTwitterUsernameInput(e.target.value)}
+                  disabled={working === "twitter"}
+                />
+                <Button
+                  size="sm"
+                  variant="tertiary"
+                  disabled={!twitterUsernameInput.trim() || working === "twitter"}
+                  onClick={() => void saveTwitterUsername()}
+                >
+                  Use this handle
+                </Button>
+              </div>
+            </div>
+          }
         />
 
         <ConnectorCard

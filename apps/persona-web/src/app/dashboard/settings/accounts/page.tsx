@@ -510,25 +510,17 @@ export default function AccountsPage() {
     if (url) window.location.href = url;
   };
 
-  return (
-    <div className="settings-main">
-      {oauthFlash && (
-        <div style={{ marginBottom: 16 }}>
-          <Banner
-            tone={oauthFlash.tone}
-            onDismiss={() => setOauthFlash(null)}
-          >
-            {oauthFlash.msg}
-          </Banner>
-        </div>
-      )}
-      <div className="settings-header">
-        <h1 className="display-s">Connections</h1>
-        <p className="body secondary">Six things your Persona can see. Nothing else.</p>
-      </div>
-
-      <div className="connectors-grid">
-        <ConnectorCard
+  // One array of cards so the page can split them into a "Connected"
+  // section and a "Not connected" section. A card belongs to the
+  // connected group while it has a live connection — LinkedIn also
+  // counts while a background scrape is in flight, since it's
+  // connected-but-not-yet-ready rather than flatly disconnected.
+  const connectorCards = [
+    {
+      connected: conn.linkedin.read || linkedinScraping,
+      card: (
+<ConnectorCard
+          key="linkedin"
           id="linkedin"
           icon={<LinkedinIcon size={22} />}
           name="LinkedIn"
@@ -633,8 +625,13 @@ export default function AccountsPage() {
             </div>
           }
         />
-
+      ),
+    },
+    {
+      connected: conn.calendar.connected,
+      card: (
         <ConnectorCard
+          key="calendar"
           id="calendar"
           icon={<Calendar size={22} strokeWidth={1.5} />}
           name="Calendar"
@@ -651,8 +648,13 @@ export default function AccountsPage() {
           onCancelConfirm={() => setConfirming(null)}
           onConfirmDisconnect={() => disconnect("calendar")}
         />
-
+      ),
+    },
+    {
+      connected: conn.email.connected,
+      card: (
         <ConnectorCard
+          key="email"
           id="email"
           icon={<Mail size={22} strokeWidth={1.5} />}
           name="Email"
@@ -670,8 +672,13 @@ export default function AccountsPage() {
           onCancelConfirm={() => setConfirming(null)}
           onConfirmDisconnect={() => disconnect("email")}
         />
-
+      ),
+    },
+    {
+      connected: conn.telegram.connected,
+      card: (
         <ConnectorCard
+          key="telegram"
           id="telegram"
           icon={<Send size={22} strokeWidth={1.5} />}
           name="Telegram"
@@ -687,8 +694,13 @@ export default function AccountsPage() {
           onCancelConfirm={() => setConfirming(null)}
           onConfirmDisconnect={() => disconnect("telegram")}
         />
-
+      ),
+    },
+    {
+      connected: !!conn.twitter.username,
+      card: (
         <ConnectorCard
+          key="twitter"
           id="twitter"
           icon={<XIcon size={22} />}
           name="X (Twitter)"
@@ -737,8 +749,13 @@ export default function AccountsPage() {
             </div>
           }
         />
-
+      ),
+    },
+    {
+      connected: conn.github.connected,
+      card: (
         <ConnectorCard
+          key="github"
           id="github"
           icon={<GithubIcon size={22} />}
           name="GitHub"
@@ -761,7 +778,55 @@ export default function AccountsPage() {
           onCancelConfirm={() => setConfirming(null)}
           onConfirmDisconnect={() => disconnect("github")}
         />
+      ),
+    },
+  ];
+  const connectedCards = connectorCards.filter((c) => c.connected);
+  const notConnectedCards = connectorCards.filter((c) => !c.connected);
+
+  return (
+    <div className="settings-main">
+      {oauthFlash && (
+        <div style={{ marginBottom: 16 }}>
+          <Banner
+            tone={oauthFlash.tone}
+            onDismiss={() => setOauthFlash(null)}
+          >
+            {oauthFlash.msg}
+          </Banner>
+        </div>
+      )}
+      <div className="settings-header">
+        <h1 className="display-s">Connections</h1>
+        <p className="body secondary">Six things your Persona can see. Nothing else.</p>
       </div>
+
+      {/* While loading (or before anything is connected) every card reads
+          as "Not connected", so keep a single ungrouped grid to avoid a
+          flash of mis-grouped cards. Once at least one connection exists,
+          split into a Connected section and a Not connected section. */}
+      {connectedCards.length === 0 ? (
+        <div className="connectors-grid">
+          {connectorCards.map((c) => c.card)}
+        </div>
+      ) : (
+        <>
+          <section className="connections-section">
+            <h2>Connected</h2>
+            <div className="connectors-grid">
+              {connectedCards.map((c) => c.card)}
+            </div>
+          </section>
+          {notConnectedCards.length > 0 && (
+            <section className="connections-section">
+              <h2>Not connected</h2>
+              <div className="connectors-grid">
+                {notConnectedCards.map((c) => c.card)}
+              </div>
+            </section>
+          )}
+        </>
+      )}
     </div>
   );
 }

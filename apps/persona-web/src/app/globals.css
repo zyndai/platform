@@ -5817,6 +5817,19 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 
 /* ── S14 Connector cards ─────────────────────────────────────────── */
+/* Connected / Not connected sections on the accounts page */
+.connections-section {
+  margin-bottom: 28px;
+}
+.connections-section h2 {
+  margin: 0 0 12px;
+  color: var(--v2-ink);
+  font-family: var(--font-instrument-sans), 'Instrument Sans', system-ui, sans-serif;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
 .connectors-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

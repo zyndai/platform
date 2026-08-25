@@ -63,6 +63,20 @@ NOTION_REDIRECT_URI: str = os.getenv(
     "NOTION_REDIRECT_URI", "http://localhost:8000/api/oauth/notion/callback"
 )
 
+# ── GitHub ───────────────────────────────────────────────────────────
+# Redirect URI is derived dynamically from FRONTEND_URL (see
+# api/oauth_routes._oauth_redirect_uri) so the callback always points at
+# the channel the request came in on (prod vs dev), never a hardcoded host.
+GITHUB_CLIENT_ID: str = os.getenv("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET: str = os.getenv("GITHUB_CLIENT_SECRET", "")
+
+# ── Reddit ───────────────────────────────────────────────────────────
+# Reddit requires a User-Agent header on every API call. Format per their
+# API rules: "<platform>/<version> by <owner>" — set per deployment.
+REDDIT_CLIENT_ID: str = os.getenv("REDDIT_CLIENT_ID", "")
+REDDIT_CLIENT_SECRET: str = os.getenv("REDDIT_CLIENT_SECRET", "")
+REDDIT_USER_AGENT: str = os.getenv("REDDIT_USER_AGENT", "zynd-persona/1.0")
+
 # ── Zynd AI (v2 — Ed25519/zns) ──────────────────────────────────────
 # Path to the developer keypair JSON (created by `zynd init` / `zynd auth login`)
 # This is the HD root from which all user persona keys are derived.

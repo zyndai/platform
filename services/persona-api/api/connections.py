@@ -18,7 +18,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-PROVIDERS = ["linkedin", "twitter", "google", "notion", "telegram"]
+PROVIDERS = ["linkedin", "twitter", "google", "notion", "github", "reddit", "telegram"]
+
+# Providers whose OAuth callback captures a username into api_tokens.raw_data
+# (see api/oauth_routes._identity). Surfaced so the Accounts page can show
+# "Connected as @handle".
+USERNAME_PROVIDERS = {"twitter", "github", "reddit"}
 
 
 @router.get("/")
@@ -30,11 +35,13 @@ async def list_connections(user: dict = Depends(get_current_user)):
     conn_map = {c["provider"]: c for c in user_conns}
 
     connections = {}
-    for provider in ["linkedin", "twitter", "google", "notion"]:
+    for provider in ["linkedin", "twitter", "google", "notion", "github", "reddit"]:
         conn_info = conn_map.get(provider)
+        raw = (conn_info.get("raw_data") or {}) if conn_info else {}
         connections[provider] = {
             "connected": provider in conn_map,
             "scopes": conn_info.get("scopes", "") if conn_info else "",
+            "username": raw.get("username") if provider in USERNAME_PROVIDERS else None,
         }
         
     # Telegram link lives in Supabase (telegram_links), written by the

@@ -91,6 +91,45 @@ def _generate_pkce() -> tuple[str, str]:
     return verifier, challenge
 
 
+def _oauth_redirect_uri(provider: str) -> str:
+    """Derive the OAuth callback URL from the app's public base URL.
+
+    The backend sits behind Caddy, which serves /api/* on the same public
+    origin as the frontend (config.FRONTEND_URL is env-configured per
+    channel: prod vs dev). Deriving the redirect URI from it keeps the
+    callback pointing at whichever channel started the flow — never a
+    hardcoded host — and matches what the provider app registers.
+    """
+    return f"{config.FRONTEND_URL}/api/oauth/{provider}/callback"
+
+
+def _identity(
+    platform: str,
+    platform_user_id,
+    username: str,
+    name: str | None = None,
+    profile_url: str | None = None,
+    avatar_url: str | None = None,
+) -> dict:
+    """Normalize a provider's /me response into one identity shape.
+
+    platform_user_id is the provider's immutable user id (canonical
+    identity); username is the display handle the enrichment pipeline
+    (Apify scrapers) keys on. Merged into the token payload before
+    save_tokens so it persists in api_tokens.raw_data.
+    """
+    out = {"platform": platform, "username": username}
+    if platform_user_id is not None:
+        out["platform_user_id"] = str(platform_user_id)
+    if name:
+        out["name"] = name
+    if profile_url:
+        out["profile_url"] = profile_url
+    if avatar_url:
+        out["avatar_url"] = avatar_url
+    return out
+
+
 # =====================================================================
 # LINKEDIN — OAuth 2.0 (OpenID Connect)
 # =====================================================================
@@ -218,7 +257,12 @@ async def linkedin_callback(code: str = None, state: str = None, error: str = No
 
 @router.get("/twitter/authorize")
 async def twitter_authorize(token: str):
-    """Start Twitter OAuth 2.0 PKCE flow."""
+    """Start Twitter OAuth 2.0 PKCE flow.
+
+    Scope is `users.read` only — we capture the handle and feed it to
+    Apify scrapers; we deliberately do NOT request tweet/dm write or read
+    permissions.
+    """
     user = await _validate_token(token)
 
     state = secrets.token_urlsafe(32)
@@ -229,8 +273,8 @@ async def twitter_authorize(token: str):
     params = {
         "response_type": "code",
         "client_id": config.TWITTER_CLIENT_ID,
-        "redirect_uri": config.TWITTER_REDIRECT_URI,
-        "scope": "tweet.read tweet.write users.read dm.read dm.write offline.access",
+        "redirect_uri": _oauth_redirect_uri("twitter"),
+        "scope": "users.read",
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
@@ -241,10 +285,14 @@ async def twitter_authorize(token: str):
 
 @router.get("/twitter/callback")
 async def twitter_callback(code: str = None, state: str = None, error: str = None, error_description: str = None):
-    """Exchange Twitter authorization code for tokens (with PKCE)."""
+    """Exchange Twitter authorization code for tokens (with PKCE).
+
+    After the exchange we call GET /2/users/me to capture the immutable
+    user id + username; the username feeds Apify profile scrapers later.
+    """
     if error or not code:
         desc = error_description or error or "authorization_denied"
-        return _frontend_redirect("/dashboard", oauth="twitter", status="error", detail=desc)
+        return _frontend_redirect("/dashboard/settings/accounts", oauth="twitter", status="error", detail=desc)
     pending = _pop_pending_state(state, "twitter")
     if not pending:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
@@ -254,11 +302,11 @@ async def twitter_callback(code: str = None, state: str = None, error: str = Non
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            "https://api.twitter.com/2/oauth2/token",
+            "https://api.x.com/2/oauth2/token",
             data={
                 "grant_type": "authorization_code",
                 "code": code,
-                "redirect_uri": config.TWITTER_REDIRECT_URI,
+                "redirect_uri": _oauth_redirect_uri("twitter"),
                 "client_id": config.TWITTER_CLIENT_ID,
                 "code_verifier": code_verifier,
             },
@@ -266,16 +314,227 @@ async def twitter_callback(code: str = None, state: str = None, error: str = Non
         )
 
     if resp.status_code != 200:
-        return _frontend_redirect("/dashboard", oauth="twitter", status="error", detail=resp.text)
+        return _frontend_redirect("/dashboard/settings/accounts", oauth="twitter", status="error", detail=resp.text)
 
     token_data = resp.json()
+
+    # Fetch the authenticated user's handle + immutable id. Failure here
+    # must not fail the connection itself — the token is already valid.
+    try:
+        async with httpx.AsyncClient() as client:
+            me_resp = await client.get(
+                "https://api.x.com/2/users/me",
+                params={"user.fields": "username"},
+                headers={"Authorization": f"Bearer {token_data['access_token']}"},
+            )
+        if me_resp.status_code == 200:
+            me_data = (me_resp.json() or {}).get("data") or {}
+            if me_data.get("username"):
+                token_data.update(_identity("x", me_data.get("id"), me_data["username"]))
+    except Exception:
+        pass
+
     save_tokens(
         user_id=user_id,
         provider="twitter",
         tokens=token_data,
     )
 
-    return _frontend_redirect("/dashboard", oauth="twitter", status="success")
+    return _frontend_redirect("/dashboard/settings/accounts", oauth="twitter", status="success")
+
+
+# =====================================================================
+# GITHUB — OAuth 2.0 (authorization code, no scopes)
+# =====================================================================
+
+@router.get("/github/authorize")
+async def github_authorize(token: str):
+    """Start GitHub OAuth flow.
+
+    No scope is requested — /user returns the public profile (login,
+    name, avatar) with an unscoped token, which is all we need to
+    capture the username for later Apify scraping.
+    """
+    user = await _validate_token(token)
+
+    state = secrets.token_urlsafe(32)
+    _store_pending_state(state, user["id"], "github")
+
+    params = {
+        "client_id": config.GITHUB_CLIENT_ID,
+        "redirect_uri": _oauth_redirect_uri("github"),
+        "state": state,
+    }
+    auth_url = f"https://github.com/login/oauth/authorize?{urlencode(params)}"
+    return RedirectResponse(auth_url)
+
+
+@router.get("/github/callback")
+async def github_callback(code: str = None, state: str = None, error: str = None, error_description: str = None):
+    """Exchange GitHub authorization code for tokens, then capture identity."""
+    if error or not code:
+        desc = error_description or error or "authorization_denied"
+        return _frontend_redirect("/dashboard/settings/accounts", oauth="github", status="error", detail=desc)
+    pending = _pop_pending_state(state, "github")
+    if not pending:
+        raise HTTPException(status_code=400, detail="Invalid or expired state")
+
+    user_id = pending["user_id"]
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://github.com/login/oauth/access_token",
+            headers={"Accept": "application/json"},
+            json={
+                "client_id": config.GITHUB_CLIENT_ID,
+                "client_secret": config.GITHUB_CLIENT_SECRET,
+                "code": code,
+                "redirect_uri": _oauth_redirect_uri("github"),
+            },
+        )
+
+    if resp.status_code != 200:
+        return _frontend_redirect("/dashboard/settings/accounts", oauth="github", status="error", detail=resp.text)
+
+    token_data = resp.json()
+    if not token_data.get("access_token"):
+        return _frontend_redirect(
+            "/dashboard/settings/accounts", oauth="github", status="error", detail="Token exchange failed"
+        )
+
+    # Revalidate identity via the API (GitHub recommends this over trusting
+    # stale data). Best-effort — a failure here must not fail the connect.
+    try:
+        async with httpx.AsyncClient() as client:
+            me_resp = await client.get(
+                "https://api.github.com/user",
+                headers={
+                    "Authorization": f"Bearer {token_data['access_token']}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+        if me_resp.status_code == 200:
+            me = me_resp.json() or {}
+            if me.get("login"):
+                token_data.update(
+                    _identity(
+                        "github",
+                        me.get("id"),
+                        me["login"],
+                        name=me.get("name"),
+                        profile_url=me.get("html_url"),
+                        avatar_url=me.get("avatar_url"),
+                    )
+                )
+    except Exception:
+        pass
+
+    save_tokens(
+        user_id=user_id,
+        provider="github",
+        tokens=token_data,
+    )
+
+    return _frontend_redirect("/dashboard/settings/accounts", oauth="github", status="success")
+
+
+# =====================================================================
+# REDDIT — OAuth 2.0 (authorization code, Basic auth exchange)
+# =====================================================================
+
+@router.get("/reddit/authorize")
+async def reddit_authorize(token: str):
+    """Start Reddit OAuth flow.
+
+    Scope is `identity` only — /api/v1/me returns the username we need
+    for later Apify scraping. `duration=temporary` gives a short-lived
+    token; we have no use for long-lived Reddit access yet.
+    """
+    user = await _validate_token(token)
+
+    state = secrets.token_urlsafe(32)
+    _store_pending_state(state, user["id"], "reddit")
+
+    params = {
+        "client_id": config.REDDIT_CLIENT_ID,
+        "response_type": "code",
+        "state": state,
+        "redirect_uri": _oauth_redirect_uri("reddit"),
+        "scope": "identity",
+        "duration": "temporary",
+    }
+    auth_url = f"https://www.reddit.com/api/v1/authorize?{urlencode(params)}"
+    return RedirectResponse(auth_url)
+
+
+@router.get("/reddit/callback")
+async def reddit_callback(code: str = None, state: str = None, error: str = None, error_description: str = None):
+    """Exchange Reddit authorization code for tokens, then capture identity."""
+    if error or not code:
+        desc = error_description or error or "authorization_denied"
+        return _frontend_redirect("/dashboard/settings/accounts", oauth="reddit", status="error", detail=desc)
+    pending = _pop_pending_state(state, "reddit")
+    if not pending:
+        raise HTTPException(status_code=400, detail="Invalid or expired state")
+
+    user_id = pending["user_id"]
+
+    # Reddit requires HTTP Basic auth (client_id:client_secret) on the
+    # token endpoint and a User-Agent header on every API call.
+    credentials = base64.b64encode(
+        f"{config.REDDIT_CLIENT_ID}:{config.REDDIT_CLIENT_SECRET}".encode()
+    ).decode()
+    user_agent = config.REDDIT_USER_AGENT
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://www.reddit.com/api/v1/access_token",
+            headers={
+                "Authorization": f"Basic {credentials}",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": user_agent,
+            },
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": _oauth_redirect_uri("reddit"),
+            },
+        )
+
+    if resp.status_code != 200:
+        return _frontend_redirect("/dashboard/settings/accounts", oauth="reddit", status="error", detail=resp.text)
+
+    token_data = resp.json()
+    if not token_data.get("access_token"):
+        return _frontend_redirect(
+            "/dashboard/settings/accounts", oauth="reddit", status="error", detail="Token exchange failed"
+        )
+
+    # Capture username from /api/v1/me. Best-effort — never fail the connect.
+    try:
+        async with httpx.AsyncClient() as client:
+            me_resp = await client.get(
+                "https://oauth.reddit.com/api/v1/me",
+                headers={
+                    "Authorization": f"Bearer {token_data['access_token']}",
+                    "User-Agent": user_agent,
+                },
+            )
+        if me_resp.status_code == 200:
+            me = me_resp.json() or {}
+            if me.get("name"):
+                token_data.update(_identity("reddit", me.get("id"), me["name"]))
+    except Exception:
+        pass
+
+    save_tokens(
+        user_id=user_id,
+        provider="reddit",
+        tokens=token_data,
+    )
+
+    return _frontend_redirect("/dashboard/settings/accounts", oauth="reddit", status="success")
 
 
 # =====================================================================

@@ -18,12 +18,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-PROVIDERS = ["linkedin", "google", "notion", "github", "reddit", "telegram"]
+PROVIDERS = ["linkedin", "google", "notion", "github", "telegram"]
 
 # Providers whose OAuth callback captures a username into api_tokens.raw_data
 # (see api/oauth_routes._identity). Surfaced so the Accounts page can show
 # "Connected as @handle".
-USERNAME_PROVIDERS = {"github", "reddit"}
+USERNAME_PROVIDERS = {"github"}
 
 
 @router.get("/")
@@ -35,7 +35,7 @@ async def list_connections(user: dict = Depends(get_current_user)):
     conn_map = {c["provider"]: c for c in user_conns}
 
     connections = {}
-    for provider in ["linkedin", "google", "notion", "github", "reddit"]:
+    for provider in ["linkedin", "google", "notion", "github"]:
         conn_info = conn_map.get(provider)
         raw = (conn_info.get("raw_data") or {}) if conn_info else {}
         connections[provider] = {

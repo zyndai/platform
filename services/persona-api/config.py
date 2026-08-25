@@ -70,13 +70,6 @@ NOTION_REDIRECT_URI: str = os.getenv(
 GITHUB_CLIENT_ID: str = os.getenv("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET: str = os.getenv("GITHUB_CLIENT_SECRET", "")
 
-# ── Reddit ───────────────────────────────────────────────────────────
-# Reddit requires a User-Agent header on every API call. Format per their
-# API rules: "<platform>/<version> by <owner>" — set per deployment.
-REDDIT_CLIENT_ID: str = os.getenv("REDDIT_CLIENT_ID", "")
-REDDIT_CLIENT_SECRET: str = os.getenv("REDDIT_CLIENT_SECRET", "")
-REDDIT_USER_AGENT: str = os.getenv("REDDIT_USER_AGENT", "zynd-persona/1.0")
-
 # ── Zynd AI (v2 — Ed25519/zns) ──────────────────────────────────────
 # Path to the developer keypair JSON (created by `zynd init` / `zynd auth login`)
 # This is the HD root from which all user persona keys are derived.

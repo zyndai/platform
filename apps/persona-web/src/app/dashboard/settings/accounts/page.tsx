@@ -46,20 +46,6 @@ function GithubIcon({ size = 22 }: { size?: number }) {
     </svg>
   );
 }
-
-function RedditIcon({ size = 22 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.701zM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.687-.562-1.249-1.25-1.249zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.196-2.512-.73a.326.326 0 0 0-.232-.095z" />
-    </svg>
-  );
-}
 import { Banner, Button, Input, FieldLabel, Tag } from "@/components/ui";
 import { getSupabase } from "@/lib/supabase";
 import { useDashboard } from "@/contexts/DashboardContext";
@@ -68,7 +54,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 // Bot swapped 2026-05-20: was @zynd_persona_telegram_bot — now @zynd_brief_bot.
 const TELEGRAM_BOT = "zynd_brief_bot";
 
-type ConnId = "linkedin" | "calendar" | "email" | "telegram" | "twitter" | "github" | "reddit";
+type ConnId = "linkedin" | "calendar" | "email" | "telegram" | "twitter" | "github";
 
 interface LinkedinPreview {
   headline?: string;
@@ -95,7 +81,6 @@ interface ConnState {
    *  persona profile (profile.twitter), same place the "You" page edits it. */
   twitter: { username: string };
   github: SocialConn;
-  reddit: SocialConn;
 }
 
 const EMPTY: ConnState = {
@@ -105,7 +90,6 @@ const EMPTY: ConnState = {
   telegram: { connected: false },
   twitter: { username: "" },
   github: { connected: false },
-  reddit: { connected: false },
 };
 
 const LINKEDIN_REAL_DATA_KEYS = ["headline", "experience", "education", "skills", "summary"] as const;
@@ -206,14 +190,12 @@ export default function AccountsPage() {
     let linkedinOauth = false;
     let telegram = { connected: false };
     let github: SocialConn = { connected: false };
-    let reddit: SocialConn = { connected: false };
     if (connRes.ok) {
       const data = await connRes.json();
       google = data.connections?.google ?? google;
       linkedinOauth = data.connections?.linkedin?.connected ?? false;
       telegram = data.connections?.telegram ?? telegram;
       github = data.connections?.github ?? github;
-      reddit = data.connections?.reddit ?? reddit;
     }
 
     let twitterUsername = "";
@@ -264,7 +246,6 @@ export default function AccountsPage() {
       telegram,
       twitter: { username: twitterUsername },
       github,
-      reddit,
     });
     setLoading(false);
   }, []);
@@ -465,7 +446,7 @@ export default function AccountsPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ profile: { ...personaProfile, twitter: "" } }),
         });
-      } else if (which === "github" || which === "reddit") {
+      } else if (which === "github") {
         await fetch(`${API}/api/connections/${which}`, {
           method: "DELETE",
           headers: { Authorization: `Bearer ${jwt}` },
@@ -512,7 +493,7 @@ export default function AccountsPage() {
       document.getElementById("twitter-username-input")?.focus();
       return;
     }
-    if (id === "github" || id === "reddit") {
+    if (id === "github") {
       // OAuth-only connect: redirect to the backend authorize endpoint,
       // which bounces to the provider and back to this page with a flash.
       setWorking(id);
@@ -543,7 +524,7 @@ export default function AccountsPage() {
       )}
       <div className="settings-header">
         <h1 className="display-s">Connections</h1>
-        <p className="body secondary">Seven things your Persona can see. Nothing else.</p>
+        <p className="body secondary">Six things your Persona can see. Nothing else.</p>
       </div>
 
       <div className="connectors-grid">
@@ -779,30 +760,6 @@ export default function AccountsPage() {
           onAskDisconnect={() => setConfirming("github")}
           onCancelConfirm={() => setConfirming(null)}
           onConfirmDisconnect={() => disconnect("github")}
-        />
-
-        <ConnectorCard
-          id="reddit"
-          icon={<RedditIcon size={22} />}
-          name="Reddit"
-          connected={conn.reddit.connected}
-          loading={loading}
-          working={working === "reddit"}
-          confirming={confirming === "reddit"}
-          description="Your Persona connects to your Reddit identity to learn what you care about. Read-only — no posting or voting."
-          meta={
-            conn.reddit.connected
-              ? conn.reddit.username
-                ? `Connected as u/${conn.reddit.username}`
-                : "Connected"
-              : undefined
-          }
-          connectLabel="Connect my Reddit"
-          confirmNote="Your Persona will lose access to your Reddit identity."
-          onConnect={() => handleConnect("reddit")}
-          onAskDisconnect={() => setConfirming("reddit")}
-          onCancelConfirm={() => setConfirming(null)}
-          onConfirmDisconnect={() => disconnect("reddit")}
         />
       </div>
     </div>

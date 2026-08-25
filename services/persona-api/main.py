@@ -73,9 +73,16 @@ async def lifespan(app: FastAPI):
     from agent.proactive_loop import get_proactive_agent
     await get_proactive_agent().start()
 
+    # GitHub sync — refreshes connected users' repos/languages daily
+    # and writes new knowledge to the memory layer.
+    from agent.github_sync_loop import get_github_sync_loop
+    await get_github_sync_loop().start()
+
     yield
 
     # ── Shutdown ──
+    from agent.github_sync_loop import get_github_sync_loop as _ghs
+    await _ghs().stop()
     from agent.proactive_loop import get_proactive_agent as _pa
     await _pa().stop()
     from agent.a2a_router import stop_a2a_lifecycle

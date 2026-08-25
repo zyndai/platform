@@ -543,6 +543,35 @@ CREATE POLICY "Service role full access on linkedin_profiles" ON linkedin_profil
 
 
 -- ================================================================
+-- 10b. GITHUB PROFILES — cached repo/language snapshot per user
+-- ================================================================
+CREATE TABLE IF NOT EXISTS github_profiles (
+    user_id     UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    username    TEXT,
+    raw_repos   JSONB NOT NULL DEFAULT '[]'::jsonb,
+    skills      JSONB NOT NULL DEFAULT '[]'::jsonb,
+    projects    JSONB NOT NULL DEFAULT '[]'::jsonb,
+    synced_at   TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    updated_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS github_profiles_synced_at_idx
+    ON github_profiles (synced_at DESC);
+
+ALTER TABLE github_profiles ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users read own github profile" ON github_profiles
+    FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users delete own github profile" ON github_profiles
+    FOR DELETE USING (auth.uid() = user_id);
+
+CREATE POLICY "Service role full access on github_profiles" ON github_profiles
+    FOR ALL USING (auth.role() = 'service_role');
+
+
+-- ================================================================
 -- 11. REALTIME PUBLICATION
 --
 -- Frontend subscribes to these tables for live updates:

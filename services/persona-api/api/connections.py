@@ -96,4 +96,7 @@ async def delete_provider_data(provider: str, user: dict = Depends(get_current_u
     if provider == "linkedin":
         config.get_supabase().table("linkedin_profiles").delete().eq("user_id", user["id"]).execute()
 
+    if provider == "github":
+        config.get_supabase().table("github_profiles").delete().eq("user_id", user["id"]).execute()
+
     return {"status": "deleted", "provider": provider}

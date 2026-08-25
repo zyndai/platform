@@ -13,13 +13,14 @@ Flow:
   5. Redirects to frontend dashboard with success/error status
 """
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import RedirectResponse
 import httpx
 import secrets
 import hashlib
 import base64
 import json
+import logging
 from urllib.parse import urlencode
 
 import config
@@ -27,6 +28,8 @@ from services.token_store import save_tokens
 from datetime import datetime, timezone
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 PENDING_STATE_TABLE = "oauth_pending_state"
 
@@ -259,9 +262,10 @@ async def linkedin_callback(code: str = None, state: str = None, error: str = No
 async def github_authorize(token: str):
     """Start GitHub OAuth flow.
 
-    No scope is requested — /user returns the public profile (login,
-    name, avatar) with an unscoped token, which is all we need to
-    capture the username for later Apify scraping.
+    `repo` lets the daily sync list the user's repositories (public and
+    private) and fetch language statistics; `read:user` gives profile +
+    email. Users who connected before this scope was added must
+    reconnect once to re-consent.
     """
     user = await _validate_token(token)
 
@@ -271,6 +275,7 @@ async def github_authorize(token: str):
     params = {
         "client_id": config.GITHUB_CLIENT_ID,
         "redirect_uri": _oauth_redirect_uri("github"),
+        "scope": "repo read:user",
         "state": state,
     }
     auth_url = f"https://github.com/login/oauth/authorize?{urlencode(params)}"
@@ -278,7 +283,13 @@ async def github_authorize(token: str):
 
 
 @router.get("/github/callback")
-async def github_callback(code: str = None, state: str = None, error: str = None, error_description: str = None):
+async def github_callback(
+    code: str = None,
+    state: str = None,
+    error: str = None,
+    error_description: str = None,
+    background_tasks: BackgroundTasks = None,
+):
     """Exchange GitHub authorization code for tokens, then capture identity."""
     if error or not code:
         desc = error_description or error or "authorization_denied"
@@ -344,7 +355,24 @@ async def github_callback(code: str = None, state: str = None, error: str = None
         tokens=token_data,
     )
 
+    # Kick off the first repo/language sync immediately — the daily loop
+    # would otherwise pick this user up only at the next 24h scan. This is
+    # the best-effort part: it must never fail the connect itself.
+    if background_tasks is not None:
+        background_tasks.add_task(_safe_github_sync, user_id)
+
     return _frontend_redirect("/dashboard/settings/accounts", oauth="github", status="success")
+
+
+async def _safe_github_sync(user_id: str) -> None:
+    """BackgroundTask wrapper — a GitHub sync failure must not 500 the
+    OAuth redirect, and the daily loop retries anyway."""
+    try:
+        from services.github_sync import sync_user
+        result = await sync_user(user_id)
+        logger.info("[github] post-connect sync for %s: %s", user_id, result.get("status"))
+    except Exception:
+        logger.exception("[github] post-connect sync failed for %s", user_id)
 
 
 # =====================================================================

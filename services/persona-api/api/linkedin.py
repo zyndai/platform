@@ -48,9 +48,9 @@ def _get_supabase():
     return config.get_supabase()
 
 
-async def _safe_scrape(user_id: str, full_name: str, profile_url: str | None = None) -> None:
+async def _safe_scrape(user_id: str, profile_url: str) -> None:
     try:
-        result = await scrape_user(user_id, full_name, profile_url)
+        result = await scrape_user(user_id, profile_url)
         logger.info(f"[linkedin] background scrape done for {user_id}: {result}")
     except Exception as e:
         logger.error(f"[linkedin] background scrape crashed for {user_id}: {e}")
@@ -85,20 +85,14 @@ async def trigger_scrape(
     the scrape runs in the background and persists to linkedin_profiles.
     Safe to call multiple times — the underlying upsert is idempotent.
 
-    If a profile_url was stored from a prior OAuth connect, it is passed
-    directly to the scraper, avoiding the fragile search-by-name step.
+    A profile URL is mandatory: name-based guessing was removed entirely,
+    so scraping is strictly opt-in. `profile_url` is accepted directly
+    (from the user pasting it) or taken from a stored prior connect; with
+    neither present this returns `no_profile_url` and nothing runs.
 
     `force=True` (the Accounts page's "Refresh now" button) bypasses the
     cached-data short-circuit below. There's no periodic re-scrape job —
     this is the only way data ever gets refreshed after the first scrape.
-
-    `profile_url`, if provided, is treated as authoritative: stored and
-    scraped directly, skipping the search-by-name guess entirely.
-    LinkedIn's OAuth only gives us a name via OIDC — no profile URL,
-    which requires special partner API access we don't have — so
-    search-by-name is the only option when the user doesn't supply this.
-    For a common name that guess can (and does) land on a stranger's
-    profile; this is the only way to guarantee we scrape the right one.
 
     `fast=True` (onboarding's LinkedIn step) scrapes just the profile
     actor, skipping posts — the profile+posts actors run in parallel in
@@ -108,9 +102,6 @@ async def trigger_scrape(
     (see the has_posts branch below), once a later onboarding step
     (matches/brief) actually needs them.
     """
-    metadata = user.get("user_metadata") or {}
-    full_name = metadata.get("full_name") or metadata.get("name") or ""
-
     sb = _get_supabase()
 
     if profile_url:
@@ -128,7 +119,7 @@ async def trigger_scrape(
         if fast:
             background_tasks.add_task(_safe_scrape_profile_only, user["id"], profile_url)
             return {"status": "started", "source": "user_provided_url_fast"}
-        background_tasks.add_task(_safe_scrape, user["id"], full_name, profile_url)
+        background_tasks.add_task(_safe_scrape, user["id"], profile_url)
         return {"status": "started", "source": "user_provided_url"}
 
     existing = (
@@ -159,17 +150,16 @@ async def trigger_scrape(
         if not force and has_real_data and not has_posts and row.get("profile_url"):
             background_tasks.add_task(_safe_scrape_posts_only, user["id"], row["profile_url"])
             return {"status": "started", "source": "posts_backfill"}
-        # If we have a profile_url from OAuth but no scrape data yet, use it.
+        # If we have a profile_url from a prior paste/connect but no scrape
+        # data yet, use it.
         if row.get("profile_url"):
-            background_tasks.add_task(_safe_scrape, user["id"], full_name, row["profile_url"])
+            background_tasks.add_task(_safe_scrape, user["id"], row["profile_url"])
             return {"status": "started", "source": "oauth_profile_url"}
 
-    # No existing row at all — need a name to search by.
-    if not full_name:
-        return {"status": "skipped", "reason": "no_name_in_metadata"}
-
-    background_tasks.add_task(_safe_scrape, user["id"], full_name)
-    return {"status": "started", "source": "search_by_name"}
+    # No stored row and no profile URL supplied — with name guessing
+    # removed, scraping is strictly opt-in: the user pastes their URL on
+    # onboarding or the Accounts page, and nothing runs until they do.
+    return {"status": "skipped", "reason": "no_profile_url"}
 
 
 @router.get("/me")

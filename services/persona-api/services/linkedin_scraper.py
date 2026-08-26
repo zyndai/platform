@@ -1,14 +1,15 @@
 """
 LinkedIn scraper service — wraps the harvestapi suite on Apify.
 
-Three actors are used in sequence:
-  1. harvestapi/linkedin-profile-search-by-name → profile URL
-  2. harvestapi/linkedin-profile-scraper        → headline, summary, skills
-  3. harvestapi/linkedin-profile-posts          → recent posts
+Two actors are used:
+  1. harvestapi/linkedin-profile-scraper        → headline, summary, skills
+  2. harvestapi/linkedin-profile-posts          → latest 5 posts
 
-Results land in the public.linkedin_profiles Supabase table. Aria's bio
-synthesis (LLM-driven) reads from that table later; this module only
-fetches and persists raw data.
+Results land in the public.linkedin_profiles Supabase table. The scrape
+is strictly opt-in: the profile URL must be supplied by the user (name
+guessing was removed entirely). After a successful profile persist, the
+curated facts are also synced into the memory layer, deduped — only new
+info is declared (see sync_profile_to_memory).
 """
 
 import asyncio
@@ -22,13 +23,12 @@ import config
 logger = logging.getLogger(__name__)
 
 APIFY_BASE = "https://api.apify.com/v2"
-SEARCH_BY_NAME_ACTOR = "harvestapi~linkedin-profile-search-by-name"
 PROFILE_ACTOR = "harvestapi~linkedin-profile-scraper"
 POSTS_ACTOR = "harvestapi~linkedin-profile-posts"
-# General keyword/role/location people search — distinct from
-# SEARCH_BY_NAME_ACTOR above, which only does exact first/last-name lookup
-# and is used solely for onboarding profile matching. This one is what
-# powers open-ended discovery ("find AI founders on LinkedIn").
+# General keyword/role/location people search — powers open-ended
+# discovery ("find AI founders on LinkedIn") via the search_linkedin_people
+# MCP tool. Distinct from the two scrape actors above and never runs
+# during a profile scrape.
 PEOPLE_SEARCH_ACTOR = "harvestapi~linkedin-profile-search"
 
 # Per-call timeout for Apify run-sync. Each actor takes ~10-60s in practice;
@@ -62,44 +62,6 @@ async def _run_actor(actor_id: str, payload: dict) -> list:
             logger.error(f"[linkedin] actor {actor_id} returned {resp.status_code}: {resp.text[:500]}")
         resp.raise_for_status()
         return resp.json() or []
-
-
-def _split_name(full_name: str) -> tuple[str, str]:
-    parts = full_name.strip().split()
-    if not parts:
-        return "", ""
-    if len(parts) == 1:
-        return parts[0], ""
-    return parts[0], " ".join(parts[1:])
-
-
-async def find_profile_url(full_name: str) -> str | None:
-    """Search LinkedIn by name; return the top-match profile URL, or None."""
-    first, last = _split_name(full_name)
-    if not first:
-        return None
-
-    items = await _run_actor(
-        SEARCH_BY_NAME_ACTOR,
-        {
-            "profileScraperMode": "Short",
-            "firstName": first,
-            "lastName": last,
-            "strictSearch": True,
-            "maxItems": 5,
-        },
-    )
-    if not items:
-        return None
-
-    # Result records expose either `linkedinUrl`, `profileUrl`, or `url`
-    # depending on actor version. Pick the first non-empty one.
-    top = items[0]
-    return (
-        top.get("linkedinUrl")
-        or top.get("profileUrl")
-        or top.get("url")
-    )
 
 
 async def scrape_profile(profile_url: str) -> dict:
@@ -175,6 +137,7 @@ async def scrape_profile_only(user_id: str, profile_url: str) -> dict:
     ).execute()
 
     logger.info(f"[linkedin] stored profile-only for {user_id} ({profile_url})")
+    await _safe_memory_sync(user_id, profile)
     return {"status": "ok", "profile_url": profile_url}
 
 
@@ -211,8 +174,8 @@ async def search_people(
 ) -> list[dict]:
     """
     Keyword/role/location people search across LinkedIn (not a specific
-    person lookup — see find_profile_url for that). Backs the
-    `search_linkedin_people` MCP tool.
+    person lookup — a profile scrape always takes an explicit URL).
+    Backs the `search_linkedin_people` MCP tool.
 
     Field names on the returned dicts (firstName/lastName, headline,
     location.linkedinText, linkedinUrl, currentPosition[].companyName) are
@@ -240,8 +203,8 @@ async def search_people(
     return await _run_actor(PEOPLE_SEARCH_ACTOR, payload)
 
 
-async def scrape_recent_posts(profile_url: str, max_posts: int = 10) -> list[dict]:
-    """Fetch recent posts authored by the profile."""
+async def scrape_recent_posts(profile_url: str, max_posts: int = 5) -> list[dict]:
+    """Fetch the latest posts authored by the profile (5 by default)."""
     return await _run_actor(
         POSTS_ACTOR,
         {
@@ -253,28 +216,17 @@ async def scrape_recent_posts(profile_url: str, max_posts: int = 10) -> list[dic
     )
 
 
-async def scrape_user(user_id: str, full_name: str, profile_url: str | None = None) -> dict:
+async def scrape_user(user_id: str, profile_url: str) -> dict:
     """
-    End-to-end scrape: find the profile URL (or use the provided one),
-    fetch profile + posts in parallel, persist to linkedin_profiles.
-    Idempotent — calling twice for the same user upserts.
+    End-to-end scrape of a known profile URL: fetch profile + posts in
+    parallel, persist to linkedin_profiles, and sync curated facts to the
+    memory layer (deduped). Idempotent — calling twice upserts.
 
-    If profile_url is provided (e.g. from OAuth vanity name resolution),
-    the search-by-name step is skipped entirely.
+    The URL is mandatory. Name-based guessing was removed entirely, so a
+    user who never supplies their profile URL never gets scraped.
     """
     if not profile_url:
-        if not full_name:
-            return {"status": "skipped", "reason": "no_name"}
-
-        try:
-            profile_url = await find_profile_url(full_name)
-        except Exception as e:
-            logger.warning(f"[linkedin] search-by-name failed for {user_id}: {e}")
-            return {"status": "error", "stage": "search", "detail": str(e)}
-
-        if not profile_url:
-            logger.info(f"[linkedin] no profile match for {user_id} ({full_name!r})")
-            return {"status": "no_match"}
+        return {"status": "skipped", "reason": "no_profile_url"}
 
     # Log the attempt before awaiting anything below. Past incidents had
     # this coroutine start and then never produce another log line at all
@@ -348,4 +300,168 @@ async def scrape_user(user_id: str, full_name: str, profile_url: str | None = No
         f"[linkedin] stored profile + {len(posts)} posts for {user_id} "
         f"({profile_url})"
     )
+    await _safe_memory_sync(user_id, profile)
     return {"status": "ok", "profile_url": profile_url, "posts_count": len(posts)}
+
+
+# ── Memory sync ──────────────────────────────────────────────────────
+
+MAX_SKILL_FACTS = 8
+
+
+def _extract_facts(profile: dict) -> list[tuple[str, str]]:
+    """Curated (predicate, value) facts from a raw_profile blob.
+
+    Deliberately small and high-signal — the same shape the persona
+    surfaces elsewhere (works_at / lives_in / has_skill), not a full
+    dump of the profile.
+    """
+    facts: list[tuple[str, str]] = []
+
+    experience = profile.get("experience") or []
+    if experience:
+        first = experience[0] if isinstance(experience[0], dict) else {}
+        title = str(first.get("title") or "").strip()
+        company = str(first.get("companyName") or first.get("company") or "").strip()
+        if title or company:
+            value = f"{title} at {company}" if title and company else (title or company)
+            facts.append(("works_at", value))
+
+    location = str(profile.get("location") or "").strip()
+    if location:
+        facts.append(("lives_in", location))
+
+    for skill in (profile.get("skills") or [])[:MAX_SKILL_FACTS]:
+        name = skill.get("name") if isinstance(skill, dict) else skill
+        name = str(name or "").strip()
+        if name:
+            facts.append(("has_skill", name))
+
+    return facts
+
+
+async def _compose_profile_summary(user_id: str, profile: dict) -> str:
+    """LLM-composed first-person memory note about the profile.
+
+    Falls back to a plain template when the LLM is unreachable — the
+    summary is a bonus, never a dependency of the scrape.
+    """
+    headline = str(profile.get("headline") or "").strip()
+    facts = _extract_facts(profile)
+    works_at = next((v for p, v in facts if p == "works_at"), "")
+    skills = [v for p, v in facts if p == "has_skill"]
+
+    if works_at or skills:
+        prompt = (
+            "Write a private memory note about a person's LinkedIn profile, "
+            "in their own first-person voice. Use only the facts given. "
+            "3-5 short declarative sentences. Lead with their current role, "
+            "then main skills. No fluff, no markdown, no bullet lists.\n\n"
+        )
+        if headline:
+            prompt += f"Headline: {headline}\n"
+        prompt += f"Current role: {works_at}\nMain skills: {', '.join(skills)}"
+        try:
+            from agent.orchestrator import _get_provider
+
+            provider = _get_provider()
+            text, _ = await asyncio.to_thread(
+                provider.chat_with_tools,
+                [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": "Write the note."},
+                ],
+                [],
+            )
+            if text and text.strip():
+                return text.strip()
+        except Exception as exc:
+            logger.warning("[linkedin] %s: summary LLM call failed: %s", user_id, exc)
+
+    parts = []
+    if headline:
+        parts.append(f'My LinkedIn headline is "{headline}".')
+    if works_at:
+        parts.append(f"I work as {works_at}.")
+    if skills:
+        parts.append("My main skills include: " + ", ".join(skills) + ".")
+    return " ".join(parts)
+
+
+async def sync_profile_to_memory(user_id: str, profile: dict) -> dict:
+    """Write the IMPORTANT LinkedIn facts to the memory layer, deduped.
+
+    Curated, not everything:
+      • works_at   — the current position ("<title> at <company>")
+      • lives_in   — the profile location
+      • has_skill  — the first MAX_SKILL_FACTS skills
+    Plus one LLM-composed first-person summary ingested with
+    source_system="linkedin" for async extraction — only when at least
+    one new fact was declared, so an unchanged re-scrape writes nothing.
+
+    Diffed against the user's current assertion graph (list_assertions)
+    so only new (predicate, object) pairs are declared. Fire-and-forget:
+    memory-layer problems are logged and never block the scrape.
+    """
+    from agent.memory_client import (
+        declare_fact,
+        ingest_turns,
+        is_enabled,
+        list_assertions,
+    )
+
+    if not is_enabled():
+        return {"facts_declared": 0}
+
+    facts = _extract_facts(profile)
+    if not facts:
+        return {"facts_declared": 0}
+
+    try:
+        existing = await list_assertions(user_id)
+        seen = {(a.predicate, (a.object or "").strip().lower()) for a in existing}
+        new_facts = [
+            (p, v) for p, v in facts if (p, v.strip().lower()) not in seen
+        ]
+    except Exception as exc:
+        logger.warning("[linkedin] memory graph read failed for %s: %s", user_id, exc)
+        return {"facts_declared": 0}
+
+    declared = 0
+    for predicate, value in new_facts:
+        try:
+            if await declare_fact(user_id, predicate, value):
+                declared += 1
+        except Exception as exc:
+            logger.warning(
+                "[linkedin] declare_fact(%s, %r) failed for %s: %s",
+                predicate, value, user_id, exc,
+            )
+
+    if declared:
+        summary = await _compose_profile_summary(user_id, profile)
+        if summary:
+            try:
+                await ingest_turns(
+                    user_id,
+                    turns=[{"role": "user", "content": summary}],
+                    source_system="linkedin",
+                )
+            except Exception as exc:
+                logger.warning("[linkedin] summary ingest failed for %s: %s", user_id, exc)
+
+    logger.info(
+        "[linkedin] memory sync for %s: %d new facts declared (of %d extracted)",
+        user_id, declared, len(facts),
+    )
+    return {"facts_declared": declared}
+
+
+async def _safe_memory_sync(user_id: str, profile: dict) -> None:
+    """Wrapper — a memory-sync failure must never fail the scrape that
+    triggered it. sync_profile_to_memory already catches most errors;
+    this is the last line of defense."""
+    try:
+        await sync_profile_to_memory(user_id, profile)
+    except Exception as exc:
+        logger.warning(f"[linkedin] memory sync failed for {user_id}: {exc}")

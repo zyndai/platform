@@ -147,19 +147,18 @@ export default function AccountsPage() {
   const [oauthFlash, setOauthFlash] =
     useState<{ tone: "success" | "danger"; msg: string } | null>(null);
   // True while a background LinkedIn scrape is believed to be in flight —
-  // covers the gap (up to a few minutes: search-by-name + profile + posts
-  // actors on Apify) between "clicked connect/refresh" and the row actually
-  // updating. Without this the card just sat there looking unchanged, which
-  // read as "nothing happened."
+  // covers the gap (up to a few minutes: profile + posts actors on Apify)
+  // between "clicked connect/refresh" and the row actually updating.
+  // Without this the card just sat there looking unchanged, which read
+  // as "nothing happened."
   const [linkedinScraping, setLinkedinScraping] = useState(false);
   const [linkedinNotice, setLinkedinNotice] = useState<string | null>(null);
-  // LinkedIn OAuth only gives us the user's name (no profile URL — that
-  // needs LinkedIn partner-tier API access we don't have), so the read
-  // path falls back to a name search that can land on the wrong person
-  // for a common name. Letting the user paste their real URL is the only
-  // way to guarantee we're scraping them, not a stranger who shares their
-  // name — this is a correction path, reachable whether or not they're
-  // already "connected".
+  // Scraping is strictly opt-in and URL-driven: LinkedIn's OAuth only
+  // gives us the user's name (no profile URL — that needs LinkedIn
+  // partner-tier API access we don't have), so the user pastes their
+  // real URL and we scrape exactly that profile — never a guess at
+  // someone else who shares their name. This input is the correction
+  // path, reachable whether or not they're already "connected".
   const [linkedinUrlInput, setLinkedinUrlInput] = useState("");
   // Twitter is username-based: the handle lives in the persona profile
   // (profile.twitter), not in an OAuth token. The whole profile blob is
@@ -257,9 +256,9 @@ export default function AccountsPage() {
   // Polls /api/linkedin/me until the scrape that was just kicked off
   // actually lands (real profile fields + a scraped_at newer than
   // `sinceIso`), or gives up after ~3 minutes. That's the realistic upper
-  // bound for the search-by-name + profile + posts Apify actors combined.
-  // Without this, clicking connect/refresh looked like a no-op for however
-  // long the scrape actually took.
+  // bound for the profile + posts Apify actors combined. Without this,
+  // clicking connect/refresh looked like a no-op for however long the
+  // scrape actually took.
   const pollLinkedinUntilReady = useCallback(
     async (sinceIso: string | undefined) => {
       setLinkedinScraping(true);
@@ -331,12 +330,24 @@ export default function AccountsPage() {
         (async () => {
           const sb = getSupabase();
           const { data: { session } } = await sb.auth.getSession();
-          if (session?.access_token) {
+          if (!session?.access_token) return;
+          // Scraping requires a profile URL (name guessing is gone). Only
+          // auto-kick the scrape when one is already stored; otherwise
+          // point the user at the paste-URL field on this card.
+          const liRes = await fetch(`${API}/api/linkedin/me`, {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          }).catch(() => null);
+          const li = liRes && liRes.ok ? await liRes.json().catch(() => ({})) : {};
+          if (li.profile_url) {
             fetch(`${API}/api/linkedin/scrape`, {
               method: "POST",
               headers: { Authorization: `Bearer ${session.access_token}` },
             }).catch(() => {});
             void pollLinkedinUntilReady(undefined);
+          } else {
+            setLinkedinNotice(
+              "Connected — paste your LinkedIn profile URL below so Persona can read your profile. LinkedIn's login alone doesn't tell us which profile is yours.",
+            );
           }
         })();
       }
@@ -477,6 +488,14 @@ export default function AccountsPage() {
         oauthLinkedIn();
         return;
       }
+      if (conn.linkedin.write && !conn.linkedin.read) {
+        // OAuth is connected but no profile was ever scraped — scraping
+        // is URL-driven now, so point the user at the paste field instead
+        // of firing a scrape that would just skip.
+        setLinkedinNotice("Paste your LinkedIn profile URL below so Persona can read your profile.");
+        document.getElementById("linkedin-profile-url-input")?.focus();
+        return;
+      }
       await connectLinkedIn();
       return;
     }
@@ -597,7 +616,7 @@ export default function AccountsPage() {
               <p className="field-hint">
                 {conn.linkedin.read
                   ? "Wrong profile above? Paste your exact URL to fix it."
-                  : "Know your URL? Paste it for a guaranteed-correct match — LinkedIn's login alone can't tell us which \"you\" you are among people with the same name."}
+                  : "Paste your profile URL and hit \u201cUse this URL\u201d — that's how Persona reads your profile. LinkedIn's login alone doesn't tell us which profile is yours."}
               </p>
               <div className="linkedin-url-row">
                 <Input

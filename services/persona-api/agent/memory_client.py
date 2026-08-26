@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -101,6 +102,29 @@ def _client() -> httpx.AsyncClient:
 # ── Public API ───────────────────────────────────────────────────────
 
 
+def _keyword_relevance(topic: str, assertion: MemoryAssertion) -> float:
+    """Client-side relevance score for ranking /me/context results.
+
+    /me/context returns the user's facts without server-side semantic
+    ranking (the topic-scoped /context/{user_id} endpoint is unavailable
+    to the persona JWT — see the memory-layer follow-up), so we rank here:
+    token overlap with the topic, object matches weighted above statement
+    matches. Zero-match facts fall back to confidence ordering by callers.
+    """
+    tokens = {t for t in re.split(r"[^a-z0-9]+", (topic or "").lower()) if len(t) > 2}
+    if not tokens:
+        return 0.0
+    object_text = (assertion.object or "").lower()
+    statement_text = assertion.statement.lower()
+    score = 0.0
+    for token in tokens:
+        if token in object_text:
+            score += 3.0
+        if token in statement_text:
+            score += 1.0
+    return score
+
+
 async def get_context(
     user_id: str,
     topic: str,
@@ -109,9 +133,16 @@ async def get_context(
 ) -> MemoryContext:
     """Fetch topic-relevant assertions from the user's memory graph.
 
+    Reads GET /me/context (the combined context packet) and ranks
+    client-side with `_keyword_relevance`, because the semantic
+    topic-scoped endpoint (/context/{user_id}) rejects the persona JWT
+    ("can only query your own context") and every chat turn was silently
+    getting zero memory. When the memory layer exposes a topic-scoped
+    endpoint for this token, swap the call back to server-side ranking.
+
     Args:
         user_id: The Supabase user UUID (same in both agent-persona and memory-layer).
-        topic: Natural-language query for semantic search over assertions.
+        topic: Natural-language query used for client-side relevance ranking.
         k: Max assertions to return (default from config).
         min_confidence: Minimum confidence threshold (default from config).
 
@@ -132,34 +163,39 @@ async def get_context(
 
     try:
         async with _client() as client:
-            resp = await client.post(
-                f"/context/{user_id}",
-                json={"topic": topic, "k": k},
+            resp = await client.get(
+                "/me/context",
+                params={"k": min(k * 3, 50)},
                 headers={"Authorization": f"Bearer {token}"},
             )
             if resp.status_code == 403:
-                logger.debug(
-                    "[memory] /context 403 for %s — user has no memory-layer account yet",
-                    user_id,
+                # Not "no account" — the token/path mapping failed. Loud
+                # enough to spot in prod logs, but never fatal for chat.
+                logger.warning(
+                    "[memory] /me/context 403 for %s: %s",
+                    user_id, resp.text[:200],
                 )
-                return MemoryContext()
+                return MemoryContext(error="forbidden")
             resp.raise_for_status()
 
-            raw: list[dict[str, Any]] = resp.json()
+            raw: list[dict[str, Any]] = resp.json().get("assertions", [])
             assertions = [
                 MemoryAssertion(
                     statement=item.get("statement", ""),
                     predicate=item.get("predicate", "unknown"),
-                    object=item.get("object", ""),
-                    object_type=item.get("object_type", "unknown"),
+                    object=item.get("object") or "",
+                    object_type=item.get("object_type") or "unknown",
                     confidence=float(item.get("confidence", 0.0)),
-                    relevance=float(item.get("relevance", 0.0)),
+                    relevance=0.0,
                 )
                 for item in raw
                 if float(item.get("confidence", 0)) >= min_confidence
             ]
-            # Sort by relevance descending so the most important facts come first.
-            assertions.sort(key=lambda a: a.relevance, reverse=True)
+            for a in assertions:
+                a.relevance = _keyword_relevance(topic, a)
+            # Relevant facts first; within a tier, higher confidence wins.
+            assertions.sort(key=lambda a: (a.relevance, a.confidence), reverse=True)
+            assertions = assertions[:k]
 
             logger.debug(
                 "[memory] loaded %d assertions for %s (topic=%r, confidence≥%.1f)",
@@ -168,13 +204,13 @@ async def get_context(
             return MemoryContext(assertions=assertions)
 
     except httpx.TimeoutException:
-        logger.warning("[memory] /context timed out for %s", user_id)
+        logger.warning("[memory] /me/context timed out for %s", user_id)
         return MemoryContext(error="timeout")
     except httpx.HTTPStatusError as exc:
-        logger.warning("[memory] /context HTTP %s for %s", exc.response.status_code, user_id)
+        logger.warning("[memory] /me/context HTTP %s for %s", exc.response.status_code, user_id)
         return MemoryContext(error=f"http_{exc.response.status_code}")
     except Exception as exc:
-        logger.warning("[memory] /context failed for %s: %s", user_id, exc)
+        logger.warning("[memory] /me/context failed for %s: %s", user_id, exc)
         return MemoryContext(error=str(exc)[:120])
 
 
@@ -193,7 +229,7 @@ async def list_assertions(user_id: str) -> list[MemoryAssertion]:
     try:
         async with _client() as client:
             resp = await client.get(
-                f"/users/{user_id}/graph",
+                "/me/graph",
                 headers={"Authorization": f"Bearer {token}"},
             )
             resp.raise_for_status()
@@ -210,7 +246,7 @@ async def list_assertions(user_id: str) -> list[MemoryAssertion]:
                 for item in raw
             ]
     except Exception as exc:
-        logger.warning("[memory] /users/%s/graph failed: %s", user_id, exc)
+        logger.warning("[memory] /me/graph failed for %s: %s", user_id, exc)
         return []
 
 

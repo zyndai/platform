@@ -31,7 +31,7 @@ from typing import Any
 import httpx
 
 import config
-from services.token_store import get_tokens
+from services.token_store import get_tokens, save_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,59 @@ async def _get_json(client: httpx.AsyncClient, url: str) -> dict | list | None:
     except Exception as exc:
         logger.warning("[github] GET %s failed: %s", url, exc)
         return None
+
+
+async def _refresh_access_token(user_id: str) -> bool:
+    """Rotate an expired GitHub user token.
+
+    GitHub App user tokens live 8 hours; the refresh token lives ~6
+    months and ROTATES on every use. save_tokens upserts the new pair so
+    the daily loop keeps working. The prod+dev backends both run this —
+    if one wins the rotation race, the loser re-reads the fresh token
+    from api_tokens and retries (see fetch_github_profile).
+    """
+    tokens = await asyncio.to_thread(get_tokens, user_id, "github")
+    if not tokens or not tokens.get("refresh_token"):
+        logger.warning("[github] %s: no refresh_token stored — reconnect required", user_id)
+        return False
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=10.0)) as client:
+        resp = await client.post(
+            "https://github.com/login/oauth/access_token",
+            headers={"Accept": "application/json"},
+            json={
+                "client_id": config.GITHUB_CLIENT_ID,
+                "client_secret": config.GITHUB_CLIENT_SECRET,
+                "grant_type": "refresh_token",
+                "refresh_token": tokens["refresh_token"],
+            },
+        )
+
+    if resp.status_code != 200 or not resp.json().get("access_token"):
+        logger.warning(
+            "[github] %s: refresh failed (%s) — reconnect required", user_id, resp.status_code
+        )
+        return False
+
+    await asyncio.to_thread(
+        save_tokens, user_id, "github", resp.json()
+    )
+    logger.info("[github] %s: refreshed access token", user_id)
+    return True
+
+
+async def _token_needs_refresh(user_id: str) -> bool:
+    """True when the stored access token is expired or about to expire."""
+    tokens = await asyncio.to_thread(get_tokens, user_id, "github")
+    if not tokens:
+        return False
+    expires_at = tokens.get("expires_at") or ""
+    try:
+        expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        return (expires_dt - datetime.now(timezone.utc)).total_seconds() < 300
+    except (ValueError, TypeError):
+        # No expiry info — assume fresh enough and let a 401 trigger refresh.
+        return False
 
 
 def _score_repo(repo: dict) -> float:
@@ -149,47 +202,72 @@ def _derive_profile(repos: list[dict], languages_by_repo: dict[str, dict[str, in
     return {"skills": skills, "projects": projects, "interests": interests}
 
 
+async def _pull_profile(client: httpx.AsyncClient) -> tuple[dict | None, list[dict], dict[str, dict[str, int]]]:
+    """Fetch identity + repos + languages for the top-scored repos in one pass.
+
+    Returns (me_data, repos, languages_by_repo). me_data is None when the
+    token is rejected or the API fails — the caller decides on refresh.
+    """
+    me_data = await _get_json(client, "/user")
+    if me_data is None:
+        return None, [], {}
+
+    repos = await _fetch_repos(client)
+    if not repos:
+        # An empty list is a legitimate state (no owned repos), but could
+        # also mean the token lost repo permissions after a re-consent —
+        # record it and let the next sync retry.
+        logger.info("[github] /user/repos returned no repos")
+
+    scored = sorted(
+        (r for r in repos if _score_repo(r) > 0),
+        key=_score_repo,
+        reverse=True,
+    )
+    languages_by_repo: dict[str, dict[str, int]] = {}
+    for repo in scored[:MAX_LANGUAGE_REPOS]:
+        full_name = repo.get("full_name")
+        if not full_name:
+            continue
+        langs = await _fetch_languages(client, full_name)
+        if langs:
+            languages_by_repo[full_name] = langs
+
+    return me_data, repos, languages_by_repo
+
+
 async def fetch_github_profile(user_id: str) -> dict | None:
     """Fetch repos/languages from the GitHub API and persist the snapshot.
 
     Returns the derived profile dict, or None when there is no usable
-    token or the API rejects it.
+    token or the API rejects it. Refreshes expired user tokens first and
+    retries once on failure (revoked token, or a rotating-token race
+    with the other channel's refresh).
     """
+    if await _token_needs_refresh(user_id):
+        if not await _refresh_access_token(user_id):
+            return None
+
     tokens = await asyncio.to_thread(get_tokens, user_id, "github")
     if not tokens or not tokens.get("access_token"):
         return None
 
-    profile: dict = {"skills": [], "projects": [], "interests": [], "username": ""}
-
     async with _gh_client(tokens["access_token"]) as client:
-        me_data = await _get_json(client, "/user")
+        me_data, repos, languages_by_repo = await _pull_profile(client)
         if me_data is None:
-            return None
-        if isinstance(me_data, dict) and me_data.get("login"):
-            profile["username"] = me_data["login"]
+            if not await _refresh_access_token(user_id):
+                return None
+            refreshed = await asyncio.to_thread(get_tokens, user_id, "github")
+            if not refreshed or not refreshed.get("access_token"):
+                return None
+            async with _gh_client(refreshed["access_token"]) as retry_client:
+                me_data, repos, languages_by_repo = await _pull_profile(retry_client)
+                if me_data is None:
+                    return None
 
-        repos = await _fetch_repos(client)
-        if not repos:
-            # An empty list is a legitimate state (no owned repos), but
-            # could also mean the token lost the repo scope after a
-            # re-consent — record both and let the next sync retry.
-            logger.info("[github] %s: /user/repos returned no repos", user_id)
-
-        scored = sorted(
-            (r for r in repos if _score_repo(r) > 0),
-            key=_score_repo,
-            reverse=True,
-        )
-        top = scored[:MAX_LANGUAGE_REPOS]
-
-        languages_by_repo: dict[str, dict[str, int]] = {}
-        for repo in top:
-            full_name = repo.get("full_name")
-            if not full_name:
-                continue
-            langs = await _fetch_languages(client, full_name)
-            if langs:
-                languages_by_repo[full_name] = langs
+    profile: dict = {"skills": [], "projects": [], "interests": [], "username": ""}
+    if isinstance(me_data, dict) and me_data.get("login"):
+        profile["username"] = me_data["login"]
 
     derived = _derive_profile(repos, languages_by_repo)
     profile.update(derived)

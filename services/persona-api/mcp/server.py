@@ -15,6 +15,7 @@ from ContextAware import ContextAware  # noqa: E402
 
 # ── Import Social Tools ──
 from mcp.tools.linkedin import post_to_linkedin, send_linkedin_dm, read_linkedin_dms, read_linkedin_profile, search_linkedin_people
+from mcp.tools.github import read_github_profile, refresh_github_profile
 
 # ── Import Google Workspace Tools ──
 from mcp.tools.google.calendar import create_event, list_events, delete_event
@@ -124,6 +125,10 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(read_linkedin_dms, name="read_linkedin_dms", description="[PLACEHOLDER] Read LinkedIn DMs")
     mcp.register(read_linkedin_profile, name="read_linkedin_profile", description="Read the principal's scraped LinkedIn profile — headline, experience, education, skills, and recent posts. Use this when the principal asks about their own LinkedIn background or work history.")
     mcp.register(search_linkedin_people, name="search_linkedin_people", description="Search LinkedIn itself for people by role/topic/keyword (e.g. 'AI founders'). Real, metered LinkedIn scrape — separate from search_zynd_personas, which only covers people with a Zynd persona. Use when asked to find people 'on LinkedIn', or automatically as the next step when a Zynd Network people search comes back thin — narrate the broaden, don't ask permission first.")
+
+    # ── GitHub tools ─────────────────────────────────────────────────
+    mcp.register(read_github_profile, name="read_github_profile", description="Read the principal's synced GitHub profile — username, skills (languages by code volume), and top projects (name, description, URL, languages, topics). Use this when the principal asks about their own GitHub work, repos, or which languages they use. Serves the daily-synced snapshot (at most 24h old); if the data is missing or stale and the principal wants fresh results, call refresh_github_profile instead.")
+    mcp.register(refresh_github_profile, name="refresh_github_profile", description="Pull fresh GitHub data now (repos, languages, skills, projects) via the principal's connected GitHub account and update their memory with anything new. Use when the principal explicitly asks to update GitHub data, or when read_github_profile returned no data and the principal said GitHub is connected.")
 
     # ── Google Calendar tools ────────────────────────────────────────
     mcp.register(create_event, name="create_calendar_event", description="Create an event on Google Calendar. Pass `attendees` (a list of email addresses) to invite guests — Google emails them the invite automatically. Checks for conflicts with existing events first: if the time overlaps something already on the calendar, it returns {conflict: true, conflicting_events, suggested_times} and does NOT create the event — present the conflict and suggested_times to the principal instead of retrying blindly. Only pass force=true to double-book anyway, and only when the principal explicitly asked for that after seeing the conflict.")

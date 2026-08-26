@@ -262,10 +262,11 @@ async def linkedin_callback(code: str = None, state: str = None, error: str = No
 async def github_authorize(token: str):
     """Start GitHub OAuth flow.
 
-    `repo` lets the daily sync list the user's repositories (public and
-    private) and fetch language statistics; `read:user` gives profile +
-    email. Users who connected before this scope was added must
-    reconnect once to re-consent.
+    The connected app is a GitHub App, so repo access is configured in
+    the App's settings (Repositories → Contents: Read), NOT via an OAuth
+    `scope` URL param — GitHub Apps ignore scopes entirely. The exchange
+    returns a user token (8h access + rotating refresh) which
+    services/github_sync.py refreshes.
     """
     user = await _validate_token(token)
 
@@ -275,7 +276,6 @@ async def github_authorize(token: str):
     params = {
         "client_id": config.GITHUB_CLIENT_ID,
         "redirect_uri": _oauth_redirect_uri("github"),
-        "scope": "repo read:user",
         "state": state,
     }
     auth_url = f"https://github.com/login/oauth/authorize?{urlencode(params)}"

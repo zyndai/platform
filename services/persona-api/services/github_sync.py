@@ -16,8 +16,8 @@ module is what actually uses it:
   6. Wire the IMPORTANT facts into the memory layer:
        • is_working_on per active repo (the focus — declared with
          description)
-       • has_built per notable repo
-       • is_skilled_in per top language
+       • is_building per notable repo
+       • has_skill per top language
        • one LLM-composed first-person summary (active work first)
          ingested with source_system="github" for async extraction
 
@@ -453,8 +453,8 @@ async def sync_to_memory(user_id: str, profile: dict, previous: dict | None = No
 
     Curated, not everything:
       • is_working_on  — only ACTIVE repos (pushed < 90 days) — the focus
-      • has_built      — the best notable repos (stars/docs/topics)
-      • is_skilled_in  — top languages
+      • is_building    — the best notable repos (stars/docs/topics)
+      • has_skill      — top languages
     Plus one LLM-composed summary turn (active work first) ingested with
     source_system="github" for async extraction.
 
@@ -489,13 +489,13 @@ async def sync_to_memory(user_id: str, profile: dict, previous: dict | None = No
 
     declared = 0
     for lang in new_skills:
-        if await declare_fact(user_id, "is_skilled_in", lang):
+        if await declare_fact(user_id, "has_skill", lang):
             declared += 1
     for proj in new_active:
         if await declare_fact(user_id, "is_working_on", _project_value(proj)):
             declared += 1
     for proj in new_notable:
-        if await declare_fact(user_id, "has_built", _project_value(proj)):
+        if await declare_fact(user_id, "is_building", _project_value(proj)):
             declared += 1
 
     changed = bool(new_skills or new_active or new_notable)

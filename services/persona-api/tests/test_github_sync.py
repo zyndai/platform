@@ -139,12 +139,12 @@ def test_sync_to_memory_declares_active_notable_and_skills():
 
     result = asyncio.run(run())
     predicates = {p for p, _ in declared}
-    assert "is_skilled_in" in predicates
+    assert "has_skill" in predicates
     assert "is_working_on" in predicates
-    assert "has_built" in predicates
-    # Active repo → is_working_on; notable repo → has_built; filler → nothing.
+    assert "is_building" in predicates
+    # Active repo → is_working_on; notable repo → is_building; filler → nothing.
     working = [v for p, v in declared if p == "is_working_on"]
-    built = [v for p, v in declared if p == "has_built"]
+    built = [v for p, v in declared if p == "is_building"]
     assert any(v.startswith("current") for v in working)
     assert any(v.startswith("legacy") for v in built)
     assert not any(v.startswith("filler") for _, v in declared)

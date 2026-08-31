@@ -1,4 +1,14 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+def _clean(value):
+    if isinstance(value, dict):
+        return {k: _clean(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clean(v) for v in value]
+    if value is None:
+        return ""
+    return value
 
 
 class Identity(BaseModel):
@@ -13,6 +23,18 @@ class Skill(BaseModel):
     name: str
     level: str = "intermediate"
     evidence_count: int = 0
+
+    @field_validator("level", mode="before")
+    @classmethod
+    def _coerce_level(cls, v):
+        return v or "intermediate"
+
+    @field_validator("evidence_count", mode="before")
+    @classmethod
+    def _coerce_count(cls, v):
+        if v in (None, ""):
+            return 0
+        return v
 
 
 class Project(BaseModel):
@@ -70,3 +92,8 @@ class CardSynthesis(BaseModel):
     writing_samples: list[WritingSample] = Field(default_factory=list)
     searchable_facts: list[str] = Field(default_factory=list)
     sources: list[Source] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_nulls(cls, data):
+        return _clean(data)

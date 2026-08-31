@@ -2,6 +2,12 @@
 -- One row per card. `card` holds the full AgentProfileCard JSON; `search_tsv`
 -- is a generated tsvector column backed by a GIN index for on-site search.
 
+create or replace function skill_names(card jsonb) returns text
+language sql immutable as $$
+  select coalesce(string_agg(s->>'name', ' ' order by s->>'name'), '')
+  from jsonb_array_elements(coalesce(card->'skills', '[]'::jsonb)) s
+$$;
+
 create table if not exists agent_profile_cards (
   id            text primary key,
   status        text not null default 'draft',
@@ -13,8 +19,7 @@ create table if not exists agent_profile_cards (
                     coalesce(card->'identity'->>'name','') || ' ' ||
                     coalesce(card->'identity'->>'headline','') || ' ' ||
                     coalesce(card->>'summary','') || ' ' ||
-                    coalesce((select string_agg(s->>'name',' ')
-                              from jsonb_array_elements(card->'skills') s), '')
+                    skill_names(card)
                   )
                 ) stored,
   created_at    timestamptz not null default now(),

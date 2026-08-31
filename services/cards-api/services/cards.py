@@ -55,7 +55,6 @@ def assemble_card(
         writing_samples=synth.writing_samples,
         searchable_facts=synth.searchable_facts,
         sources=synth.sources,
-        review=synth.review,
     )
 
 

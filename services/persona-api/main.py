@@ -30,6 +30,7 @@ from api.services import router as services_router
 from api.agents import router as agents_router
 from api.pages import router as pages_router
 from api.transcribe import router as transcribe_router
+from api.public_search import router as public_search_router
 
 # ─────────────────────────────────────────────────────────────────────
 
@@ -99,6 +100,11 @@ app = FastAPI(
     version="2.0.0",
     description="Backend for the Zynd AI social networking agent platform.",
     lifespan=lifespan,
+    # Caddy only routes /api/* to the backend (everything else hits the
+    # Next.js web app), so the OpenAPI schema + docs must live under
+    # /api/ or external callers (ChatGPT Actions, curl) get a web-app 404.
+    openapi_url="/api/openapi.json",
+    docs_url="/api/docs",
 )
 
 # ── CORS (allow Next.js frontend) ────────────────────────────────────
@@ -142,6 +148,7 @@ app.include_router(services_router, prefix="/api/services", tags=["Services"])
 app.include_router(agents_router, prefix="/api/agents", tags=["Agents"])
 app.include_router(pages_router, prefix="/api/pages", tags=["Pages"])
 app.include_router(transcribe_router, prefix="/api/transcribe", tags=["Transcribe"])
+app.include_router(public_search_router, prefix="/api/public", tags=["Public"])
 
 
 # Temporary diagnostic endpoint — remove after debugging

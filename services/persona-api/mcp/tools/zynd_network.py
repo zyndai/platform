@@ -1035,6 +1035,125 @@ def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:
         "source": source,
     }
 
+def _interest_stems(persona_row: dict) -> set[str]:
+    """Stemmed keyword set for a persona row's capabilities ∪ interests.
+
+    Mirrors api/matches.py's interest extraction, but tokenized + stemmed
+    so it can be matched against a free-text query by the same
+    _stem/_QUERY_STOPWORDS machinery _match_score uses.
+    """
+    caps = persona_row.get("capabilities") or []
+    profile = persona_row.get("profile") or {}
+    raw = profile.get("interests")
+    if isinstance(raw, str):
+        ints = [s.strip() for s in raw.split(",") if s.strip()]
+    elif isinstance(raw, list):
+        ints = [str(s).strip() for s in raw if s]
+    else:
+        ints = []
+    stems: set[str] = set()
+    for item in [str(x) for x in (list(caps) + ints)]:
+        for w in re.findall(r"[a-z]+", item.lower()):
+            if w not in _QUERY_STOPWORDS and len(w) >= 2:
+                stems.add(_stem(w))
+    return stems
+
+
+def search_similar_people(query: str, top_k: int = 10) -> dict:
+    """
+    Find personas SIMILAR to a free-text description of a person or focus
+    area — e.g. "AI startup founder building agent infrastructure".
+
+    The query text IS the comparison basis (no logged-in user required):
+    each active persona is ranked by how much of the query their declared
+    capabilities + profile.interests cover, with bio/name text-relevance
+    (_match_score) as a tiebreaker and a fallback when nothing overlaps.
+
+    Args:
+        query: Free-text description of the kind of person to find.
+        top_k: Max results to return (1–40).
+
+    Returns ``{status, count, total_available, results: [{name, agent_id,
+    description, avatar_url, match_reason, match_score}], source}`` —
+    the same shape as search_zynd_personas so API + MCP consumers handle
+    both identically. ``match_reason`` says what overlapped (e.g.
+    "similar focus: ai, founder") or falls back to text-match reasons.
+    """
+    top_k = max(1, min(int(top_k or 10), 40))
+
+    q_tokens = {
+        _stem(t) for t in re.findall(r"[a-z]+", (query or "").lower())
+        if t not in _QUERY_STOPWORDS and len(t) >= 2
+    }
+    if not q_tokens:
+        return {"status": "success", "count": 0, "total_available": 0, "results": [], "source": "local_db"}
+
+    sb = _get_supabase()
+    try:
+        rows = (
+            sb.table("persona_agents")
+            .select("agent_id,name,description,capabilities,profile")
+            .eq("active", True)
+            .execute()
+        ).data or []
+    except Exception as e:
+        logger.warning(f"[zynd_network] similar-people query failed: {e!r}")
+        err = friendly_error_message("search for similar people", str(e))
+        return {
+            "status": "error",
+            "error": err["error"],
+            "error_message": err["error_message"],
+            "hint": err["hint"],
+            "results": [],
+            "count": 0,
+        }
+
+    avatars = _get_avatar_map()
+
+    scored: list[tuple[float, int, list[str], dict]] = []
+    for r in rows:
+        aid = r.get("agent_id") or ""
+        if not aid:
+            continue
+        interests = _interest_stems(r)
+        hits = sorted(q_tokens & interests)
+        coverage = len(hits) / len(q_tokens)
+        text_score, text_reason = _match_score(query, r.get("name", ""), r.get("description", ""))
+        if coverage == 0.0 and text_score == 0:
+            continue
+        scored.append((coverage, text_score, hits, r))
+
+    scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+
+    results = []
+    for coverage, text_score, hits, r in scored[:top_k]:
+        if coverage > 0:
+            reason = f"similar focus: {', '.join(hits)}"
+            if coverage < 1.0:
+                missing = sorted(q_tokens - set(hits))
+                if missing:
+                    reason += f" — missing: {', '.join(missing[:2])}"
+            score = round(coverage * 100) + text_score
+        else:
+            _, reason = _match_score(query, r.get("name", ""), r.get("description", ""))
+            score = text_score
+        results.append({
+            "name": r.get("name") or "",
+            "agent_id": r.get("agent_id") or "",
+            "description": r.get("description") or "",
+            "avatar_url": avatars.get(r.get("agent_id") or ""),
+            "match_reason": reason,
+            "match_score": score,
+        })
+
+    return {
+        "status": "success",
+        "count": len(results),
+        "total_available": len(scored),
+        "results": results,
+        "source": "local_db",
+    }
+
 def _local_persona_fallback(query: str, top_k: int, avatars: dict[str, str]) -> list[dict]:
     """Read active personas from the local DB. Returned shape mirrors
     search_zynd_personas results.

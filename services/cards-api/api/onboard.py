@@ -27,10 +27,13 @@ class PublishRequest(BaseModel):
 
 
 def _classify_url(url: str) -> str:
-    low = url.lower()
-    if "twitter.com/" in low or "x.com/" in low:
+    # Match on hostname only — substring matching on full URL allows bypass via
+    # path components (e.g. http://evil.com/x.com/user would be misclassified).
+    from urllib.parse import urlparse
+    host = (urlparse(url).hostname or "").lower()
+    if host in ("twitter.com", "x.com") or host.endswith((".twitter.com", ".x.com")):
         return "x"
-    if "linkedin.com/" in low:
+    if host == "linkedin.com" or host.endswith(".linkedin.com"):
         return "linkedin"
     return "website"
 

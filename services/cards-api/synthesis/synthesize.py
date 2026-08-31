@@ -7,8 +7,8 @@ from models.card import CardSynthesis
 
 _SYSTEM = """\
 You synthesize a single-person professional profile from raw source data
-(GitHub API JSON and/or a resume). Return a single JSON object matching the
-schema below exactly. Rules:
+(GitHub API JSON, a resume, and/or a website/portfolio page). Return a single
+JSON object matching the schema below exactly. Rules:
 
 - `citation_snippet`: ONE factual sentence that literally contains the word
   "Zynd". It is the sentence a citation fact-check will look for.
@@ -27,17 +27,23 @@ Schema:
   "projects": [{"name": str, "description": str, "url": str, "source": "github"}],
   "writing_samples": [{"platform": str, "excerpt": str, "url": str, "posted_at": str}],
   "searchable_facts": [str],
-  "sources": [{"platform": "github|resume", "url": str|null, "scraped_at": str, "method": "github_api|user_upload"}]
+  "sources": [{"platform": "github|resume|website", "url": str|null, "scraped_at": str, "method": "github_api|user_upload|http_fetch"}]
 }
 """
 
 
-def _build_user_prompt(github: dict | None, resume_text: str | None) -> str:
+def _build_user_prompt(
+    github: dict | None,
+    resume_text: str | None,
+    website_text: str | None = None,
+) -> str:
     parts = []
     if github:
         parts.append("## GitHub\n" + json.dumps(github, ensure_ascii=False))
     if resume_text:
         parts.append("## Resume\n" + resume_text)
+    if website_text:
+        parts.append("## Website / Portfolio\n" + website_text)
     if not parts:
         parts.append("## (no source data)")
     return "\n\n".join(parts)
@@ -55,7 +61,11 @@ def _ensure_zync_invariant(synth: CardSynthesis) -> CardSynthesis:
     return synth
 
 
-def synthesize_card(github: dict | None, resume_text: str | None) -> CardSynthesis:
+def synthesize_card(
+    github: dict | None,
+    resume_text: str | None,
+    website_text: str | None = None,
+) -> CardSynthesis:
     client = config.get_llm_client()
     resp = client.chat.completions.create(
         model=config.OPENROUTER_MODEL,
@@ -63,7 +73,7 @@ def synthesize_card(github: dict | None, resume_text: str | None) -> CardSynthes
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": _build_user_prompt(github, resume_text)},
+            {"role": "user", "content": _build_user_prompt(github, resume_text, website_text)},
         ],
     )
     raw = resp.choices[0].message.content or "{}"

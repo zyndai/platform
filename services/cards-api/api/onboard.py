@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from models.card import AgentProfileCard
 from publish import hooks
 from scraping import github as github_scraper
+from scraping import website as website_scraper
 from scraping.resume import extract_resume_text
 from services import cards as cards_service
 from services.jobs import create_job, get_job, set_error, set_ready, utcnow
@@ -25,12 +26,16 @@ async def _run_pipeline(
     github_handle: str | None,
     x_handle: str | None,
     resume_text: str | None,
+    website_url: str | None,
 ) -> None:
     try:
         github_data = None
         if github_handle:
             github_data = await github_scraper.fetch_github(github_handle)
-        synth = synthesize_card(github_data, resume_text)
+        website_text = None
+        if website_url:
+            website_text = await website_scraper.fetch_website(website_url)
+        synth = synthesize_card(github_data, resume_text, website_text)
         card = cards_service.assemble_card(
             synth, github_data, github_handle, x_handle, bool(resume_text)
         )
@@ -43,6 +48,7 @@ async def _run_pipeline(
 async def start_onboard(
     github_handle: str | None = Form(None),
     x_handle: str | None = Form(None),
+    website_url: str | None = Form(None),
     resume: UploadFile | None = File(None),
 ):
     resume_text = None
@@ -56,11 +62,13 @@ async def start_onboard(
         finally:
             os.unlink(path)
 
-    if not github_handle and not x_handle and not resume_text:
+    if not github_handle and not x_handle and not website_url and not resume_text:
         raise HTTPException(status_code=400, detail="At least one source is required")
 
     job_id = create_job(github_handle, x_handle)
-    asyncio.create_task(_run_pipeline(job_id, github_handle, x_handle, resume_text))
+    asyncio.create_task(
+        _run_pipeline(job_id, github_handle, x_handle, resume_text, website_url)
+    )
     return {"job_id": job_id}
 
 

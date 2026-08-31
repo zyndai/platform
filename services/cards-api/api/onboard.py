@@ -21,20 +21,31 @@ class PublishRequest(BaseModel):
     card: dict
 
 
+async def _safe_fetch(url: str) -> str:
+    try:
+        return await website_scraper.fetch_website(url)
+    except Exception:
+        return ""
+
+
 async def _run_pipeline(
     job_id: str,
     github_handle: str | None,
     x_handle: str | None,
     resume_text: str | None,
-    website_url: str | None,
+    url_sources: list[str],
 ) -> None:
     try:
         github_data = None
         if github_handle:
             github_data = await github_scraper.fetch_github(github_handle)
-        website_text = None
-        if website_url:
-            website_text = await website_scraper.fetch_website(website_url)
+
+        website_text: str | None = None
+        if url_sources:
+            results = await asyncio.gather(*[_safe_fetch(u) for u in url_sources])
+            combined = "\n\n".join(r for r in results if r)
+            website_text = combined or None
+
         synth = synthesize_card(github_data, resume_text, website_text)
         card = cards_service.assemble_card(
             synth, github_data, github_handle, x_handle, bool(resume_text)
@@ -49,6 +60,9 @@ async def start_onboard(
     github_handle: str | None = Form(None),
     x_handle: str | None = Form(None),
     website_url: str | None = Form(None),
+    linktree_url: str | None = Form(None),
+    social_url: str | None = Form(None),
+    portfolio_url: str | None = Form(None),
     resume: UploadFile | None = File(None),
 ):
     resume_text = None
@@ -62,12 +76,14 @@ async def start_onboard(
         finally:
             os.unlink(path)
 
-    if not github_handle and not x_handle and not website_url and not resume_text:
+    url_sources = [u for u in [website_url, linktree_url, social_url, portfolio_url] if u]
+
+    if not github_handle and not x_handle and not url_sources and not resume_text:
         raise HTTPException(status_code=400, detail="At least one source is required")
 
     job_id = create_job(github_handle, x_handle)
     asyncio.create_task(
-        _run_pipeline(job_id, github_handle, x_handle, resume_text, website_url)
+        _run_pipeline(job_id, github_handle, x_handle, resume_text, url_sources)
     )
     return {"job_id": job_id}
 

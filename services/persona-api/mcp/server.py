@@ -16,6 +16,21 @@ from ContextAware import ContextAware  # noqa: E402
 # ── Import Social Tools ──
 from mcp.tools.linkedin import post_to_linkedin, send_linkedin_dm, read_linkedin_dms, read_linkedin_profile, search_linkedin_people
 from mcp.tools.github import read_github_profile, refresh_github_profile
+from mcp.tools.github_read import (
+    get_repo_contents,
+    get_repo_tree,
+    read_repo_readme,
+    list_recent_commits,
+    search_repositories,
+    list_repo_issues,
+    get_issue_details,
+    list_repo_pull_requests,
+    get_pull_request_details,
+    get_my_recent_activity,
+    list_my_notifications,
+    list_starred_repos,
+    list_my_orgs,
+)
 
 # ── Import Google Workspace Tools ──
 from mcp.tools.google.calendar import create_event, list_events, delete_event
@@ -129,6 +144,23 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     # ── GitHub tools ─────────────────────────────────────────────────
     mcp.register(read_github_profile, name="read_github_profile", description="Read the principal's synced GitHub profile — username, skills (languages by code volume), and top projects (name, description, URL, languages, topics). Use this when the principal asks about their own GitHub work, repos, or which languages they use. Serves the daily-synced snapshot (at most 24h old); if the data is missing or stale and the principal wants fresh results, call refresh_github_profile instead.")
     mcp.register(refresh_github_profile, name="refresh_github_profile", description="Pull fresh GitHub data now (repos, languages, skills, projects) via the principal's connected GitHub account and update their memory with anything new. Use when the principal explicitly asks to update GitHub data, or when read_github_profile returned no data and the principal said GitHub is connected.")
+
+    # ── GitHub read-only tools (principal-private) ───────────────────
+    # Live reads of any repo the token can see — code, issues, PRs,
+    # activity. Never added to external/group allowlists.
+    mcp.register(get_repo_contents, name="get_repo_contents", description="List a directory or read a single file in any repo the GitHub token can access. Pass repo='owner/name' and an optional path (file or folder). Returns directory entries, or the file's text content (capped ~100k chars). Use when the principal asks what's in a repo or wants to see a specific file.")
+    mcp.register(get_repo_tree, name="get_repo_tree", description="Get the full file tree of a repo (owner/name) — every file path and type, capped at 1000 entries. Use when the principal wants a map of a repo's structure without pulling file bodies.")
+    mcp.register(read_repo_readme, name="read_repo_readme", description="Read the README of any repo the token can access as text. Use when the principal asks 'what is this repo about' or wants a repo's docs — the fastest way to orient in a codebase.")
+    mcp.register(list_recent_commits, name="list_recent_commits", description="List the most recent commits in a repo (owner/name), newest first, with author, date, and message. Use to see what's happening in a repo or who pushed what.")
+    mcp.register(search_repositories, name="search_repositories", description="Search GitHub repositories by keyword — name, topic, or technology — returning repos with description, language, stars, and URL. Use when the principal wants to find a repo (theirs or anyone's).")
+    mcp.register(list_repo_issues, name="list_repo_issues", description="List issues in a repo (owner/name), newest first. state ∈ open/closed/all; pull requests excluded. Requires GitHub App 'Issues: Read'. Use to triage what's open or needs attention.")
+    mcp.register(get_issue_details, name="get_issue_details", description="Get full details of one issue — title, body, state, labels, assignees, comment count. Use when the principal asks 'what is issue #N' or wants the full text of a specific issue.")
+    mcp.register(list_repo_pull_requests, name="list_repo_pull_requests", description="List pull requests in a repo (owner/name), newest first. state ∈ open/closed/all. Requires GitHub App 'Pull requests: Read'. Use to see open PRs, what's awaiting review, or review history.")
+    mcp.register(get_pull_request_details, name="get_pull_request_details", description="Get full details of one pull request — title, body, author, merge state, branch targets, review state. Use when the principal asks 'what is PR #N' or wants details of a specific PR.")
+    mcp.register(get_my_recent_activity, name="get_my_recent_activity", description="Summarize the principal's recent GitHub activity (pushes, PRs, issues, releases, stars) over the last N days (default 7). Use when they ask 'what did I do on GitHub this week' or want a recap.")
+    mcp.register(list_my_notifications, name="list_my_notifications", description="List the principal's GitHub notifications — unread by default. Use when they ask what needs their attention on GitHub (mentions, reviews, watched-issue updates).")
+    mcp.register(list_starred_repos, name="list_starred_repos", description="List repos the principal has starred, newest first, with language and stars. Use to recall a saved repo or curate favorites.")
+    mcp.register(list_my_orgs, name="list_my_orgs", description="List GitHub organizations the principal belongs to. Use when they ask what GitHub orgs/groups they're a member of.")
 
     # ── Google Calendar tools ────────────────────────────────────────
     mcp.register(create_event, name="create_calendar_event", description="Create an event on Google Calendar. Pass `attendees` (a list of email addresses) to invite guests — Google emails them the invite automatically. Checks for conflicts with existing events first: if the time overlaps something already on the calendar, it returns {conflict: true, conflicting_events, suggested_times} and does NOT create the event — present the conflict and suggested_times to the principal instead of retrying blindly. Only pass force=true to double-book anyway, and only when the principal explicitly asked for that after seeing the conflict.")

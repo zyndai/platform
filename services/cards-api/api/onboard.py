@@ -1,14 +1,19 @@
 import asyncio
+import logging
 import os
 import tempfile
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
+
 from models.card import AgentProfileCard
 from publish import hooks
 from scraping import github as github_scraper
+from scraping import linkedin as linkedin_scraper
 from scraping import website as website_scraper
+from scraping import x as x_scraper
 from scraping.resume import extract_resume_text
 from services import cards as cards_service
 from services.jobs import create_job, get_job, set_error, set_ready, utcnow
@@ -21,11 +26,30 @@ class PublishRequest(BaseModel):
     card: dict
 
 
-async def _safe_fetch(url: str) -> str:
+def _classify_url(url: str) -> str:
+    low = url.lower()
+    if "twitter.com/" in low or "x.com/" in low:
+        return "x"
+    if "linkedin.com/" in low:
+        return "linkedin"
+    return "website"
+
+
+async def _safe_fetch_url(url: str) -> tuple[str, str]:
+    """Returns (kind, text). kind ∈ {'x', 'linkedin', 'website'}."""
+    kind = _classify_url(url)
     try:
-        return await website_scraper.fetch_website(url)
-    except Exception:
-        return ""
+        if kind == "x":
+            text = await x_scraper.fetch_x_profile(url)
+        elif kind == "linkedin":
+            text = await linkedin_scraper.fetch_linkedin_profile(url)
+        else:
+            text = await website_scraper.fetch_website(url)
+        logger.info("scraped %s url=%s chars=%d", kind, url, len(text))
+        return kind, text
+    except Exception as exc:
+        logger.warning("scrape failed kind=%s url=%s err=%s", kind, url, exc)
+        return kind, ""
 
 
 async def _run_pipeline(
@@ -40,13 +64,29 @@ async def _run_pipeline(
         if github_handle:
             github_data = await github_scraper.fetch_github(github_handle)
 
-        website_text: str | None = None
-        if url_sources:
-            results = await asyncio.gather(*[_safe_fetch(u) for u in url_sources])
-            combined = "\n\n".join(r for r in results if r)
-            website_text = combined or None
+        website_texts: list[str] = []
+        x_texts: list[str] = []
+        linkedin_texts: list[str] = []
 
-        synth = synthesize_card(github_data, resume_text, website_text)
+        if url_sources:
+            results = await asyncio.gather(*[_safe_fetch_url(u) for u in url_sources])
+            for kind, text in results:
+                if not text:
+                    continue
+                if kind == "x":
+                    x_texts.append(text)
+                elif kind == "linkedin":
+                    linkedin_texts.append(text)
+                else:
+                    website_texts.append(text)
+
+        synth = synthesize_card(
+            github_data,
+            resume_text,
+            website_text="\n\n".join(website_texts) or None,
+            x_text="\n\n".join(x_texts) or None,
+            linkedin_text="\n\n".join(linkedin_texts) or None,
+        )
         card = cards_service.assemble_card(
             synth, github_data, github_handle, x_handle, bool(resume_text)
         )

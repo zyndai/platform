@@ -19,6 +19,7 @@ OPENROUTER_APP_NAME: str = os.getenv("OPENROUTER_APP_NAME", "zynd-cards")
 
 # ── Scraping ──
 GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
+APIFY_API_KEY: str = os.getenv("APIFY_API_KEY", "")
 
 # ── Site / indexing ──
 SITE_BASE_URL: str = os.getenv("SITE_BASE_URL", "https://zynd.ai")

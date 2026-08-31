@@ -107,6 +107,12 @@ app = FastAPI(
     docs_url="/api/docs",
 )
 
+# ChatGPT Actions only accept OpenAPI 3.0.x schemas; FastAPI generates
+# 3.1.0 by default, which fails ChatGPT's schema validation. This is an
+# ATTRIBUTE (not a constructor kwarg) — the FastAPI docs explicitly say
+# the class doesn't take it as a parameter.
+app.openapi_version = "3.0.2"
+
 # ── CORS (allow Next.js frontend) ────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,

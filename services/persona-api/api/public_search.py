@@ -91,3 +91,110 @@ async def search_people(req: PeopleSearchRequest, request: Request):
     result["mode"] = req.mode
     result["limit"] = req.limit
     return result
+
+
+# ── Minimal OpenAPI schema for ChatGPT Actions ───────────────────────
+# The full /api/openapi.json is ~99KB of 93 routes — ChatGPT's action
+# importer rejects 3.1.x schemas and chokes on near-limit payloads. This
+# hand-built 3.0.2 spec exposes ONLY the public search endpoint, so
+# external callers get a tiny, guaranteed-compatible schema.
+def _public_schema(origin: str) -> dict:
+    schema = {
+        "openapi": "3.0.2",
+        "info": {
+            "title": "Zynd People Search API",
+            "description": (
+                "Search personas on the Zynd network. mode=domain finds people "
+                "by role/topic; mode=similar ranks people by how well their "
+                "declared capabilities and interests match your query text."
+            ),
+            "version": "1.0.0",
+        },
+        "servers": [{"url": origin}],
+        "paths": {
+            "/api/public/search/people": {
+                "post": {
+                    "operationId": "searchPeople",
+                    "summary": "Search personas (by domain or by similarity)",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["query"],
+                                    "properties": {
+                                        "query": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 120,
+                                            "description": "Free-text: a role, topic, or person description (e.g. 'AI founders').",
+                                        },
+                                        "mode": {
+                                            "type": "string",
+                                            "enum": ["domain", "similar"],
+                                            "default": "domain",
+                                            "description": "domain = people in a field/role; similar = people whose interests match the query text.",
+                                        },
+                                        "limit": {
+                                            "type": "integer",
+                                            "minimum": 1,
+                                            "maximum": 40,
+                                            "default": 10,
+                                            "description": "Max results to return.",
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Search results",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "status": {"type": "string"},
+                                            "count": {"type": "integer"},
+                                            "total_available": {"type": "integer"},
+                                            "source": {"type": "string"},
+                                            "results": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "name": {"type": "string"},
+                                                        "agent_id": {"type": "string"},
+                                                        "description": {"type": "string"},
+                                                        "avatar_url": {"type": "string"},
+                                                        "webhook_url": {"type": "string"},
+                                                        "match_reason": {"type": "string"},
+                                                        "match_score": {"type": "integer"},
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                        "429": {"description": "Rate limited"},
+                    },
+                }
+            }
+        },
+    }
+    return schema
+
+
+@router.get("/openapi.json", include_in_schema=False)
+async def public_openapi_schema(request: Request):
+    """Minimal OpenAPI 3.0.2 schema for external callers (ChatGPT Actions).
+    Point a custom GPT's Actions tab at /api/public/openapi.json. The
+    `servers` URL is derived from the requesting host, so dev serves dev
+    and prod serves prod."""
+    scheme = request.headers.get("x-forwarded-proto", "https")
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "persona.zynd.ai"
+    return _public_schema(f"{scheme}://{host}")

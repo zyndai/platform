@@ -1,23 +1,26 @@
-"""LinkedIn profile scraping via Apify atomus~linkedin-profile-scraper.
+"""LinkedIn profile + recent posts via Apify atomus actors (no cookies).
 
-$6 / 1,000 profiles. No cookies or account required.
-Input: { "profileUrls": ["https://www.linkedin.com/in/handle/"] }
-Output: [{ status: "success"|"not_found"|"error", profile: { ... } }]
+Profile: atomus~linkedin-profile-scraper  — $6/1K profiles
+Posts:   atomus~linkedin-posts-scraper-pro — $2/1K posts, capped at 7
 
-Falls back to Jina Reader on Apify failure (returns limited public metadata).
+Both fetches run concurrently. Falls back to Jina Reader on Apify failure.
 """
+
+import asyncio
 
 import httpx
 
 import config
 
 _APIFY_BASE = "https://api.apify.com/v2"
-_ACTOR = "atomus~linkedin-profile-scraper"
+_ACTOR_PROFILE = "atomus~linkedin-profile-scraper"
+_ACTOR_POSTS   = "atomus~linkedin-posts-scraper-pro"
+_MAX_POSTS = 7
 _MAX_CHARS = 8_000
 
 
 async def fetch_linkedin_profile(url: str) -> str:
-    """Scrape a LinkedIn profile. No cookies needed."""
+    """Scrape LinkedIn profile + recent posts. Apify if key set, else Jina."""
     if config.APIFY_API_KEY:
         try:
             return await _apify_fetch(url)
@@ -34,9 +37,24 @@ async def fetch_linkedin_profile(url: str) -> str:
 
 
 async def _apify_fetch(url: str) -> str:
+    profile_text, posts_text = await asyncio.gather(
+        _fetch_profile(url),
+        _fetch_posts(url),
+        return_exceptions=True,
+    )
+
+    parts: list[str] = []
+    if isinstance(profile_text, str) and profile_text:
+        parts.append(profile_text)
+    if isinstance(posts_text, str) and posts_text:
+        parts.append(posts_text)
+    return "\n\n".join(parts)[:_MAX_CHARS]
+
+
+async def _fetch_profile(url: str) -> str:
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
-            f"{_APIFY_BASE}/acts/{_ACTOR}/run-sync-get-dataset-items",
+            f"{_APIFY_BASE}/acts/{_ACTOR_PROFILE}/run-sync-get-dataset-items",
             params={"token": config.APIFY_API_KEY, "timeout": 90, "memory": 256},
             json={"profileUrls": [url]},
         )
@@ -81,4 +99,25 @@ async def _apify_fetch(url: str) -> str:
             if title or company:
                 parts.append(f"Experience: {title} at {company}".strip(" at"))
 
-    return "\n".join(parts)[:_MAX_CHARS]
+    return "\n".join(parts)
+
+
+async def _fetch_posts(url: str) -> str:
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            f"{_APIFY_BASE}/acts/{_ACTOR_POSTS}/run-sync-get-dataset-items",
+            params={"token": config.APIFY_API_KEY, "timeout": 90, "memory": 256},
+            json={"profiles": [url], "maxPosts": _MAX_POSTS, "sortBy": "date"},
+        )
+        resp.raise_for_status()
+        items = resp.json()
+
+    if not items:
+        return ""
+
+    lines = ["Recent LinkedIn posts:"]
+    for post in items[:_MAX_POSTS]:
+        content = post.get("content") or ""
+        if content:
+            lines.append(f"- {content[:400]}")
+    return "\n".join(lines) if len(lines) > 1 else ""

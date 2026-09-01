@@ -157,8 +157,8 @@ async def publish_card(job_id: str, body: PublishRequest):
     card.review.reviewed_by = "user_self"
     card.review.reviewed_at = now
 
-    await asyncio.to_thread(
+    handle = await asyncio.to_thread(
         cards_service.insert_card, card, job.handle_github, job.handle_x
     )
-    await hooks.run_publish_hooks(card.id)
+    await hooks.run_publish_hooks(card.id, handle)
     return card.model_dump(mode="json")

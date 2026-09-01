@@ -2,6 +2,7 @@ import re
 
 import config
 from models.card import AgentProfileCard, CardSynthesis, Source
+from services import embed
 from services.jobs import new_card_id, utcnow
 
 
@@ -81,6 +82,9 @@ def assemble_card(
         writing_samples=synth.writing_samples,
         searchable_facts=synth.searchable_facts,
         sources=synth.sources,
+        experience_years=synth.experience_years,
+        industries=synth.industries,
+        availability=synth.availability,
     )
 
 
@@ -106,8 +110,12 @@ def get_card_by_handle(handle: str) -> AgentProfileCard | None:
     return _row_to_card(rows[0])
 
 
-def insert_card(card: AgentProfileCard, handle_github: str | None, handle_x: str | None) -> None:
+def insert_card(card: AgentProfileCard, handle_github: str | None, handle_x: str | None) -> str:
     handle = _assign_handle(handle_github, handle_x, card.identity.name, card.id)
+    try:
+        embedding = embed.embed_text(embed.card_search_text(card))
+    except Exception:
+        embedding = None
     sb = config.get_supabase()
     sb.table("agent_profile_cards").insert(
         {
@@ -117,8 +125,10 @@ def insert_card(card: AgentProfileCard, handle_github: str | None, handle_x: str
             "handle_x": handle_x,
             "handle": handle,
             "card": card.model_dump(mode="json"),
+            "embedding": embedding,
         }
     ).execute()
+    return handle
 
 
 def get_card(card_id: str) -> AgentProfileCard | None:
@@ -171,3 +181,15 @@ def list_published(limit: int = 1000) -> list[AgentProfileCard]:
         .execute()
     )
     return [_row_to_card(r) for r in (resp.data or [])]
+
+
+def list_published_rows(limit: int = 1000) -> list[dict]:
+    sb = config.get_supabase()
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("card,handle,embedding")
+        .eq("status", "published")
+        .limit(limit)
+        .execute()
+    )
+    return resp.data or []

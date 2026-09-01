@@ -11,6 +11,25 @@ def _clean(value):
     return value
 
 
+def _coerce_experience(v):
+    if v in (None, ""):
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_industries(v):
+    if v in (None, ""):
+        return []
+    if isinstance(v, str):
+        return [x.strip() for x in v.split(",") if x.strip()]
+    if isinstance(v, list):
+        return [x for x in v if x]
+    return []
+
+
 class Identity(BaseModel):
     name: str = ""
     headline: str = ""
@@ -80,6 +99,19 @@ class AgentProfileCard(BaseModel):
     searchable_facts: list[str] = Field(default_factory=list)
     sources: list[Source] = Field(default_factory=list)
     review: Review = Field(default_factory=Review)
+    experience_years: int | None = None
+    industries: list[str] = Field(default_factory=list)
+    availability: str = ""
+
+    @field_validator("experience_years", mode="before")
+    @classmethod
+    def _coerce_experience_card(cls, v):
+        return _coerce_experience(v)
+
+    @field_validator("industries", mode="before")
+    @classmethod
+    def _coerce_industries_card(cls, v):
+        return _coerce_industries(v)
 
 
 class CardSynthesis(BaseModel):
@@ -93,8 +125,21 @@ class CardSynthesis(BaseModel):
     writing_samples: list[WritingSample] = Field(default_factory=list)
     searchable_facts: list[str] = Field(default_factory=list)
     sources: list[Source] = Field(default_factory=list)
+    experience_years: int | None = None
+    industries: list[str] = Field(default_factory=list)
+    availability: str = ""
 
     @model_validator(mode="before")
     @classmethod
     def _coerce_nulls(cls, data):
         return _clean(data)
+
+    @field_validator("experience_years", mode="before")
+    @classmethod
+    def _coerce_experience_synth(cls, v):
+        return _coerce_experience(v)
+
+    @field_validator("industries", mode="before")
+    @classmethod
+    def _coerce_industries_synth(cls, v):
+        return _coerce_industries(v)

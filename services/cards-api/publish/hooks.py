@@ -12,7 +12,9 @@ BING_SUBMIT_URL = (
 )
 
 
-def profile_url(card_id: str) -> str:
+def profile_url(card_id: str, handle: str | None = None) -> str:
+    if handle:
+        return f"{config.SITE_BASE_URL}/p/{handle}"
     return f"{config.SITE_BASE_URL}/profile/{card_id}"
 
 
@@ -44,7 +46,7 @@ async def submit_bing_urls(urls: list[str]) -> None:
             return
 
 
-async def run_publish_hooks(card_id: str) -> None:
-    url = profile_url(card_id)
+async def run_publish_hooks(card_id: str, handle: str | None = None) -> None:
+    url = profile_url(card_id, handle)
     await ping_indexnow([url, config.SITE_BASE_URL + "/directory"])
     await submit_bing_urls([url])

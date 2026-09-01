@@ -45,3 +45,28 @@ create policy "service role full access on cards"
   to service_role
   using (true)
   with check (true);
+
+-- Phase 1: canonical slug handle
+alter table agent_profile_cards add column if not exists handle text unique;
+create index if not exists agent_profile_cards_handle_idx on agent_profile_cards (handle);
+
+-- Backfill: github handle → x handle → slugified name from card JSON
+update agent_profile_cards
+set handle = coalesce(
+  nullif(lower(handle_github), ''),
+  nullif(lower(handle_x), ''),
+  lower(regexp_replace(
+    regexp_replace(card->'identity'->>'name', '[^a-zA-Z0-9]+', '-', 'g'),
+    '^-+|-+$', '', 'g'
+  ))
+)
+where handle is null and status = 'published';
+
+-- Append short id suffix to resolve any uniqueness conflicts (rare)
+update agent_profile_cards a
+set handle = a.handle || '-' || substr(a.id, 1, 4)
+where handle in (
+  select handle from agent_profile_cards group by handle having count(*) > 1
+) and id not in (
+  select min(id) from agent_profile_cards group by handle having count(*) > 1
+);

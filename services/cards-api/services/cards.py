@@ -1,6 +1,32 @@
+import re
+
 import config
 from models.card import AgentProfileCard, CardSynthesis, Source
 from services.jobs import new_card_id, utcnow
+
+
+def _slugify(text: str) -> str:
+    text = text.lower().strip()
+    text = re.sub(r"[^a-z0-9]+", "-", text)
+    return text.strip("-")[:50]
+
+
+def _assign_handle(github_handle: str | None, x_handle: str | None, name: str, card_id: str) -> str:
+    """Derive canonical slug: github > x > name, suffix card_id on collision."""
+    base = (
+        github_handle.lower() if github_handle
+        else x_handle.lower() if x_handle
+        else _slugify(name or "user")
+    ) or "user"
+
+    sb = config.get_supabase()
+    handle = base
+    for suffix in ("", f"-{card_id[:4]}"):
+        handle = base + suffix
+        resp = sb.table("agent_profile_cards").select("id").eq("handle", handle).execute()
+        if not (resp.data):
+            return handle
+    return f"{base}-{card_id}"
 
 
 def assemble_card(
@@ -59,10 +85,29 @@ def assemble_card(
 
 
 def _row_to_card(row: dict) -> AgentProfileCard:
-    return AgentProfileCard.model_validate(row["card"])
+    data = dict(row["card"])
+    if row.get("handle"):
+        data["handle"] = row["handle"]
+    return AgentProfileCard.model_validate(data)
+
+
+def get_card_by_handle(handle: str) -> AgentProfileCard | None:
+    sb = config.get_supabase()
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("card,handle")
+        .eq("handle", handle)
+        .eq("status", "published")
+        .execute()
+    )
+    rows = resp.data or []
+    if not rows:
+        return None
+    return _row_to_card(rows[0])
 
 
 def insert_card(card: AgentProfileCard, handle_github: str | None, handle_x: str | None) -> None:
+    handle = _assign_handle(handle_github, handle_x, card.identity.name, card.id)
     sb = config.get_supabase()
     sb.table("agent_profile_cards").insert(
         {
@@ -70,6 +115,7 @@ def insert_card(card: AgentProfileCard, handle_github: str | None, handle_x: str
             "status": card.status,
             "handle_github": handle_github,
             "handle_x": handle_x,
+            "handle": handle,
             "card": card.model_dump(mode="json"),
         }
     ).execute()
@@ -79,7 +125,7 @@ def get_card(card_id: str) -> AgentProfileCard | None:
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card")
+        .select("card,handle")
         .eq("id", card_id)
         .eq("status", "published")
         .execute()
@@ -94,7 +140,7 @@ def search_cards(q: str, limit: int = 50) -> list[AgentProfileCard]:
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card")
+        .select("card,handle")
         .eq("status", "published")
         .text_search("search_tsv", q)
         .limit(limit)
@@ -104,7 +150,7 @@ def search_cards(q: str, limit: int = 50) -> list[AgentProfileCard]:
     if not rows and q:
         resp = (
             sb.table("agent_profile_cards")
-            .select("card")
+            .select("card,handle")
             .eq("status", "published")
             .ilike("card->>summary", f"%{q}%")
             .limit(limit)
@@ -118,7 +164,7 @@ def list_published(limit: int = 1000) -> list[AgentProfileCard]:
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card")
+        .select("card,handle")
         .eq("status", "published")
         .order("created_at", desc=True)
         .limit(limit)

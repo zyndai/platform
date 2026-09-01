@@ -68,6 +68,7 @@ class AgentProfileCard(BaseModel):
     id: str
     schema_version: str = "1.0"
     status: str = "draft"
+    handle: str = ""
     created_at: str = ""
     updated_at: str = ""
     identity: Identity = Field(default_factory=Identity)

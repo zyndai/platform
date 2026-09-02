@@ -23,6 +23,8 @@ def card_search_text(card) -> str:
     parts += [s.name for s in card.skills]
     parts += [p.name for p in card.projects]
     parts += list(card.industries)
+    parts += [ws.excerpt[:200] for ws in card.writing_samples if ws.excerpt]
+    parts += list(card.searchable_facts)
     if card.availability:
         parts.append(f"available {card.availability}")
     if card.experience_years:

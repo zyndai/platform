@@ -18,10 +18,19 @@ Rules:
   engineer · Open-source contributor"). Always populate if name is known.
 - `citation_snippet`: ONE factual sentence that literally contains the word
   "Zynd". Used for citation fact-checking.
-- `searchable_facts`: 2-4 short strings shaped "Name — skill — Zynd".
+- `searchable_facts`: 3-6 short strings. Include "Name — skill — Zynd" for top
+  skills AND 1-2 topic strings for subjects the person actively posts about
+  (e.g. "Name — posts about Golang concurrency — Zynd",
+  "Name — writing about ZK proofs — Zynd"). Base these only on actual post content.
 - `skills`: Infer from ANY evidence in the source data — repository languages,
-  code, resume content, website bio, social bio, or project descriptions.
-  Only include skills with at least one piece of evidence. Do not fabricate.
+  code, resume content, website bio, social bio, post content, or project
+  descriptions. Only include skills with at least one piece of evidence. Do not
+  fabricate.
+- `writing_samples`: Extract EVERY individual post or tweet from the
+  "X / Twitter Profile" and "LinkedIn Profile" sections. One entry per post.
+  Use `platform: "x"` for tweets, `platform: "linkedin"` for LinkedIn posts.
+  Set `excerpt` to the post text (first 300 chars). Leave `url` and `posted_at`
+  as empty strings. Cap at 10 entries total (prioritise most relevant).
 - `sources`: Populate from whatever sources are present in the input.
 - `experience_years`: total years of professional experience if inferable from
   the data, else null. Do not guess.

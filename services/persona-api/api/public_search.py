@@ -82,9 +82,11 @@ async def _execute_search(query: str, mode: str, limit: int) -> dict:
         result = await asyncio.to_thread(search_similar_people, query, limit)
     else:
         # Public callers can't message personas (no Zynd account), so skip
-        # per-candidate webhook/card resolution — it's the dominant latency
-        # of the domain search and buys them nothing.
-        result = await asyncio.to_thread(search_zynd_personas, query, limit, "", False)
+        # per-candidate webhook/card resolution AND the registry's enrich
+        # pass — those two account for ~10s of domain-search latency and
+        # buy external callers nothing (non-enriched rows still carry the
+        # bio summary used for ranking).
+        result = await asyncio.to_thread(search_zynd_personas, query, limit, "", False, False)
 
     result["mode"] = mode
     result["limit"] = limit

@@ -823,7 +823,7 @@ def search_zynd_network(query: str, top_k: int = 8, kind: str = "any", user_id: 
         "query_used": query_used,
     }
 
-def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "", resolve_webhooks: bool = True) -> dict:
+def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "", resolve_webhooks: bool = True, enrich: bool = True) -> dict:
     """
     Search for other people's personas by topic, role, or interest — e.g.
     "AI founders", "product designers", "someone into climate tech".
@@ -849,6 +849,10 @@ def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "", resolve_
             embedded for free). Public/browsing callers that can't message
             personas pass False to cut ~5s of latency; internal callers
             leave True.
+        enrich: When False, don't ask the registry to embed full AgentCards
+            (their enrich pass costs ~5-7s). Non-enriched rows still carry
+            `summary` for scoring. Public callers pass False; internal
+            callers leave True.
 
     Returns ``{status, count, total_available, results: [{name, agent_id,
     description, webhook_url, avatar_url, match_reason, match_score}],
@@ -915,7 +919,10 @@ def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "", resolve_
                 "query": "persona",
                 "tags": ["persona"],
                 "max_results": max(int(top_k), _REGISTRY_POOL_FLOOR),
-                "enrich": True,  # include summary + the full AgentCard inline
+                # enrich=True embeds the full AgentCard per candidate —
+                # that's a ~5-7s registry-side cost for zero benefit to
+                # callers that only need the bio summary + ranking.
+                "enrich": enrich,
                 "status": "any",  # don't filter out agents whose heartbeat is mid-cycle
             },
             timeout=10,

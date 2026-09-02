@@ -38,7 +38,7 @@ def test_domain_mode_passes_through_to_persona_search():
             PeopleSearchRequest(query="AI founders", mode="domain", limit=5),
             _fake_request(),
         ))
-    mock_search.assert_called_once_with("AI founders", 5, "", False)
+    mock_search.assert_called_once_with("AI founders", 5, "", False, False)
     assert result["status"] == "success"
     assert result["mode"] == "domain"
     assert result["limit"] == 5
@@ -106,7 +106,7 @@ def test_get_variant_domain_passthrough():
     fake_result = {"status": "success", "count": 1, "results": [{"name": "Alice", "agent_id": "a1"}]}
     with patch("api.public_search.search_zynd_personas", return_value=fake_result) as mock_search:
         result = _run(search_people_get(_fake_request(), query="AI founders", mode="domain", limit=5))
-    mock_search.assert_called_once_with("AI founders", 5, "", False)
+    mock_search.assert_called_once_with("AI founders", 5, "", False, False)
     assert result["mode"] == "domain"
     assert result["results"][0]["name"] == "Alice"
 
@@ -260,6 +260,25 @@ def test_persona_search_skips_card_fetch_when_resolve_webhooks_false():
     fetch_mock.assert_not_called()
     assert result["status"] == "success"
     assert result["results"][0]["webhook_url"] == ""
+
+
+def test_persona_search_sends_enrich_false_to_registry_when_asked():
+    from mcp.tools.zynd_network import search_zynd_personas
+
+    captured = {}
+    post_mock = MagicMock(return_value=_registry_response([]))
+
+    def _fake_post(url, json, timeout):
+        captured["body"] = json
+        return post_mock(url, json=json, timeout=timeout)
+
+    with patch("mcp.tools.zynd_network.requests.post", side_effect=_fake_post), \
+         patch("mcp.tools.zynd_network._get_avatar_map", return_value={}), \
+         patch("mcp.tools.zynd_network._local_persona_fallback", return_value=[]):
+        search_zynd_personas(query="AI founder", top_k=5, user_id="", resolve_webhooks=False, enrich=False)
+
+    assert captured["body"]["enrich"] is False
+    assert captured["body"]["tags"] == ["persona"]
 
 
 def test_persona_search_resolves_webhook_when_flag_true():

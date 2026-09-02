@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from api.public_search import PeopleSearchRequest, search_people
+from api.public_search import PeopleSearchRequest, search_people, search_people_get
 from mcp.tools.zynd_network import search_similar_people
 
 
@@ -97,6 +97,67 @@ def test_client_ip_prefers_x_forwarded_for():
 
     assert _client_ip(_fake_request(fwd="9.9.9.9, 10.0.0.1")) == "9.9.9.9"
     assert _client_ip(_fake_request()) == "1.2.3.4"
+
+
+# ── GET variant ───────────────────────────────────────────────────────
+
+
+def test_get_variant_domain_passthrough():
+    fake_result = {"status": "success", "count": 1, "results": [{"name": "Alice", "agent_id": "a1"}]}
+    with patch("api.public_search.search_zynd_personas", return_value=fake_result) as mock_search:
+        result = _run(search_people_get(_fake_request(), query="AI founders", mode="domain", limit=5))
+    mock_search.assert_called_once_with("AI founders", 5, "")
+    assert result["mode"] == "domain"
+    assert result["results"][0]["name"] == "Alice"
+
+
+def test_get_variant_defaults_and_similar_mode():
+    fake_result = {"status": "success", "count": 0, "results": []}
+    with patch("api.public_search.search_similar_people", return_value=fake_result) as mock_similar, \
+         patch("api.public_search.search_zynd_personas", return_value=fake_result) as mock_domain:
+        result = _run(search_people_get(_fake_request(), query="climate founder", mode="similar", limit=10))
+    mock_similar.assert_called_once_with("climate founder", 10)
+    mock_domain.assert_not_called()
+    assert result["mode"] == "similar"
+    assert result["limit"] == 10
+
+
+def test_get_variant_empty_query_422():
+    with pytest.raises(HTTPException) as exc:
+        _run(search_people_get(_fake_request(), query="   "))
+    assert exc.value.status_code == 422
+
+
+def test_get_variant_rate_limited():
+    import api.public_search as ps
+
+    ps._hits.clear()
+    old_max = ps._MAX_PER_WINDOW
+    ps._MAX_PER_WINDOW = 2
+    try:
+        with patch("api.public_search.search_zynd_personas", return_value={"status": "success", "results": []}):
+            req = _fake_request(ip="8.8.8.8")
+            _run(search_people_get(req, query="a"))
+            _run(search_people_get(req, query="b"))
+            with pytest.raises(HTTPException) as exc:
+                _run(search_people_get(req, query="c"))
+            assert exc.value.status_code == 429
+    finally:
+        ps._MAX_PER_WINDOW = old_max
+        ps._hits.clear()
+
+
+def test_minimal_schema_exposes_get_and_post():
+    from api.public_search import _public_schema
+
+    s = _public_schema("https://dev.persona.zynd.ai")
+    path = s["paths"]["/api/public/search/people"]
+    assert set(path.keys()) == {"post", "get"}
+    assert path["get"]["parameters"][0]["name"] == "query"
+    assert path["get"]["parameters"][0]["in"] == "query"
+    assert path["post"]["requestBody"]["required"] is True
+    assert s["openapi"] == "3.0.2"
+    assert s["servers"][0]["url"] == "https://dev.persona.zynd.ai"
 
 
 # ── search_similar_people ranking ─────────────────────────────────────

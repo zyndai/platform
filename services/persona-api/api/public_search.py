@@ -24,7 +24,7 @@ import threading
 import time
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from mcp.tools.zynd_network import search_similar_people, search_zynd_personas
@@ -72,34 +72,135 @@ class PeopleSearchRequest(BaseModel):
     limit: int = Field(10, ge=1, le=40)
 
 
+async def _execute_search(query: str, mode: str, limit: int) -> dict:
+    """Shared dispatch for the POST and GET variants."""
+    query = (query or "").strip()
+    if not query:
+        raise HTTPException(status_code=422, detail="query must not be empty")
+
+    if mode == "similar":
+        result = await asyncio.to_thread(search_similar_people, query, limit)
+    else:
+        result = await asyncio.to_thread(search_zynd_personas, query, limit, "")
+
+    result["mode"] = mode
+    result["limit"] = limit
+    return result
+
+
 @router.post("/search/people")
 async def search_people(req: PeopleSearchRequest, request: Request):
     """Search personas by domain/role (mode='domain') or by similarity to
     a free-text description (mode='similar'). Public — no auth required."""
     if _rate_limited(_client_ip(request)):
         raise HTTPException(status_code=429, detail="Too many requests — slow down.")
+    return await _execute_search(req.query, req.mode, req.limit)
 
-    query = req.query.strip()
-    if not query:
-        raise HTTPException(status_code=422, detail="query must not be empty")
 
-    if req.mode == "similar":
-        result = await asyncio.to_thread(search_similar_people, query, req.limit)
-    else:
-        result = await asyncio.to_thread(search_zynd_personas, query, req.limit, "")
-
-    result["mode"] = req.mode
-    result["limit"] = req.limit
-    return result
+@router.get("/search/people")
+async def search_people_get(
+    request: Request,
+    query: str = Query(..., min_length=1, max_length=120),
+    mode: Literal["domain", "similar"] = Query("domain"),
+    limit: int = Query(10, ge=1, le=40),
+):
+    """GET variant of people search — same behavior, query params in the
+    URL. Exists because ChatGPT's browsing tool only issues GET requests:
+    a bare link like /api/public/search/people?query=AI+founders can be
+    fetched and read directly, no GPT Action setup needed."""
+    if _rate_limited(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="Too many requests — slow down.")
+    return await _execute_search(query, mode, limit)
 
 
 # ── Minimal OpenAPI schema for ChatGPT Actions ───────────────────────
 # The full /api/openapi.json is ~99KB of 93 routes — ChatGPT's action
 # importer rejects 3.1.x schemas and chokes on near-limit payloads. This
-# hand-built 3.0.2 spec exposes ONLY the public search endpoint, so
-# external callers get a tiny, guaranteed-compatible schema.
+# hand-built 3.0.2 spec exposes ONLY the public search endpoint (GET and
+# POST), so external callers get a tiny, guaranteed-compatible schema.
+_SEARCH_RESPONSES = {
+    "200": {
+        "description": "Search results",
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string"},
+                        "count": {"type": "integer"},
+                        "total_available": {"type": "integer"},
+                        "source": {"type": "string"},
+                        "results": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "agent_id": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "avatar_url": {"type": "string"},
+                                    "webhook_url": {"type": "string"},
+                                    "match_reason": {"type": "string"},
+                                    "match_score": {"type": "integer"},
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        },
+    },
+    "429": {"description": "Rate limited"},
+}
+
+_QUERY_PARAMS = [
+    {
+        "name": "query",
+        "in": "query",
+        "required": True,
+        "schema": {"type": "string", "minLength": 1, "maxLength": 120},
+        "description": "Free-text: a role, topic, or person description (e.g. 'AI founders').",
+    },
+    {
+        "name": "mode",
+        "in": "query",
+        "required": False,
+        "schema": {"type": "string", "enum": ["domain", "similar"], "default": "domain"},
+        "description": "domain = people in a field/role; similar = people whose interests match the query text.",
+    },
+    {
+        "name": "limit",
+        "in": "query",
+        "required": False,
+        "schema": {"type": "integer", "minimum": 1, "maximum": 40, "default": 10},
+        "description": "Max results to return.",
+    },
+]
+
+
 def _public_schema(origin: str) -> dict:
-    schema = {
+    post_props = {
+        "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "Free-text: a role, topic, or person description (e.g. 'AI founders').",
+        },
+        "mode": {
+            "type": "string",
+            "enum": ["domain", "similar"],
+            "default": "domain",
+            "description": "domain = people in a field/role; similar = people whose interests match the query text.",
+        },
+        "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 40,
+            "default": 10,
+            "description": "Max results to return.",
+        },
+    }
+    return {
         "openapi": "3.0.2",
         "info": {
             "title": "Zynd People Search API",
@@ -123,70 +224,22 @@ def _public_schema(origin: str) -> dict:
                                 "schema": {
                                     "type": "object",
                                     "required": ["query"],
-                                    "properties": {
-                                        "query": {
-                                            "type": "string",
-                                            "minLength": 1,
-                                            "maxLength": 120,
-                                            "description": "Free-text: a role, topic, or person description (e.g. 'AI founders').",
-                                        },
-                                        "mode": {
-                                            "type": "string",
-                                            "enum": ["domain", "similar"],
-                                            "default": "domain",
-                                            "description": "domain = people in a field/role; similar = people whose interests match the query text.",
-                                        },
-                                        "limit": {
-                                            "type": "integer",
-                                            "minimum": 1,
-                                            "maximum": 40,
-                                            "default": 10,
-                                            "description": "Max results to return.",
-                                        },
-                                    },
+                                    "properties": post_props,
                                 }
                             }
                         },
                     },
-                    "responses": {
-                        "200": {
-                            "description": "Search results",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "status": {"type": "string"},
-                                            "count": {"type": "integer"},
-                                            "total_available": {"type": "integer"},
-                                            "source": {"type": "string"},
-                                            "results": {
-                                                "type": "array",
-                                                "items": {
-                                                    "type": "object",
-                                                    "properties": {
-                                                        "name": {"type": "string"},
-                                                        "agent_id": {"type": "string"},
-                                                        "description": {"type": "string"},
-                                                        "avatar_url": {"type": "string"},
-                                                        "webhook_url": {"type": "string"},
-                                                        "match_reason": {"type": "string"},
-                                                        "match_score": {"type": "integer"},
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    }
-                                }
-                            },
-                        },
-                        "429": {"description": "Rate limited"},
-                    },
-                }
+                    "responses": _SEARCH_RESPONSES,
+                },
+                "get": {
+                    "operationId": "searchPeopleGet",
+                    "summary": "Search personas via URL query parameters (browsable GET)",
+                    "parameters": _QUERY_PARAMS,
+                    "responses": _SEARCH_RESPONSES,
+                },
             }
         },
     }
-    return schema
 
 
 @router.get("/openapi.json", include_in_schema=False)

@@ -98,6 +98,16 @@ async def _fetch_profile(url: str) -> str:
     if pic and pic.startswith("http"):
         parts.append(f"Avatar URL: {pic}")
 
+    # LinkedIn background/cover image
+    bg = (
+        profile.get("background_url")
+        or profile.get("backgroundUrl")
+        or record.get("background_url")
+        or ""
+    )
+    if bg and bg.startswith("http"):
+        parts.append(f"Avatar BG URL: {bg}")
+
     skills = profile.get("skills") or []
     if skills:
         parts.append(f"Skills: {', '.join(skills[:30])}")

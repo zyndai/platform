@@ -35,6 +35,7 @@ class Identity(BaseModel):
     headline: str = ""
     location: str = ""
     avatar_url: str = ""
+    avatar_bg_url: str = ""
     links: dict[str, str] = Field(default_factory=dict)
 
 

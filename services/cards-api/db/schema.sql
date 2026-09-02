@@ -70,3 +70,9 @@ where handle in (
 ) and id not in (
   select min(id) from agent_profile_cards group by handle having count(*) > 1
 );
+
+-- Raw scraped source texts per provider for re-synthesis and auditing
+alter table agent_profile_cards add column if not exists scrape_raw jsonb;
+
+-- User intent answers from onboarding follow-up questions
+alter table agent_profile_cards add column if not exists user_intent jsonb;

@@ -110,24 +110,31 @@ def get_card_by_handle(handle: str) -> AgentProfileCard | None:
     return _row_to_card(rows[0])
 
 
-def insert_card(card: AgentProfileCard, handle_github: str | None, handle_x: str | None) -> str:
+def insert_card(
+    card: AgentProfileCard,
+    handle_github: str | None,
+    handle_x: str | None,
+    scrape_raw: dict | None = None,
+    user_intent: dict | None = None,
+) -> str:
     handle = _assign_handle(handle_github, handle_x, card.identity.name, card.id)
     try:
         embedding = embed.embed_text(embed.card_search_text(card))
     except Exception:
         embedding = None
     sb = config.get_supabase()
-    sb.table("agent_profile_cards").insert(
-        {
-            "id": card.id,
-            "status": card.status,
-            "handle_github": handle_github,
-            "handle_x": handle_x,
-            "handle": handle,
-            "card": card.model_dump(mode="json"),
-            "embedding": embedding,
-        }
-    ).execute()
+    row: dict = {
+        "id": card.id,
+        "status": card.status,
+        "handle_github": handle_github,
+        "handle_x": handle_x,
+        "handle": handle,
+        "card": card.model_dump(mode="json"),
+        "embedding": embedding,
+        "scrape_raw": scrape_raw,
+        "user_intent": user_intent,
+    }
+    sb.table("agent_profile_cards").insert(row).execute()
     return handle
 
 

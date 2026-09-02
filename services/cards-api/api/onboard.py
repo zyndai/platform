@@ -1,3 +1,4 @@
+"""Onboarding pipeline — multi-URL input, auto-classifies to correct scraper."""
 import asyncio
 import logging
 import os
@@ -24,18 +25,25 @@ router = APIRouter()
 
 class PublishRequest(BaseModel):
     card: dict
+    user_answers: dict[str, str] = {}
 
 
 def _classify_url(url: str) -> str:
-    # Match on hostname only — substring matching on full URL allows bypass via
-    # path components (e.g. http://evil.com/x.com/user would be misclassified).
     from urllib.parse import urlparse
     host = (urlparse(url).hostname or "").lower()
+    if host == "github.com" or host.endswith(".github.com"):
+        return "github"
     if host in ("twitter.com", "x.com") or host.endswith((".twitter.com", ".x.com")):
         return "x"
     if host == "linkedin.com" or host.endswith(".linkedin.com"):
         return "linkedin"
     return "website"
+
+
+def _handle_from_url(url: str) -> str | None:
+    from urllib.parse import urlparse
+    parts = urlparse(url).path.strip("/").split("/")
+    return parts[0] if parts and parts[0] else None
 
 
 async def _safe_fetch_url(url: str) -> tuple[str, str]:
@@ -55,21 +63,27 @@ async def _safe_fetch_url(url: str) -> tuple[str, str]:
         return kind, ""
 
 
-async def _run_pipeline(
-    job_id: str,
-    github_handle: str | None,
-    x_handle: str | None,
-    resume_text: str | None,
-    url_sources: list[str],
-) -> None:
+async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -> None:
     try:
+        github_handle: str | None = None
+        x_handle: str | None = None
         github_data = None
-        if github_handle:
-            github_data = await github_scraper.fetch_github(github_handle)
 
-        # Expand Linktree / link-in-bio pages to their child URLs before scraping
+        github_urls = [u for u in urls if _classify_url(u) == "github"]
+        other_urls = [u for u in urls if _classify_url(u) != "github"]
+
+        if github_urls:
+            github_handle = _handle_from_url(github_urls[0])
+            if github_handle:
+                github_data = await github_scraper.fetch_github(github_handle)
+
+        x_urls = [u for u in other_urls if _classify_url(u) == "x"]
+        if x_urls:
+            x_handle = _handle_from_url(x_urls[0])
+
+        # Expand Linktree / link-in-bio pages before scraping
         expanded: list[str] = []
-        for u in url_sources:
+        for u in other_urls:
             if website_scraper.is_linktree(u):
                 try:
                     links = await website_scraper.fetch_linktree_links(u)
@@ -79,14 +93,13 @@ async def _run_pipeline(
                     logger.warning("linktree expand failed url=%s err=%s", u, exc)
             else:
                 expanded.append(u)
-        url_sources = expanded
 
         website_texts: list[str] = []
         x_texts: list[str] = []
         linkedin_texts: list[str] = []
 
-        if url_sources:
-            results = await asyncio.gather(*[_safe_fetch_url(u) for u in url_sources])
+        if expanded:
+            results = await asyncio.gather(*[_safe_fetch_url(u) for u in expanded])
             for kind, text in results:
                 if not text:
                     continue
@@ -96,6 +109,14 @@ async def _run_pipeline(
                     linkedin_texts.append(text)
                 else:
                     website_texts.append(text)
+
+        scrape_raw: dict = {
+            "github": github_data,
+            "linkedin": "\n\n".join(linkedin_texts) or None,
+            "x": "\n\n".join(x_texts) or None,
+            "website": "\n\n".join(website_texts) or None,
+            "resume": resume_text,
+        }
 
         synth = synthesize_card(
             github_data,
@@ -107,19 +128,19 @@ async def _run_pipeline(
         card = cards_service.assemble_card(
             synth, github_data, github_handle, x_handle, bool(resume_text)
         )
-        set_ready(job_id, card)
+
+        set_ready(job_id, card, scrape_raw=scrape_raw)
+        job = get_job(job_id)
+        if job:
+            job.handle_github = github_handle
+            job.handle_x = x_handle
     except Exception as exc:
         set_error(job_id, str(exc))
 
 
 @router.post("/start")
 async def start_onboard(
-    github_handle: str | None = Form(None),
-    x_handle: str | None = Form(None),
-    website_url: str | None = Form(None),
-    linktree_url: str | None = Form(None),
-    social_url: str | None = Form(None),
-    portfolio_url: str | None = Form(None),
+    url: list[str] = Form(default=[]),
     resume: UploadFile | None = File(None),
 ):
     resume_text = None
@@ -133,15 +154,11 @@ async def start_onboard(
         finally:
             os.unlink(path)
 
-    url_sources = [u for u in [website_url, linktree_url, social_url, portfolio_url] if u]
-
-    if not github_handle and not x_handle and not url_sources and not resume_text:
+    if not url and not resume_text:
         raise HTTPException(status_code=400, detail="At least one source is required")
 
-    job_id = create_job(github_handle, x_handle)
-    asyncio.create_task(
-        _run_pipeline(job_id, github_handle, x_handle, resume_text, url_sources)
-    )
+    job_id = create_job()
+    asyncio.create_task(_run_pipeline(job_id, list(url), resume_text))
     return {"job_id": job_id}
 
 
@@ -171,8 +188,15 @@ async def publish_card(job_id: str, body: PublishRequest):
     card.review.reviewed_by = "user_self"
     card.review.reviewed_at = now
 
+    user_intent = body.user_answers if body.user_answers else None
+
     handle = await asyncio.to_thread(
-        cards_service.insert_card, card, job.handle_github, job.handle_x
+        cards_service.insert_card,
+        card,
+        job.handle_github,
+        job.handle_x,
+        job.scrape_raw,
+        user_intent,
     )
     await hooks.run_publish_hooks(card.id, handle)
     return card.model_dump(mode="json")

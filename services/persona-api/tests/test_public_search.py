@@ -38,7 +38,7 @@ def test_domain_mode_passes_through_to_persona_search():
             PeopleSearchRequest(query="AI founders", mode="domain", limit=5),
             _fake_request(),
         ))
-    mock_search.assert_called_once_with("AI founders", 5, "")
+    mock_search.assert_called_once_with("AI founders", 5, "", False)
     assert result["status"] == "success"
     assert result["mode"] == "domain"
     assert result["limit"] == 5
@@ -106,7 +106,7 @@ def test_get_variant_domain_passthrough():
     fake_result = {"status": "success", "count": 1, "results": [{"name": "Alice", "agent_id": "a1"}]}
     with patch("api.public_search.search_zynd_personas", return_value=fake_result) as mock_search:
         result = _run(search_people_get(_fake_request(), query="AI founders", mode="domain", limit=5))
-    mock_search.assert_called_once_with("AI founders", 5, "")
+    mock_search.assert_called_once_with("AI founders", 5, "", False)
     assert result["mode"] == "domain"
     assert result["results"][0]["name"] == "Alice"
 
@@ -229,3 +229,54 @@ def test_similar_people_db_error_returns_friendly_error():
         result = search_similar_people("founders", top_k=3)
     assert result["status"] == "error"
     assert "hint" in result
+
+
+# ── resolve_webhooks=False fast path ──────────────────────────────────
+
+
+def _registry_response(results):
+    resp = MagicMock()
+    resp.json.return_value = {"results": results}
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+def test_persona_search_skips_card_fetch_when_resolve_webhooks_false():
+    from mcp.tools.zynd_network import search_zynd_personas
+
+    registry_row = {
+        "entity_id": "zns:x1",
+        "name": "X",
+        "summary": "AI founder",
+        "tags": ["persona"],
+        "card": {},  # card embedded but no URL → would normally trigger a fetch
+    }
+    with patch("mcp.tools.zynd_network.requests.post", return_value=_registry_response([registry_row])), \
+         patch("mcp.tools.zynd_network._get_avatar_map", return_value={}), \
+         patch("mcp.tools.zynd_network._local_persona_fallback", return_value=[]), \
+         patch("mcp.tools.zynd_network._fetch_agent_card", side_effect=AssertionError("card fetch should be skipped")) as fetch_mock:
+        result = search_zynd_personas(query="AI founder", top_k=5, user_id="", resolve_webhooks=False)
+
+    fetch_mock.assert_not_called()
+    assert result["status"] == "success"
+    assert result["results"][0]["webhook_url"] == ""
+
+
+def test_persona_search_resolves_webhook_when_flag_true():
+    from mcp.tools.zynd_network import search_zynd_personas
+
+    registry_row = {
+        "entity_id": "zns:x1",
+        "name": "X",
+        "summary": "AI founder",
+        "tags": ["persona"],
+        "card": {},
+    }
+    with patch("mcp.tools.zynd_network.requests.post", return_value=_registry_response([registry_row])), \
+         patch("mcp.tools.zynd_network._get_avatar_map", return_value={}), \
+         patch("mcp.tools.zynd_network._local_persona_fallback", return_value=[]), \
+         patch("mcp.tools.zynd_network._fetch_agent_card", return_value={"url": "https://x/a2a/v1", "preferredTransport": "JSONRPC"}), \
+         patch("mcp.tools.zynd_network._get_supabase", return_value=MagicMock()):
+        result = search_zynd_personas(query="AI founder", top_k=5, user_id="", resolve_webhooks=True)
+
+    assert result["results"][0]["webhook_url"] == "https://x/a2a/v1"

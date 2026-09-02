@@ -81,7 +81,10 @@ async def _execute_search(query: str, mode: str, limit: int) -> dict:
     if mode == "similar":
         result = await asyncio.to_thread(search_similar_people, query, limit)
     else:
-        result = await asyncio.to_thread(search_zynd_personas, query, limit, "")
+        # Public callers can't message personas (no Zynd account), so skip
+        # per-candidate webhook/card resolution — it's the dominant latency
+        # of the domain search and buys them nothing.
+        result = await asyncio.to_thread(search_zynd_personas, query, limit, "", False)
 
     result["mode"] = mode
     result["limit"] = limit

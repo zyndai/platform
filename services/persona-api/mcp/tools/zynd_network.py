@@ -823,7 +823,7 @@ def search_zynd_network(query: str, top_k: int = 8, kind: str = "any", user_id: 
         "query_used": query_used,
     }
 
-def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:
+def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "", resolve_webhooks: bool = True) -> dict:
     """
     Search for other people's personas by topic, role, or interest — e.g.
     "AI founders", "product designers", "someone into climate tech".
@@ -844,6 +844,11 @@ def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:
         query: Name, keyword, or topic to search for (e.g., 'Alice', 'ZyndAI', 'AI founders').
         top_k: Max results to return.
         user_id: Injected automatically by the orchestrator — do not pass it.
+        resolve_webhooks: When False, skip per-candidate agent-card fetches
+            for missing webhook_urls (results keep whatever URL the registry
+            embedded for free). Public/browsing callers that can't message
+            personas pass False to cut ~5s of latency; internal callers
+            leave True.
 
     Returns ``{status, count, total_available, results: [{name, agent_id,
     description, webhook_url, avatar_url, match_reason, match_score}],
@@ -989,9 +994,14 @@ def search_zynd_personas(query: str, top_k: int = 5, user_id: str = "") -> dict:
         a = item
         aid = a.get("entity_id") or a.get("agent_id") or ""
         webhook = _agent_url_from_card(a.get("card")) or a.get("service_endpoint") or a.get("entity_url") or ""
-        if not webhook:
+        # Resolving a missing webhook costs one network round-trip PER
+        # candidate (agent-card fetch, 10s timeout each) — that's the
+        # dominant latency of this search (~5s for 5 results). Callers
+        # that can't message personas anyway (public API, browsing) pass
+        # resolve_webhooks=False and skip it entirely.
+        if not webhook and resolve_webhooks:
             webhook = _agent_url_from_card(_fetch_agent_card(aid))
-        if not webhook:
+        if not webhook and resolve_webhooks:
             try:
                 sb = _get_supabase()
                 local_row = sb.table("persona_agents").select("webhook_url").eq("agent_id", aid).execute()

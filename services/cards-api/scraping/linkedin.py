@@ -87,6 +87,17 @@ async def _fetch_profile(url: str) -> str:
     if profile.get("industry"):
         parts.append(f"Industry: {profile['industry']}")
 
+    # Profile picture — actor may put it at record level or inside profile
+    pic = (
+        record.get("picture_url")
+        or record.get("pictureUrl")
+        or profile.get("picture_url")
+        or profile.get("pictureUrl")
+        or ""
+    )
+    if pic and pic.startswith("http"):
+        parts.append(f"Avatar URL: {pic}")
+
     skills = profile.get("skills") or []
     if skills:
         parts.append(f"Skills: {', '.join(skills[:30])}")

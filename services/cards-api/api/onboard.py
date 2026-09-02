@@ -67,6 +67,20 @@ async def _run_pipeline(
         if github_handle:
             github_data = await github_scraper.fetch_github(github_handle)
 
+        # Expand Linktree / link-in-bio pages to their child URLs before scraping
+        expanded: list[str] = []
+        for u in url_sources:
+            if website_scraper.is_linktree(u):
+                try:
+                    links = await website_scraper.fetch_linktree_links(u)
+                    logger.info("linktree %s -> %d links", u, len(links))
+                    expanded.extend(links)
+                except Exception as exc:
+                    logger.warning("linktree expand failed url=%s err=%s", u, exc)
+            else:
+                expanded.append(u)
+        url_sources = expanded
+
         website_texts: list[str] = []
         x_texts: list[str] = []
         linkedin_texts: list[str] = []

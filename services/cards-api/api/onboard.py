@@ -110,12 +110,12 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
                 else:
                     website_texts.append(text)
 
+        # Exclude resume — user-uploaded private document; public scrapes only
         scrape_raw: dict = {
             "github": github_data,
             "linkedin": "\n\n".join(linkedin_texts) or None,
             "x": "\n\n".join(x_texts) or None,
             "website": "\n\n".join(website_texts) or None,
-            "resume": resume_text,
         }
 
         synth = synthesize_card(
@@ -129,11 +129,12 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
             synth, github_data, github_handle, x_handle, bool(resume_text)
         )
 
-        set_ready(job_id, card, scrape_raw=scrape_raw)
+        # Set handles before set_ready so publish sees them immediately
         job = get_job(job_id)
         if job:
             job.handle_github = github_handle
             job.handle_x = x_handle
+        set_ready(job_id, card, scrape_raw=scrape_raw)
     except Exception as exc:
         set_error(job_id, str(exc))
 

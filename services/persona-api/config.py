@@ -110,6 +110,10 @@ CUSTOM_LLM_MODEL: str = os.getenv("CUSTOM_LLM_MODEL", "")
 # ── OpenRouter ───────────────────────────────────────────────────────
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "")
+# Model used by the public /api/public/ask endpoint. Separate from
+# OPENROUTER_MODEL so the ask endpoint can run a cheap/fast model
+# without changing the main agent's model.
+ASK_ENDPOINT_MODEL: str = os.getenv("ASK_ENDPOINT_MODEL", "")
 OPENROUTER_BASE_URL: str = os.getenv(
     "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
 )

@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # ── In-memory per-IP rate limit ──────────────────────────────────────
-# Public endpoint → keep anonymous callers from turning it into a free
-# scraping or load-generation tool. Soft guard, not a hard security
+# Public endpoints → keep anonymous callers from turning them into free
+# scraping or load-generation tools. Soft guard, not a hard security
 # boundary: the data served is already public on the network.
 _WINDOW_SECONDS = 60.0
 _MAX_PER_WINDOW = 30
@@ -43,19 +43,21 @@ _hits: dict[str, tuple[float, int]] = {}
 _lock = threading.Lock()
 
 
-def _rate_limited(ip: str) -> bool:
+def _rate_limited(ip: str, hits: dict, window: float, max_hits: int) -> bool:
+    """Sliding-window check shared by the public endpoints. Returns True
+    when `ip` has exceeded `max_hits` requests inside `window` seconds."""
     now = time.time()
     with _lock:
-        entry = _hits.get(ip)
-        if entry and now - entry[0] < _WINDOW_SECONDS:
+        entry = hits.get(ip)
+        if entry and now - entry[0] < window:
             count = entry[1] + 1
-            _hits[ip] = (entry[0], count)
-            return count > _MAX_PER_WINDOW
-        _hits[ip] = (now, 1)
+            hits[ip] = (entry[0], count)
+            return count > max_hits
+        hits[ip] = (now, 1)
         # Bound the map — drop stale entries so long-running processes
         # don't accumulate unbounded state.
-        if len(_hits) > 1024:
-            _hits.clear()
+        if len(hits) > 1024:
+            hits.clear()
         return False
 
 
@@ -97,7 +99,7 @@ async def _execute_search(query: str, mode: str, limit: int) -> dict:
 async def search_people(req: PeopleSearchRequest, request: Request):
     """Search personas by domain/role (mode='domain') or by similarity to
     a free-text description (mode='similar'). Public — no auth required."""
-    if _rate_limited(_client_ip(request)):
+    if _rate_limited(_client_ip(request), _hits, _WINDOW_SECONDS, _MAX_PER_WINDOW):
         raise HTTPException(status_code=429, detail="Too many requests — slow down.")
     return await _execute_search(req.query, req.mode, req.limit)
 
@@ -113,7 +115,7 @@ async def search_people_get(
     URL. Exists because ChatGPT's browsing tool only issues GET requests:
     a bare link like /api/public/search/people?query=AI+founders can be
     fetched and read directly, no GPT Action setup needed."""
-    if _rate_limited(_client_ip(request)):
+    if _rate_limited(_client_ip(request), _hits, _WINDOW_SECONDS, _MAX_PER_WINDOW):
         raise HTTPException(status_code=429, detail="Too many requests — slow down.")
     return await _execute_search(query, mode, limit)
 
@@ -182,6 +184,30 @@ _QUERY_PARAMS = [
     },
 ]
 
+_ASK_PARAMS = [
+    {
+        "name": "question",
+        "in": "query",
+        "required": True,
+        "schema": {"type": "string", "minLength": 1, "maxLength": 200},
+        "description": "Natural-language request, e.g. 'find me AI founders in Bangalore'.",
+    },
+    {
+        "name": "mode",
+        "in": "query",
+        "required": False,
+        "schema": {"type": "string", "enum": ["domain", "similar"]},
+        "description": "Optional override; otherwise detected automatically.",
+    },
+    {
+        "name": "limit",
+        "in": "query",
+        "required": False,
+        "schema": {"type": "integer", "minimum": 1, "maximum": 40, "default": 8},
+        "description": "Max results to return.",
+    },
+]
+
 
 def _public_schema(origin: str) -> dict:
     post_props = {
@@ -242,7 +268,51 @@ def _public_schema(origin: str) -> dict:
                     "parameters": _QUERY_PARAMS,
                     "responses": _SEARCH_RESPONSES,
                 },
-            }
+            },
+            "/api/public/ask": {
+                "post": {
+                    "operationId": "askPeople",
+                    "summary": "Plaintext people search — natural language in, answer + results out",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["question"],
+                                    "properties": {
+                                        "question": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 200,
+                                            "description": "Natural-language request, e.g. 'find me AI founders in Bangalore'.",
+                                        },
+                                        "mode": {
+                                            "type": "string",
+                                            "enum": ["domain", "similar"],
+                                            "description": "Optional override; otherwise detected automatically.",
+                                        },
+                                        "limit": {
+                                            "type": "integer",
+                                            "minimum": 1,
+                                            "maximum": 40,
+                                            "default": 8,
+                                            "description": "Max results to return.",
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": _SEARCH_RESPONSES,
+                },
+                "get": {
+                    "operationId": "askPeopleGet",
+                    "summary": "Plaintext people search via URL (browsable GET)",
+                    "parameters": _ASK_PARAMS,
+                    "responses": _SEARCH_RESPONSES,
+                },
+            },
         },
     }
 

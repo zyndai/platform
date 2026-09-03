@@ -16,8 +16,8 @@ import config
 _APIFY_BASE = "https://api.apify.com/v2"
 _ACTOR_PROFILE = "data-slayer~twitter-user"
 _ACTOR_TWEETS  = "data-slayer~twitter-user-tweets"
-_MAX_TWEETS = 10
-_MAX_CHARS = 8_000
+_MAX_TWEETS = 7
+_MAX_CHARS = 12_000
 
 
 def _handle_from_url(url: str) -> str | None:

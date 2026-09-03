@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -28,11 +29,26 @@ async def fetch_github(handle: str) -> dict:
         events = events_resp.json() if events_resp.is_success else []
 
     recent_activity = _parse_events(events)
+    user_data = user_resp.json()
+    repos_data = repos_resp.json()
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=180)
+    active_repos = sum(
+        1 for r in repos_data
+        if r.get("pushed_at") and
+        datetime.fromisoformat(r["pushed_at"].rstrip("Z")).replace(tzinfo=timezone.utc) > cutoff
+    )
+    top_languages = list(dict.fromkeys(r["language"] for r in repos_data if r.get("language")))[:5]
 
     return {
-        "user": user_resp.json(),
-        "repos": repos_resp.json(),
+        "user": user_data,
+        "repos": repos_data,
         "recent_activity": recent_activity,
+        "stats": {
+            "total_repos": user_data.get("public_repos", 0),
+            "active_repos": active_repos,
+            "top_languages": top_languages,
+        },
     }
 
 

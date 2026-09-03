@@ -15,8 +15,8 @@ import config
 _APIFY_BASE = "https://api.apify.com/v2"
 _ACTOR_PROFILE = "atomus~linkedin-profile-scraper"
 _ACTOR_POSTS   = "atomus~linkedin-posts-scraper-pro"
-_MAX_POSTS = 7
-_MAX_CHARS = 8_000
+_MAX_POSTS = 15
+_MAX_CHARS = 12_000
 
 
 async def fetch_linkedin_profile(url: str) -> str:
@@ -128,7 +128,7 @@ async def _fetch_posts(url: str) -> str:
         resp = await client.post(
             f"{_APIFY_BASE}/acts/{_ACTOR_POSTS}/run-sync-get-dataset-items",
             params={"token": config.APIFY_API_KEY, "timeout": 90, "memory": 256},
-            json={"profiles": [url], "maxPosts": _MAX_POSTS, "sortBy": "date"},
+            json={"profiles": [url], "maxPosts": _MAX_POSTS, "sortBy": "date", "includeText": True},
         )
         resp.raise_for_status()
         items = resp.json()
@@ -140,5 +140,5 @@ async def _fetch_posts(url: str) -> str:
     for post in items[:_MAX_POSTS]:
         content = post.get("content") or ""
         if content:
-            lines.append(f"- {content[:400]}")
+            lines.append(f"- {content[:600]}")
     return "\n".join(lines) if len(lines) > 1 else ""

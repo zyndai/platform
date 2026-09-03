@@ -103,6 +103,11 @@ class AgentProfileCard(BaseModel):
     experience_years: int | None = None
     industries: list[str] = Field(default_factory=list)
     availability: str = ""
+    working_on: list[str] = Field(default_factory=list)
+    can_help_with: list[str] = Field(default_factory=list)
+    connect_with: list[str] = Field(default_factory=list)
+    love_talking_about: list[str] = Field(default_factory=list)
+    github_stats: dict = Field(default_factory=dict)
 
     @field_validator("experience_years", mode="before")
     @classmethod
@@ -129,6 +134,11 @@ class CardSynthesis(BaseModel):
     experience_years: int | None = None
     industries: list[str] = Field(default_factory=list)
     availability: str = ""
+    working_on: list[str] = Field(default_factory=list)
+    can_help_with: list[str] = Field(default_factory=list)
+    connect_with: list[str] = Field(default_factory=list)
+    love_talking_about: list[str] = Field(default_factory=list)
+    github_stats: dict = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod

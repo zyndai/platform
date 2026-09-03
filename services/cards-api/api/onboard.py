@@ -126,7 +126,8 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
             linkedin_text="\n\n".join(linkedin_texts) or None,
         )
         card = cards_service.assemble_card(
-            synth, github_data, github_handle, x_handle, bool(resume_text)
+            synth, github_data, github_handle, x_handle, bool(resume_text),
+            linkedin_scraped=bool(linkedin_texts),
         )
 
         # Set handles before set_ready so publish sees them immediately
@@ -189,7 +190,19 @@ async def publish_card(job_id: str, body: PublishRequest):
     card.review.reviewed_by = "user_self"
     card.review.reviewed_at = now
 
-    user_intent = body.user_answers if body.user_answers else None
+    answers = body.user_answers
+    if answers.get("working_on"):
+        card.working_on = [x.strip() for x in answers["working_on"].split(",") if x.strip()]
+    if answers.get("can_help"):
+        card.can_help_with = [x.strip() for x in answers["can_help"].split(",") if x.strip()]
+    if answers.get("connect_with"):
+        card.connect_with = [x.strip() for x in answers["connect_with"].split(",") if x.strip()]
+    if answers.get("love_talking"):
+        card.love_talking_about = [x.strip() for x in answers["love_talking"].split(",") if x.strip()]
+    if answers.get("location") and not card.identity.location:
+        card.identity.location = answers["location"]
+
+    user_intent = answers if answers else None
 
     handle = await asyncio.to_thread(
         cards_service.insert_card,

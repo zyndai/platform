@@ -36,6 +36,7 @@ def assemble_card(
     github_handle: str | None,
     x_handle: str | None,
     resume_used: bool,
+    linkedin_scraped: bool = False,
 ) -> AgentProfileCard:
     card_id = new_card_id()
     now = utcnow()
@@ -57,6 +58,10 @@ def assemble_card(
     if resume_used:
         sources.append(
             Source(platform="resume", url=None, scraped_at=now, method="user_upload")
+        )
+    if linkedin_scraped:
+        sources.append(
+            Source(platform="linkedin", url=None, scraped_at=now, method="http_fetch")
         )
     if x_handle:
         sources.append(
@@ -85,6 +90,11 @@ def assemble_card(
         experience_years=synth.experience_years,
         industries=synth.industries,
         availability=synth.availability,
+        working_on=synth.working_on,
+        can_help_with=synth.can_help_with,
+        connect_with=synth.connect_with,
+        love_talking_about=synth.love_talking_about,
+        github_stats=synth.github_stats,
     )
 
 

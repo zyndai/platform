@@ -199,5 +199,6 @@ async def publish_card(job_id: str, body: PublishRequest):
         job.scrape_raw,
         user_intent,
     )
+    card.handle = handle  # frontend reads published.handle for redirect
     await hooks.run_publish_hooks(card.id, handle)
     return card.model_dump(mode="json")

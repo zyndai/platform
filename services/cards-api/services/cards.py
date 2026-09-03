@@ -134,7 +134,7 @@ def insert_card(
         "scrape_raw": scrape_raw,
         "user_intent": user_intent,
     }
-    sb.table("agent_profile_cards").insert(row).execute()
+    sb.table("agent_profile_cards").upsert(row, on_conflict="id").execute()
     return handle
 
 

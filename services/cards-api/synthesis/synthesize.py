@@ -29,8 +29,15 @@ Rules:
 - `writing_samples`: Extract EVERY individual post or tweet from the
   "X / Twitter Profile" and "LinkedIn Profile" sections. One entry per post.
   Use `platform: "x"` for tweets, `platform: "linkedin"` for LinkedIn posts.
-  Set `excerpt` to the post text (first 300 chars). Leave `url` and `posted_at`
-  as empty strings. Cap at 10 entries total (prioritise most relevant).
+  Set `excerpt` to the post text (first 500 chars). Leave `url` and `posted_at`
+  as empty strings. Cap at 20 entries total (prioritise most substantive content).
+- `projects`: Also use GitHub `recent_activity` — if the person pushed to a repo
+  that is not already in their top repos, add it as a project with the commit
+  messages as description context. PR titles are strong signals of what they build.
+- `skills`: Also infer skills from post content — if the person posts about
+  "Golang concurrency", "ZK proofs", "LLM fine-tuning", etc., add those as
+  skills with level "intermediate" and evidence_count 1, unless other sources
+  provide higher confidence. Posts are strong signals of active interest.
 - `sources`: Populate from whatever sources are present in the input.
 - `experience_years`: total years of professional experience if inferable from
   the data, else null. Do not guess.

@@ -6,8 +6,87 @@ import httpx
 import config
 
 GITHUB_API = "https://api.github.com"
+GITHUB_GRAPHQL = "https://api.github.com/graphql"
 _MAX_EVENTS = 30
 _MAX_COMMIT_MSG_CHARS = 120
+
+_CONTRIB_QUERY = """
+query($login: String!) {
+  user(login: $login) {
+    contributionsCollection {
+      contributionCalendar {
+        totalContributions
+        weeks {
+          contributionDays {
+            contributionCount
+            date
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def _count_to_level(count: int, p75: int, p50: int) -> int:
+    if count == 0:
+        return 0
+    if count >= p75:
+        return 4
+    if count >= p50:
+        return 3
+    if count >= 2:
+        return 2
+    return 1
+
+
+async def _fetch_contributions(handle: str, headers: dict) -> dict | None:
+    if not config.GITHUB_TOKEN:
+        return None
+    try:
+        async with httpx.AsyncClient(headers=headers, timeout=20) as c:
+            resp = await c.post(
+                GITHUB_GRAPHQL,
+                json={"query": _CONTRIB_QUERY, "variables": {"login": handle}},
+            )
+        if not resp.is_success:
+            return None
+        body = resp.json()
+        cal = (
+            body.get("data", {})
+            .get("user", {})
+            .get("contributionsCollection", {})
+            .get("contributionCalendar", {})
+        )
+        if not cal:
+            return None
+
+        total = cal.get("totalContributions", 0)
+        days: list[int] = []
+        for week in cal.get("weeks", []):
+            for day in week.get("contributionDays", []):
+                days.append(day.get("contributionCount", 0))
+
+        # Use top quartiles of non-zero days to derive level thresholds
+        nonzero = sorted(d for d in days if d > 0)
+        if nonzero:
+            p50 = nonzero[len(nonzero) // 2]
+            p75 = nonzero[int(len(nonzero) * 0.75)]
+        else:
+            p50, p75 = 2, 5
+
+        levels = [_count_to_level(d, p75, p50) for d in days]
+        avg = round(total / 365, 1) if total else 0.0
+
+        return {
+            "year": datetime.now(timezone.utc).year,
+            "total": total,
+            "avg_per_day": avg,
+            "levels": levels,
+        }
+    except Exception:
+        return None
 
 
 async def fetch_github(handle: str) -> dict:
@@ -25,7 +104,6 @@ async def fetch_github(handle: str) -> dict:
         )
         user_resp.raise_for_status()
         repos_resp.raise_for_status()
-        # events may 404 for some accounts — degrade gracefully
         events = events_resp.json() if events_resp.is_success else []
 
     recent_activity = _parse_events(events)
@@ -40,6 +118,11 @@ async def fetch_github(handle: str) -> dict:
     )
     top_languages = list(dict.fromkeys(r["language"] for r in repos_data if r.get("language")))[:5]
 
+    contribution_stats = await _fetch_contributions(handle, headers)
+
+    # Total commits approximated as contribution count (includes PRs/issues/reviews — close enough)
+    total_commits = contribution_stats["total"] if contribution_stats else None
+
     return {
         "user": user_data,
         "repos": repos_data,
@@ -48,7 +131,9 @@ async def fetch_github(handle: str) -> dict:
             "total_repos": user_data.get("public_repos", 0),
             "active_repos": active_repos,
             "top_languages": top_languages,
+            "total_commits": total_commits,
         },
+        "contribution_stats": contribution_stats,
     }
 
 

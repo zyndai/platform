@@ -62,6 +62,8 @@ class Project(BaseModel):
     description: str = ""
     url: str = ""
     source: str = "github"
+    stars: int | None = None
+    tech: list[str] = Field(default_factory=list)
 
 
 class WritingSample(BaseModel):
@@ -69,6 +71,7 @@ class WritingSample(BaseModel):
     excerpt: str = ""
     url: str = ""
     posted_at: str = ""
+    metrics: list[str] = Field(default_factory=list)
 
 
 class Source(BaseModel):
@@ -108,6 +111,10 @@ class AgentProfileCard(BaseModel):
     connect_with: list[str] = Field(default_factory=list)
     love_talking_about: list[str] = Field(default_factory=list)
     github_stats: dict = Field(default_factory=dict)
+    affiliations: str = ""
+    linkedin_stats: dict | None = None
+    x_stats: dict | None = None
+    contribution_stats: dict | None = None
 
     @field_validator("experience_years", mode="before")
     @classmethod
@@ -139,6 +146,7 @@ class CardSynthesis(BaseModel):
     connect_with: list[str] = Field(default_factory=list)
     love_talking_about: list[str] = Field(default_factory=list)
     github_stats: dict = Field(default_factory=dict)
+    affiliations: str = ""
 
     @model_validator(mode="before")
     @classmethod

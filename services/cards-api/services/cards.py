@@ -37,6 +37,9 @@ def assemble_card(
     x_handle: str | None,
     resume_used: bool,
     linkedin_scraped: bool = False,
+    x_stats: dict | None = None,
+    linkedin_stats: dict | None = None,
+    contribution_stats: dict | None = None,
 ) -> AgentProfileCard:
     card_id = new_card_id()
     now = utcnow()
@@ -74,6 +77,12 @@ def assemble_card(
         )
     synth.sources = sources
 
+    # If X scraper didn't return handle but we have x_handle, fill it in
+    if x_stats and not x_stats.get("handle") and x_handle:
+        x_stats = {**x_stats, "handle": f"@{x_handle}"}
+    elif x_handle and not x_stats:
+        x_stats = None  # leave as None — page will infer from identity.links.x
+
     return AgentProfileCard(
         id=card_id,
         status="pending_review",
@@ -82,6 +91,7 @@ def assemble_card(
         identity=synth.identity,
         citation_snippet=synth.citation_snippet,
         summary=synth.summary,
+        affiliations=synth.affiliations,
         skills=synth.skills,
         projects=synth.projects,
         writing_samples=synth.writing_samples,
@@ -95,6 +105,9 @@ def assemble_card(
         connect_with=synth.connect_with,
         love_talking_about=synth.love_talking_about,
         github_stats=synth.github_stats,
+        x_stats=x_stats,
+        linkedin_stats=linkedin_stats,
+        contribution_stats=contribution_stats,
     )
 
 

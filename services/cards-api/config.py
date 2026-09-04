@@ -17,6 +17,20 @@ OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-pro"
 OPENROUTER_REFERER: str = os.getenv("OPENROUTER_REFERER", "https://zynd.ai")
 OPENROUTER_APP_NAME: str = os.getenv("OPENROUTER_APP_NAME", "zynd-cards")
 
+# ── OpenAI (embeddings) ──
+OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+
+# ── X / Twitter bot ──
+X_API_KEY: str = os.getenv("X_API_KEY", "")            # Consumer Key (OAuth 1.0a, still needed for some endpoints)
+X_API_SECRET: str = os.getenv("X_API_SECRET", "")      # Consumer Secret
+X_BEARER_TOKEN: str = os.getenv("X_BEARER_TOKEN", "")  # App-only reads (search mentions)
+# OAuth 2.0 user context — used for posting replies as the bot account
+X_USER_ACCESS_TOKEN: str = os.getenv("X_USER_ACCESS_TOKEN", "")
+X_USER_REFRESH_TOKEN: str = os.getenv("X_USER_REFRESH_TOKEN", "")
+X_CLIENT_ID: str = os.getenv("X_CLIENT_ID", "")
+X_CLIENT_SECRET: str = os.getenv("X_CLIENT_SECRET", "")
+X_BOT_HANDLE: str = os.getenv("X_BOT_HANDLE", "ZyndAI")
+
 # ── Scraping ──
 GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 APIFY_API_KEY: str = os.getenv("APIFY_API_KEY", "")
@@ -57,3 +71,9 @@ def get_llm_client():
             "X-Title": OPENROUTER_APP_NAME,
         },
     )
+
+
+def get_openai_client():
+    from openai import OpenAI
+
+    return OpenAI(api_key=OPENAI_API_KEY)

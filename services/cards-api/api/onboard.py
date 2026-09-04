@@ -46,21 +46,22 @@ def _handle_from_url(url: str) -> str | None:
     return parts[0] if parts and parts[0] else None
 
 
-async def _safe_fetch_url(url: str) -> tuple[str, str]:
-    """Returns (kind, text). kind ∈ {'x', 'linkedin', 'website'}."""
+async def _safe_fetch_url(url: str) -> tuple[str, str, dict | None]:
+    """Returns (kind, text, stats_or_None). kind ∈ {'x', 'linkedin', 'website'}."""
     kind = _classify_url(url)
     try:
         if kind == "x":
-            text = await x_scraper.fetch_x_profile(url)
+            text, stats = await x_scraper.fetch_x_profile(url)
         elif kind == "linkedin":
-            text = await linkedin_scraper.fetch_linkedin_profile(url)
+            text, stats = await linkedin_scraper.fetch_linkedin_profile(url)
         else:
             text = await website_scraper.fetch_website(url)
+            stats = None
         logger.info("scraped %s url=%s chars=%d", kind, url, len(text))
-        return kind, text
+        return kind, text, stats
     except Exception as exc:
         logger.warning("scrape failed kind=%s url=%s err=%s", kind, url, exc)
-        return kind, ""
+        return kind, "", None
 
 
 async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -> None:
@@ -97,16 +98,22 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
         website_texts: list[str] = []
         x_texts: list[str] = []
         linkedin_texts: list[str] = []
+        x_stats_data: dict | None = None
+        linkedin_stats_data: dict | None = None
 
         if expanded:
             results = await asyncio.gather(*[_safe_fetch_url(u) for u in expanded])
-            for kind, text in results:
+            for kind, text, stats in results:
                 if not text:
                     continue
                 if kind == "x":
                     x_texts.append(text)
+                    if stats and not x_stats_data:
+                        x_stats_data = stats
                 elif kind == "linkedin":
                     linkedin_texts.append(text)
+                    if stats and not linkedin_stats_data:
+                        linkedin_stats_data = stats
                 else:
                     website_texts.append(text)
 
@@ -128,6 +135,9 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
         card = cards_service.assemble_card(
             synth, github_data, github_handle, x_handle, bool(resume_text),
             linkedin_scraped=bool(linkedin_texts),
+            x_stats=x_stats_data,
+            linkedin_stats=linkedin_stats_data,
+            contribution_stats=github_data.get("contribution_stats") if github_data else None,
         )
 
         # Set handles before set_ready so publish sees them immediately

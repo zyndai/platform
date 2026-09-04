@@ -8,7 +8,7 @@ def embed_text(text: str) -> list[float]:
     text = (text or "").strip()
     if not text:
         return []
-    client = config.get_llm_client()
+    client = config.get_openai_client()
     resp = client.embeddings.create(model=EMBEDDING_MODEL, input=text[:8000])
     return list(resp.data[0].embedding)
 

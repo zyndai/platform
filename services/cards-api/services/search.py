@@ -60,6 +60,8 @@ def search_agents(
             card = AgentProfileCard.model_validate(card_data)
         except Exception:
             continue
+        if row.get("handle"):
+            card.handle = row["handle"]
         emb = _parse_embedding(row.get("embedding"))
         search_text = card_search_text(card).lower()
 
@@ -119,7 +121,7 @@ def search_agents(
                 "experience_years": card.experience_years,
                 "match_score": round(min(score, 1.0), 3),
                 "match_reasons": reasons[:6],
-                "url": f"{config.SITE_BASE_URL}/profile/{card.id}",
+                "url": f"{config.SITE_BASE_URL}/p/{card.handle}" if card.handle else f"{config.SITE_BASE_URL}/profile/{card.id}",
             }
         )
 

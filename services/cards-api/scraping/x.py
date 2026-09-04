@@ -4,6 +4,7 @@ Profile: data-slayer~twitter-user  — $1.50/1K profiles
 Tweets:  data-slayer~twitter-user-tweets — $1.50/1K tweets, capped at 10
 
 Both fetches run concurrently. Falls back to Jina Reader on Apify failure.
+Returns tuple[str, dict | None] — (profile_text, x_stats).
 """
 
 import asyncio
@@ -25,8 +26,16 @@ def _handle_from_url(url: str) -> str | None:
     return parts[0] if parts and parts[0] else None
 
 
-async def fetch_x_profile(url: str) -> str:
-    """Scrape public X/Twitter profile + recent tweets. Apify if key set, else Jina."""
+def _compact(n: int | float) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M".rstrip("0").rstrip(".")
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k".rstrip("0").rstrip(".")
+    return str(int(n))
+
+
+async def fetch_x_profile(url: str) -> tuple[str, dict | None]:
+    """Scrape public X/Twitter profile + recent tweets. Returns (text, x_stats)."""
     if config.APIFY_API_KEY:
         try:
             return await _apify_fetch(url)
@@ -34,31 +43,39 @@ async def fetch_x_profile(url: str) -> str:
             pass
     from scraping.website import _jina_fetch
     try:
-        return (await _jina_fetch(url))[:_MAX_CHARS]
+        return (await _jina_fetch(url))[:_MAX_CHARS], None
     except Exception:
-        return ""
+        return "", None
 
 
-async def _apify_fetch(url: str) -> str:
+async def _apify_fetch(url: str) -> tuple[str, dict | None]:
     handle = _handle_from_url(url)
     if not handle:
         raise ValueError(f"Cannot extract handle from URL: {url!r}")
 
-    profile_text, tweets_text = await asyncio.gather(
+    profile_result, tweets_text = await asyncio.gather(
         _fetch_profile(handle),
         _fetch_tweets(handle),
         return_exceptions=True,
     )
 
     parts: list[str] = []
-    if isinstance(profile_text, str) and profile_text:
-        parts.append(profile_text)
+    x_stats: dict | None = None
+
+    if isinstance(profile_result, tuple):
+        profile_text, x_stats = profile_result
+        if profile_text:
+            parts.append(profile_text)
+    elif isinstance(profile_result, str) and profile_result:
+        parts.append(profile_result)
+
     if isinstance(tweets_text, str) and tweets_text:
         parts.append(tweets_text)
-    return "\n\n".join(parts)[:_MAX_CHARS]
+
+    return "\n\n".join(parts)[:_MAX_CHARS], x_stats
 
 
-async def _fetch_profile(handle: str) -> str:
+async def _fetch_profile(handle: str) -> tuple[str, dict | None]:
     async with httpx.AsyncClient(timeout=90) as client:
         resp = await client.post(
             f"{_APIFY_BASE}/acts/{_ACTOR_PROFILE}/run-sync-get-dataset-items",
@@ -69,7 +86,7 @@ async def _fetch_profile(handle: str) -> str:
         items = resp.json()
 
     if not items:
-        return ""
+        return "", None
 
     user = items[0]
     parts: list[str] = []
@@ -81,15 +98,32 @@ async def _fetch_profile(handle: str) -> str:
         parts.append(f"Bio: {user['desc']}")
     if user.get("location"):
         parts.append(f"Location: {user['location']}")
-    if user.get("sub_count") is not None:
-        parts.append(f"Followers: {user['sub_count']}")
+
+    followers = user.get("sub_count")
+    if followers is not None:
+        parts.append(f"Followers: {followers}")
+
+    tweet_count = user.get("statuses_count") or user.get("tweet_count") or user.get("tweets")
+    if tweet_count is not None:
+        parts.append(f"Tweets: {tweet_count}")
+
     if user.get("blue_verified"):
         parts.append("Verified: yes")
-    return "\n".join(parts)
+
+    x_stats: dict | None = None
+    actual_handle = user.get("profile") or user.get("username") or handle
+    if followers is not None or tweet_count is not None:
+        x_stats = {
+            "handle": f"@{actual_handle}",
+            "followers": _compact(followers) if followers is not None else "—",
+            "posts": _compact(tweet_count) if tweet_count is not None else "—",
+            "impressions": "—",
+        }
+
+    return "\n".join(parts), x_stats
 
 
 async def _fetch_tweets(handle: str) -> str:
-    # memory=256 + timeout=40s keeps the run to the first page (~20 tweets)
     async with httpx.AsyncClient(timeout=90) as client:
         resp = await client.post(
             f"{_APIFY_BASE}/acts/{_ACTOR_TWEETS}/run-sync-get-dataset-items",

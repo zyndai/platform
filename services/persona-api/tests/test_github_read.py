@@ -13,6 +13,7 @@ Focused on:
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 from mcp.tools.github_read import (
@@ -201,9 +202,14 @@ def test_get_pull_request_details():
 
 
 def test_get_my_recent_activity_uses_snapshot_username():
+    # Relative to now: the impl filters on a rolling `days` window, so
+    # hardcoded dates rot into failures once they age past it.
+    def _ago(days: int) -> str:
+        return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     events = [
-        {"type": "PushEvent", "created_at": "2026-08-29T10:00:00Z", "repo": {"name": "a/foo"}, "payload": {}},
-        {"type": "WatchEvent", "created_at": "2026-01-01T00:00:00Z", "repo": {"name": "a/old"}, "payload": {}},
+        {"type": "PushEvent", "created_at": _ago(1), "repo": {"name": "a/foo"}, "payload": {}},
+        {"type": "WatchEvent", "created_at": _ago(300), "repo": {"name": "a/old"}, "payload": {}},
     ]
     responses = {"/users/alice/events": (200, events)}
     with patch("mcp.tools.github_read.api_get", new=AsyncMock(side_effect=_fake_api_get(responses))), \

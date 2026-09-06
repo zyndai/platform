@@ -12,6 +12,7 @@ All functions accept a `user_id` to look up stored data or OAuth tokens.
 
 import httpx
 import asyncio
+import re
 
 import config
 from services.token_store import get_tokens
@@ -183,6 +184,20 @@ def _extract_profile_fields(raw_profile: dict) -> dict:
     return result
 
 
+def _relevance_tokens(text: str) -> set[str]:
+    """Word set for query-vs-headline matching. Splits on punctuation (so
+    "Co-Founder," yields "founder") and keeps both plural and singular forms,
+    so a "founders" query still matches a "Founder & CEO" headline."""
+    tokens: set[str] = set()
+    for w in re.split(r"[^a-z0-9]+", text.lower()):
+        if len(w) <= 2:
+            continue
+        tokens.add(w)
+        if len(w) > 3 and w.endswith("s"):
+            tokens.add(w[:-1])
+    return tokens
+
+
 def search_linkedin_people(user_id: str, query: str, location: str = "", top_k: int = 8) -> dict:
     """
     Search LinkedIn ITSELF for people matching a role, topic, or keyword —
@@ -239,7 +254,7 @@ def search_linkedin_people(user_id: str, query: str, location: str = "", top_k: 
         return friendly_error("search LinkedIn for people", e)
 
     # Query tokens used for headline relevance filtering below.
-    query_tokens = set(w.lower() for w in q.split() if len(w) > 2)
+    query_tokens = _relevance_tokens(q)
 
     results = []
     fields_missing = 0
@@ -261,8 +276,7 @@ def search_linkedin_people(user_id: str, query: str, location: str = "", top_k: 
         # Apify returning tangentially matched profiles (LinkedIn's own algo
         # sometimes ranks for profile activity or network proximity rather than role).
         if query_tokens and headline:
-            headline_words = set(w.lower() for w in headline.split())
-            if not query_tokens & headline_words:
+            if not query_tokens & _relevance_tokens(headline):
                 continue
 
         if not (name and profile_url):

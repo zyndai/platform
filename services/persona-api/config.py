@@ -129,6 +129,20 @@ LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
 # ── Apify (LinkedIn scraping) ────────────────────────────────────────
 APIFY_API_TOKEN: str = os.getenv("APIFY_API_TOKEN", "")
 
+# ── QuickEnrich (contact & company database) ─────────────────────────
+# Powers the persona's people/company discovery tools (mcp/tools/quickenrich.py).
+# The base URL and auth header are env-driven because the deployment host and
+# the header name the service expects are environment-specific — leave
+# QUICKENRICH_BASE_URL empty and every QuickEnrich tool degrades to a clean
+# "not configured" message instead of erroring.
+QUICKENRICH_BASE_URL: str = os.getenv("QUICKENRICH_BASE_URL", "")
+QUICKENRICH_API_KEY: str = os.getenv("QUICKENRICH_API_KEY", "")
+# "X-API-Key" sends the key raw; set to "Authorization" to send "Bearer <key>".
+QUICKENRICH_AUTH_HEADER: str = os.getenv("QUICKENRICH_AUTH_HEADER", "X-API-Key")
+QUICKENRICH_TIMEOUT: float = float(os.getenv("QUICKENRICH_TIMEOUT", "30"))
+# How long a cached email/phone reveal stays usable before we pay to refresh it.
+QUICKENRICH_CACHE_TTL_DAYS: int = int(os.getenv("QUICKENRICH_CACHE_TTL_DAYS", "30"))
+
 # ── Memory Layer ──────────────────────────────────────────────────────
 # The ZYND memory layer (assertion graph from conversations).
 # When enabled, the persona queries memory-layer for user context on every

@@ -51,6 +51,20 @@ from mcp.tools.notion import (
     append_to_notion_page
 )
 
+# ── Import QuickEnrich Tools ──
+# Principal-private; contact/company database discovery + enrichment.
+# Never added to any external allowlist — foreign agents must not be able
+# to run PII lookups through someone else's persona.
+from mcp.tools.quickenrich import (
+    search_people_database,
+    search_companies_database,
+    list_people_at_company,
+    get_email_for_person,
+    get_phone_for_person,
+    identify_person_by_email,
+    list_people_filter_values,
+)
+
 # ── Import Network Tools ──
 from mcp.tools.zynd_network import (
     search_zynd_network,
@@ -161,6 +175,19 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(list_my_notifications, name="list_my_notifications", description="List the principal's GitHub notifications — unread by default. Use when they ask what needs their attention on GitHub (mentions, reviews, watched-issue updates).")
     mcp.register(list_starred_repos, name="list_starred_repos", description="List repos the principal has starred, newest first, with language and stars. Use to recall a saved repo or curate favorites.")
     mcp.register(list_my_orgs, name="list_my_orgs", description="List GitHub organizations the principal belongs to. Use when they ask what GitHub orgs/groups they're a member of.")
+
+    # ── QuickEnrich contact-database tools ───────────────────────────
+    # A third-party contact/company database. Distinct from BOTH the Zynd
+    # Network (people with a persona you can connect to) AND
+    # search_linkedin_people (a metered LinkedIn scrape). Results here are
+    # public business records — they cannot be request_connection'd.
+    mcp.register(search_people_database, name="search_people_database", description="Find people by ROLE + COMPANY ATTRIBUTES in a large contact database — e.g. 'VPs of Engineering at 51-200 person fintechs in the US', 'heads of marketing at agencies in Austin'. This search is FREE and returns each person's LinkedIn profile URL plus has_email/has_phone flags telling you whether contact details exist for them. Prefer this over search_linkedin_people whenever the ask has structure (title + industry/size/revenue/location), because it filters precisely and costs nothing; search_linkedin_people is a metered keyword scrape and should be the fallback. These are public business records, NOT Zynd personas — the principal cannot request_connection or message_zynd_agent them, only view the LinkedIn URL or reach out by email. Industry, company size, revenue, country, and services must be EXACT values from the database's own lists — pass what the principal said and the tool will map close values for you (it reports what it rewrote in normalized_filters), or call list_people_filter_values first if you want to be certain.")
+    mcp.register(search_companies_database, name="search_companies_database", description="Find COMPANIES (not people) by what they do, their industry, size, revenue, and location — e.g. 'cloud migration consultancies in the US with 51-200 staff'. Use when the principal is looking for organizations to target rather than named individuals; follow up with list_people_at_company to get the people inside one. COSTS 1 CREDIT PER COMPANY RETURNED, so keep `limit` tight (10 or fewer) unless the principal asked for a big list. Same exact-value rule as search_people_database for industry/size/revenue/country/services.")
+    mcp.register(list_people_at_company, name="list_people_at_company", description="List the people who work at ONE specific company, optionally narrowed by job title — e.g. 'who is the CEO of acme.com', 'find the sales leaders at stripe.com'. Takes a domain plus an optional comma-separated title list, and returns up to 20 people per page WITH their email and phone. Use this when the principal names a company; use search_people_database instead when they describe a type of company. Costs a credit per contact returned that has an email or phone.")
+    mcp.register(get_email_for_person, name="get_email_for_person", description="Get the work email address for ONE specific person the principal wants to reach. Identify them with their LinkedIn profile URL (best) or all three of company website + first name + last name. Costs 1 credit when an email is found and nothing when it isn't; a previously-found email is returned free from cache. Call this only when reaching the person is the actual ask — check the has_email flag on the search result first, and don't run it speculatively across a whole result list. Once you have the address, use send_gmail_email to actually write to them.")
+    mcp.register(get_phone_for_person, name="get_phone_for_person", description="Get the phone number for ONE specific person, identified by LinkedIn profile URL (best) or company website + first name + last name. Costs 1 credit when a number is found and nothing when it isn't; cached results are free. Same rule as get_email_for_person — only for a person the principal actually asked to reach, never speculatively.")
+    mcp.register(identify_person_by_email, name="identify_person_by_email", description="Reverse lookup: given an email address, find out who it belongs to — their name, job title, company, and LinkedIn profile. Use when the principal asks 'who is this?' about an address, or wants context on an unfamiliar sender before replying. Costs 1 credit when a match is found, nothing when it isn't.")
+    mcp.register(list_people_filter_values, name="list_people_filter_values", description="List the exact values allowed for a contact-database filter — dimension is one of 'industry', 'country_code', 'employee_range', 'revenue_range', or 'services'. FREE. Use it when a search reports unresolved_filters, or when you want the precise label before searching (e.g. to learn that the industry is 'Computer Software', not 'Software', or that the size band is '51-200', not '50-200'). Pass `query` to narrow — required in practice for 'services', which has a very long list.")
 
     # ── Google Calendar tools ────────────────────────────────────────
     mcp.register(create_event, name="create_calendar_event", description="Create an event on Google Calendar. Pass `attendees` (a list of email addresses) to invite guests — Google emails them the invite automatically. Checks for conflicts with existing events first: if the time overlaps something already on the calendar, it returns {conflict: true, conflicting_events, suggested_times} and does NOT create the event — present the conflict and suggested_times to the principal instead of retrying blindly. Only pass force=true to double-book anyway, and only when the principal explicitly asked for that after seeing the conflict.")

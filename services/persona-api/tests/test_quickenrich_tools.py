@@ -264,6 +264,25 @@ def test_cache_hit_skips_the_paid_call():
     mock_call.assert_not_called()
 
 
+def test_cache_row_without_data_still_yields_the_phone():
+    """
+    The table stores `phone`, the API sends `employee_phone`. Shaping a row
+    that has no `data` blob has to alias across, or the number vanishes.
+    """
+    row = {"phone": "+1-555-0123", "phone_type": "direct",
+           "first_name": "John", "last_name": "Doe", "data": {}}
+    with patch.object(tools.cache, "get_contact", return_value=row), \
+         patch.object(tools.qe, "phone_search") as mock_call:
+        result = tools.get_phone_for_person(
+            user_id="u1", linkedin_url="https://linkedin.com/in/johndoe"
+        )
+
+    assert result["cached"] is True
+    assert result["person"]["phone"] == "+1-555-0123"
+    assert result["person"]["phone_type"] == "direct"
+    mock_call.assert_not_called()
+
+
 def test_no_records_is_a_clean_not_found_not_an_error():
     """A miss is a 200 with data: [] and credits_used: 0 — never an error."""
     miss = {"success": True, "data": [], "meta": {"credits_used": 0, "reason": "EMAIL_NOT_FOUND"}}

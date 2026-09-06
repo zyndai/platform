@@ -227,6 +227,26 @@ def _validation_error(operation: str, exc: qe.QuickEnrichValidationError, unreso
     }
 
 
+def _shape_cached(row: dict) -> dict:
+    """
+    Shape a cached row back into a result.
+
+    The full API record is kept in `data`, so prefer that. Falling back to the
+    row's own columns needs an alias: the table stores `phone`/`phone_type`
+    where the API sends `employee_phone`/`employee_phone_type`, and shaping the
+    row directly would silently drop the number.
+    """
+    record = row.get("data")
+    if isinstance(record, dict) and record:
+        return _shape_person(record)
+
+    return _shape_person({
+        **row,
+        "employee_phone": row.get("phone"),
+        "employee_phone_type": row.get("phone_type"),
+    })
+
+
 def _meta(payload: dict) -> dict:
     """Pull the credit/pagination block out of a response, tolerating its absence."""
     meta = payload.get("meta")
@@ -562,7 +582,7 @@ def _person_lookup(
             "status": "success",
             "cached": True,
             "credits_used": 0,
-            "person": _shape_person(cached.get("data") or cached),
+            "person": _shape_cached(cached),
         }
 
     try:
@@ -690,7 +710,7 @@ def identify_person_by_email(user_id: str, email: str) -> dict:
             "status": "success",
             "cached": True,
             "credits_used": 0,
-            "person": _shape_person(cached.get("data") or cached),
+            "person": _shape_cached(cached),
         }
 
     try:

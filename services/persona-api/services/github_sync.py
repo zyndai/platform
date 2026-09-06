@@ -489,13 +489,13 @@ async def sync_to_memory(user_id: str, profile: dict, previous: dict | None = No
 
     declared = 0
     for lang in new_skills:
-        if await declare_fact(user_id, "has_skill", lang):
+        if await declare_fact(user_id, "has_skill", lang, source_system="github"):
             declared += 1
     for proj in new_active:
-        if await declare_fact(user_id, "is_working_on", _project_value(proj)):
+        if await declare_fact(user_id, "is_working_on", _project_value(proj), source_system="github"):
             declared += 1
     for proj in new_notable:
-        if await declare_fact(user_id, "is_building", _project_value(proj)):
+        if await declare_fact(user_id, "is_building", _project_value(proj), source_system="github"):
             declared += 1
 
     changed = bool(new_skills or new_active or new_notable)

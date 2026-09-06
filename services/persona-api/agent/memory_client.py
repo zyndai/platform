@@ -38,6 +38,8 @@ class MemoryAssertion:
     object_type: str        # entity type
     confidence: float       # 0.0–0.97
     relevance: float = 1.0  # cosine similarity to the query topic (if topic-scoped)
+    source_system: str = ""       # provenance tag: twitter/linkedin/github/mcp/…
+    observed_at: str | None = None  # when the fact was recorded (ISO)
 
 
 @dataclass
@@ -187,6 +189,8 @@ async def get_context(
                     object_type=item.get("object_type") or "unknown",
                     confidence=float(item.get("confidence", 0.0)),
                     relevance=0.0,
+                    source_system=item.get("source_system") or "",
+                    observed_at=item.get("observed_at"),
                 )
                 for item in raw
                 if float(item.get("confidence", 0)) >= min_confidence
@@ -242,6 +246,8 @@ async def list_assertions(user_id: str) -> list[MemoryAssertion]:
                     object_type=item.get("object_type") or "unknown",
                     confidence=float(item.get("confidence", 0.0)),
                     relevance=1.0,
+                    source_system=item.get("source_system") or "",
+                    observed_at=item.get("observed_at"),
                 )
                 for item in raw
             ]
@@ -347,11 +353,18 @@ async def forget_by_ref(user_id: str, predicate: str, obj: str) -> bool:
         return False
 
 
-async def declare_fact(user_id: str, predicate: str, value: str) -> bool:
+async def declare_fact(
+    user_id: str,
+    predicate: str,
+    value: str,
+    source_system: str = "user_confirmed",
+) -> bool:
     """Write a user-authored PRIVATE memory fact directly (structured predicate/value).
 
     Distinct from ingest_turns (which runs async extraction) — this is an
     explicit, high-confidence declaration for the editable memory surface.
+    `source_system` tags provenance (twitter/linkedin/github/mcp/…);
+    defaults to user_confirmed for hand-declared facts.
     """
     if not is_enabled():
         return False
@@ -360,7 +373,11 @@ async def declare_fact(user_id: str, predicate: str, value: str) -> bool:
         async with _client() as client:
             resp = await client.post(
                 "/me/memory/declare",
-                json={"predicate": predicate, "value": value},
+                json={
+                    "predicate": predicate,
+                    "value": value,
+                    "source_system": source_system,
+                },
                 headers={"Authorization": f"Bearer {token}"},
             )
             resp.raise_for_status()

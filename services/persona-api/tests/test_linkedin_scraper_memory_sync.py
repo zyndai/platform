@@ -77,7 +77,7 @@ def test_sync_profile_to_memory_declares_only_new_facts():
     existing = [_assertion("works_at", "CTO at Lattice Labs")]
     declared = []
 
-    async def fake_declare(user_id, predicate, value):
+    async def fake_declare(user_id, predicate, value, source_system="user_confirmed"):
         declared.append((predicate, value))
         return True
 

@@ -127,7 +127,7 @@ def test_sync_to_memory_declares_active_notable_and_skills():
     }
     declared = []
 
-    async def fake_declare(user_id, predicate, value):
+    async def fake_declare(user_id, predicate, value, source_system="user_confirmed"):
         declared.append((predicate, value))
         return True
 
@@ -163,7 +163,7 @@ def test_sync_to_memory_diff_skips_unchanged():
     }
     declared = []
 
-    async def fake_declare(user_id, predicate, value):
+    async def fake_declare(user_id, predicate, value, source_system="user_confirmed"):
         declared.append((predicate, value))
         return True
 

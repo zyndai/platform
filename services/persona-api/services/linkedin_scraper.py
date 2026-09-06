@@ -430,7 +430,7 @@ async def sync_profile_to_memory(user_id: str, profile: dict) -> dict:
     declared = 0
     for predicate, value in new_facts:
         try:
-            if await declare_fact(user_id, predicate, value):
+            if await declare_fact(user_id, predicate, value, source_system="linkedin"):
                 declared += 1
         except Exception as exc:
             logger.warning(

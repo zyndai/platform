@@ -21,6 +21,7 @@ from agent.a2a_router import router as a2a_router
 from api.meetings import router as meetings_router
 from api.telegram import router as telegram_router
 from api.linkedin import router as linkedin_router
+from api.twitter import router as twitter_router
 from api.approvals import router as approvals_router
 from api.matches import router as matches_router
 from api.todos import router as todos_router
@@ -80,9 +81,16 @@ async def lifespan(app: FastAPI):
     from agent.github_sync_loop import get_github_sync_loop
     await get_github_sync_loop().start()
 
+    # Twitter sync — refreshes connected users' X profiles weekly and
+    # writes new interest facts to the memory layer.
+    from agent.twitter_sync_loop import get_twitter_sync_loop
+    await get_twitter_sync_loop().start()
+
     yield
 
     # ── Shutdown ──
+    from agent.twitter_sync_loop import get_twitter_sync_loop as _tws
+    await _tws().stop()
     from agent.github_sync_loop import get_github_sync_loop as _ghs
     await _ghs().stop()
     from agent.proactive_loop import get_proactive_agent as _pa
@@ -146,6 +154,7 @@ app.include_router(a2a_router, prefix="/api/persona", tags=["A2A"])
 app.include_router(meetings_router, prefix="/api/meetings", tags=["Meetings"])
 app.include_router(telegram_router, prefix="/api/telegram", tags=["Telegram"])
 app.include_router(linkedin_router, prefix="/api/linkedin", tags=["LinkedIn"])
+app.include_router(twitter_router, prefix="/api/twitter", tags=["Twitter"])
 app.include_router(approvals_router, prefix="/api/approvals", tags=["Approvals"])
 app.include_router(matches_router, prefix="/api/matches", tags=["Matches"])
 app.include_router(todos_router, prefix="/api/todos", tags=["Todos"])

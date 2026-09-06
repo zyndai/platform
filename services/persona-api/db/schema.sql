@@ -572,6 +572,34 @@ CREATE POLICY "Service role full access on github_profiles" ON github_profiles
 
 
 -- ================================================================
+-- 10c. TWITTER PROFILES — cached Apify X/Twitter scrape per user
+-- ================================================================
+CREATE TABLE IF NOT EXISTS twitter_profiles (
+    user_id     UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    handle      TEXT,
+    scraped_at  TIMESTAMPTZ,
+    raw_tweets  JSONB NOT NULL DEFAULT '[]'::jsonb,
+    facts       JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    updated_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS twitter_profiles_scraped_at_idx
+    ON twitter_profiles (scraped_at DESC);
+
+ALTER TABLE twitter_profiles ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users read own twitter profile" ON twitter_profiles
+    FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users delete own twitter profile" ON twitter_profiles
+    FOR DELETE USING (auth.uid() = user_id);
+
+CREATE POLICY "Service role full access on twitter_profiles" ON twitter_profiles
+    FOR ALL USING (auth.role() = 'service_role');
+
+
+-- ================================================================
 -- 11. REALTIME PUBLICATION
 --
 -- Frontend subscribes to these tables for live updates:

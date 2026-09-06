@@ -150,6 +150,60 @@ def test_scrape_actor_payload_uses_handle_and_caps_tweets():
     assert payload["sort"] == "Latest"
 
 
+def test_refused_run_raises_instead_of_returning_placeholders():
+    # A plan-restricted / blocked actor run answers HTTP 200 with a dataset
+    # of {"noResults": true} placeholders. Storing those would show the user
+    # "Read 10 tweets" for a scrape that actually failed.
+    async def run():
+        with patch("services.twitter_scraper._run_actor", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = [{"noResults": True}] * 10
+            from services.twitter_scraper import scrape_tweets
+            return await scrape_tweets("jane")
+
+    try:
+        asyncio.run(run())
+    except RuntimeError as exc:
+        assert "refused" in str(exc)
+    else:
+        raise AssertionError("expected a RuntimeError for an all-placeholder dataset")
+
+
+def test_genuinely_empty_dataset_is_not_an_error():
+    async def run():
+        with patch("services.twitter_scraper._run_actor", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = []
+            from services.twitter_scraper import scrape_tweets
+            return await scrape_tweets("jane")
+
+    assert asyncio.run(run()) == []
+
+
+def test_placeholders_are_dropped_from_a_mixed_dataset():
+    real = {"text": "hello", "author": {"userName": "jane"}}
+
+    async def run():
+        with patch("services.twitter_scraper._run_actor", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = [{"noResults": True}, real]
+            from services.twitter_scraper import scrape_tweets
+            return await scrape_tweets("jane")
+
+    assert asyncio.run(run()) == [real]
+
+
+def test_scrape_user_leaves_db_untouched_when_the_run_is_refused():
+    async def run():
+        with patch("services.twitter_scraper.scrape_tweets", new_callable=AsyncMock) as mock_scrape, \
+             patch("services.twitter_scraper._get_supabase") as mock_sb:
+            mock_scrape.side_effect = RuntimeError("the actor run was refused")
+            result = await scrape_user("u1", handle="jane")
+            return result, mock_sb
+
+    result, mock_sb = asyncio.run(run())
+    assert result["status"] == "error"
+    assert result["stage"] == "tweets"
+    mock_sb.assert_not_called()
+
+
 # ── Memory sync ──────────────────────────────────────────────────────
 
 

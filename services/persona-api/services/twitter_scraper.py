@@ -91,15 +91,34 @@ async def _run_actor(payload: dict) -> list:
         return resp.json() or []
 
 
+def _reject_refused_run(items: list) -> list[dict]:
+    """A refused run (Apify plan restriction on the actor, blocked scrape)
+    comes back as HTTP 200 with a dataset of {"noResults": true} placeholders
+    rather than an error. Treat an all-placeholder dataset as a failure, not
+    as "this account has no tweets" — otherwise the placeholders get stored
+    and shown to the user as real, successfully-read tweets.
+    """
+    real = [i for i in items if isinstance(i, dict) and not i.get("noResults")]
+    if items and not real:
+        raise RuntimeError(
+            "Apify returned no usable tweets — the actor run was refused. "
+            "Most often this is an Apify plan restriction on "
+            f"{TWITTER_ACTOR}; check the run log at "
+            "https://console.apify.com/actors/runs for the exact reason."
+        )
+    return real
+
+
 async def scrape_tweets(handle: str) -> list[dict]:
     """Fetch the account's latest tweets (newest first) by handle."""
-    return await _run_actor(
+    items = await _run_actor(
         {
             "twitterHandles": [handle],
             "maxItems": MAX_TWEETS,
             "sort": "Latest",
         }
     )
+    return _reject_refused_run(items)
 
 
 def _select_tweets(items: list[dict], handle: str) -> list[dict]:

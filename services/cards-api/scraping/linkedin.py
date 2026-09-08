@@ -221,10 +221,15 @@ async def _fetch_posts(url: str) -> tuple[str, int]:
     return text, len(items)
 
 
+async def _no_posts() -> tuple[str, int]:
+    # Posts scraping disabled — atomus posts actor returns feed posts (others' content), not profile's own posts.
+    return "", 0
+
+
 async def _apify_fetch(url: str) -> tuple[str, dict | None]:
     profile_result, posts_result = await asyncio.gather(
         _fetch_profile(url),
-        _fetch_posts(url),
+        _no_posts(),
         return_exceptions=True,
     )
 

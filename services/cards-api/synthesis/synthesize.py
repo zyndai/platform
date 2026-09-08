@@ -26,11 +26,14 @@ Rules:
   code, resume content, website bio, social bio, post content, or project
   descriptions. Only include skills with at least one piece of evidence. Do not
   fabricate.
-- `writing_samples`: Extract EVERY individual post or tweet from the
+- `writing_samples`: Extract substantive posts or tweets from the
   "X / Twitter Profile" and "LinkedIn Profile" sections. One entry per post.
   Use `platform: "x"` for tweets, `platform: "linkedin"` for LinkedIn posts.
   Set `excerpt` to the post text (first 500 chars). Leave `url` and `posted_at`
-  as empty strings. Cap at 20 entries total (prioritise most substantive content).
+  as empty strings. Cap at 10 entries total. SKIP: replies (start with "@"),
+  single-word or emoji-only posts, posts shorter than 40 chars with no real content,
+  and posts that are just URLs or "True" / "Yup" / reaction words.
+  Prioritise posts that show expertise, opinions, or things the person built.
 - `projects`: Also use GitHub `recent_activity` — if the person pushed to a repo
   that is not already in their top repos, add it as a project with the commit
   messages as description context. PR titles are strong signals of what they build.

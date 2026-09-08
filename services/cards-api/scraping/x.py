@@ -8,6 +8,7 @@ Returns tuple[str, dict | None] — (profile_text, x_stats).
 """
 
 import asyncio
+import re
 from urllib.parse import urlparse
 
 import httpx
@@ -137,8 +138,18 @@ async def _fetch_tweets(handle: str) -> str:
         return ""
 
     lines = ["Recent posts:"]
-    for tweet in items[:_MAX_TWEETS]:
-        text = tweet.get("text") or ""
-        if text:
-            lines.append(f"- {text}")
+    for tweet in items[:_MAX_TWEETS * 3]:  # over-fetch to compensate for filtering
+        text = (tweet.get("text") or "").strip()
+        if not text:
+            continue
+        # Skip replies, pure emoji/URL reactions, and very short posts
+        if text.startswith("@"):
+            continue
+        stripped = text.replace(" ", "").replace("\n", "")
+        meaningful = re.sub(r'[^\w]', '', stripped)
+        if len(meaningful) < 20:
+            continue
+        lines.append(f"- {text}")
+        if len(lines) > _MAX_TWEETS + 1:
+            break
     return "\n".join(lines) if len(lines) > 1 else ""

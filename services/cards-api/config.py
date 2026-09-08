@@ -35,6 +35,11 @@ X_BOT_HANDLE: str = os.getenv("X_BOT_HANDLE", "ZyndAI")
 GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 APIFY_API_KEY: str = os.getenv("APIFY_API_KEY", "")
 
+# ── Cloudflare Workers AI (profile chatbot) ──
+CLOUDFLARE_ACCOUNT_ID: str = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
+CLOUDFLARE_AI_KEY: str = os.getenv("CLOUDFLARE_AI_KEY", "")
+CLOUDFLARE_AI_MODEL: str = "@cf/meta/llama-3.1-8b-instruct-fast"
+
 # ── Site / indexing ──
 SITE_BASE_URL: str = os.getenv("SITE_BASE_URL", "https://zynd.ai")
 API_BASE_URL: str = os.getenv("API_BASE_URL", "https://api.zynd.ai")

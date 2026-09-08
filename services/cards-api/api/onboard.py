@@ -211,6 +211,8 @@ async def publish_card(job_id: str, body: PublishRequest):
         card.love_talking_about = [x.strip() for x in answers["love_talking"].split(",") if x.strip()]
     if answers.get("location") and not card.identity.location:
         card.identity.location = answers["location"]
+    if answers.get("calendly_url"):
+        card.calendly_url = answers["calendly_url"].strip() or None
 
     user_intent = answers if answers else None
 

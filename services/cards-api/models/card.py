@@ -115,6 +115,7 @@ class AgentProfileCard(BaseModel):
     linkedin_stats: dict | None = None
     x_stats: dict | None = None
     contribution_stats: dict | None = None
+    calendly_url: str | None = None
 
     @field_validator("experience_years", mode="before")
     @classmethod

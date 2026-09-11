@@ -9,6 +9,7 @@ load_dotenv(_env_path)
 # ── Supabase / Postgres ──
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "http://127.0.0.1:54321")
 SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
+SUPABASE_JWT_SECRET: str = os.getenv("SUPABASE_JWT_SECRET", "")
 
 # ── LLM (OpenRouter) ──
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")

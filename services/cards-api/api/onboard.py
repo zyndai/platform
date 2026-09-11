@@ -26,6 +26,7 @@ router = APIRouter()
 class PublishRequest(BaseModel):
     card: dict
     user_answers: dict[str, str] = {}
+    owner_email: str | None = None
 
 
 def _classify_url(url: str) -> str:
@@ -223,6 +224,7 @@ async def publish_card(job_id: str, body: PublishRequest):
         job.handle_x,
         job.scrape_raw,
         user_intent,
+        body.owner_email,
     )
     card.handle = handle  # frontend reads published.handle for redirect
     await hooks.run_publish_hooks(card.id, handle)

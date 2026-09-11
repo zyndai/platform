@@ -139,6 +139,7 @@ def insert_card(
     handle_x: str | None,
     scrape_raw: dict | None = None,
     user_intent: dict | None = None,
+    owner_email: str | None = None,
 ) -> str:
     handle = _assign_handle(handle_github, handle_x, card.identity.name, card.id)
     try:
@@ -156,9 +157,58 @@ def insert_card(
         "embedding": embedding,
         "scrape_raw": scrape_raw,
         "user_intent": user_intent,
+        "owner_email": owner_email,
     }
     sb.table("agent_profile_cards").upsert(row, on_conflict="id").execute()
     return handle
+
+
+def get_card_by_owner(email: str) -> tuple[AgentProfileCard, str] | None:
+    """Return (card, handle) for the most recently created card owned by email."""
+    sb = config.get_supabase()
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("card,handle")
+        .eq("owner_email", email)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    rows = resp.data or []
+    if not rows:
+        return None
+    return _row_to_card(rows[0]), rows[0]["handle"]
+
+
+def update_card(handle: str, card: AgentProfileCard, owner_email: str) -> bool:
+    """Update a published card in-place after verifying ownership.
+
+    Returns False (without modifying anything) if the handle does not exist
+    or the stored owner_email does not match the caller's email.
+    """
+    sb = config.get_supabase()
+    check = (
+        sb.table("agent_profile_cards")
+        .select("owner_email")
+        .eq("handle", handle)
+        .execute()
+    )
+    if not check.data or check.data[0].get("owner_email") != owner_email:
+        return False
+    card.updated_at = utcnow()
+    try:
+        embedding = embed.embed_text(embed.card_search_text(card))
+    except Exception:
+        embedding = None
+    sb.table("agent_profile_cards").update(
+        {
+            "card": card.model_dump(mode="json"),
+            "status": card.status,
+            "embedding": embedding,
+            "updated_at": card.updated_at,
+        }
+    ).eq("handle", handle).execute()
+    return True
 
 
 def get_card(card_id: str) -> AgentProfileCard | None:

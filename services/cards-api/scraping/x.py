@@ -9,6 +9,7 @@ Returns tuple[str, dict | None] — (profile_text, x_stats).
 
 import asyncio
 import re
+from datetime import datetime
 from urllib.parse import urlparse
 
 import httpx
@@ -24,7 +25,10 @@ _MAX_CHARS = 12_000
 
 def _handle_from_url(url: str) -> str | None:
     parts = urlparse(url).path.strip("/").split("/")
-    return parts[0] if parts and parts[0] else None
+    handle = parts[0] if parts and parts[0] else None
+    if handle and handle.startswith("@"):
+        handle = handle[1:]
+    return handle
 
 
 def _compact(n: int | float) -> str:
@@ -39,7 +43,9 @@ async def fetch_x_profile(url: str) -> tuple[str, dict | None]:
     """Scrape public X/Twitter profile + recent tweets. Returns (text, x_stats)."""
     if config.APIFY_API_KEY:
         try:
-            return await _apify_fetch(url)
+            text, stats = await _apify_fetch(url)
+            if text:
+                return text, stats
         except Exception:
             pass
     from scraping.website import _jina_fetch
@@ -113,23 +119,35 @@ async def _fetch_profile(handle: str) -> tuple[str, dict | None]:
 
     x_stats: dict | None = None
     actual_handle = user.get("profile") or user.get("username") or handle
-    if followers is not None or tweet_count is not None:
+    if followers is not None or tweet_count is not None or user.get("avatar"):
         x_stats = {
             "handle": f"@{actual_handle}",
             "followers": _compact(followers) if followers is not None else "—",
             "posts": _compact(tweet_count) if tweet_count is not None else "—",
             "impressions": "—",
         }
+        if user.get("avatar"):
+            x_stats["avatar"] = user["avatar"]
 
     return "\n".join(parts), x_stats
 
 
+def _parse_twitter_date(value: str | None) -> datetime | None:
+    """Twitter's created_at format: 'Wed Dec 18 09:15:22 +0000 2025'."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%a %b %d %H:%M:%S %z %Y")
+    except ValueError:
+        return None
+
+
 async def _fetch_tweets(handle: str) -> str:
-    async with httpx.AsyncClient(timeout=90) as client:
+    async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             f"{_APIFY_BASE}/acts/{_ACTOR_TWEETS}/run-sync-get-dataset-items",
-            params={"token": config.APIFY_API_KEY, "timeout": 40, "memory": 256},
-            json={"userId": handle},
+            params={"token": config.APIFY_API_KEY, "timeout": 90, "memory": 256},
+            json={"userId": handle, "maxPages": 2},
         )
         resp.raise_for_status()
         items = resp.json()
@@ -137,19 +155,36 @@ async def _fetch_tweets(handle: str) -> str:
     if not items:
         return ""
 
+    # The actor doesn't guarantee ordering — sort newest first. Tweets with
+    # no parsable date sink to the bottom rather than breaking the sort.
+    def _ts(tweet) -> float:
+        d = _parse_twitter_date(tweet.get("created_at"))
+        return d.timestamp() if d else 0.0
+
+    items = sorted(items, key=_ts, reverse=True)
+
     lines = ["Recent posts:"]
     for tweet in items[:_MAX_TWEETS * 3]:  # over-fetch to compensate for filtering
+        # Only the target account's own tweets — rows whose author doesn't
+        # match the requested handle are dropped defensively.
+        author_screen_name = (tweet.get("author") or {}).get("screen_name")
+        if author_screen_name and author_screen_name.lower() != handle.lower():
+            continue
         text = (tweet.get("text") or "").strip()
         if not text:
             continue
-        # Skip replies, pure emoji/URL reactions, and very short posts
-        if text.startswith("@"):
+        # Skip replies, retweets, pure emoji/URL reactions, and junk posts
+        if text.startswith("@") or text.startswith("RT "):
             continue
         stripped = text.replace(" ", "").replace("\n", "")
-        meaningful = re.sub(r'[^\w]', '', stripped)
-        if len(meaningful) < 20:
+        meaningful = re.sub(r"[^\w]", "", stripped)
+        if len(meaningful) < 12:
             continue
-        lines.append(f"- {text}")
+        parsed = _parse_twitter_date(tweet.get("created_at"))
+        posted = parsed.strftime("%Y-%m-%d") if parsed else ""
+        tid = tweet.get("tweet_id")
+        url = f" https://x.com/{handle}/status/{tid}" if tid else ""
+        lines.append(f"- [{posted}] {text[:600]}{url}" if posted else f"- {text[:600]}{url}")
         if len(lines) > _MAX_TWEETS + 1:
             break
     return "\n".join(lines) if len(lines) > 1 else ""

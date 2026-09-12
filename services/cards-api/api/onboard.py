@@ -133,6 +133,15 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
             x_text="\n\n".join(x_texts) or None,
             linkedin_text="\n\n".join(linkedin_texts) or None,
         )
+
+        # Deterministic avatar priority: LinkedIn > X > GitHub. The LLM's guess
+        # (if any) is overridden by real scraped photo URLs.
+        synth.identity.avatar_url = cards_service.pick_avatar(
+            (linkedin_stats_data or {}).get("avatar"),
+            (x_stats_data or {}).get("avatar"),
+            ((github_data or {}).get("user") or {}).get("avatar_url"),
+        ) or synth.identity.avatar_url
+
         card = cards_service.assemble_card(
             synth, github_data, github_handle, x_handle, bool(resume_text),
             linkedin_scraped=bool(linkedin_texts),

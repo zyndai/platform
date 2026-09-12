@@ -29,8 +29,10 @@ Rules:
 - `writing_samples`: Extract substantive posts or tweets from the
   "X / Twitter Profile" and "LinkedIn Profile" sections. One entry per post.
   Use `platform: "x"` for tweets, `platform: "linkedin"` for LinkedIn posts.
-  Set `excerpt` to the post text (first 500 chars). Leave `url` and `posted_at`
-  as empty strings. Cap at 10 entries total. SKIP: replies (start with "@"),
+  Set `excerpt` to the post text (first 500 chars). When a source line shows
+  a date in brackets (e.g. "[2026-03-15]") or a post URL, copy the date into
+  `posted_at` and the URL into `url`; otherwise leave them as empty strings.
+  Cap at 10 entries total. SKIP: replies (start with "@"),
   single-word or emoji-only posts, posts shorter than 40 chars with no real content,
   and posts that are just URLs or "True" / "Yup" / reaction words.
   Prioritise posts that show expertise, opinions, or things the person built.
@@ -48,8 +50,8 @@ Rules:
   if inferable, else [].
 - `availability`: one of "fulltime" | "contract" | "freelance" | "open", but
   ONLY if explicitly stated in the source. Otherwise empty string "".
-- `identity.avatar_url`: If the LinkedIn data contains an "Avatar URL:" line,
-  use that URL verbatim as identity.avatar_url. Otherwise leave empty.
+- `identity.avatar_url`: Leave empty — the system sets this deterministically
+  from scraped photos (LinkedIn > X > GitHub priority), do not guess.
 - `identity.avatar_bg_url`: If the LinkedIn data contains an "Avatar BG URL:" line,
   use that URL verbatim as identity.avatar_bg_url. Otherwise leave empty.
 - `working_on`: 1-4 short phrases inferred from bio/posts/projects ("building X",

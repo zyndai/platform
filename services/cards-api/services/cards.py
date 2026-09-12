@@ -111,6 +111,14 @@ def assemble_card(
     )
 
 
+def pick_avatar(linkedin_avatar: str | None, x_avatar: str | None, github_avatar: str | None) -> str:
+    """Deterministic avatar priority: LinkedIn > X > GitHub. First valid http URL wins."""
+    for candidate in (linkedin_avatar, x_avatar, github_avatar):
+        if candidate and str(candidate).startswith("http"):
+            return str(candidate)
+    return ""
+
+
 def _row_to_card(row: dict) -> AgentProfileCard:
     data = dict(row["card"])
     if row.get("handle"):
@@ -184,7 +192,10 @@ def update_card(handle: str, card: AgentProfileCard, owner_email: str) -> bool:
     """Update a published card in-place after verifying ownership.
 
     Returns False (without modifying anything) if the handle does not exist
-    or the stored owner_email does not match the caller's email.
+    or the stored owner_email belongs to a different user.
+
+    Cards created before the ownership feature have `owner_email` NULL —
+    the first authenticated editor claims them.
     """
     sb = config.get_supabase()
     check = (
@@ -193,7 +204,10 @@ def update_card(handle: str, card: AgentProfileCard, owner_email: str) -> bool:
         .eq("handle", handle)
         .execute()
     )
-    if not check.data or check.data[0].get("owner_email") != owner_email:
+    if not check.data:
+        return False
+    stored_owner = check.data[0].get("owner_email")
+    if stored_owner and stored_owner != owner_email:
         return False
     card.updated_at = utcnow()
     try:
@@ -206,6 +220,8 @@ def update_card(handle: str, card: AgentProfileCard, owner_email: str) -> bool:
             "status": card.status,
             "embedding": embedding,
             "updated_at": card.updated_at,
+            # Unowned legacy cards get claimed on first edit.
+            "owner_email": stored_owner or owner_email,
         }
     ).eq("handle", handle).execute()
     return True

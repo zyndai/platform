@@ -1,25 +1,47 @@
 """LinkedIn profile + recent posts via Apify actors (no cookies).
 
-Profile: bebity~linkedin-profile-scraper (primary)  — flat response, widely reliable
-         atomus~linkedin-profile-scraper (fallback)  — nested under 'profile' key
-Posts:   atomus~linkedin-posts-scraper-pro           — $2/1K posts, capped at 15
+Profile: atomus~linkedin-profile-scraper (primary)     — nested under 'profile' key
+         bebity~…-profiles-scraper-pay-per-result (fb)  — flat response, widely reliable
+Posts:   atomus~linkedin-posts-scraper-pro           — own posts only, newest first, capped at 7
+         Jina Reader Activity section                — free fallback when the posts actor
+                                                       is unavailable (billing caps, errors)
 
 Both profile and posts fetches run concurrently. Falls back to Jina Reader on Apify failure.
 Returns tuple[str, dict | None] — (profile_text, linkedin_stats).
 """
 
 import asyncio
+import re
+from urllib.parse import urlparse
 
 import httpx
 
 import config
 
 _APIFY_BASE = "https://api.apify.com/v2"
-_ACTOR_PROFILE_PRIMARY  = "bebity~linkedin-profile-scraper"
-_ACTOR_PROFILE_FALLBACK = "atomus~linkedin-profile-scraper"
+# bebity~linkedin-profile-scraper was renamed; the atomus actor is now primary.
+_ACTOR_PROFILE_PRIMARY  = "atomus~linkedin-profile-scraper"
+_ACTOR_PROFILE_FALLBACK = "bebity~best-cheapest-linkedin-profiles-scraper-pay-per-result"
 _ACTOR_POSTS = "atomus~linkedin-posts-scraper-pro"
-_MAX_POSTS = 15
+_MAX_POSTS = 7
 _MAX_CHARS = 12_000
+
+# "[Satya Nadella shared this](https://www.linkedin.com/posts/…)" — how Jina's
+# markdown renders every entry in the public-profile Activity section.
+_JINA_MARKER = re.compile(
+    r"^\[[^\]]*? (shared|reposted) this\]\((https://www\.linkedin\.com/posts/[^)]+)\)"
+)
+_JINA_MORE = re.compile(r"\[\.\.\.more\]\([^)]+\)")
+
+
+def _handle_from_url(url: str) -> str | None:
+    """Extract the profile handle. LinkedIn URLs are /in/{handle}."""
+    parts = urlparse(url).path.strip("/").split("/")
+    if not parts or not parts[0]:
+        return None
+    if len(parts) >= 2 and parts[0] == "in":
+        return parts[1]
+    return parts[0]
 
 
 def _compact_connections(n: int | str | None) -> str:
@@ -99,8 +121,13 @@ def _parse_bebity_profile(record: dict) -> tuple[str, dict | None]:
         or record.get("connections_count")
     )
     linkedin_stats: dict | None = None
-    if connections_raw is not None:
-        linkedin_stats = {"connections": _compact_connections(connections_raw), "posts": 0}
+    if connections_raw is not None or pic:
+        linkedin_stats = {
+            "connections": _compact_connections(connections_raw) if connections_raw is not None else "500+",
+            "posts": 0,
+        }
+        if pic:
+            linkedin_stats["avatar"] = pic
 
     return "\n".join(parts), linkedin_stats
 
@@ -165,8 +192,13 @@ def _parse_atomus_profile(record: dict) -> tuple[str, dict | None]:
         or profile.get("followersCount") or profile.get("followers_count")
     )
     linkedin_stats: dict | None = None
-    if connections_raw is not None:
-        linkedin_stats = {"connections": _compact_connections(connections_raw), "posts": 0}
+    if connections_raw is not None or pic:
+        linkedin_stats = {
+            "connections": _compact_connections(connections_raw) if connections_raw is not None else "500+",
+            "posts": 0,
+        }
+        if pic:
+            linkedin_stats["avatar"] = pic
 
     return "\n".join(parts), linkedin_stats
 
@@ -200,36 +232,144 @@ async def _fetch_profile(url: str) -> tuple[str, dict | None]:
     return _parse_atomus_profile(items[0])
 
 
-async def _fetch_posts(url: str) -> tuple[str, int]:
+async def _fetch_posts(url: str) -> tuple[str, int, str | None]:
+    """The profile's own recent posts, newest first, via the atomus posts actor.
+
+    Only rows of type "post" whose author username matches the target handle
+    are kept; reposts and quote-posts are dropped. Error rows (e.g. the
+    account's free-tier event cap) are skipped so the caller can fall back
+    to the Jina Activity parse.
+
+    Returns (posts_text, own_post_count, author_avatar_or_None).
+    """
     try:
         items = await _run_actor(
             _ACTOR_POSTS,
-            {"profiles": [url], "maxPosts": _MAX_POSTS, "sortBy": "date", "includeText": True},
+            {
+                "profiles": [url],
+                "maxPosts": _MAX_POSTS,
+                "sortBy": "date",
+                "includeReposts": False,
+                "includeSharedPosts": False,
+            },
         )
     except Exception:
-        return "", 0
+        items = []
+    if not isinstance(items, list):
+        return "", 0, None
 
-    if not items:
+    handle = _handle_from_url(url)
+    lines = ["Recent LinkedIn posts:"]
+    post_count = 0
+    avatar: str | None = None
+    for post in items:
+        if not isinstance(post, dict) or post.get("type") != "post":
+            continue
+        if post.get("is_repost") or post.get("reposted_by"):
+            continue
+        author = post.get("author") or {}
+        author_username = author.get("username")
+        if handle and author_username and author_username.lower() != handle.lower():
+            continue
+        if not avatar and author.get("avatar"):
+            avatar = author["avatar"]
+        content = (post.get("content") or post.get("text") or post.get("postText") or "").strip()
+        if not content:
+            continue
+        posted = (post.get("posted_at") or "")[:10]
+        post_url = post.get("post_url") or post.get("share_url") or ""
+        line = f"- [{posted}] {content[:600]}" if posted else f"- {content[:600]}"
+        if post_url:
+            line += f" {post_url}"
+        lines.append(line)
+        post_count += 1
+        if len(lines) > _MAX_POSTS + 1:
+            break
+    text = "\n".join(lines) if len(lines) > 1 else ""
+    return text, post_count, avatar
+
+
+def _parse_jina_activity(markdown: str) -> tuple[str, int]:
+    """Extract the profile's own posts from Jina's LinkedIn Activity section.
+
+    Public-profile Activity only contains the person's own posts. Jina renders
+    each entry as a "[Name shared this](posts url)" marker line followed by the
+    post text and a "[public_profile__posts]" terminator (after which reaction
+    counts and images appear — skipped). Reposts are dropped.
+    """
+    idx = markdown.find("## Activity")
+    if idx < 0:
         return "", 0
+    section = markdown[idx + len("## Activity"):]
 
     lines = ["Recent LinkedIn posts:"]
-    for post in items[:_MAX_POSTS]:
-        content = post.get("content") or post.get("text") or post.get("postText") or ""
-        if content:
-            lines.append(f"- {content[:600]}")
-    text = "\n".join(lines) if len(lines) > 1 else ""
-    return text, len(items)
+    count = 0
+    current_url: str | None = None
+    current_kind: str | None = None
+    current_text: list[str] = []
+    in_reactions = False
+
+    def flush() -> bool:
+        nonlocal count
+        if current_url is None or current_kind == "reposted":
+            return False
+        content = _JINA_MORE.sub("", " ".join(current_text)).strip()
+        content = re.sub(r"\s+", " ", content)
+        if not content:
+            return False
+        lines.append(f"- {content[:600]} {current_url}")
+        count += 1
+        return count >= _MAX_POSTS
+
+    for raw in section.split("\n"):
+        line = raw.strip()
+        m = _JINA_MARKER.match(line)
+        if m:
+            if flush():
+                return "\n".join(lines), count
+            current_url, current_kind, current_text = m.group(2), m.group(1), []
+            in_reactions = False
+            continue
+        if current_url is None or in_reactions:
+            continue
+        if not line or line.startswith("[public_profile__posts]"):
+            in_reactions = line.startswith("[public_profile__posts]")
+            continue
+        if line.startswith("[Report this post]") or line.startswith("[![") or line.startswith("### "):
+            continue
+        current_text.append(line)
+
+    flush()
+    return ("\n".join(lines) if count else ""), count
 
 
-async def _no_posts() -> tuple[str, int]:
-    # Posts scraping disabled — atomus posts actor returns feed posts (others' content), not profile's own posts.
-    return "", 0
+def _parse_jina_avatar(markdown: str) -> str | None:
+    """Profile display photo URL from Jina's LinkedIn markdown, if present."""
+    m = re.search(
+        r"!\[[^\]]*\]\(((?:https?://)?media\.licdn\.com/[^)]*profile-displayphoto[^)]*)\)",
+        markdown,
+    )
+    if not m:
+        return None
+    url = m.group(1)
+    return url if url.startswith("http") else f"https://{url}"
+
+
+async def _fetch_posts_jina(url: str) -> tuple[str, int, str | None]:
+    """Free fallback: parse the Activity section from Jina's render of the profile."""
+    from scraping.website import _jina_fetch
+    try:
+        markdown = await _jina_fetch(url)
+    except Exception:
+        return "", 0, None
+    text, count = _parse_jina_activity(markdown)
+    return text, count, _parse_jina_avatar(markdown)
 
 
 async def _apify_fetch(url: str) -> tuple[str, dict | None]:
     profile_result, posts_result = await asyncio.gather(
         _fetch_profile(url),
-        _no_posts(),
+        _fetch_posts(url),
         return_exceptions=True,
     )
 
@@ -242,13 +382,20 @@ async def _apify_fetch(url: str) -> tuple[str, dict | None]:
         if profile_text:
             parts.append(profile_text)
 
-    if isinstance(posts_result, tuple):
-        posts_text, posts_count = posts_result
+    if isinstance(posts_result, tuple) and len(posts_result) == 3:
+        posts_text, posts_count, posts_avatar = posts_result
+        if not posts_text:
+            # Actor unavailable (billing caps, errors) — fall back to the free
+            # Jina Activity parse so LinkedIn posts still flow.
+            posts_text, posts_count, posts_avatar = await _fetch_posts_jina(url)
         if posts_text:
             parts.append(posts_text)
-
-    if linkedin_stats is not None and posts_count:
-        linkedin_stats["posts"] = posts_count
+        if linkedin_stats is None:
+            linkedin_stats = {}
+        if posts_count:
+            linkedin_stats["posts"] = posts_count
+        if posts_avatar and not linkedin_stats.get("avatar"):
+            linkedin_stats["avatar"] = posts_avatar
     elif linkedin_stats is None and posts_count:
         linkedin_stats = {"connections": "500+", "posts": posts_count}
 
@@ -259,14 +406,26 @@ async def fetch_linkedin_profile(url: str) -> tuple[str, dict | None]:
     """Scrape LinkedIn profile + recent posts. Returns (text, linkedin_stats)."""
     if config.APIFY_API_KEY:
         try:
-            return await _apify_fetch(url)
+            text, stats = await _apify_fetch(url)
+            if text:
+                return text, stats
         except Exception:
             pass
     from scraping.website import _jina_fetch
     try:
-        text = await _jina_fetch(url)
-        if len(text) >= 100:
-            return text[:_MAX_CHARS], None
+        markdown = await _jina_fetch(url)
+        if len(markdown) >= 100:
+            posts_text, posts_count = _parse_jina_activity(markdown)
+            avatar = _parse_jina_avatar(markdown)
+            parts = [markdown[:_MAX_CHARS]]
+            if posts_text:
+                parts.append(posts_text)
+            stats = None
+            if posts_count or avatar:
+                stats = {"connections": "500+", "posts": posts_count}
+                if avatar:
+                    stats["avatar"] = avatar
+            return "\n\n".join(parts)[:_MAX_CHARS], stats
     except Exception:
         pass
     return "", None

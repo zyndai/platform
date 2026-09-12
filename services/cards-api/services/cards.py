@@ -1,7 +1,7 @@
 import re
 
 import config
-from models.card import AgentProfileCard, CardSynthesis, Source
+from models.card import AgentProfileCard, CardSynthesis, Source, WritingSample
 from services import embed
 from services.jobs import new_card_id, utcnow
 
@@ -117,6 +117,68 @@ def pick_avatar(linkedin_avatar: str | None, x_avatar: str | None, github_avatar
         if candidate and str(candidate).startswith("http"):
             return str(candidate)
     return ""
+
+
+def merge_scraped_posts(
+    llm_samples: list[WritingSample],
+    x_posts: list[dict] | None,
+    linkedin_posts: list[dict] | None,
+    cap: int = 10,
+) -> list[WritingSample]:
+    """Guarantee both platforms appear in writing_samples.
+
+    The LLM under-fills when both X and LinkedIn sections are present, so
+    real scraped posts (dated, with URLs) are injected deterministically,
+    interleaved X/LinkedIn-first, and LLM picks fill the remaining slots.
+    """
+    def _key(w: WritingSample) -> str:
+        url = (w.url or "").strip().rstrip("/")
+        if url:
+            return url
+        return f"{w.platform}:{(w.excerpt or '').strip()[:80]}"
+
+    result: list[WritingSample] = []
+    seen: set[str] = set()
+
+    def add(w: WritingSample) -> None:
+        key = _key(w)
+        if key in seen:
+            return
+        seen.add(key)
+        result.append(w)
+
+    def norm(posts: list[dict] | None, platform: str) -> list[WritingSample]:
+        out: list[WritingSample] = []
+        for p in posts or []:
+            if not isinstance(p, dict) or not (p.get("excerpt") or "").strip():
+                continue
+            out.append(WritingSample(
+                platform=platform,
+                excerpt=str(p["excerpt"])[:500],
+                url=str(p.get("url") or ""),
+                posted_at=str(p.get("posted_at") or ""),
+            ))
+        return out
+
+    x_norm = norm(x_posts, "x")
+    li_norm = norm(linkedin_posts, "linkedin")
+
+    interleaved: list[WritingSample] = []
+    for i in range(max(len(x_norm), len(li_norm))):
+        if i < len(x_norm):
+            interleaved.append(x_norm[i])
+        if i < len(li_norm):
+            interleaved.append(li_norm[i])
+
+    for w in interleaved:
+        if len(result) >= cap:
+            break
+        add(w)
+    for w in llm_samples:
+        if len(result) >= cap:
+            break
+        add(w)
+    return result
 
 
 def _row_to_card(row: dict) -> AgentProfileCard:

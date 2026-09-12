@@ -142,6 +142,15 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
             ((github_data or {}).get("user") or {}).get("avatar_url"),
         ) or synth.identity.avatar_url
 
+        # Deterministic post injection: both platforms must appear even when
+        # the LLM only picked one. posts_raw is a pipeline-internal key — pop
+        # it so it never lands in the stored card stats.
+        x_posts_raw = (x_stats_data or {}).pop("posts_raw", None) if x_stats_data else None
+        li_posts_raw = (linkedin_stats_data or {}).pop("posts_raw", None) if linkedin_stats_data else None
+        synth.writing_samples = cards_service.merge_scraped_posts(
+            synth.writing_samples, x_posts_raw, li_posts_raw
+        )
+
         card = cards_service.assemble_card(
             synth, github_data, github_handle, x_handle, bool(resume_text),
             linkedin_scraped=bool(linkedin_texts),

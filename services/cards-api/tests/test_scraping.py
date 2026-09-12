@@ -47,7 +47,7 @@ def test_linkedin_posts_keeps_own_posts_only(monkeypatch):
     ]
     monkeypatch.setattr(linkedin, "_run_actor", AsyncMock(return_value=items))
 
-    text, count, avatar = asyncio.run(linkedin._fetch_posts("https://www.linkedin.com/in/alice/"))
+    text, count, avatar, posts = asyncio.run(linkedin._fetch_posts("https://www.linkedin.com/in/alice/"))
 
     assert "Alice shipped the API v2 today" in text
     assert "[2026-03-15]" in text
@@ -55,6 +55,12 @@ def test_linkedin_posts_keeps_own_posts_only(monkeypatch):
     assert "Just resharing" not in text
     assert count == 1
     assert avatar == "https://media.licdn.com/alice.jpg"
+    assert posts == [{
+        "platform": "linkedin",
+        "excerpt": "Alice shipped the API v2 today.",
+        "url": "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+        "posted_at": "2026-03-15",
+    }]
 
 
 def test_linkedin_posts_actor_error_rows_are_skipped(monkeypatch):
@@ -63,11 +69,12 @@ def test_linkedin_posts_actor_error_rows_are_skipped(monkeypatch):
     ]
     monkeypatch.setattr(linkedin, "_run_actor", AsyncMock(return_value=items))
 
-    text, count, avatar = asyncio.run(linkedin._fetch_posts("https://www.linkedin.com/in/alice/"))
+    text, count, avatar, posts = asyncio.run(linkedin._fetch_posts("https://www.linkedin.com/in/alice/"))
 
     assert text == ""
     assert count == 0
     assert avatar is None
+    assert posts == []
 
 
 def test_linkedin_posts_author_match_is_case_insensitive(monkeypatch):
@@ -81,7 +88,7 @@ def test_linkedin_posts_author_match_is_case_insensitive(monkeypatch):
     ]
     monkeypatch.setattr(linkedin, "_run_actor", AsyncMock(return_value=items))
 
-    text, _, _ = asyncio.run(linkedin._fetch_posts("https://linkedin.com/in/alice/"))
+    text, _, _, _ = asyncio.run(linkedin._fetch_posts("https://linkedin.com/in/alice/"))
 
     assert "Alice wrote this herself" in text
 
@@ -89,11 +96,12 @@ def test_linkedin_posts_author_match_is_case_insensitive(monkeypatch):
 def test_linkedin_posts_actor_error_returns_empty(monkeypatch):
     monkeypatch.setattr(linkedin, "_run_actor", AsyncMock(side_effect=Exception("boom")))
 
-    text, count, avatar = asyncio.run(linkedin._fetch_posts("https://www.linkedin.com/in/alice/"))
+    text, count, avatar, posts = asyncio.run(linkedin._fetch_posts("https://www.linkedin.com/in/alice/"))
 
     assert text == ""
     assert count == 0
     assert avatar is None
+    assert posts == []
 
 
 def test_linkedin_posts_handle_from_in_url():
@@ -107,7 +115,9 @@ def test_linkedin_apify_fetch_combines_profile_and_posts(monkeypatch):
         return "Name: Alice\nHeadline: Engineer", {"connections": "500+"}
 
     async def fake_posts(url):
-        return "Recent LinkedIn posts:\n- [2026-03-15] Alice shipped.", 1, "https://media.licdn.com/alice.jpg"
+        return ("Recent LinkedIn posts:\n- [2026-03-15] Alice shipped.", 1,
+                "https://media.licdn.com/alice.jpg",
+                [{"platform": "linkedin", "excerpt": "Alice shipped.", "url": "https://ln/p/1", "posted_at": "2026-03-15"}])
 
     monkeypatch.setattr(linkedin, "_fetch_profile", fake_profile)
     monkeypatch.setattr(linkedin, "_fetch_posts", fake_posts)
@@ -116,7 +126,11 @@ def test_linkedin_apify_fetch_combines_profile_and_posts(monkeypatch):
 
     assert "Name: Alice" in text
     assert "Alice shipped" in text
-    assert stats == {"connections": "500+", "posts": 1, "avatar": "https://media.licdn.com/alice.jpg"}
+    assert stats["connections"] == "500+"
+    assert stats["posts"] == 1
+    assert stats["avatar"] == "https://media.licdn.com/alice.jpg"
+    assert stats["posts_raw"] == [{"platform": "linkedin", "excerpt": "Alice shipped.",
+                                   "url": "https://ln/p/1", "posted_at": "2026-03-15"}]
 
 
 def test_linkedin_apify_fetch_falls_back_to_jina_when_actor_empty(monkeypatch):
@@ -124,10 +138,12 @@ def test_linkedin_apify_fetch_falls_back_to_jina_when_actor_empty(monkeypatch):
         return "Name: Alice\nHeadline: Engineer", {"connections": "500+"}
 
     async def fake_posts(url):
-        return "", 0, None
+        return "", 0, None, []
 
     async def fake_jina_posts(url):
-        return "Recent LinkedIn posts:\n- Alice via Jina. https://www.linkedin.com/posts/alice_1", 1, None
+        return ("Recent LinkedIn posts:\n- Alice via Jina. https://www.linkedin.com/posts/alice_1",
+                1, None,
+                [{"platform": "linkedin", "excerpt": "Alice via Jina.", "url": "https://www.linkedin.com/posts/alice_1", "posted_at": ""}])
 
     monkeypatch.setattr(linkedin, "_fetch_profile", fake_profile)
     monkeypatch.setattr(linkedin, "_fetch_posts", fake_posts)
@@ -136,7 +152,8 @@ def test_linkedin_apify_fetch_falls_back_to_jina_when_actor_empty(monkeypatch):
     text, stats = asyncio.run(linkedin._apify_fetch("https://www.linkedin.com/in/alice/"))
 
     assert "Alice via Jina" in text
-    assert stats == {"connections": "500+", "posts": 1}
+    assert stats["posts"] == 1
+    assert len(stats["posts_raw"]) == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -159,29 +176,54 @@ First post text about AI. Learn more: [https://lnkd.in/xyz](https://lnkd.in/xyz?
 Reposted content that must be skipped.
 [public_profile__posts](https://www.linkedin.com/posts/other_repost-activity-222-XyZ)
 [Satya Nadella shared this](https://www.linkedin.com/posts/satyanadella_post-two-activity-333-AbC)
-Second post text.
+Second post text about LLM optimisation work that is substantive enough to keep.
 [public_profile__posts](https://www.linkedin.com/posts/satyanadella_post-two-activity-333-AbC)
 """
 
 
 def test_parse_jina_activity_extracts_own_posts_and_drops_reposts():
-    text, count = linkedin._parse_jina_activity(_JINA_SAMPLE)
+    text, count, posts = linkedin._parse_jina_activity(_JINA_SAMPLE)
 
     assert count == 2
     assert "First post text about AI" in text
-    assert "Second post text" in text
+    assert "Second post text about LLM" in text
     assert "Reposted content" not in text
     assert "2,788" not in text
     assert "149 Comments" not in text
     assert "post-one-activity-111" in text
     assert "Report this post" not in text
     assert text.count("\n- ") == 2
+    assert [p["platform"] for p in posts] == ["linkedin", "linkedin"]
+    assert posts[0]["url"] == "https://www.linkedin.com/posts/satyanadella_post-one-activity-111-EJS4"
+    assert posts[0]["excerpt"] == "First post text about AI. Learn more: https://lnkd.in/xyz"
+
+
+def test_parse_jina_activity_drops_comment_rows_and_short_fragments():
+    md = """## Activity
+[Alice shared this](https://www.linkedin.com/posts/alice_a)
+- [Bob Marley](https://www.linkedin.com/in/bob) 7y https://www.linkedin.com/posts/alice_a
+[public_profile__posts](https://www.linkedin.com/posts/alice_a)
+[Alice shared this](https://www.linkedin.com/posts/alice_b)
+Short post.
+[public_profile__posts](https://www.linkedin.com/posts/alice_b)
+[Alice shared this](https://www.linkedin.com/posts/alice_c)
+A genuinely substantive post about shipping infrastructure at scale this quarter.
+[public_profile__posts](https://www.linkedin.com/posts/alice_c)
+"""
+    text, count, posts = linkedin._parse_jina_activity(md)
+
+    assert count == 1
+    assert "Bob Marley" not in text
+    assert "Short post." not in text
+    assert "substantive post about shipping" in text
+    assert posts[0]["url"].endswith("alice_c")
 
 
 def test_parse_jina_activity_missing_section_returns_empty():
-    text, count = linkedin._parse_jina_activity("# Just a profile\n\nNo activity here.")
+    text, count, posts = linkedin._parse_jina_activity("# Just a profile\n\nNo activity here.")
     assert text == ""
     assert count == 0
+    assert posts == []
 
 
 def test_parse_jina_avatar_extracts_displayphoto():
@@ -247,7 +289,8 @@ def _run_tweets(items):
     original = x_module.httpx.AsyncClient
     x_module.httpx.AsyncClient = lambda *a, **k: client
     try:
-        return asyncio.run(x_module._fetch_tweets("alice")), client.calls
+        text, posts = asyncio.run(x_module._fetch_tweets("alice"))
+        return text, client.calls, posts
     finally:
         x_module.httpx.AsyncClient = original
 
@@ -286,7 +329,7 @@ def test_x_tweets_newest_first_and_filters_junk():
         },
     ]
 
-    text, calls = _run_tweets(items)
+    text, calls, posts = _run_tweets(items)
 
     assert text.index("shipping the feature") < text.index("infra")
     assert "@someone" not in text
@@ -295,6 +338,10 @@ def test_x_tweets_newest_first_and_filters_junk():
     assert "[2025-01-02]" in text
     assert "https://x.com/alice/status/5" in text
     assert calls and calls[0]["json"] == {"userId": "alice", "maxPages": 2}
+    assert len(posts) == 2
+    assert posts[0]["platform"] == "x"
+    assert posts[0]["url"] == "https://x.com/alice/status/5"
+    assert posts[0]["posted_at"] == "2025-01-02"
 
 
 def test_x_tweets_drops_rows_from_other_authors():
@@ -313,10 +360,11 @@ def test_x_tweets_drops_rows_from_other_authors():
         },
     ]
 
-    text, _ = _run_tweets(items)
+    text, _, posts = _run_tweets(items)
 
     assert "Alice's own tweet" in text
     assert "Bob's tweet" not in text
+    assert len(posts) == 1
 
 
 def test_x_tweets_author_filter_case_insensitive_and_missing_author_allowed():
@@ -334,15 +382,17 @@ def test_x_tweets_author_filter_case_insensitive_and_missing_author_allowed():
         },
     ]
 
-    text, _ = _run_tweets(items)
+    text, _, posts = _run_tweets(items)
 
     assert "Match despite case difference" in text
     assert "No author field at all" in text
+    assert len(posts) == 2
 
 
 def test_x_tweets_empty_dataset_returns_empty_string():
-    text, _ = _run_tweets([])
+    text, _, posts = _run_tweets([])
     assert text == ""
+    assert posts == []
 
 
 def test_x_tweets_parse_twitter_date():
@@ -386,6 +436,27 @@ def test_x_profile_captures_avatar_in_stats():
     assert "Name: Alice" in text
 
 
+def test_x_apify_fetch_combines_profile_and_tweets_with_posts_raw(monkeypatch):
+    async def fake_profile(handle):
+        return "Name: Alice\nBio: Builder", {"handle": "@alice", "followers": "1.2k", "posts": "300", "avatar": "https://pbs.twimg.com/a.jpg"}
+
+    async def fake_tweets(handle):
+        return ("Recent posts:\n- [2026-01-02] Hello world.", [
+            {"platform": "x", "excerpt": "Hello world.", "url": "https://x.com/alice/status/1", "posted_at": "2026-01-02"},
+        ])
+
+    monkeypatch.setattr(x, "_fetch_profile", fake_profile)
+    monkeypatch.setattr(x, "_fetch_tweets", fake_tweets)
+
+    text, stats = asyncio.run(x._apify_fetch("https://x.com/alice"))
+
+    assert "Name: Alice" in text
+    assert "Hello world" in text
+    assert stats["avatar"] == "https://pbs.twimg.com/a.jpg"
+    assert len(stats["posts_raw"]) == 1
+    assert stats["posts_raw"][0]["platform"] == "x"
+
+
 def test_fetch_x_profile_falls_back_to_jina_when_apify_empty(monkeypatch):
     monkeypatch.setattr(x.config, "APIFY_API_KEY", "fake-key")
     monkeypatch.setattr(x, "_apify_fetch", AsyncMock(return_value=("", None)))
@@ -425,7 +496,7 @@ def test_fetch_linkedin_profile_jina_keeps_posts_block_within_cap(monkeypatch):
     monkeypatch.setattr(linkedin.config, "APIFY_API_KEY", "fake-key")
     monkeypatch.setattr(linkedin, "_apify_fetch", AsyncMock(return_value=("", None)))
 
-    markdown = "Profile filler " * 2000 + "\n## Activity\n[Alice shared this](https://www.linkedin.com/posts/alice_1)\nA substantive post from Alice.\n[public_profile__posts](https://www.linkedin.com/posts/alice_1)\n"
+    markdown = "Profile filler " * 2000 + "\n## Activity\n[Alice shared this](https://www.linkedin.com/posts/alice_1)\nA substantive post from Alice about distributed systems design.\n[public_profile__posts](https://www.linkedin.com/posts/alice_1)\n"
 
     import scraping.website as website
 
@@ -434,6 +505,8 @@ def test_fetch_linkedin_profile_jina_keeps_posts_block_within_cap(monkeypatch):
     text, stats = asyncio.run(linkedin.fetch_linkedin_profile("https://www.linkedin.com/in/alice/"))
 
     assert len(text) <= linkedin._MAX_CHARS
-    assert "A substantive post from Alice" in text
+    assert "A substantive post from Alice about distributed systems design" in text
     assert "Recent LinkedIn posts:" in text
     assert stats is not None and stats["posts"] == 1
+    assert len(stats["posts_raw"]) == 1
+    assert stats["posts_raw"][0]["platform"] == "linkedin"

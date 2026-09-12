@@ -32,7 +32,12 @@ Rules:
   Set `excerpt` to the post text (first 500 chars). When a source line shows
   a date in brackets (e.g. "[2026-03-15]") or a post URL, copy the date into
   `posted_at` and the URL into `url`; otherwise leave them as empty strings.
-  Cap at 10 entries total. SKIP: replies (start with "@"),
+  Cap at 10 entries total. IMPORTANT: extract from BOTH sections when both
+  contain posts — do not stop after the first section. The LinkedIn section's
+  "Recent LinkedIn posts:" block lists one post per "- " line; include those
+  with `platform: "linkedin"`. When both platforms exist, aim for a mix of
+  both in the final list.
+  SKIP: replies (start with "@"),
   single-word or emoji-only posts, posts shorter than 40 chars with no real content,
   and posts that are just URLs or "True" / "Yup" / reaction words.
   Prioritise posts that show expertise, opinions, or things the person built.

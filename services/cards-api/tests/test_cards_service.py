@@ -105,3 +105,48 @@ def test_pick_avatar_falls_back_when_linkedin_missing():
 def test_pick_avatar_skips_invalid_and_returns_empty():
     assert cards_service.pick_avatar("not-a-url", "", "data:text/plain,hi") == ""
     assert cards_service.pick_avatar(None, None, None) == ""
+
+
+def test_merge_scraped_posts_injects_both_platforms():
+    from models.card import WritingSample
+
+    llm = [WritingSample(platform="x", excerpt="LLM-picked tweet.", url="https://x.com/a/status/9", posted_at="2026-01-01")]
+
+    x_posts = [{"platform": "x", "excerpt": "Real tweet one.", "url": "https://x.com/a/status/1", "posted_at": "2026-01-02"},
+               {"platform": "x", "excerpt": "Real tweet two.", "url": "https://x.com/a/status/2", "posted_at": "2026-01-03"}]
+    li_posts = [{"platform": "linkedin", "excerpt": "Real LI post one.", "url": "https://ln/p/1", "posted_at": "2026-01-04"}]
+
+    merged = cards_service.merge_scraped_posts(llm, x_posts, li_posts)
+
+    platforms = [w.platform for w in merged]
+    assert platforms == ["x", "linkedin", "x", "x"]  # interleaved scraped, then LLM fill
+    # Scraped posts come before the LLM fill
+    assert merged[0].url == "https://x.com/a/status/1"
+    assert merged[-1].excerpt == "LLM-picked tweet."
+
+
+def test_merge_scraped_posts_dedupes_by_url():
+    from models.card import WritingSample
+
+    llm = [WritingSample(platform="x", excerpt="Same tweet via LLM.", url="https://x.com/a/status/1", posted_at="")]
+    x_posts = [{"platform": "x", "excerpt": "Same tweet via LLM.", "url": "https://x.com/a/status/1", "posted_at": ""}]
+
+    merged = cards_service.merge_scraped_posts(llm, x_posts, None)
+
+    assert len(merged) == 1
+
+
+def test_merge_scraped_posts_respects_cap():
+    from models.card import WritingSample
+
+    llm = [WritingSample(platform="x", excerpt=f"LLM {i}.", url=f"https://x.com/a/status/l{i}", posted_at="") for i in range(8)]
+    x_posts = [{"platform": "x", "excerpt": f"Tweet {i}.", "url": f"https://x.com/a/status/{i}", "posted_at": ""} for i in range(8)]
+    li_posts = [{"platform": "linkedin", "excerpt": f"LI {i}.", "url": f"https://ln/p/{i}", "posted_at": ""} for i in range(8)]
+
+    merged = cards_service.merge_scraped_posts(llm, x_posts, li_posts, cap=10)
+
+    assert len(merged) == 10
+    platforms = [w.platform for w in merged]
+    # Interleave favours a mix: 5 x + 5 linkedin fills the cap before LLM picks
+    assert platforms.count("x") == 5
+    assert platforms.count("linkedin") == 5

@@ -32,6 +32,14 @@ _JINA_MARKER = re.compile(
     r"^\[[^\]]*? (shared|reposted) this\]\((https://www\.linkedin\.com/posts/[^)]+)\)"
 )
 _JINA_MORE = re.compile(r"\[\.\.\.more\]\([^)]+\)")
+_JINA_MD_LINK = re.compile(r"\[([^\]]*)\]\((https?://[^)]+)\)")
+
+
+def _strip_md(text: str) -> str:
+    """Markdown links/images → plain text, for clean post excerpts."""
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)  # images
+    text = _JINA_MD_LINK.sub(r"\1", text)  # links
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _handle_from_url(url: str) -> str | None:
@@ -232,7 +240,7 @@ async def _fetch_profile(url: str) -> tuple[str, dict | None]:
     return _parse_atomus_profile(items[0])
 
 
-async def _fetch_posts(url: str) -> tuple[str, int, str | None]:
+async def _fetch_posts(url: str) -> tuple[str, int, str | None, list[dict]]:
     """The profile's own recent posts, newest first, via the atomus posts actor.
 
     Only rows of type "post" whose author username matches the target handle
@@ -240,7 +248,7 @@ async def _fetch_posts(url: str) -> tuple[str, int, str | None]:
     account's free-tier event cap) are skipped so the caller can fall back
     to the Jina Activity parse.
 
-    Returns (posts_text, own_post_count, author_avatar_or_None).
+    Returns (posts_text, own_post_count, author_avatar_or_None, structured_posts).
     """
     try:
         items = await _run_actor(
@@ -256,11 +264,11 @@ async def _fetch_posts(url: str) -> tuple[str, int, str | None]:
     except Exception:
         items = []
     if not isinstance(items, list):
-        return "", 0, None
+        return "", 0, None, []
 
     handle = _handle_from_url(url)
     lines = ["Recent LinkedIn posts:"]
-    post_count = 0
+    posts: list[dict] = []
     avatar: str | None = None
     for post in items:
         if not isinstance(post, dict) or post.get("type") != "post":
@@ -282,14 +290,19 @@ async def _fetch_posts(url: str) -> tuple[str, int, str | None]:
         if post_url:
             line += f" {post_url}"
         lines.append(line)
-        post_count += 1
+        posts.append({
+            "platform": "linkedin",
+            "excerpt": _strip_md(content)[:500],
+            "url": post_url,
+            "posted_at": posted,
+        })
         if len(lines) > _MAX_POSTS + 1:
             break
     text = "\n".join(lines) if len(lines) > 1 else ""
-    return text, post_count, avatar
+    return text, len(posts), avatar, posts
 
 
-def _parse_jina_activity(markdown: str) -> tuple[str, int]:
+def _parse_jina_activity(markdown: str) -> tuple[str, int, list[dict]]:
     """Extract the profile's own posts from Jina's LinkedIn Activity section.
 
     Public-profile Activity only contains the person's own posts. Jina renders
@@ -299,34 +312,45 @@ def _parse_jina_activity(markdown: str) -> tuple[str, int]:
     """
     idx = markdown.find("## Activity")
     if idx < 0:
-        return "", 0
+        return "", 0, []
     section = markdown[idx + len("## Activity"):]
 
     lines = ["Recent LinkedIn posts:"]
-    count = 0
+    posts: list[dict] = []
     current_url: str | None = None
     current_kind: str | None = None
     current_text: list[str] = []
     in_reactions = False
 
     def flush() -> bool:
-        nonlocal count
         if current_url is None or current_kind == "reposted":
             return False
         content = _JINA_MORE.sub("", " ".join(current_text)).strip()
         content = re.sub(r"\s+", " ", content)
         if not content:
             return False
+        cleaned = _strip_md(content).lstrip("-–— ").strip()
+        # Drop comment rows ("Name 7y", "Name 2d https://…") that leak between
+        # posts, and short fragments with no real content.
+        if re.match(r"^[A-Za-z][\w .'’-]{1,30}\s+\d{1,2}[dwmy]\b", cleaned[:40]):
+            return False
+        if len(cleaned) < 40:
+            return False
         lines.append(f"- {content[:600]} {current_url}")
-        count += 1
-        return count >= _MAX_POSTS
+        posts.append({
+            "platform": "linkedin",
+            "excerpt": cleaned[:500],
+            "url": current_url,
+            "posted_at": "",
+        })
+        return len(posts) >= _MAX_POSTS
 
     for raw in section.split("\n"):
         line = raw.strip()
         m = _JINA_MARKER.match(line)
         if m:
             if flush():
-                return "\n".join(lines), count
+                return "\n".join(lines), len(posts), posts
             current_url, current_kind, current_text = m.group(2), m.group(1), []
             in_reactions = False
             continue
@@ -340,7 +364,7 @@ def _parse_jina_activity(markdown: str) -> tuple[str, int]:
         current_text.append(line)
 
     flush()
-    return ("\n".join(lines) if count else ""), count
+    return ("\n".join(lines) if posts else ""), len(posts), posts
 
 
 def _parse_jina_avatar(markdown: str) -> str | None:
@@ -355,15 +379,15 @@ def _parse_jina_avatar(markdown: str) -> str | None:
     return url if url.startswith("http") else f"https://{url}"
 
 
-async def _fetch_posts_jina(url: str) -> tuple[str, int, str | None]:
+async def _fetch_posts_jina(url: str) -> tuple[str, int, str | None, list[dict]]:
     """Free fallback: parse the Activity section from Jina's render of the profile."""
     from scraping.website import _jina_fetch
     try:
         markdown = await _jina_fetch(url)
     except Exception:
-        return "", 0, None
-    text, count = _parse_jina_activity(markdown)
-    return text, count, _parse_jina_avatar(markdown)
+        return "", 0, None, []
+    text, count, posts = _parse_jina_activity(markdown)
+    return text, count, _parse_jina_avatar(markdown), posts
 
 
 async def _apify_fetch(url: str) -> tuple[str, dict | None]:
@@ -382,18 +406,20 @@ async def _apify_fetch(url: str) -> tuple[str, dict | None]:
         if profile_text:
             parts.append(profile_text)
 
-    if isinstance(posts_result, tuple) and len(posts_result) == 3:
-        posts_text, posts_count, posts_avatar = posts_result
+    if isinstance(posts_result, tuple) and len(posts_result) == 4:
+        posts_text, posts_count, posts_avatar, posts = posts_result
         if not posts_text:
             # Actor unavailable (billing caps, errors) — fall back to the free
             # Jina Activity parse so LinkedIn posts still flow.
-            posts_text, posts_count, posts_avatar = await _fetch_posts_jina(url)
+            posts_text, posts_count, posts_avatar, posts = await _fetch_posts_jina(url)
         if posts_text:
             parts.append(posts_text)
         if linkedin_stats is None:
             linkedin_stats = {}
         if posts_count:
             linkedin_stats["posts"] = posts_count
+        if posts:
+            linkedin_stats["posts_raw"] = posts
         if posts_avatar and not linkedin_stats.get("avatar"):
             linkedin_stats["avatar"] = posts_avatar
     elif linkedin_stats is None and posts_count:
@@ -415,7 +441,7 @@ async def fetch_linkedin_profile(url: str) -> tuple[str, dict | None]:
     try:
         markdown = await _jina_fetch(url)
         if len(markdown) >= 100:
-            posts_text, posts_count = _parse_jina_activity(markdown)
+            posts_text, posts_count, posts = _parse_jina_activity(markdown)
             avatar = _parse_jina_avatar(markdown)
             # Reserve room for the posts block so it isn't truncated away.
             head_limit = max(2000, _MAX_CHARS - len(posts_text) - 4) if posts_text else _MAX_CHARS
@@ -425,6 +451,8 @@ async def fetch_linkedin_profile(url: str) -> tuple[str, dict | None]:
             stats = None
             if posts_count or avatar:
                 stats = {"connections": "500+", "posts": posts_count}
+                if posts:
+                    stats["posts_raw"] = posts
                 if avatar:
                     stats["avatar"] = avatar
             return "\n\n".join(parts)[:_MAX_CHARS], stats

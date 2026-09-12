@@ -60,7 +60,7 @@ async def _apify_fetch(url: str) -> tuple[str, dict | None]:
     if not handle:
         raise ValueError(f"Cannot extract handle from URL: {url!r}")
 
-    profile_result, tweets_text = await asyncio.gather(
+    profile_result, tweets_result = await asyncio.gather(
         _fetch_profile(handle),
         _fetch_tweets(handle),
         return_exceptions=True,
@@ -76,8 +76,14 @@ async def _apify_fetch(url: str) -> tuple[str, dict | None]:
     elif isinstance(profile_result, str) and profile_result:
         parts.append(profile_result)
 
-    if isinstance(tweets_text, str) and tweets_text:
-        parts.append(tweets_text)
+    if isinstance(tweets_result, tuple) and len(tweets_result) == 2:
+        tweets_text, tweets_posts = tweets_result
+        if tweets_text:
+            parts.append(tweets_text)
+        if tweets_posts:
+            if x_stats is None:
+                x_stats = {}
+            x_stats["posts_raw"] = tweets_posts
 
     return "\n\n".join(parts)[:_MAX_CHARS], x_stats
 
@@ -142,7 +148,9 @@ def _parse_twitter_date(value: str | None) -> datetime | None:
         return None
 
 
-async def _fetch_tweets(handle: str) -> str:
+async def _fetch_tweets(handle: str) -> tuple[str, list[dict]]:
+    """Returns (tweets_text, structured_posts) — posts feed the card's
+    writing_samples deterministically so both platforms are always represented."""
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             f"{_APIFY_BASE}/acts/{_ACTOR_TWEETS}/run-sync-get-dataset-items",
@@ -153,7 +161,7 @@ async def _fetch_tweets(handle: str) -> str:
         items = resp.json()
 
     if not items:
-        return ""
+        return "", []
 
     # The actor doesn't guarantee ordering — sort newest first. Tweets with
     # no parsable date sink to the bottom rather than breaking the sort.
@@ -164,6 +172,7 @@ async def _fetch_tweets(handle: str) -> str:
     items = sorted(items, key=_ts, reverse=True)
 
     lines = ["Recent posts:"]
+    posts: list[dict] = []
     for tweet in items[:_MAX_TWEETS * 3]:  # over-fetch to compensate for filtering
         # Only the target account's own tweets — rows whose author doesn't
         # match the requested handle are dropped defensively.
@@ -185,6 +194,12 @@ async def _fetch_tweets(handle: str) -> str:
         tid = tweet.get("tweet_id")
         url = f" https://x.com/{handle}/status/{tid}" if tid else ""
         lines.append(f"- [{posted}] {text[:600]}{url}" if posted else f"- {text[:600]}{url}")
-        if len(lines) > _MAX_TWEETS + 1:
+        posts.append({
+            "platform": "x",
+            "excerpt": text[:500],
+            "url": f"https://x.com/{handle}/status/{tid}" if tid else "",
+            "posted_at": posted,
+        })
+        if len(posts) >= _MAX_TWEETS:
             break
-    return "\n".join(lines) if len(lines) > 1 else ""
+    return ("\n".join(lines) if len(lines) > 1 else ""), posts

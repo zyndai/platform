@@ -418,3 +418,22 @@ def test_fetch_linkedin_profile_falls_back_to_jina_when_apify_empty(monkeypatch)
 
     assert text.startswith("Jina fallback text for LinkedIn")
     assert stats is None
+
+
+def test_fetch_linkedin_profile_jina_keeps_posts_block_within_cap(monkeypatch):
+    """A huge Jina page must not truncate the parsed posts block away."""
+    monkeypatch.setattr(linkedin.config, "APIFY_API_KEY", "fake-key")
+    monkeypatch.setattr(linkedin, "_apify_fetch", AsyncMock(return_value=("", None)))
+
+    markdown = "Profile filler " * 2000 + "\n## Activity\n[Alice shared this](https://www.linkedin.com/posts/alice_1)\nA substantive post from Alice.\n[public_profile__posts](https://www.linkedin.com/posts/alice_1)\n"
+
+    import scraping.website as website
+
+    monkeypatch.setattr(website, "_jina_fetch", AsyncMock(return_value=markdown))
+
+    text, stats = asyncio.run(linkedin.fetch_linkedin_profile("https://www.linkedin.com/in/alice/"))
+
+    assert len(text) <= linkedin._MAX_CHARS
+    assert "A substantive post from Alice" in text
+    assert "Recent LinkedIn posts:" in text
+    assert stats is not None and stats["posts"] == 1

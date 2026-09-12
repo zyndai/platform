@@ -417,7 +417,9 @@ async def fetch_linkedin_profile(url: str) -> tuple[str, dict | None]:
         if len(markdown) >= 100:
             posts_text, posts_count = _parse_jina_activity(markdown)
             avatar = _parse_jina_avatar(markdown)
-            parts = [markdown[:_MAX_CHARS]]
+            # Reserve room for the posts block so it isn't truncated away.
+            head_limit = max(2000, _MAX_CHARS - len(posts_text) - 4) if posts_text else _MAX_CHARS
+            parts = [markdown[:head_limit]]
             if posts_text:
                 parts.append(posts_text)
             stats = None

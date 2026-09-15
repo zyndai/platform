@@ -116,6 +116,9 @@ class AgentProfileCard(BaseModel):
     x_stats: dict | None = None
     contribution_stats: dict | None = None
     calendly_url: str | None = None
+    # Public findability facts pulled from the ZYND memory layer by our cron
+    # (services/zynd_memory). None = not connected / nothing public yet.
+    zynd_memory: list[dict] | None = None
 
     @field_validator("experience_years", mode="before")
     @classmethod

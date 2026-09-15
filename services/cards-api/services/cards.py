@@ -341,11 +341,36 @@ def list_published(limit: int = 1000) -> list[AgentProfileCard]:
     return [_row_to_card(r) for r in (resp.data or [])]
 
 
+def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:
+    """Backend-only refresh of the stored ZYND memory snapshot on a card row.
+
+    Called by the periodic memory refresh cron, not by end users — no ownership
+    check. Only the card JSON changes; the search embedding is left untouched
+    (the memory section is not searchable content).
+    """
+    sb = config.get_supabase()
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("card")
+        .eq("handle", handle)
+        .execute()
+    )
+    if not resp.data:
+        return False
+    card = _row_to_card(resp.data[0])
+    card.zynd_memory = zynd_memory
+    card.updated_at = utcnow()
+    sb.table("agent_profile_cards").update(
+        {"card": card.model_dump(mode="json"), "updated_at": card.updated_at}
+    ).eq("handle", handle).execute()
+    return True
+
+
 def list_published_rows(limit: int = 1000) -> list[dict]:
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card,handle,embedding")
+        .select("card,handle,embedding,owner_email")
         .eq("status", "published")
         .limit(limit)
         .execute()

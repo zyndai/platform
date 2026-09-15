@@ -26,11 +26,28 @@ async def lifespan(app: FastAPI):
         logger.info("X bot polling task started (Apify reads + X API writes)")
     else:
         logger.warning("X bot disabled — APIFY_API_KEY or X_USER_ACCESS_TOKEN not set")
+
+    memory_task = None
+    if config.MEMORY_SERVICE_TOKEN:
+        from services.zynd_memory import memory_refresh_loop
+        memory_task = asyncio.create_task(memory_refresh_loop())
+        logger.info(
+            "ZYND memory refresh loop started (every %dh)",
+            config.MEMORY_REFRESH_INTERVAL_HOURS,
+        )
+    else:
+        logger.warning("ZYND memory refresh disabled — MEMORY_SERVICE_TOKEN not set")
     yield
     if task:
         task.cancel()
         try:
             await task
+        except asyncio.CancelledError:
+            pass
+    if memory_task:
+        memory_task.cancel()
+        try:
+            await memory_task
         except asyncio.CancelledError:
             pass
 

@@ -49,6 +49,11 @@ INDEXNOW_KEY: str = os.getenv("INDEXNOW_KEY", "")
 BING_API_KEY: str = os.getenv("BING_API_KEY", "")
 BING_SITE_URL: str = os.getenv("BING_SITE_URL", "https://zynd.ai")
 
+# ── ZYND memory layer (cron refresh of public findability facts) ──
+MEMORY_LAYER_URL: str = os.getenv("MEMORY_LAYER_URL", "https://api.zynd.ai")
+MEMORY_SERVICE_TOKEN: str = os.getenv("MEMORY_SERVICE_TOKEN", "")
+MEMORY_REFRESH_INTERVAL_HOURS: int = int(os.getenv("MEMORY_REFRESH_INTERVAL_HOURS", "6"))
+
 
 def _get_supabase():
     global _sb_service

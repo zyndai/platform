@@ -381,6 +381,9 @@ def test_all_seven_tools_are_registered_with_descriptions():
     The LLM-facing text must live in the register() call — ContextAware
     truncates docstrings at 'Args:', so a missing description means the model
     sees an empty tool.
+
+    (Now eight — get_suggested_people joined the original seven — but the
+    name stays for history; see git blame if it's confusing.)
     """
     from mcp.server import mcp_server
 
@@ -388,7 +391,7 @@ def test_all_seven_tools_are_registered_with_descriptions():
     expected = [
         "search_people_database", "search_companies_database", "list_people_at_company",
         "get_email_for_person", "get_phone_for_person", "identify_person_by_email",
-        "list_people_filter_values",
+        "list_people_filter_values", "get_suggested_people",
     ]
     for name in expected:
         assert name in caps, f"{name} is not registered"

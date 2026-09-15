@@ -35,6 +35,11 @@ from agent.zynd_identity import (
 
 logger = logging.getLogger(__name__)
 
+# Strong reference set for the fire-and-forget People-suggestions seed
+# kicked off by create_persona — without this, asyncio can GC the task
+# before it runs since nothing else holds a reference to it.
+_background_tasks: set[asyncio.Task] = set()
+
 def _register_entity_v2(
     keypair: Keypair,
     name: str,
@@ -351,6 +356,13 @@ async def create_persona(
 
     logger.info(f"[persona] Created persona for user {user_id}: {agent_id} (index={index})")
 
+    # 7. Best-effort: seed the People page's "Similar people" suggestions in
+    # the background. Never blocks or fails persona creation — a brand-new
+    # persona rarely has LinkedIn data yet anyway, so this mostly warms the
+    # role/company recipes; the LinkedIn scrape re-runs it with richer
+    # signals once it lands (see services/linkedin_scraper.py).
+    _spawn_suggestions_refresh(user_id)
+
     return {
         "status": "success",
         "agent_id": agent_id,
@@ -358,6 +370,25 @@ async def create_persona(
         "webhook_url": webhook_url,
         "derivation_index": index,
     }
+
+def _spawn_suggestions_refresh(user_id: str) -> None:
+    """
+    Fire-and-forget: (re)generate the People page's suggested-people
+    shortlist for this user. Used both right after persona creation and
+    after a LinkedIn scrape lands (services/linkedin_scraper.py) — never
+    blocks or fails its caller on error.
+    """
+    async def _run() -> None:
+        try:
+            from services import people_suggestions
+            await asyncio.to_thread(people_suggestions.run_for_user, user_id)
+        except Exception as e:
+            logger.warning(f"[persona] suggestion refresh failed for {user_id}: {e}")
+
+    task = asyncio.create_task(_run())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 
 async def delete_persona(user_id: str) -> dict:
     """

@@ -3838,6 +3838,131 @@ textarea.input { resize: vertical; min-height: 88px; }
   cursor: not-allowed;
 }
 
+/* ── Similar people (proactive QuickEnrich suggestions) ─────────────── */
+
+.people-suggest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.people-suggest-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.people-suggest-heading svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.people-suggest-heading h2 {
+  margin: 0;
+  color: var(--v2-ink);
+  font-family: var(--font-instrument-sans), 'Instrument Sans', system-ui, sans-serif;
+  font-size: 21px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.people-suggest-tag {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--v2-ink-muted);
+  background: var(--v2-surface);
+  border: 1px solid var(--v2-border-subtle);
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.people-suggest-error {
+  margin: 4px 0 10px;
+  font-size: 13px;
+  color: var(--v2-ink-secondary);
+}
+
+.people-suggest-placeholder {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--v2-ink-muted);
+  font-style: italic;
+}
+
+.people-suggest-subrow {
+  margin-top: 18px;
+}
+
+.people-suggest-subrow:first-of-type {
+  margin-top: 8px;
+}
+
+.people-suggest-subrow-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.people-suggest-subrow-head h3 {
+  margin: 0;
+  color: var(--v2-ink);
+  font-family: var(--font-instrument-sans), 'Instrument Sans', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.people-suggest-subrow-head p {
+  margin: 0;
+  color: var(--v2-ink-muted);
+  font-size: 12px;
+}
+
+/* Same avatar+body layout as .people-card-link, but a plain div — these
+   cards have no profile page to navigate to, only the LinkedIn CTA. */
+.people-suggest-card-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+}
+
+.people-suggest-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.people-suggest-meta span {
+  font-size: 11px;
+  color: var(--v2-ink-muted);
+}
+
+.people-suggest-meta .people-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--v2-ink-secondary);
+  background: var(--v2-surface-raised);
+  border: 1px solid var(--v2-border-subtle);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
 .people-quick-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(220px, 1fr));
@@ -4112,6 +4237,10 @@ textarea.input { resize: vertical; min-height: 88px; }
   .people-section-head h2,
   .people-section > h2 {
     font-size: 22px;
+  }
+
+  .people-suggest-heading h2 {
+    font-size: 19px;
   }
 
   .people-row {

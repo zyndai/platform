@@ -138,6 +138,7 @@ async def scrape_profile_only(user_id: str, profile_url: str) -> dict:
 
     logger.info(f"[linkedin] stored profile-only for {user_id} ({profile_url})")
     await _safe_memory_sync(user_id, profile)
+    await _safe_suggestions_refresh(user_id)
     return {"status": "ok", "profile_url": profile_url}
 
 
@@ -301,6 +302,7 @@ async def scrape_user(user_id: str, profile_url: str) -> dict:
         f"({profile_url})"
     )
     await _safe_memory_sync(user_id, profile)
+    await _safe_suggestions_refresh(user_id)
     return {"status": "ok", "profile_url": profile_url, "posts_count": len(posts)}
 
 
@@ -465,3 +467,19 @@ async def _safe_memory_sync(user_id: str, profile: dict) -> None:
         await sync_profile_to_memory(user_id, profile)
     except Exception as exc:
         logger.warning(f"[linkedin] memory sync failed for {user_id}: {exc}")
+
+
+async def _safe_suggestions_refresh(user_id: str) -> None:
+    """
+    Refresh the People page's "Similar people" suggestions now that a fresh
+    LinkedIn profile (title/company/location/skills) has landed — this scrape
+    is what actually gives services/people_suggestions.py signal to work
+    with, so re-running here (on top of the one-shot seed at persona
+    creation) is what makes the LinkedIn-derived recipes show up. Runs the
+    sync generator off-thread; fire-and-forget like _safe_memory_sync.
+    """
+    try:
+        from services import people_suggestions
+        await asyncio.to_thread(people_suggestions.run_for_user, user_id)
+    except Exception as exc:
+        logger.warning(f"[linkedin] suggestions refresh failed for {user_id}: {exc}")

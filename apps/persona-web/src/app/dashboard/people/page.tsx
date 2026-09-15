@@ -11,10 +11,13 @@ import {
   Globe2,
   Handshake,
   Lightbulb,
+  Mail,
   MessageCircle,
   Palette,
+  Phone,
   RefreshCw,
   Search as SearchIcon,
+  Sparkles,
   Users,
   X,
 } from "lucide-react";
@@ -24,8 +27,12 @@ import { useDashboard } from "@/contexts/DashboardContext";
 import {
   discoverPeople,
   getPeopleMe,
+  getPeopleSuggestions,
+  refreshPeopleSuggestions,
   sendPeopleIntroduction,
   type PeopleDiscoverResponse,
+  type PeopleSuggestionsResponse,
+  type SuggestedPerson,
 } from "@/lib/people-api";
 import type { PersonaHit } from "@/components/chat/types";
 
@@ -81,6 +88,10 @@ export default function PeoplePage() {
   const [searchMeta, setSearchMeta] = useState<PeopleDiscoverResponse | null>(null);
   const [introTarget, setIntroTarget] = useState<PersonaHit | null>(null);
   const [myAgentId, setMyAgentId] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<PeopleSuggestionsResponse | null>(null);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(true);
+  const [suggestionsRefreshing, setSuggestionsRefreshing] = useState(false);
+  const [suggestionsError, setSuggestionsError] = useState<string | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -102,6 +113,54 @@ export default function PeoplePage() {
       cancelled = true;
     };
   }, [user?.id]);
+
+  // Proactive "Similar people" shortlist — generated in the background
+  // (persona creation, LinkedIn scrape, weekly refresh); this just reads
+  // whatever was last generated. Independent of the network search above,
+  // and errors are swallowed so a QuickEnrich hiccup never degrades the
+  // rest of the People page.
+  const loadSuggestions = useCallback(async () => {
+    if (!user?.id) return;
+    setSuggestionsLoading(true);
+    try {
+      const data = await getPeopleSuggestions();
+      setSuggestions(data);
+    } catch {
+      setSuggestions(null);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    void loadSuggestions();
+  }, [loadSuggestions]);
+
+  const handleRefreshSuggestions = useCallback(async () => {
+    if (suggestionsRefreshing) return;
+    setSuggestionsRefreshing(true);
+    setSuggestionsError(null);
+    try {
+      const data = await refreshPeopleSuggestions();
+      setSuggestions(data);
+    } catch (e) {
+      // The refresh endpoint's error body is JSON ({detail}) surfaced via
+      // Error.message as raw text (see refreshPeopleSuggestions) — try to
+      // pull out the friendly cooldown message, else fall back generically.
+      let message = "Couldn't refresh suggestions right now.";
+      if (e instanceof Error) {
+        try {
+          const parsed = JSON.parse(e.message) as { detail?: string };
+          if (parsed?.detail) message = parsed.detail;
+        } catch {
+          /* not JSON — keep the generic message */
+        }
+      }
+      setSuggestionsError(message);
+    } finally {
+      setSuggestionsRefreshing(false);
+    }
+  }, [suggestionsRefreshing]);
 
   const runSearch = useCallback(async (q: string) => {
     if (!user?.id) return;
@@ -353,6 +412,16 @@ export default function PeoplePage() {
             />
           )}
 
+          {!query.trim() && (
+            <SimilarPeopleSection
+              suggestions={suggestions}
+              loading={suggestionsLoading}
+              refreshing={suggestionsRefreshing}
+              error={suggestionsError}
+              onRefresh={handleRefreshSuggestions}
+            />
+          )}
+
           <QuickStarts onPick={setQuery} />
 
           {sections.slice(1).map((section) => (
@@ -484,6 +553,143 @@ function PeopleCard({
             Say hi
           </button>
         ) : null}
+      </div>
+    </li>
+  );
+}
+
+function SimilarPeopleSection({
+  suggestions,
+  loading,
+  refreshing,
+  error,
+  onRefresh,
+}: {
+  suggestions: PeopleSuggestionsResponse | null;
+  loading: boolean;
+  refreshing: boolean;
+  error: string | null;
+  onRefresh: () => void;
+}) {
+  // QuickEnrich isn't configured for this deployment — nothing to show, ever.
+  if (suggestions?.status === "skipped") return null;
+
+  const sections = (suggestions?.sections || []).filter((s) => s.items.length > 0);
+  // Loading for the first time ever (nothing generated yet) — show a
+  // one-line skeleton instead of the section just popping in later.
+  const findingFirstBatch = loading && !suggestions;
+
+  if (!findingFirstBatch && sections.length === 0) return null;
+
+  const canRefresh = suggestions?.can_refresh ?? true;
+  const cooldownMinutes = Math.max(1, Math.ceil((suggestions?.cooldown_seconds || 0) / 60));
+
+  return (
+    <section className="people-section people-suggest-section">
+      <div className="people-suggest-head">
+        <div className="people-suggest-heading">
+          <Sparkles size={16} strokeWidth={1.8} />
+          <h2>Similar people</h2>
+          <span className="people-suggest-tag">From contact database</span>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing || !canRefresh}
+          className="people-toolbar-icon"
+          title={
+            refreshing
+              ? "Refreshing…"
+              : canRefresh
+                ? "Refresh suggestions"
+                : `Available again in ~${cooldownMinutes} min`
+          }
+          aria-label="Refresh similar people"
+        >
+          <RefreshCw className={refreshing ? "is-spinning" : ""} size={15} strokeWidth={1.8} />
+        </button>
+      </div>
+
+      {error && <div className="people-suggest-error">{error}</div>}
+
+      {findingFirstBatch ? (
+        <p className="people-suggest-placeholder">Finding people like you…</p>
+      ) : (
+        sections.map((section) => (
+          <div key={section.key} className="people-suggest-subrow">
+            <div className="people-suggest-subrow-head">
+              <h3>{section.title}</h3>
+              {section.reason && <p>{section.reason}</p>}
+            </div>
+            <ul className="people-row people-row-compact">
+              {section.items.map((person, i) => (
+                <SuggestedPersonCard
+                  key={`${section.key}-${person.linkedin_url || person.name || i}`}
+                  person={person}
+                />
+              ))}
+            </ul>
+          </div>
+        ))
+      )}
+    </section>
+  );
+}
+
+function SuggestedPersonCard({ person }: { person: SuggestedPerson }) {
+  const name =
+    person.name ||
+    [person.first_name, person.last_name].filter(Boolean).join(" ") ||
+    "Someone in the database";
+  const roleLine = [person.title, person.company_name].filter(Boolean).join(" · ");
+  const locationLine = [person.city || person.locality, person.country]
+    .filter(Boolean)
+    .join(", ");
+
+  return (
+    <li className="people-card people-suggest-card">
+      <div className="people-suggest-card-main">
+        <Avatar size="xl" name={name} variant="default" />
+        <div className="people-card-body">
+          <div className="people-card-name-row">
+            <span className="people-card-name">{name}</span>
+          </div>
+          {roleLine ? (
+            <p className="people-card-desc">{roleLine}</p>
+          ) : (
+            <p className="people-card-desc people-card-desc-empty">No title on file.</p>
+          )}
+          {(locationLine || person.has_email || person.has_phone) && (
+            <div className="people-suggest-meta">
+              {locationLine && <span>{locationLine}</span>}
+              {person.has_email && (
+                <span className="people-badge" title="Email on file">
+                  <Mail size={11} strokeWidth={2} />
+                  Email
+                </span>
+              )}
+              {person.has_phone && (
+                <span className="people-badge" title="Phone on file">
+                  <Phone size={11} strokeWidth={2} />
+                  Phone
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="people-card-cta-wrap">
+        {person.linkedin_url && (
+          <a
+            href={person.linkedin_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="people-card-cta"
+          >
+            <ArrowUpRight size={14} strokeWidth={1.8} />
+            LinkedIn
+          </a>
+        )}
       </div>
     </li>
   );

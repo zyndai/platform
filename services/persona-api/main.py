@@ -86,9 +86,18 @@ async def lifespan(app: FastAPI):
     from agent.twitter_sync_loop import get_twitter_sync_loop
     await get_twitter_sync_loop().start()
 
+    # People suggestions — refreshes the People page's proactive "Similar
+    # people" shortlist weekly for every active persona (also seeded
+    # on persona creation and after a LinkedIn scrape — see
+    # agent/persona_manager.py and services/linkedin_scraper.py).
+    from agent.people_suggestions_loop import get_people_suggestions_loop
+    await get_people_suggestions_loop().start()
+
     yield
 
     # ── Shutdown ──
+    from agent.people_suggestions_loop import get_people_suggestions_loop as _psl
+    await _psl().stop()
     from agent.twitter_sync_loop import get_twitter_sync_loop as _tws
     await _tws().stop()
     from agent.github_sync_loop import get_github_sync_loop as _ghs

@@ -799,3 +799,32 @@ def list_people_filter_values(user_id: str, dimension: str, query: str = "", lim
         "total_available": len(values),
         "values": capped,
     }
+
+
+# ── Proactive suggestions ────────────────────────────────────────────
+
+def get_suggested_people(user_id: str) -> dict:
+    """
+    People the system already picked for the principal based on their own
+    profile — free, read-only, no new search performed. Backs the People
+    page's "Similar people" section (services/people_suggestions.py).
+
+    Args:
+        user_id: Injected automatically by the orchestrator — do not pass it.
+
+    Returns {status, generated_at, sections}. Each section is
+    {key, title, reason, items} where items are shaped like
+    search_people_database results (name, title, company, linkedin_url,
+    has_email/has_phone). `status` is "empty" when nothing has been
+    generated yet — not an error — in which case call
+    search_people_database directly instead of waiting.
+    """
+    from services import people_suggestions
+
+    result = people_suggestions.get_suggestions(user_id)
+    if result.get("status") == "empty":
+        result["message"] = (
+            "No suggestions generated yet for this principal. Use "
+            "search_people_database directly instead of waiting on this."
+        )
+    return result

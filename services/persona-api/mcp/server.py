@@ -63,6 +63,7 @@ from mcp.tools.quickenrich import (
     get_phone_for_person,
     identify_person_by_email,
     list_people_filter_values,
+    get_suggested_people,
 )
 
 # ── Import Network Tools ──
@@ -188,6 +189,7 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(get_phone_for_person, name="get_phone_for_person", description="Get the phone number for ONE specific person, identified by LinkedIn profile URL (best) or company website + first name + last name. Costs 1 credit when a number is found and nothing when it isn't; cached results are free. Same rule as get_email_for_person — only for a person the principal actually asked to reach, never speculatively.")
     mcp.register(identify_person_by_email, name="identify_person_by_email", description="Reverse lookup: given an email address, find out who it belongs to — their name, job title, company, and LinkedIn profile. Use when the principal asks 'who is this?' about an address, or wants context on an unfamiliar sender before replying. Costs 1 credit when a match is found, nothing when it isn't.")
     mcp.register(list_people_filter_values, name="list_people_filter_values", description="List the exact values allowed for a contact-database filter — dimension is one of 'industry', 'country_code', 'employee_range', 'revenue_range', or 'services'. FREE. Use it when a search reports unresolved_filters, or when you want the precise label before searching (e.g. to learn that the industry is 'Computer Software', not 'Software', or that the size band is '51-200', not '50-200'). Pass `query` to narrow — required in practice for 'services', which has a very long list.")
+    mcp.register(get_suggested_people, name="get_suggested_people", description="Read the shortlist of people the system already picked for the principal from the contact database, based on their own role/company/location/interests — e.g. for 'who should I meet this week?' or 'anyone new I should talk to?'. FREE, read-only, no new search — it just returns what was generated in the background (grouped into sections like 'Same role', 'At your company', 'Shared interests', each with a one-line reason). If it comes back empty, fall back to search_people_database with filters built from what the principal has told you, rather than waiting.")
 
     # ── Google Calendar tools ────────────────────────────────────────
     mcp.register(create_event, name="create_calendar_event", description="Create an event on Google Calendar. Pass `attendees` (a list of email addresses) to invite guests — Google emails them the invite automatically. Checks for conflicts with existing events first: if the time overlaps something already on the calendar, it returns {conflict: true, conflicting_events, suggested_times} and does NOT create the event — present the conflict and suggested_times to the principal instead of retrying blindly. Only pass force=true to double-book anyway, and only when the principal explicitly asked for that after seeing the conflict.")

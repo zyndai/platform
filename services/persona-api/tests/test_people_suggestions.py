@@ -59,6 +59,13 @@ def _person(first, last, linkedin_url, *, company_url="https://acme.com",
 # ── collect_signals ──────────────────────────────────────────────────
 
 def test_collect_signals_merges_persona_and_linkedin_and_derives_city():
+    """
+    Uses the actual harvestapi profile-actor shape confirmed against a live
+    scrape row: experience[0]'s job title is under "position" (not
+    "title"), and "location" is a nested {parsed: {city, text, ...},
+    linkedinText} object rather than a plain string. Both were silently
+    broken before — this fixture guards against regressing either.
+    """
     sb, _ = _mock_supabase({
         "persona_agents": [{"profile": {
             "title": "", "organization": "", "location": "",
@@ -67,8 +74,11 @@ def test_collect_signals_merges_persona_and_linkedin_and_derives_city():
         "linkedin_profiles": [{
             "profile_url": "https://linkedin.com/in/jane",
             "raw_profile": {
-                "experience": [{"title": "CTO", "companyName": "Acme Inc"}],
-                "location": "Austin, TX, United States",
+                "experience": [{"position": "CTO", "companyName": "Acme Inc"}],
+                "location": {
+                    "parsed": {"city": "Austin", "text": "Austin, TX, United States"},
+                    "linkedinText": "Greater Austin Area",
+                },
                 "skills": [{"name": "Python"}, {"name": "LLMs"}],
             },
         }],
@@ -78,10 +88,23 @@ def test_collect_signals_merges_persona_and_linkedin_and_derives_city():
 
     assert signals["title"] == "CTO"
     assert signals["organization"] == "Acme Inc"
+    assert signals["location"] == "Austin, TX, United States"
     assert signals["city"] == "Austin"
     assert signals["interests"] == ["AI agents", "fintech"]
     assert signals["skills"] == ["Python", "LLMs"]
     assert signals["own_linkedin_url"] == "https://linkedin.com/in/jane"
+
+
+def test_location_text_handles_nested_object_plain_string_and_missing():
+    nested = {
+        "parsed": {"city": "Washington", "text": "Washington, DC, United States"},
+        "linkedinText": "Washington DC-Baltimore Area",
+    }
+    assert people_suggestions._location_text(nested) == "Washington, DC, United States"
+    assert people_suggestions._location_text("Austin, TX") == "Austin, TX"
+    assert people_suggestions._location_text({"linkedinText": "Bay Area"}) == "Bay Area"
+    assert people_suggestions._location_text(None) == ""
+    assert people_suggestions._location_text({}) == ""
 
 
 def test_collect_signals_tolerates_missing_rows():

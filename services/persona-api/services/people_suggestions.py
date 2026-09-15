@@ -83,6 +83,26 @@ def _sb():
 
 # ── Signal collection ───────────────────────────────────────────────
 
+def _location_text(raw) -> str:
+    """
+    Pull a plain "City, Region, Country" string out of the profile actor's
+    `location` field, which — confirmed against a live scrape row — is a
+    nested object ({parsed: {city, text, ...}, linkedinText, countryCode}),
+    not a plain string. Stringifying it directly (str(raw)) produces
+    garbage like "{'parsed': {'city': 'Washington', ...". Tolerates a
+    plain string too, in case a differently-shaped payload ever lands here.
+    """
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, dict):
+        parsed = raw.get("parsed")
+        if isinstance(parsed, dict) and parsed.get("text"):
+            return str(parsed["text"]).strip()
+        if raw.get("linkedinText"):
+            return str(raw["linkedinText"]).strip()
+    return ""
+
+
 def collect_signals(user_id: str) -> dict:
     """
     Gather what we know about the user: persona profile + LinkedIn profile.
@@ -142,13 +162,17 @@ def collect_signals(user_id: str) -> dict:
             experience = profile.get("experience") or []
             first = experience[0] if experience and isinstance(experience[0], dict) else {}
             if not signals["title"]:
-                signals["title"] = str(first.get("title") or "").strip()
+                # harvestapi's profile actor names this field "position", not
+                # "title" — confirmed against a live scrape row. "title" is
+                # kept as a fallback in case a differently-shaped payload
+                # (a different actor version, say) ever uses it instead.
+                signals["title"] = str(first.get("position") or first.get("title") or "").strip()
             if not signals["organization"]:
                 signals["organization"] = str(
                     first.get("companyName") or first.get("company") or ""
                 ).strip()
         if not signals["location"]:
-            signals["location"] = str(profile.get("location") or "").strip()
+            signals["location"] = _location_text(profile.get("location"))
         for skill in (profile.get("skills") or [])[:10]:
             name = skill.get("name") if isinstance(skill, dict) else skill
             name = str(name or "").strip()

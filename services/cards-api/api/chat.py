@@ -60,8 +60,11 @@ def _build_system_prompt(card: dict) -> str:
     return "\n".join(l for l in lines if l is not None)
 
 
+CLOUDFLARE_MODEL = "@cf/deepseek-ai/deepseek-v4-flash-0731"
+
+
 async def _stream_cf(system_prompt: str, messages: list[dict]):
-    url = f"https://api.cloudflare.com/client/v4/accounts/{config.CLOUDFLARE_ACCOUNT_ID}/ai/run/{config.CLOUDFLARE_AI_MODEL}"
+    url = f"https://api.cloudflare.com/client/v4/accounts/{config.CLOUDFLARE_ACCOUNT_ID}/ai/run/{CLOUDFLARE_MODEL}"
     payload = {
         "stream": True,
         "max_tokens": 300,
@@ -75,8 +78,27 @@ async def _stream_cf(system_prompt: str, messages: list[dict]):
             json=payload,
         ) as resp:
             resp.raise_for_status()
-            async for chunk in resp.aiter_bytes():
-                yield chunk
+            # Workers AI streams OpenAI-style chunks; the dashboard widget
+            # expects {"response": ...} events, so translate between the two.
+            buf = ""
+            async for chunk in resp.aiter_text():
+                buf += chunk
+                while "\n" in buf:
+                    line, buf = buf.split("\n", 1)
+                    line = line.strip()
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:].strip()
+                    if data_str == "[DONE]":
+                        continue
+                    try:
+                        data = json.loads(data_str)
+                        content = (data.get("choices") or [{}])[0].get("delta", {}).get("content")
+                        if content:
+                            yield f"data: {json.dumps({'response': content})}\n\n"
+                    except Exception:
+                        continue
+    yield "data: [DONE]\n\n"
 
 
 @router.post("/{handle}")

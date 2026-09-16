@@ -58,6 +58,47 @@ async def patch_card(
     return card.model_dump(mode="json")
 
 
+@router.post("/by-handle/{handle}/refresh-memory")
+async def refresh_memory(
+    handle: str,
+    authorization: str | None = Header(default=None),
+):
+    """Refresh the card's ZYND memory snapshot from the memory layer.
+
+    Called by the dashboard right after a user claims a card so their key
+    points (public findability facts) show up immediately instead of waiting
+    for the 6-hourly cron. Owner-only.
+    """
+    email = verify_supabase_jwt(authorization)
+    if not email:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    card = await asyncio.to_thread(cards_service.get_card_by_handle, handle)
+    if not card:
+        raise HTTPException(status_code=404, detail="card not found")
+
+    sb = config.get_supabase()
+    stored = (
+        sb.table("agent_profile_cards").select("owner_email").eq("handle", handle).execute()
+    )
+    if not stored.data:
+        raise HTTPException(status_code=404, detail="card not found")
+    stored_owner = stored.data[0].get("owner_email")
+    if stored_owner and stored_owner != email:
+        raise HTTPException(status_code=403, detail="not the card owner")
+
+    from services.zynd_memory import fetch_findability
+    payload = fetch_findability(email)
+    zynd_memory: list[dict] | None = None
+    if payload and payload.get("connected"):
+        zynd_memory = payload.get("facts") or []
+    ok = await asyncio.to_thread(cards_service.update_card_memory, handle, zynd_memory)
+    if not ok:
+        raise HTTPException(status_code=404, detail="card not found")
+    return {"zynd_memory": zynd_memory}
+
+
+
 @router.get("/{card_id}")
 async def get_card(card_id: str):
     card = await asyncio.to_thread(cards_service.get_card, card_id)

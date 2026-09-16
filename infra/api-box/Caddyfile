@@ -10,6 +10,24 @@ api.zynd.ai {
 	handle /.well-known/oauth-protected-resource* {
 		reverse_proxy mcp:8090
 	}
+	# Memory-layer service-to-service endpoint (called by zynd-cards).
+	# MUST stay above /v1* — that prefix otherwise routes to cards.
+	handle /v1/service* {
+		reverse_proxy api:8000
+	}
+	# Zynd agent profile cards API (separate FastAPI service).
+	handle /cards* {
+		reverse_proxy cards:8000
+	}
+	handle /ask* {
+		reverse_proxy cards:8000
+	}
+	handle /onboard* {
+		reverse_proxy cards:8000
+	}
+	handle /v1* {
+		reverse_proxy cards:8000
+	}
 	handle {
 		reverse_proxy api:8000
 	}

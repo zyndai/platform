@@ -180,6 +180,34 @@ async def token_exchange(authorization: str = Header(default="")) -> dict:
     }
 
 
+@app.get("/v1/service/findability/{identifier}")
+async def service_findability(identifier: str, authorization: str = Header(default="")) -> dict:
+    """Service-to-service lookup of a user's PUBLIC findability card.
+
+    Called by the zynd-cards backend (profile-card "Memory & MCP Sync" section).
+    Auth: Bearer MEMORY_SERVICE_TOKEN (shared secret, same value both services).
+    `identifier` may be a memory-layer user id, a Supabase user id, or the
+    user's email. Returns {"connected": bool, "facts": [...]} — only ever the
+    user-approved public subset; private memory never leaves the layer."""
+    token = authorization.removeprefix("Bearer ").strip()
+    if not settings.memory_service_token or token != settings.memory_service_token:
+        raise HTTPException(status_code=401, detail="invalid service token")
+    identifier = identifier.strip()
+    if not identifier:
+        raise HTTPException(status_code=422, detail="empty identifier")
+    row = await get_pool().fetchrow(
+        """SELECT id FROM users
+            WHERE id::text = $1 OR supabase_user_id::text = $1 OR lower(email) = lower($1)
+            LIMIT 1""",
+        identifier,
+    )
+    if not row:
+        return {"connected": False, "facts": []}
+    from app.services.findability import get_card
+    facts = await get_card(get_pool(), str(row["id"]))
+    return {"connected": True, "facts": facts}
+
+
 @app.post("/me/social-links")
 async def set_my_social_links(body: SocialLinks, authorization: str = Header(default="")) -> dict:
     """Store the caller's public social links in memory-layer, synced from the persona

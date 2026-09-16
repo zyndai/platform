@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # M2 — JWT + OAuth (dev-grade; see docs/CHATGPT_PLUGIN.md security notes).
     jwt_secret: str = "dev-jwt-secret-change-me-in-production-0123456789"
     jwt_issuer: str = "zynd"
+    # Shared secret for service-to-service endpoints (e.g. /v1/service/*) called
+    # by zynd-cards. Empty = endpoint disabled.
+    memory_service_token: str = ""
     access_token_ttl_seconds: int = 3600
     refresh_token_ttl_seconds: int = 30 * 24 * 3600
     mcp_token_ttl_seconds: int = 90 * 24 * 3600   # long-lived token pasted into MCP clients

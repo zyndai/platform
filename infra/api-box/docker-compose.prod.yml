@@ -51,6 +51,17 @@ services:
       postgres: { condition: service_healthy }
     restart: unless-stopped
 
+  # Zynd agent profile cards API (separate codebase, merged into this compose
+  # so Caddy can reach it over the shared network). Built from ~/zynd-cards.
+  cards:
+    build:
+      context: /home/ubuntu/zynd-cards
+    env_file: /home/ubuntu/zynd-cards/.env.prod
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    expose:
+      - "8000"
+    restart: unless-stopped
+
   caddy:
     image: caddy:2
     ports:

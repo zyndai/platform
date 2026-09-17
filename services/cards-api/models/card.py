@@ -75,6 +75,13 @@ class Project(BaseModel):
         except (TypeError, ValueError):
             return None
 
+    @field_validator("tech", mode="before")
+    @classmethod
+    def _coerce_tech(cls, v):
+        if isinstance(v, str):
+            return []
+        return v
+
 
 class WritingSample(BaseModel):
     platform: str = "x"
@@ -82,6 +89,13 @@ class WritingSample(BaseModel):
     url: str = ""
     posted_at: str = ""
     metrics: list[str] = Field(default_factory=list)
+
+    @field_validator("metrics", mode="before")
+    @classmethod
+    def _coerce_metrics(cls, v):
+        if isinstance(v, str):
+            return []
+        return v
 
 
 class Source(BaseModel):
@@ -169,7 +183,18 @@ class CardSynthesis(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _coerce_nulls(cls, data):
-        return _clean(data)
+        cleaned = _clean(data)
+        # _clean converts None→"" globally, but list fields reject "".
+        # Convert any string-ified list field back to empty list.
+        _LIST_KEYS = frozenset({
+            "skills", "projects", "writing_samples", "searchable_facts",
+            "sources", "working_on", "can_help_with", "connect_with",
+            "love_talking_about",
+        })
+        for key in _LIST_KEYS:
+            if isinstance(cleaned.get(key), str):
+                cleaned[key] = []
+        return cleaned
 
     @field_validator("experience_years", mode="before")
     @classmethod

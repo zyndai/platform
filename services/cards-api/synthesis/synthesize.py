@@ -1,7 +1,5 @@
 import json
 
-from pydantic import ValidationError
-
 import config
 from models.card import CardSynthesis
 
@@ -159,12 +157,14 @@ def synthesize_card(
             {"role": "user", "content": _build_user_prompt(github, resume_text, website_text, x_text, linkedin_text)},
         ],
     )
+    if not resp.choices:
+        raise RuntimeError("LLM returned empty response — no choices")
     raw = resp.choices[0].message.content or "{}"
-    data = json.loads(raw)
     try:
-        synth = CardSynthesis.model_validate(data)
-    except ValidationError:
-        synth = CardSynthesis(**data)
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"LLM returned invalid JSON: {exc}") from exc
+    synth = CardSynthesis.model_validate(data)
     # Authoritative github_stats from raw API data — don't trust LLM to copy correctly
     if github and github.get("stats"):
         synth.github_stats = github["stats"]

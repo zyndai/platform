@@ -510,3 +510,84 @@ def test_fetch_linkedin_profile_jina_keeps_posts_block_within_cap(monkeypatch):
     assert stats is not None and stats["posts"] == 1
     assert len(stats["posts_raw"]) == 1
     assert stats["posts_raw"][0]["platform"] == "linkedin"
+
+
+def test_extract_experience_data_slayer_current_role():
+    record = {
+        "full_name": "Abhinav Gupta",
+        "experience": [
+            {
+                "job_title": "Product Manager",
+                "company_name": "Zynd",
+                "job_started_on": "3-2026",
+                "job_still_working": True,
+                "logoUrl": "https://media.licdn.com/zynd.png",
+                "location": "United States · Remote",
+                "job_description": "Building agent infra.",
+            },
+            {
+                "job_title": "Blockchain Engineer",
+                "company_name": "Tokamak Network",
+                "job_started_on": "12-2025",
+                "job_ended_on": "Mar 2026",
+                "job_still_working": False,
+            },
+        ],
+    }
+    jobs = linkedin._sort_jobs(linkedin._extract_experience_any(record))
+    assert jobs[0]["title"] == "Product Manager"
+    assert jobs[0]["company"] == "Zynd"
+    assert jobs[0]["end_date"] == "Present"
+    assert jobs[0]["start_date"] == "Mar 2026"
+    assert jobs[0]["duration"]
+    assert jobs[0]["company_logo"] == "https://media.licdn.com/zynd.png"
+    assert jobs[1]["title"] == "Blockchain Engineer"
+
+
+def test_extract_experience_top_level_current_and_website_logo():
+    record = {
+        "job_title": "Protocol and Research",
+        "current_company_name": "Zynd",
+        "company_website": "zynd.ai",
+        "location": "United States · Remote",
+        "experience": [],
+    }
+    jobs = linkedin._extract_experience_any(record)
+    assert jobs[0]["title"] == "Protocol and Research"
+    assert jobs[0]["company"] == "Zynd"
+    assert jobs[0]["end_date"] == "Present"
+    assert "logo.clearbit.com/zynd.ai" in jobs[0]["company_logo"]
+
+
+def test_extract_experience_dev_fusion_yyyy_mm():
+    record = {
+        "experiences": [
+            {
+                "title": "Intern",
+                "companyName": "NEAR Protocol",
+                "jobStartedOn": "2023-07",
+                "jobEndedOn": "2023-09",
+                "jobStillWorking": False,
+                "jobLocation": "Switzerland",
+            }
+        ]
+    }
+    jobs = linkedin._extract_experience_any(record)
+    assert jobs[0]["title"] == "Intern"
+    assert jobs[0]["start_date"] == "Jul 2023"
+    assert jobs[0]["end_date"] == "Sep 2023"
+    assert jobs[0]["location"] == "Switzerland"
+
+
+def test_extract_experience_logo_object_and_date_range():
+    record = {
+        "experience": [{
+            "title": "Engineer",
+            "company": "Acme",
+            "dateRange": "Jan 2024 – Present",
+            "companyLogo": {"url": "https://logo.example/acme.png"},
+        }]
+    }
+    jobs = linkedin._extract_experience_any(record)
+    assert jobs[0]["end_date"] == "Present"
+    assert jobs[0]["company_logo"] == "https://logo.example/acme.png"

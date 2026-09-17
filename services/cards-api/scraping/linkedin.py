@@ -1,9 +1,8 @@
 """LinkedIn profile + recent posts via Apify actors (no cookies).
 
-Profile: dev_fusion/linkedin-profile-scraper (primary) — flat response; experiences[] with
-         title, companyName, jobDescription, jobStartedOn/jobEndedOn as "YYYY-MM" strings
-         atomus~linkedin-profile-scraper (fallback)    — nested under 'profile' key,
-         position_groups[] structure
+Profile: data-slayer~linkedin-profile-scraper (primary) — experience[] with
+         job_title, company_name, job_started_on ("M-YYYY"), job_still_working
+         dev_fusion / atomus remain fallbacks
 Posts:   atomus~linkedin-posts-scraper-pro           — own posts only, newest first, capped at 7
          Jina Reader Activity section                — free fallback when the posts actor
                                                        is unavailable (billing caps, errors)
@@ -21,8 +20,10 @@ import httpx
 import config
 
 _APIFY_BASE = "https://api.apify.com/v2"
-# dev_fusion actor returns structured experiences[] with full job history including descriptions.
-_ACTOR_PROFILE_PRIMARY  = "dev_fusion/linkedin-profile-scraper"
+# data-slayer: structured experience[] + logos. 99%+ success, same vendor as X scrape.
+# dev_fusion / atomus remain fallbacks if data-slayer returns empty.
+_ACTOR_PROFILE_PRIMARY  = "data-slayer~linkedin-profile-scraper"
+_ACTOR_PROFILE_DEV_FUSION = "dev_fusion/linkedin-profile-scraper"
 _ACTOR_PROFILE_FALLBACK = "atomus~linkedin-profile-scraper"
 _ACTOR_POSTS = "atomus~linkedin-posts-scraper-pro"
 _MAX_POSTS = 7
@@ -153,45 +154,227 @@ def _duration_from_dates(start: dict | None, end: dict | None) -> str:
     return _months_str(months) if months > 0 else ""
 
 
-def _extract_experience_bebity(record: dict) -> list[dict]:
-    """Extract structured work experience from bebity flat actor response."""
-    entries = []
-    for exp in (record.get("experience") or record.get("positions") or []):
-        if not isinstance(exp, dict):
-            continue
-        title = exp.get("title") or exp.get("position") or ""
-        company = exp.get("companyName") or exp.get("company") or ""
-        if isinstance(company, dict):
-            company = company.get("name") or ""
-        company_logo = exp.get("companyLogoUrl") or exp.get("companyLogo") or ""
-        employment_type = exp.get("employmentType") or ""
-        location = exp.get("location") or ""
-        description = exp.get("description") or ""
+def _http_url(v) -> str:
+    if isinstance(v, str) and v.startswith("http"):
+        return v
+    if isinstance(v, dict):
+        for key in ("url", "src", "href"):
+            u = v.get(key)
+            if isinstance(u, str) and u.startswith("http"):
+                return u
+    return ""
 
-        start = exp.get("startDate") or {}
-        end = exp.get("endDate") or {}
-        start_str = _fmt_date(start)
-        end_str = _fmt_date(end) if (end and end.get("year")) else "Present"
 
-        duration_months = exp.get("durationMonths")
-        if duration_months and isinstance(duration_months, int) and duration_months > 0:
-            duration = _months_str(duration_months)
+def _logo_from_website(site: str) -> str:
+    site = (site or "").strip()
+    if not site:
+        return ""
+    if not site.startswith("http"):
+        site = f"https://{site}"
+    host = (urlparse(site).netloc or urlparse(site).path).replace("www.", "").split("/")[0]
+    return f"https://logo.clearbit.com/{host}" if host and "." in host else ""
+
+
+def _company_logo(exp: dict) -> str:
+    for key in ("companyLogoUrl", "company_logo_url", "companyLogo", "company_logo", "logoUrl", "logo"):
+        u = _http_url(exp.get(key))
+        if u:
+            return u
+    company = exp.get("company")
+    if isinstance(company, dict):
+        u = _http_url(company.get("logo") or company.get("logoUrl") or company.get("url"))
+        if u:
+            return u
+    site = exp.get("company_website") or exp.get("companyWebsite") or ""
+    if isinstance(site, str):
+        return _logo_from_website(site)
+    return ""
+
+
+def _company_name(exp: dict) -> str:
+    c = exp.get("companyName") or exp.get("company_name") or exp.get("company") or ""
+    if isinstance(c, dict):
+        c = c.get("name") or ""
+    return str(c or "").strip()
+
+
+def _job_title(exp: dict) -> str:
+    return str(exp.get("title") or exp.get("job_title") or exp.get("position") or "").strip()
+
+
+def _parse_date_range(raw: str) -> tuple[str, str]:
+    text = re.sub(r"\s+", " ", raw or "").strip()
+    if not text:
+        return "", ""
+    parts = re.split(r"\s*[–—-]\s*", text, maxsplit=1)
+    start = parts[0].strip()
+    end = parts[1].strip() if len(parts) > 1 else "Present"
+    return start, end or "Present"
+
+
+def _entry_dates(exp: dict) -> tuple[str, str, str]:
+    """Return (start, end, duration) from the many Apify date shapes."""
+    still = bool(exp.get("jobStillWorking") or exp.get("job_still_working") or exp.get("current"))
+    start_raw = exp.get("jobStartedOn") or exp.get("job_started_on") or ""
+    end_raw = exp.get("jobEndedOn") or exp.get("job_ended_on") or ""
+    if start_raw and (isinstance(start_raw, str) and re.match(r"^\d{4}-\d{2}", start_raw)):
+        start_str = _fmt_yyyymm(start_raw)
+        end_str = "Present" if still or not end_raw else _fmt_yyyymm(str(end_raw))
+        duration = _duration_from_yyyymm(str(start_raw), None if still or not end_raw else str(end_raw))
+        return start_str, end_str, duration
+    if isinstance(start_raw, str) and start_raw and not isinstance(exp.get("startDate"), dict):
+        # data-slayer "2-2014" or "Mar 2026"
+        yyyymm = ""
+        if re.match(r"^\d{1,2}-\d{4}$", start_raw):
+            month, year = start_raw.split("-")
+            yyyymm = f"{year}-{int(month):02d}"
+            start_str = _fmt_yyyymm(yyyymm)
         else:
-            duration = _duration_from_dates(start, end)
+            start_str = start_raw
+        end_yyyymm = None
+        if still or not end_raw:
+            end_str = "Present"
+        elif re.match(r"^\d{1,2}-\d{4}$", str(end_raw)):
+            month, year = str(end_raw).split("-")
+            end_yyyymm = f"{year}-{int(month):02d}"
+            end_str = _fmt_yyyymm(end_yyyymm)
+        else:
+            end_str = str(end_raw)
+        duration = _duration_from_yyyymm(yyyymm, end_yyyymm) if yyyymm else ""
+        return start_str, end_str, duration
 
-        if title or company:
-            entries.append({
-                "title": title,
-                "company": company,
-                "company_logo": company_logo,
-                "employment_type": employment_type,
-                "start_date": start_str,
-                "end_date": end_str,
-                "duration": duration,
-                "location": location,
-                "description": description,
+    start = exp.get("startDate") or {}
+    end = exp.get("endDate") or {}
+    if isinstance(start, str) or isinstance(end, str):
+        start_str = start if isinstance(start, str) else _fmt_date(start)
+        if still:
+            end_str = "Present"
+        elif isinstance(end, str):
+            end_str = end or "Present"
+        else:
+            end_str = _fmt_date(end) if (end and end.get("year")) else "Present"
+        return start_str, end_str, _duration_from_dates(start if isinstance(start, dict) else None, end if isinstance(end, dict) else None)
+
+    date = exp.get("date") or exp.get("startEndDate") or {}
+    if isinstance(date, dict) and (date.get("start") or date.get("end")):
+        s, e = date.get("start") or {}, date.get("end") or {}
+        start_str = _fmt_date(s) if isinstance(s, dict) else str(s or "")
+        end_str = "Present" if still or not (isinstance(e, dict) and e.get("year")) else _fmt_date(e)
+        duration = _duration_from_dates(s if isinstance(s, dict) else None, e if isinstance(e, dict) else None)
+        return start_str, end_str, duration
+
+    range_text = exp.get("dateRange") or exp.get("date_range") or exp.get("duration") or ""
+    if isinstance(range_text, str) and range_text:
+        start_str, end_str = _parse_date_range(range_text)
+        if still:
+            end_str = "Present"
+        return start_str, end_str, ""
+
+    if isinstance(start, dict) or isinstance(end, dict):
+        start_str = _fmt_date(start) if isinstance(start, dict) else ""
+        end_str = "Present" if still or not (isinstance(end, dict) and end.get("year")) else _fmt_date(end)
+        duration = _duration_from_dates(start if isinstance(start, dict) else None, end if isinstance(end, dict) else None)
+        return start_str, end_str, duration
+    return "", "Present" if still else "", ""
+
+
+def _job_from_exp(exp: dict, company_fallback: str = "", logo_fallback: str = "") -> dict | None:
+    if not isinstance(exp, dict):
+        return None
+    title = _job_title(exp)
+    company = _company_name(exp) or company_fallback
+    if not title and not company:
+        return None
+    start_str, end_str, duration = _entry_dates(exp)
+    duration_months = exp.get("durationMonths")
+    if duration_months and isinstance(duration_months, int) and duration_months > 0:
+        duration = _months_str(duration_months)
+    location = exp.get("location") or exp.get("jobLocation") or exp.get("job_location") or exp.get("geoLocationName") or ""
+    if isinstance(location, dict):
+        location = location.get("default") or location.get("name") or ""
+    return {
+        "title": title,
+        "company": company,
+        "company_logo": _company_logo(exp) or logo_fallback,
+        "employment_type": exp.get("employmentType") or exp.get("employment_type") or "",
+        "start_date": start_str,
+        "end_date": end_str or "Present",
+        "duration": duration,
+        "location": str(location or ""),
+        "description": str(exp.get("jobDescription") or exp.get("job_description") or exp.get("description") or ""),
+        "company_industry": str(exp.get("company_industry") or exp.get("companyIndustry") or ""),
+    }
+
+
+def _extract_experience_any(record: dict) -> list[dict]:
+    """Normalize work history from data-slayer, dev_fusion, atomus, bebity."""
+    if not isinstance(record, dict):
+        return []
+    nested = record.get("profile")
+    if isinstance(nested, dict) and (nested.get("position_groups") or nested.get("experience")):
+        inner = _extract_experience_any(nested)
+        if inner:
+            return inner
+
+    groups = record.get("position_groups")
+    if isinstance(groups, list) and groups:
+        atomus = _extract_experience_atomus(record)
+        if atomus:
+            return atomus
+
+    rows = record.get("experiences") or record.get("experience") or record.get("positions") or []
+    out: list[dict] = []
+    seen: set[str] = set()
+    for exp in rows:
+        job = _job_from_exp(exp)
+        if not job:
+            continue
+        key = f"{job['title']}|{job['company']}|{job['start_date']}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(job)
+    # data-slayer current role lives on the profile root when experience[] is thin
+    top_title = str(record.get("job_title") or "").strip()
+    top_company = str(record.get("current_company_name") or "").strip()
+    if top_title or top_company:
+        key = f"{top_title}|{top_company}|"
+        if not any(j["title"] == top_title and j["company"] == top_company for j in out):
+            loc = record.get("location") or ""
+            out.insert(0, {
+                "title": top_title,
+                "company": top_company,
+                "company_logo": _logo_from_website(str(record.get("company_website") or "")),
+                "employment_type": "",
+                "start_date": "",
+                "end_date": "Present",
+                "duration": "",
+                "location": loc if isinstance(loc, str) else "",
+                "description": "",
+                "company_industry": str(record.get("company_industry") or ""),
             })
-    return entries
+    return out
+
+
+def _is_current_job(job: dict) -> bool:
+    end = (job.get("end_date") or "").strip().lower()
+    return end in ("", "present", "now", "current")
+
+
+def _sort_jobs(jobs: list[dict]) -> list[dict]:
+    current = [j for j in jobs if _is_current_job(j)]
+    past = [j for j in jobs if not _is_current_job(j)]
+    return current + past
+
+
+def _attach_work_exp(linkedin_stats: dict | None, record: dict) -> dict | None:
+    work_exp = _sort_jobs(_extract_experience_any(record))
+    if not work_exp:
+        return linkedin_stats
+    if linkedin_stats is None:
+        linkedin_stats = {}
+    linkedin_stats["work_experience_raw"] = work_exp
+    return linkedin_stats
 
 
 def _extract_experience_dev_fusion(record: dict) -> list[dict]:
@@ -325,11 +508,7 @@ def _parse_dev_fusion_profile(record: dict) -> tuple[str, dict | None]:
         if pic:
             linkedin_stats["avatar"] = pic
 
-    work_exp = _extract_experience_dev_fusion(record)
-    if work_exp:
-        if linkedin_stats is None:
-            linkedin_stats = {}
-        linkedin_stats["work_experience_raw"] = work_exp
+    linkedin_stats = _attach_work_exp(linkedin_stats, record)
 
     return "\n".join(parts), linkedin_stats
 
@@ -340,12 +519,14 @@ def _parse_bebity_profile(record: dict) -> tuple[str, dict | None]:
 
     full_name = (
         record.get("fullName")
+        or record.get("full_name")
         or f"{record.get('firstName', '')} {record.get('lastName', '')}".strip()
     )
     if full_name:
         parts.append(f"Name: {full_name}")
-    if record.get("headline"):
-        parts.append(f"Headline: {record['headline']}")
+    headline = record.get("headline") or record.get("profile_headline") or record.get("job_title") or ""
+    if headline:
+        parts.append(f"Headline: {headline}")
 
     about = record.get("summary") or record.get("about") or record.get("description") or ""
     if about:
@@ -361,6 +542,7 @@ def _parse_bebity_profile(record: dict) -> tuple[str, dict | None]:
         record.get("profilePicture")
         or record.get("pictureUrl")
         or record.get("profilePicUrl")
+        or record.get("profile_pic_url")
         or record.get("imgUrl")
         or ""
     )
@@ -376,8 +558,8 @@ def _parse_bebity_profile(record: dict) -> tuple[str, dict | None]:
     for exp in experience[:3]:
         if not isinstance(exp, dict):
             continue
-        title = exp.get("title") or exp.get("position") or ""
-        company = exp.get("companyName") or exp.get("company") or ""
+        title = exp.get("title") or exp.get("job_title") or exp.get("position") or ""
+        company = exp.get("companyName") or exp.get("company_name") or exp.get("company") or ""
         if isinstance(company, dict):
             company = company.get("name") or ""
         if title or company:
@@ -399,11 +581,7 @@ def _parse_bebity_profile(record: dict) -> tuple[str, dict | None]:
         if pic:
             linkedin_stats["avatar"] = pic
 
-    work_exp = _extract_experience_bebity(record)
-    if work_exp:
-        if linkedin_stats is None:
-            linkedin_stats = {}
-        linkedin_stats["work_experience_raw"] = work_exp
+    linkedin_stats = _attach_work_exp(linkedin_stats, record)
 
     return "\n".join(parts), linkedin_stats
 
@@ -476,11 +654,7 @@ def _parse_atomus_profile(record: dict) -> tuple[str, dict | None]:
         if pic:
             linkedin_stats["avatar"] = pic
 
-    work_exp = _extract_experience_atomus(profile)
-    if work_exp:
-        if linkedin_stats is None:
-            linkedin_stats = {}
-        linkedin_stats["work_experience_raw"] = work_exp
+    linkedin_stats = _attach_work_exp(linkedin_stats, record)
 
     return "\n".join(parts), linkedin_stats
 
@@ -497,9 +671,20 @@ async def _run_actor(actor: str, payload: dict, timeout_secs: int = 90) -> list:
 
 
 async def _fetch_profile(url: str) -> tuple[str, dict | None]:
-    # Primary: dev_fusion actor — flat experiences[] with full job history + descriptions
+    # Primary: data-slayer (same vendor as X) — experience[] with current role + dates.
     try:
-        items = await _run_actor(_ACTOR_PROFILE_PRIMARY, {"profileUrls": [url]})
+        items = await _run_actor(_ACTOR_PROFILE_PRIMARY, {"linkedin_urls": [url]}, timeout_secs=120)
+        if items and isinstance(items, list):
+            text, stats = _parse_bebity_profile(items[0])
+            if not (stats or {}).get("work_experience_raw"):
+                stats = _attach_work_exp(stats, items[0])
+            if text or (stats or {}).get("work_experience_raw"):
+                return text, stats
+    except Exception:
+        pass
+
+    try:
+        items = await _run_actor(_ACTOR_PROFILE_DEV_FUSION, {"profileUrls": [url]})
         if items and isinstance(items, list):
             text, stats = _parse_dev_fusion_profile(items[0])
             if text:
@@ -507,7 +692,6 @@ async def _fetch_profile(url: str) -> tuple[str, dict | None]:
     except Exception:
         pass
 
-    # Fallback: atomus actor — nested profile.position_groups[] structure
     try:
         items = await _run_actor(_ACTOR_PROFILE_FALLBACK, {"profileUrls": [url]})
         if items and isinstance(items, list):

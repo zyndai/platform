@@ -22,6 +22,7 @@ class _Job:
         self.handle_github: str | None = None
         self.handle_x: str | None = None
         self.scrape_raw: dict | None = None
+        self.url_warnings: list[dict] = []
 
 
 _jobs: dict[str, _Job] = {}

@@ -102,13 +102,20 @@ async def fetch_github(handle: str) -> dict:
         user_resp, repos_resp, events_resp = await asyncio.gather(
             user_task, repos_task, events_task
         )
+        if user_resp.status_code == 404:
+            return {}
+        if user_resp.status_code == 403:
+            # Rate-limited / token missing — skip GitHub rather than fail onboard.
+            return {}
         user_resp.raise_for_status()
-        repos_resp.raise_for_status()
+        if not repos_resp.is_success:
+            repos_data = []
+        else:
+            repos_data = repos_resp.json()
         events = events_resp.json() if events_resp.is_success else []
 
     recent_activity = _parse_events(events)
     user_data = user_resp.json()
-    repos_data = repos_resp.json()
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=180)
     active_repos = sum(

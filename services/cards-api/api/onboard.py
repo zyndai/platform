@@ -78,7 +78,22 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
         if github_urls:
             github_handle = _handle_from_url(github_urls[0])
             if github_handle:
-                github_data = await github_scraper.fetch_github(github_handle)
+                try:
+                    github_data = await github_scraper.fetch_github(github_handle)
+                except Exception as exc:
+                    logger.warning("github scrape skipped handle=%s err=%s", github_handle, exc)
+                    github_data = None
+                    github_handle = None
+                if github_data == {}:
+                    logger.info("github user not found handle=%s — continuing without GitHub", github_handle)
+                    job = get_job(job_id)
+                    if job:
+                        job.url_warnings.append({
+                            "url": github_urls[0],
+                            "message": f"GitHub user '{github_handle}' not found. Check the username and try again.",
+                        })
+                    github_data = None
+                    github_handle = None
 
         x_urls = [u for u in other_urls if _classify_url(u) == "x"]
         if x_urls:
@@ -212,6 +227,7 @@ async def get_onboard_status(job_id: str):
         "status": job.status,
         "card": job.card.model_dump(mode="json") if job.card else None,
         "error": job.error,
+        "url_warnings": job.url_warnings,
     }
 
 

@@ -65,6 +65,16 @@ class Project(BaseModel):
     stars: int | None = None
     tech: list[str] = Field(default_factory=list)
 
+    @field_validator("stars", mode="before")
+    @classmethod
+    def _coerce_stars(cls, v):
+        if v in (None, ""):
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
 
 class WritingSample(BaseModel):
     platform: str = "x"

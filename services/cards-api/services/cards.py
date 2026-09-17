@@ -242,6 +242,12 @@ def _row_to_card(row: dict) -> AgentProfileCard:
             if item["excerpt"] and not is_thin_excerpt(item["excerpt"]):
                 cleaned.append(item)
         data["writing_samples"] = cleaned
+    jobs = data.get("work_experience")
+    if isinstance(jobs, list):
+        from scraping import linkedin as linkedin_scraper
+        for job in jobs:
+            if isinstance(job, dict) and job.get("description"):
+                job["description"] = linkedin_scraper._clean_job_description(job.get("description"))
     return AgentProfileCard.model_validate(data)
 
 

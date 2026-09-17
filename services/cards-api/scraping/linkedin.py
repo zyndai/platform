@@ -12,6 +12,7 @@ Returns tuple[str, dict | None] — (profile_text, linkedin_stats).
 """
 
 import asyncio
+import ast
 import re
 from urllib.parse import urlparse
 
@@ -172,7 +173,7 @@ def _logo_from_website(site: str) -> str:
     if not site.startswith("http"):
         site = f"https://{site}"
     host = (urlparse(site).netloc or urlparse(site).path).replace("www.", "").split("/")[0]
-    return f"https://logo.clearbit.com/{host}" if host and "." in host else ""
+    return f"https://www.google.com/s2/favicons?domain={host}&sz=128" if host and "." in host else ""
 
 
 def _company_logo(exp: dict) -> str:
@@ -196,6 +197,26 @@ def _company_name(exp: dict) -> str:
     if isinstance(c, dict):
         c = c.get("name") or ""
     return str(c or "").strip()
+
+
+def _clean_job_description(raw) -> str:
+    if raw is None:
+        return ""
+    if isinstance(raw, list):
+        text = "\n".join(str(x) for x in raw)
+    else:
+        text = str(raw).strip()
+    if text.startswith("[") and text.endswith("]"):
+        try:
+            parsed = ast.literal_eval(text)
+            if isinstance(parsed, list):
+                text = "\n".join(str(x) for x in parsed)
+            elif isinstance(parsed, str):
+                text = parsed
+        except (ValueError, SyntaxError):
+            text = text.strip("[]").strip("'\"")
+    text = text.replace("\\n", "\n").replace("\\t", " ")
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _job_title(exp: dict) -> str:
@@ -301,7 +322,7 @@ def _job_from_exp(exp: dict, company_fallback: str = "", logo_fallback: str = ""
         "end_date": end_str or "Present",
         "duration": duration,
         "location": str(location or ""),
-        "description": str(exp.get("jobDescription") or exp.get("job_description") or exp.get("description") or ""),
+        "description": _clean_job_description(exp.get("jobDescription") or exp.get("job_description") or exp.get("description") or ""),
         "company_industry": str(exp.get("company_industry") or exp.get("companyIndustry") or ""),
     }
 

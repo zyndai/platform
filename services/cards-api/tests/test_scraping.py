@@ -556,7 +556,14 @@ def test_extract_experience_top_level_current_and_website_logo():
     assert jobs[0]["title"] == "Protocol and Research"
     assert jobs[0]["company"] == "Zynd"
     assert jobs[0]["end_date"] == "Present"
-    assert "logo.clearbit.com/zynd.ai" in jobs[0]["company_logo"]
+    assert "google.com/s2/favicons" in jobs[0]["company_logo"]
+
+
+def test_clean_job_description_list_repr_and_newlines():
+    raw = "['Founded 0xSpace.\\n\\nHighlights:\\n• Events']"
+    assert "Founded 0xSpace" in linkedin._clean_job_description(raw)
+    assert "\\n" not in linkedin._clean_job_description(raw)
+    assert "[" not in linkedin._clean_job_description(raw)
 
 
 def test_extract_experience_dev_fusion_yyyy_mm():

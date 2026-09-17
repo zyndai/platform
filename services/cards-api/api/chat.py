@@ -21,6 +21,7 @@ class ChatRequest(BaseModel):
 def _build_system_prompt(card: dict) -> str:
     identity = card.get("identity", {})
     name = identity.get("name", "this person")
+    first = name.split(" ")[0]
     headline = identity.get("headline", "")
     location = identity.get("location", "")
     summary = card.get("summary", "")
@@ -35,12 +36,11 @@ def _build_system_prompt(card: dict) -> str:
     topics = card.get("love_talking_about", [])[:3]
 
     lines = [
-        f"You're a sharp, engaging assistant on {name}'s profile page.",
-        f"People visiting want to know about {name} — to collaborate, hire, or connect.",
-        "Make it feel like a real conversation, not a Wikipedia lookup.",
+        f"You are {name}. A visitor is messaging you on your profile page — reply as {first} would, first person.",
+        "Talk like a real person in a quick message: plain, direct, a little warm. No theatrics, no cheerleading.",
         "",
         f"Facts about {name}:",
-        f"- Headline: {headline}" if headline else "",
+        f"- What {first} does: {headline}" if headline else "",
         f"- Location: {location}" if location else "",
         f"- Summary: {summary}" if summary else "",
         f"- Skills: {', '.join(skills)}" if skills else "",
@@ -50,14 +50,30 @@ def _build_system_prompt(card: dict) -> str:
         f"- Projects: {'; '.join(projects)}" if projects else "",
         f"- Writes about: {' | '.join(posts)}" if posts else "",
         "",
-        "Rules:",
-        "- 2 sentences max unless they ask for more detail.",
-        "- Sound like you know this person, not like you're reading their LinkedIn.",
-        "- Unknown info: 'I don't have that — reach out directly.'",
-        "- Never say 'As an AI' or anything robotic.",
-        "- End with a follow-up question when natural.",
+        "How to answer:",
+        "- 1-3 short sentences. No paragraphs, no essays, no lists.",
+        "- Write like a text message. Plain words, natural rhythm.",
+        "- No 'Hey there!', no exclamation marks, no em-dashes, no '—'.",
+        "- No markdown: no asterisks, no bold, no bullet points, no backticks.",
+        "- Never say you are an AI, a model, or an assistant. Never say 'as an AI'.",
+        "- Don't know something? Say you're not sure and suggest reaching out directly.",
+        "- If they ask for contact details you don't have, point them to the profile links (X, GitHub, LinkedIn).",
+        "- Match the visitor's language. If they write in Hindi, reply in Hindi.",
+        "- A short follow-up question only if it feels natural. Don't force one every time.",
     ]
     return "\n".join(l for l in lines if l is not None)
+
+
+def _clean_artifacts(text: str) -> str:
+    """Strip markdown/formatting artifacts the model sometimes leaks."""
+    return (
+        text.replace("**", "")
+        .replace("`", "")
+        .replace("#", "")
+        .replace("*", "")
+        .replace("—", "-")
+        .replace("–", "-")
+    )
 
 
 CLOUDFLARE_MODEL = "@cf/deepseek-ai/deepseek-v4-flash-0731"
@@ -95,7 +111,7 @@ async def _stream_cf(system_prompt: str, messages: list[dict]):
                         data = json.loads(data_str)
                         content = (data.get("choices") or [{}])[0].get("delta", {}).get("content")
                         if content:
-                            yield f"data: {json.dumps({'response': content})}\n\n"
+                            yield f"data: {json.dumps({'response': _clean_artifacts(content)})}\n\n"
                     except Exception:
                         continue
     yield "data: [DONE]\n\n"

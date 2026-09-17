@@ -52,25 +52,27 @@ def _card() -> AgentProfileCard:
 
 
 def test_update_card_claims_unowned_legacy_card(mock_sb):
-    ok = cards_service.update_card("alice", _card(), "alice@example.com")
+    ok, h = cards_service.update_card("alice", _card(), "alice@example.com")
 
     assert ok is True
+    assert h == "alice"
     assert mock_sb.payload["owner_email"] == "alice@example.com"
 
 
 def test_update_card_allows_existing_owner(mock_sb):
     mock_sb._rows = [{"owner_email": "alice@example.com"}]
 
-    ok = cards_service.update_card("alice", _card(), "alice@example.com")
+    ok, h = cards_service.update_card("alice", _card(), "alice@example.com")
 
     assert ok is True
+    assert h == "alice"
     assert mock_sb.payload["owner_email"] == "alice@example.com"
 
 
 def test_update_card_rejects_different_owner(mock_sb):
     mock_sb._rows = [{"owner_email": "someone-else@example.com"}]
 
-    ok = cards_service.update_card("alice", _card(), "alice@example.com")
+    ok, h = cards_service.update_card("alice", _card(), "alice@example.com")
 
     assert ok is False
     assert mock_sb.payload is None
@@ -79,7 +81,7 @@ def test_update_card_rejects_different_owner(mock_sb):
 def test_update_card_returns_false_when_handle_missing(mock_sb):
     mock_sb._rows = []
 
-    ok = cards_service.update_card("ghost", _card(), "alice@example.com")
+    ok, h = cards_service.update_card("ghost", _card(), "alice@example.com")
 
     assert ok is False
     assert mock_sb.payload is None
@@ -140,8 +142,8 @@ def test_merge_scraped_posts_respects_cap():
     from models.card import WritingSample
 
     llm = [WritingSample(platform="x", excerpt=f"LLM {i}.", url=f"https://x.com/a/status/l{i}", posted_at="") for i in range(8)]
-    x_posts = [{"platform": "x", "excerpt": f"Tweet {i}.", "url": f"https://x.com/a/status/{i}", "posted_at": ""} for i in range(8)]
-    li_posts = [{"platform": "linkedin", "excerpt": f"LI {i}.", "url": f"https://ln/p/{i}", "posted_at": ""} for i in range(8)]
+    x_posts = [{"platform": "x", "excerpt": f"Shipped tweet number {i} today.", "url": f"https://x.com/a/status/{i}", "posted_at": ""} for i in range(8)]
+    li_posts = [{"platform": "linkedin", "excerpt": f"LinkedIn post number {i} about the launch.", "url": f"https://ln/p/{i}", "posted_at": ""} for i in range(8)]
 
     merged = cards_service.merge_scraped_posts(llm, x_posts, li_posts, cap=10)
 
@@ -150,3 +152,26 @@ def test_merge_scraped_posts_respects_cap():
     # Interleave favours a mix: 5 x + 5 linkedin fills the cap before LLM picks
     assert platforms.count("x") == 5
     assert platforms.count("linkedin") == 5
+
+
+def test_clean_excerpt_unescapes_and_strips_tags():
+    assert cards_service.clean_excerpt("agent &amp; LLM friendly.<br>Next") == "agent & LLM friendly. Next"
+    assert cards_service.clean_excerpt("  hello   \n\n\n  world  ") == "hello \n\n world"
+
+
+def test_is_thin_excerpt_drops_url_only_posts():
+    assert cards_service.is_thin_excerpt("full post here: https://t.co/fNxJMRhPUe") is True
+    assert cards_service.is_thin_excerpt("Manifesting: I can just travel the world") is False
+
+
+def test_merge_scraped_posts_skips_thin_and_html():
+    from models.card import WritingSample
+
+    llm: list[WritingSample] = []
+    x_posts = [
+        {"excerpt": "full post here: https://t.co/fNxJMRhPUe", "url": "https://x.com/a/status/1"},
+        {"excerpt": "Cookie got a facelift. Its agent &amp; LLM friendly.", "url": "https://x.com/a/status/2"},
+    ]
+    merged = cards_service.merge_scraped_posts(llm, x_posts, None)
+    assert len(merged) == 1
+    assert merged[0].excerpt == "Cookie got a facelift. Its agent & LLM friendly."

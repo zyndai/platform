@@ -27,6 +27,7 @@ class PublishRequest(BaseModel):
     card: dict
     user_answers: dict[str, str] = {}
     owner_email: str | None = None
+    custom_handle: str | None = None
 
 
 def _classify_url(url: str) -> str:
@@ -102,9 +103,10 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
         x_stats_data: dict | None = None
         linkedin_stats_data: dict | None = None
 
+        linkedin_url_used: str | None = None
         if expanded:
             results = await asyncio.gather(*[_safe_fetch_url(u) for u in expanded])
-            for kind, text, stats in results:
+            for (orig_url, (kind, text, stats)) in zip(expanded, results):
                 if not text:
                     continue
                 if kind == "x":
@@ -115,6 +117,8 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
                     linkedin_texts.append(text)
                     if stats and not linkedin_stats_data:
                         linkedin_stats_data = stats
+                    if not linkedin_url_used:
+                        linkedin_url_used = orig_url
                 else:
                     website_texts.append(text)
 
@@ -134,6 +138,10 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
             linkedin_text="\n\n".join(linkedin_texts) or None,
         )
 
+        # Store LinkedIn URL in identity.links so refresh-linkedin endpoint can use it
+        if linkedin_url_used:
+            synth.identity.links.setdefault("linkedin", linkedin_url_used)
+
         # Deterministic avatar priority: LinkedIn > X > GitHub. The LLM's guess
         # (if any) is overridden by real scraped photo URLs.
         synth.identity.avatar_url = cards_service.pick_avatar(
@@ -147,6 +155,7 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
         # it so it never lands in the stored card stats.
         x_posts_raw = (x_stats_data or {}).pop("posts_raw", None) if x_stats_data else None
         li_posts_raw = (linkedin_stats_data or {}).pop("posts_raw", None) if linkedin_stats_data else None
+        work_experience_raw = (linkedin_stats_data or {}).pop("work_experience_raw", None) if linkedin_stats_data else None
         synth.writing_samples = cards_service.merge_scraped_posts(
             synth.writing_samples, x_posts_raw, li_posts_raw
         )
@@ -157,6 +166,7 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
             x_stats=x_stats_data,
             linkedin_stats=linkedin_stats_data,
             contribution_stats=github_data.get("contribution_stats") if github_data else None,
+            work_experience=work_experience_raw or None,
         )
 
         # Set handles before set_ready so publish sees them immediately
@@ -243,6 +253,7 @@ async def publish_card(job_id: str, body: PublishRequest):
         job.scrape_raw,
         user_intent,
         body.owner_email,
+        body.custom_handle,
     )
     card.handle = handle  # frontend reads published.handle for redirect
     await hooks.run_publish_hooks(card.id, handle)

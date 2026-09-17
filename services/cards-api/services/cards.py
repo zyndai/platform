@@ -1,9 +1,36 @@
+import html
 import re
 
 import config
 from models.card import AgentProfileCard, CardSynthesis, Source, WritingSample
 from services import embed
 from services.jobs import new_card_id, utcnow
+
+
+_HTML_TAG = re.compile(r"<[^>]+>")
+_URL = re.compile(r"https?://\S+", re.I)
+
+
+def clean_excerpt(text: str, limit: int = 500) -> str:
+    """Unescape HTML, strip tags, collapse whitespace. Safe for card quotes."""
+    t = html.unescape(str(text or ""))
+    t = _HTML_TAG.sub(" ", t)
+    t = t.replace("\u00a0", " ")
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()[:limit]
+
+
+def is_thin_excerpt(text: str) -> bool:
+    """True when the excerpt is URL/emoji junk with almost no words."""
+    raw = text or ""
+    without_urls = _URL.sub(" ", raw)
+    letters = re.sub(r"[^\w]", "", without_urls, flags=re.UNICODE)
+    if len(letters) < 8:
+        return True
+    if _URL.search(raw) and len(letters) < 16:
+        return True
+    return False
 
 
 def _slugify(text: str) -> str:
@@ -30,6 +57,20 @@ def _assign_handle(github_handle: str | None, x_handle: str | None, name: str, c
     return f"{base}-{card_id}"
 
 
+def _try_custom_handle(slug: str, card_id: str) -> str:
+    """Use slug if valid + available; otherwise append card_id suffix."""
+    import re
+    slug = re.sub(r"[^a-z0-9-]", "", slug.lower())[:30].strip("-")
+    if len(slug) < 2:
+        return f"user-{card_id[:6]}"
+    sb = config.get_supabase()
+    for candidate in (slug, f"{slug}-{card_id[:4]}", f"{slug}-{card_id}"):
+        resp = sb.table("agent_profile_cards").select("id").eq("handle", candidate).execute()
+        if not resp.data:
+            return candidate
+    return f"{slug}-{card_id}"
+
+
 def assemble_card(
     synth: CardSynthesis,
     github_data: dict | None,
@@ -40,6 +81,7 @@ def assemble_card(
     x_stats: dict | None = None,
     linkedin_stats: dict | None = None,
     contribution_stats: dict | None = None,
+    work_experience: list[dict] | None = None,
 ) -> AgentProfileCard:
     card_id = new_card_id()
     now = utcnow()
@@ -108,6 +150,7 @@ def assemble_card(
         x_stats=x_stats,
         linkedin_stats=linkedin_stats,
         contribution_stats=contribution_stats,
+        work_experience=work_experience or None,
     )
 
 
@@ -150,11 +193,14 @@ def merge_scraped_posts(
     def norm(posts: list[dict] | None, platform: str) -> list[WritingSample]:
         out: list[WritingSample] = []
         for p in posts or []:
-            if not isinstance(p, dict) or not (p.get("excerpt") or "").strip():
+            if not isinstance(p, dict):
+                continue
+            excerpt = clean_excerpt(str(p.get("excerpt") or ""))
+            if not excerpt or is_thin_excerpt(excerpt):
                 continue
             out.append(WritingSample(
                 platform=platform,
-                excerpt=str(p["excerpt"])[:500],
+                excerpt=excerpt,
                 url=str(p.get("url") or ""),
                 posted_at=str(p.get("posted_at") or ""),
             ))
@@ -185,6 +231,17 @@ def _row_to_card(row: dict) -> AgentProfileCard:
     data = dict(row["card"])
     if row.get("handle"):
         data["handle"] = row["handle"]
+    samples = data.get("writing_samples")
+    if isinstance(samples, list):
+        cleaned: list = []
+        for s in samples:
+            if not isinstance(s, dict):
+                continue
+            item = dict(s)
+            item["excerpt"] = clean_excerpt(item.get("excerpt") or "")
+            if item["excerpt"] and not is_thin_excerpt(item["excerpt"]):
+                cleaned.append(item)
+        data["writing_samples"] = cleaned
     return AgentProfileCard.model_validate(data)
 
 
@@ -210,8 +267,13 @@ def insert_card(
     scrape_raw: dict | None = None,
     user_intent: dict | None = None,
     owner_email: str | None = None,
+    custom_handle: str | None = None,
 ) -> str:
-    handle = _assign_handle(handle_github, handle_x, card.identity.name, card.id)
+    handle = (
+        _try_custom_handle(custom_handle, card.id)
+        if custom_handle
+        else _assign_handle(handle_github, handle_x, card.identity.name, card.id)
+    )
     try:
         embedding = embed.embed_text(embed.card_search_text(card))
     except Exception:
@@ -250,11 +312,17 @@ def get_card_by_owner(email: str) -> tuple[AgentProfileCard, str] | None:
     return _row_to_card(rows[0]), rows[0]["handle"]
 
 
-def update_card(handle: str, card: AgentProfileCard, owner_email: str) -> bool:
+def update_card(
+    handle: str,
+    card: AgentProfileCard,
+    owner_email: str,
+    new_handle: str | None = None,
+) -> tuple[bool, str]:
     """Update a published card in-place after verifying ownership.
 
-    Returns False (without modifying anything) if the handle does not exist
-    or the stored owner_email belongs to a different user.
+    Returns (False, handle) if the handle does not exist or ownership check fails.
+    Returns (True, effective_handle) on success — effective_handle is new_handle if
+    the rename succeeded, otherwise the original handle.
 
     Cards created before the ownership feature have `owner_email` NULL —
     the first authenticated editor claims them.
@@ -267,26 +335,38 @@ def update_card(handle: str, card: AgentProfileCard, owner_email: str) -> bool:
         .execute()
     )
     if not check.data:
-        return False
+        return False, handle
     stored_owner = check.data[0].get("owner_email")
     if stored_owner and stored_owner != owner_email:
-        return False
+        return False, handle
+
+    effective_handle = handle
+    if new_handle:
+        slug = re.sub(r"[^a-z0-9-]", "", new_handle.lower())[:30].strip("-")
+        if len(slug) >= 2 and slug != handle:
+            conflict = sb.table("agent_profile_cards").select("id").eq("handle", slug).execute()
+            if not conflict.data:
+                effective_handle = slug
+
     card.updated_at = utcnow()
     try:
         embedding = embed.embed_text(embed.card_search_text(card))
     except Exception:
         embedding = None
-    sb.table("agent_profile_cards").update(
-        {
-            "card": card.model_dump(mode="json"),
-            "status": card.status,
-            "embedding": embedding,
-            "updated_at": card.updated_at,
-            # Unowned legacy cards get claimed on first edit.
-            "owner_email": stored_owner or owner_email,
-        }
-    ).eq("handle", handle).execute()
-    return True
+
+    update_payload: dict = {
+        "card": card.model_dump(mode="json"),
+        "status": card.status,
+        "embedding": embedding,
+        "updated_at": card.updated_at,
+        # Unowned legacy cards get claimed on first edit.
+        "owner_email": stored_owner or owner_email,
+    }
+    if effective_handle != handle:
+        update_payload["handle"] = effective_handle
+
+    sb.table("agent_profile_cards").update(update_payload).eq("handle", handle).execute()
+    return True, effective_handle
 
 
 def get_card(card_id: str) -> AgentProfileCard | None:

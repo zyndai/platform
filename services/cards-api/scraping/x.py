@@ -8,6 +8,7 @@ Returns tuple[str, dict | None] — (profile_text, x_stats).
 """
 
 import asyncio
+import html
 import re
 from datetime import datetime
 from urllib.parse import urlparse
@@ -196,7 +197,7 @@ async def _fetch_tweets(handle: str) -> tuple[str, list[dict]]:
         lines.append(f"- [{posted}] {text[:600]}{url}" if posted else f"- {text[:600]}{url}")
         posts.append({
             "platform": "x",
-            "excerpt": text[:500],
+            "excerpt": html.unescape(text)[:500],
             "url": f"https://x.com/{handle}/status/{tid}" if tid else "",
             "posted_at": posted,
         })

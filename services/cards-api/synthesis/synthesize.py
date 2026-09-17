@@ -12,7 +12,10 @@ social profile text (X/Twitter, LinkedIn). Return ONE JSON object matching the
 schema below exactly.
 
 Rules:
-- `summary`: Write 2-3 sentences describing who this person is professionally.
+- `summary`: Write 3-5 sentences (minimum 80 words) describing who this person is
+  professionally. Cover: what they build or research, their domain/stack, notable
+  roles or companies, and what they are currently focused on. This fills a visible
+  bio card — make it substantive and specific to the person's actual work.
   Always populate this if any source data is present. Never leave it empty.
 - `headline`: One short phrase — their role or what they do (e.g. "Full-stack
   engineer · Open-source contributor"). Always populate if name is known.

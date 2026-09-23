@@ -95,7 +95,7 @@ def list_connected_providers(user_id: str) -> list[dict]:
     sb = _sb()
     result = (
         sb.table(TABLE)
-        .select("provider, scopes")
+        .select("provider, scopes, raw_data")
         .eq("user_id", user_id)
         .execute()
     )

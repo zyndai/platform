@@ -226,6 +226,7 @@ class BriefWatcher:
             sb.table("persona_agents")
             .select("user_id,brief_content")
             .eq("active", True)
+            .eq("auto_extract_todos", True)
             .not_.is_("brief_content", "null")
             .execute()
         )

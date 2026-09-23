@@ -62,6 +62,49 @@ async def discover_people(
     return await asyncio.to_thread(discover_personas, query, limit)
 
 
+@router.get("/suggestions")
+async def get_people_suggestions(user: dict = Depends(get_current_user)):
+    """
+    Proactive "Similar people" shortlist for the People page — QuickEnrich
+    contact-database matches picked from the persona's own profile
+    (role/company/location/interests), grouped by why they matched.
+
+    Generated in the background on persona creation, after a LinkedIn scrape,
+    and weekly (see agent/people_suggestions_loop.py); this just reads
+    whatever was last generated. Returns an "empty" status (not an error)
+    for a brand-new persona whose first background run hasn't landed yet, or
+    when QuickEnrich isn't configured for this deployment.
+    """
+    from services import people_suggestions
+
+    return await asyncio.to_thread(people_suggestions.get_suggestions, user["id"])
+
+
+@router.post("/suggestions/refresh")
+async def refresh_people_suggestions(user: dict = Depends(get_current_user)):
+    """
+    Manually regenerate the "Similar people" shortlist right now, instead of
+    waiting for the weekly background refresh. Rate-limited to once an hour
+    per user — returns 429 with the remaining cooldown when called again too
+    soon, same info the GET endpoint's `can_refresh`/`cooldown_seconds`
+    already carry for the button's disabled state.
+    """
+    from services import people_suggestions
+
+    cooldown = await asyncio.to_thread(people_suggestions.refresh_cooldown_seconds, user["id"])
+    if cooldown > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=f"You can refresh suggestions again in {cooldown} seconds.",
+        )
+
+    result = await asyncio.to_thread(people_suggestions.run_for_user, user["id"], manual=True)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=502, detail="Couldn't refresh suggestions right now.")
+
+    return await asyncio.to_thread(people_suggestions.get_suggestions, user["id"])
+
+
 @router.post("/introductions")
 async def create_people_introduction(
     req: IntroductionCreateRequest,

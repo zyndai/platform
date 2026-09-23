@@ -3838,6 +3838,131 @@ textarea.input { resize: vertical; min-height: 88px; }
   cursor: not-allowed;
 }
 
+/* ── Similar people (proactive QuickEnrich suggestions) ─────────────── */
+
+.people-suggest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.people-suggest-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.people-suggest-heading svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.people-suggest-heading h2 {
+  margin: 0;
+  color: var(--v2-ink);
+  font-family: var(--font-instrument-sans), 'Instrument Sans', system-ui, sans-serif;
+  font-size: 21px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.people-suggest-tag {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--v2-ink-muted);
+  background: var(--v2-surface);
+  border: 1px solid var(--v2-border-subtle);
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.people-suggest-error {
+  margin: 4px 0 10px;
+  font-size: 13px;
+  color: var(--v2-ink-secondary);
+}
+
+.people-suggest-placeholder {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--v2-ink-muted);
+  font-style: italic;
+}
+
+.people-suggest-subrow {
+  margin-top: 18px;
+}
+
+.people-suggest-subrow:first-of-type {
+  margin-top: 8px;
+}
+
+.people-suggest-subrow-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.people-suggest-subrow-head h3 {
+  margin: 0;
+  color: var(--v2-ink);
+  font-family: var(--font-instrument-sans), 'Instrument Sans', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.people-suggest-subrow-head p {
+  margin: 0;
+  color: var(--v2-ink-muted);
+  font-size: 12px;
+}
+
+/* Same avatar+body layout as .people-card-link, but a plain div — these
+   cards have no profile page to navigate to, only the LinkedIn CTA. */
+.people-suggest-card-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+}
+
+.people-suggest-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.people-suggest-meta span {
+  font-size: 11px;
+  color: var(--v2-ink-muted);
+}
+
+.people-suggest-meta .people-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--v2-ink-secondary);
+  background: var(--v2-surface-raised);
+  border: 1px solid var(--v2-border-subtle);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
 .people-quick-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(220px, 1fr));
@@ -4112,6 +4237,10 @@ textarea.input { resize: vertical; min-height: 88px; }
   .people-section-head h2,
   .people-section > h2 {
     font-size: 22px;
+  }
+
+  .people-suggest-heading h2 {
+    font-size: 19px;
   }
 
   .people-row {
@@ -5817,6 +5946,19 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 
 /* ── S14 Connector cards ─────────────────────────────────────────── */
+/* Connected / Not connected sections on the accounts page */
+.connections-section {
+  margin-bottom: 28px;
+}
+.connections-section h2 {
+  margin: 0 0 12px;
+  color: var(--v2-ink);
+  font-family: var(--font-instrument-sans), 'Instrument Sans', system-ui, sans-serif;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
 .connectors-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -9594,6 +9736,9 @@ textarea.input { resize: vertical; min-height: 88px; }
 .group-chat-roster.is-open {
   transform: translateX(0);
 }
+.group-chat-roster--wide {
+  width: 460px;
+}
 .group-roster-title {
   margin: 0 0 10px;
   font-family: var(--font-geist), system-ui, sans-serif;
@@ -10222,6 +10367,35 @@ textarea.input { resize: vertical; min-height: 88px; }
 }
 .slash-picker-row.is-active,
 .slash-picker-row:hover { background: var(--surface-raised); }
+.todo-picker-row { align-items: center; white-space: normal; }
+.todo-picker-checkbox {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--success, #5e8c61);
+  cursor: pointer;
+}
+.todo-picker-popover { position: relative; }
+.todo-picker-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--t-micro);
+}
+.todo-picker-close:hover { background: var(--surface-raised); color: var(--text-default); }
+.todo-picker-popover .slash-picker { padding-right: 24px; }
 .slash-picker-name {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-weight: 600;
@@ -10266,6 +10440,17 @@ textarea.input { resize: vertical; min-height: 88px; }
   background: transparent;
   color: var(--text-muted);
   font-weight: 500;
+}
+
+/* ── In-bubble todo chips (picked via the "/todo" composer picker) ── */
+.group-todo-chip,
+.chat-todo-chip {
+  display: inline;
+  padding: 1px 4px;
+  border-radius: 5px;
+  background: var(--success-soft, rgba(94, 140, 97, 0.1));
+  color: var(--success, #5e8c61);
+  font-weight: 600;
 }
 
 /* ── Typing indicator bubbles above composer ────────────────────── */
@@ -12813,6 +12998,64 @@ textarea.input { resize: vertical; min-height: 88px; }
   .dashboard-pages-info h3 {
     white-space: normal;
   }
+}
+
+/* Publish/edit HTML page modal */
+.intro-modal-body .publish-title-input {
+  min-height: 0;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: var(--r-sm);
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+.publish-html-textarea {
+  font-family: var(--font-geist-mono), "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  min-height: 280px;
+}
+.publish-visibility-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+.publish-visibility-row label {
+  font-family: var(--font-geist), sans-serif;
+  font-size: 12.5px;
+  color: var(--ink-secondary);
+}
+.publish-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.publish-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-sm);
+  padding: 8px 34px 8px 12px;
+  font-family: var(--font-geist), sans-serif;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--t-micro) var(--ease-out),
+              box-shadow var(--t-micro) var(--ease-out);
+}
+.publish-select:focus {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.publish-select:disabled { opacity: 0.6; cursor: not-allowed; }
+.publish-select-chevron {
+  position: absolute;
+  right: 10px;
+  color: var(--ink-secondary);
+  pointer-events: none;
 }
 
 /* Inline cards shown in the chat thread */

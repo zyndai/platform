@@ -15,6 +15,22 @@ from ContextAware import ContextAware  # noqa: E402
 
 # ── Import Social Tools ──
 from mcp.tools.linkedin import post_to_linkedin, send_linkedin_dm, read_linkedin_dms, read_linkedin_profile, search_linkedin_people
+from mcp.tools.github import read_github_profile, refresh_github_profile
+from mcp.tools.github_read import (
+    get_repo_contents,
+    get_repo_tree,
+    read_repo_readme,
+    list_recent_commits,
+    search_repositories,
+    list_repo_issues,
+    get_issue_details,
+    list_repo_pull_requests,
+    get_pull_request_details,
+    get_my_recent_activity,
+    list_my_notifications,
+    list_starred_repos,
+    list_my_orgs,
+)
 
 # ── Import Google Workspace Tools ──
 from mcp.tools.google.calendar import create_event, list_events, delete_event
@@ -33,6 +49,21 @@ from mcp.tools.notion import (
     get_notion_page_content, 
     create_notion_database, 
     append_to_notion_page
+)
+
+# ── Import QuickEnrich Tools ──
+# Principal-private; contact/company database discovery + enrichment.
+# Never added to any external allowlist — foreign agents must not be able
+# to run PII lookups through someone else's persona.
+from mcp.tools.quickenrich import (
+    search_people_database,
+    search_companies_database,
+    list_people_at_company,
+    get_email_for_person,
+    get_phone_for_person,
+    identify_person_by_email,
+    list_people_filter_values,
+    get_suggested_people,
 )
 
 # ── Import Network Tools ──
@@ -75,6 +106,7 @@ from mcp.tools.brief import (
     replace_my_brief,
     clear_my_brief,
     add_todo,
+    list_my_todos,
 )
 
 # ── Import Profile Tools ──
@@ -123,6 +155,41 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(read_linkedin_dms, name="read_linkedin_dms", description="[PLACEHOLDER] Read LinkedIn DMs")
     mcp.register(read_linkedin_profile, name="read_linkedin_profile", description="Read the principal's scraped LinkedIn profile — headline, experience, education, skills, and recent posts. Use this when the principal asks about their own LinkedIn background or work history.")
     mcp.register(search_linkedin_people, name="search_linkedin_people", description="Search LinkedIn itself for people by role/topic/keyword (e.g. 'AI founders'). Real, metered LinkedIn scrape — separate from search_zynd_personas, which only covers people with a Zynd persona. Use when asked to find people 'on LinkedIn', or automatically as the next step when a Zynd Network people search comes back thin — narrate the broaden, don't ask permission first.")
+
+    # ── GitHub tools ─────────────────────────────────────────────────
+    mcp.register(read_github_profile, name="read_github_profile", description="Read the principal's synced GitHub profile — username, skills (languages by code volume), and top projects (name, description, URL, languages, topics). Use this when the principal asks about their own GitHub work, repos, or which languages they use. Serves the daily-synced snapshot (at most 24h old); if the data is missing or stale and the principal wants fresh results, call refresh_github_profile instead.")
+    mcp.register(refresh_github_profile, name="refresh_github_profile", description="Pull fresh GitHub data now (repos, languages, skills, projects) via the principal's connected GitHub account and update their memory with anything new. Use when the principal explicitly asks to update GitHub data, or when read_github_profile returned no data and the principal said GitHub is connected.")
+
+    # ── GitHub read-only tools (principal-private) ───────────────────
+    # Live reads of any repo the token can see — code, issues, PRs,
+    # activity. Never added to external/group allowlists.
+    mcp.register(get_repo_contents, name="get_repo_contents", description="List a directory or read a single file in any repo the GitHub token can access. Pass repo='owner/name' and an optional path (file or folder). Returns directory entries, or the file's text content (capped ~100k chars). Use when the principal asks what's in a repo or wants to see a specific file.")
+    mcp.register(get_repo_tree, name="get_repo_tree", description="Get the full file tree of a repo (owner/name) — every file path and type, capped at 1000 entries. Use when the principal wants a map of a repo's structure without pulling file bodies.")
+    mcp.register(read_repo_readme, name="read_repo_readme", description="Read the README of any repo the token can access as text. Use when the principal asks 'what is this repo about' or wants a repo's docs — the fastest way to orient in a codebase.")
+    mcp.register(list_recent_commits, name="list_recent_commits", description="List the most recent commits in a repo (owner/name), newest first, with author, date, and message. Use to see what's happening in a repo or who pushed what.")
+    mcp.register(search_repositories, name="search_repositories", description="Search GitHub repositories by keyword — name, topic, or technology — returning repos with description, language, stars, and URL. Use when the principal wants to find a repo (theirs or anyone's).")
+    mcp.register(list_repo_issues, name="list_repo_issues", description="List issues in a repo (owner/name), newest first. state ∈ open/closed/all; pull requests excluded. Requires GitHub App 'Issues: Read'. Use to triage what's open or needs attention.")
+    mcp.register(get_issue_details, name="get_issue_details", description="Get full details of one issue — title, body, state, labels, assignees, comment count. Use when the principal asks 'what is issue #N' or wants the full text of a specific issue.")
+    mcp.register(list_repo_pull_requests, name="list_repo_pull_requests", description="List pull requests in a repo (owner/name), newest first. state ∈ open/closed/all. Requires GitHub App 'Pull requests: Read'. Use to see open PRs, what's awaiting review, or review history.")
+    mcp.register(get_pull_request_details, name="get_pull_request_details", description="Get full details of one pull request — title, body, author, merge state, branch targets, review state. Use when the principal asks 'what is PR #N' or wants details of a specific PR.")
+    mcp.register(get_my_recent_activity, name="get_my_recent_activity", description="Summarize the principal's recent GitHub activity (pushes, PRs, issues, releases, stars) over the last N days (default 7). Use when they ask 'what did I do on GitHub this week' or want a recap.")
+    mcp.register(list_my_notifications, name="list_my_notifications", description="List the principal's GitHub notifications — unread by default. Use when they ask what needs their attention on GitHub (mentions, reviews, watched-issue updates).")
+    mcp.register(list_starred_repos, name="list_starred_repos", description="List repos the principal has starred, newest first, with language and stars. Use to recall a saved repo or curate favorites.")
+    mcp.register(list_my_orgs, name="list_my_orgs", description="List GitHub organizations the principal belongs to. Use when they ask what GitHub orgs/groups they're a member of.")
+
+    # ── QuickEnrich contact-database tools ───────────────────────────
+    # A third-party contact/company database. Distinct from BOTH the Zynd
+    # Network (people with a persona you can connect to) AND
+    # search_linkedin_people (a metered LinkedIn scrape). Results here are
+    # public business records — they cannot be request_connection'd.
+    mcp.register(search_people_database, name="search_people_database", description="Find people by ROLE + COMPANY ATTRIBUTES in a large contact database — e.g. 'VPs of Engineering at 51-200 person fintechs in the US', 'heads of marketing at agencies in Austin'. This search is FREE and returns each person's LinkedIn profile URL plus has_email/has_phone flags telling you whether contact details exist for them. Prefer this over search_linkedin_people whenever the ask has structure (title + industry/size/revenue/location), because it filters precisely and costs nothing; search_linkedin_people is a metered keyword scrape and should be the fallback. These are public business records, NOT Zynd personas — the principal cannot request_connection or message_zynd_agent them, only view the LinkedIn URL or reach out by email. Industry, company size, revenue, country, and services must be EXACT values from the database's own lists — pass what the principal said and the tool will map close values for you (it reports what it rewrote in normalized_filters), or call list_people_filter_values first if you want to be certain.")
+    mcp.register(search_companies_database, name="search_companies_database", description="Find COMPANIES (not people) by what they do, their industry, size, revenue, and location — e.g. 'cloud migration consultancies in the US with 51-200 staff'. Use when the principal is looking for organizations to target rather than named individuals; follow up with list_people_at_company to get the people inside one. COSTS 1 CREDIT PER COMPANY RETURNED, so keep `limit` tight (10 or fewer) unless the principal asked for a big list. Same exact-value rule as search_people_database for industry/size/revenue/country/services.")
+    mcp.register(list_people_at_company, name="list_people_at_company", description="List the people who work at ONE specific company, optionally narrowed by job title — e.g. 'who is the CEO of acme.com', 'find the sales leaders at stripe.com'. Takes a domain plus an optional comma-separated title list, and returns up to 20 people per page WITH their email and phone. Use this when the principal names a company; use search_people_database instead when they describe a type of company. Costs a credit per contact returned that has an email or phone.")
+    mcp.register(get_email_for_person, name="get_email_for_person", description="Get the work email address for ONE specific person the principal wants to reach. Identify them with their LinkedIn profile URL (best) or all three of company website + first name + last name. Costs 1 credit when an email is found and nothing when it isn't; a previously-found email is returned free from cache. Call this only when reaching the person is the actual ask — check the has_email flag on the search result first, and don't run it speculatively across a whole result list. Once you have the address, use send_gmail_email to actually write to them.")
+    mcp.register(get_phone_for_person, name="get_phone_for_person", description="Get the phone number for ONE specific person, identified by LinkedIn profile URL (best) or company website + first name + last name. Costs 1 credit when a number is found and nothing when it isn't; cached results are free. Same rule as get_email_for_person — only for a person the principal actually asked to reach, never speculatively.")
+    mcp.register(identify_person_by_email, name="identify_person_by_email", description="Reverse lookup: given an email address, find out who it belongs to — their name, job title, company, and LinkedIn profile. Use when the principal asks 'who is this?' about an address, or wants context on an unfamiliar sender before replying. Costs 1 credit when a match is found, nothing when it isn't.")
+    mcp.register(list_people_filter_values, name="list_people_filter_values", description="List the exact values allowed for a contact-database filter — dimension is one of 'industry', 'country_code', 'employee_range', 'revenue_range', or 'services'. FREE. Use it when a search reports unresolved_filters, or when you want the precise label before searching (e.g. to learn that the industry is 'Computer Software', not 'Software', or that the size band is '51-200', not '50-200'). Pass `query` to narrow — required in practice for 'services', which has a very long list.")
+    mcp.register(get_suggested_people, name="get_suggested_people", description="Read the shortlist of people the system already picked for the principal from the contact database, based on their own role/company/location/interests — e.g. for 'who should I meet this week?' or 'anyone new I should talk to?'. FREE, read-only, no new search — it just returns what was generated in the background (grouped into sections like 'Same role', 'At your company', 'Shared interests', each with a one-line reason). If it comes back empty, fall back to search_people_database with filters built from what the principal has told you, rather than waiting.")
 
     # ── Google Calendar tools ────────────────────────────────────────
     mcp.register(create_event, name="create_calendar_event", description="Create an event on Google Calendar. Pass `attendees` (a list of email addresses) to invite guests — Google emails them the invite automatically. Checks for conflicts with existing events first: if the time overlaps something already on the calendar, it returns {conflict: true, conflicting_events, suggested_times} and does NOT create the event — present the conflict and suggested_times to the principal instead of retrying blindly. Only pass force=true to double-book anyway, and only when the principal explicitly asked for that after seeing the conflict.")
@@ -202,7 +269,8 @@ def create_mcp_server(disable_security: bool = True) -> ContextAware:
     mcp.register(append_to_my_brief, name="append_to_my_brief", description="Append a line to the principal's Brief. Use this when the user tells you something durable about themselves that you should remember across conversations.")
     mcp.register(replace_my_brief, name="replace_my_brief", description="Replace the entire body of the principal's Brief. Use only when the user explicitly asks to rewrite their brief — prefer append_to_my_brief for additions.")
     mcp.register(clear_my_brief, name="clear_my_brief", description="Empty the principal's Brief. Use only when the user explicitly asks to clear their brief.")
-    mcp.register(add_todo, name="add_todo", description="Add an actionable todo to the principal's todo list. PREFER this tool over append_to_my_brief whenever the user explicitly asks to track a task — phrases like 'add a todo', 'remind me to', 'put X on my list', 'add this to my todos'. The item shows up immediately on the dashboard's Todos tab (no 5-minute extractor wait). For general profile facts ('I work at X', 'I prefer afternoons'), use append_to_my_brief instead.")
+    mcp.register(add_todo, name="add_todo", description="Add an actionable todo to the principal's todo list. PREFER this tool over append_to_my_brief whenever the user explicitly asks to track a task — phrases like 'add a todo', 'remind me to', 'put X on my list', 'add this to my todos'. The item shows up immediately on the dashboard's Todos tab (no 5-minute extractor wait). For general profile facts ('I work at X', 'I prefer afternoons'), use append_to_my_brief instead. Also available when @mentioned in a Persona Group with a task assigned to you — group_id and assigned_by_user_id are auto-injected in that case, tagging the todo with where it came from.")
+    mcp.register(list_my_todos, name="list_my_todos", description="List the principal's todos from the dashboard's Todos tab — open items by default. Use this whenever the user asks what's on their todo list, what they have to do, or to show their tasks.")
 
     # ── Profile tools (principal-private) ───────────────────────────
     mcp.register(update_my_name, name="update_my_name", description="Change the principal's name (the name this persona uses to identify the human it represents). Use this whenever the principal says their name is wrong or asks to change it — e.g. 'my name is actually X', 'call me X'. Do NOT write a name change into the Brief via append_to_my_brief; the name has its own field and doing so creates a contradiction.")

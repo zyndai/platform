@@ -12,6 +12,11 @@ interface Assertion {
   object_type: string;
   confidence: number;
   relevance: number;
+  /** Provenance tag set by the declaring system (twitter/linkedin/github/
+   *  mcp/chat/…) — empty for older facts recorded before tagging. */
+  source_system?: string;
+  /** When the fact was recorded (ISO). */
+  observed_at?: string | null;
 }
 
 interface MemoryResponse {
@@ -44,6 +49,41 @@ const PREDICATE_LABEL: Record<string, string> = {
 
 function predicateLabel(predicate: string): string {
   return PREDICATE_LABEL[predicate] || predicate;
+}
+
+// Provenance labels for the source tag shown on each fact. Unknown or
+// missing tags fall back to the raw value / "Learned from chat".
+const SOURCE_LABEL: Record<string, string> = {
+  twitter: "Twitter",
+  linkedin: "LinkedIn",
+  github: "GitHub",
+  mcp: "MCP",
+  user_confirmed: "You",
+  "agent-persona": "Chat",
+  chatgpt: "Chat",
+};
+
+function sourceLabel(source: string | undefined): string {
+  if (!source) return "Learned from chat";
+  return SOURCE_LABEL[source] || source;
+}
+
+function timeAgo(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return "";
+  if (ms < 0) return "just now";
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} minute${m === 1 ? "" : "s"} ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d} day${d === 1 ? "" : "s"} ago`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo} month${mo === 1 ? "" : "s"} ago`;
+  const y = Math.floor(mo / 12);
+  return `${y} year${y === 1 ? "" : "s"} ago`;
 }
 
 function factKey(a: Assertion): string {
@@ -173,6 +213,29 @@ export default function MemoryPage() {
                     <li key={key} className="memory-row">
                       <div className="memory-row-main">
                         <span className="memory-text">{a.statement || a.object}</span>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            fontSize: 11,
+                            color: "var(--text-muted)",
+                          }}
+                        >
+                          <span
+                            style={{
+                              padding: "1px 6px",
+                              borderRadius: 999,
+                              border: "1px solid var(--border)",
+                              fontSize: 10,
+                              textTransform: "uppercase",
+                              letterSpacing: "0.04em",
+                            }}
+                          >
+                            {sourceLabel(a.source_system)}
+                          </span>
+                          {timeAgo(a.observed_at) && <span>{timeAgo(a.observed_at)}</span>}
+                        </div>
                         <div className="memory-confidence" title={`${Math.round(a.confidence * 100)}% confidence`}>
                           <div
                             className="memory-confidence-fill"

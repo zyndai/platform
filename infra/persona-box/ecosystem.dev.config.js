@@ -18,7 +18,11 @@ module.exports = {
       name: "api-dev",
       cwd: `${DEV}/backend`,
       script: `${DEV}/backend/.venv/bin/uvicorn`,
-      args: "main:app --host 127.0.0.1 --port 8001 --workers 1",
+      // --loop asyncio: uvloop's aarch64 build intermittently corrupts the
+      // heap here (malloc(): unsorted double linked list corrupted /
+      // silent segfaults killing the process mid-chat-turn). Pure-Python
+      // loop is the stable choice on this box until that's root-caused.
+      args: "main:app --host 127.0.0.1 --port 8001 --workers 1 --loop asyncio",
       interpreter: "none",
       instances: 1,
       autorestart: true,
@@ -28,6 +32,7 @@ module.exports = {
       max_memory_restart: "4G",
       env: {
         PYTHONUNBUFFERED: "1",
+        PYTHONFAULTHANDLER: "1",
         OPENROUTER_MODEL: "deepseek/deepseek-v4-flash",
       },
       out_file: "/home/ubuntu/.pm2/logs/api-dev-out.log",

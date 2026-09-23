@@ -407,6 +407,22 @@ async def export_account(user_id: str, user: dict = Depends(get_current_user)):
     except Exception:
         pass
 
+    # Contacts the persona found through the contact database. This is
+    # per-user PII we store, so it belongs in the export alongside the rest.
+    enriched_contacts: list = []
+    try:
+        contact_rows = (
+            sb.table("enriched_contacts")
+            .select("first_name, last_name, title, company_name, company_url, "
+                    "employee_linkedin, email, phone, source, created_at")
+            .eq("user_id", user_id)
+            .order("created_at")
+            .execute()
+        )
+        enriched_contacts = contact_rows.data or []
+    except Exception:
+        enriched_contacts = []
+
     providers: list = []
     try:
         from services.token_store import list_connected_providers
@@ -421,6 +437,7 @@ async def export_account(user_id: str, user: dict = Depends(get_current_user)):
         "brief": brief,
         "chat_messages": chat_messages,
         "linkedin": linkedin,
+        "enriched_contacts": enriched_contacts,
         "connected_providers": providers,
     }
 

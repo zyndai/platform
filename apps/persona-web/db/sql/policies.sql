@@ -290,6 +290,9 @@ CREATE POLICY "Service role full access on linkedin_profiles" ON public.linkedin
 DROP POLICY IF EXISTS "Users can read own brief todos" ON public.brief_todos;
 CREATE POLICY "Users can read own brief todos" ON public.brief_todos
     FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Group members can read group todos" ON public.brief_todos;
+CREATE POLICY "Group members can read group todos" ON public.brief_todos
+    FOR SELECT USING (group_id IS NOT NULL AND public.is_persona_group_member(group_id));
 DROP POLICY IF EXISTS "Users can update own brief todos" ON public.brief_todos;
 CREATE POLICY "Users can update own brief todos" ON public.brief_todos
     FOR UPDATE USING (auth.uid() = user_id);

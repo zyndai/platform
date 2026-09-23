@@ -10,9 +10,12 @@ import {
   ExternalLink,
   Trash2,
   Plus,
+  Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui";
 import { getSupabase } from "@/lib/supabase";
+import PublishHtmlModal from "@/components/chat/PublishHtmlModal";
+import type { PublishedPage } from "@/components/chat/PublishedPageCard";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -20,6 +23,7 @@ interface PageItem {
   slug: string;
   url: string;
   title: string;
+  content: string;
   format: "html" | "markdown";
   visibility: string;
   created_at: string | null;
@@ -29,6 +33,7 @@ export default function DashboardPagesPage() {
   const [pages, setPages] = useState<PageItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editingPage, setEditingPage] = useState<PageItem | null>(null);
 
   const fetchPages = useCallback(async () => {
     try {
@@ -103,9 +108,30 @@ export default function DashboardPagesPage() {
       ) : (
         <ul className="dashboard-pages-list">
           {pages.map((page) => (
-            <PageRow key={page.slug} page={page} onDelete={deletePage} />
+            <PageRow
+              key={page.slug}
+              page={page}
+              onDelete={deletePage}
+              onEdit={() => setEditingPage(page)}
+            />
           ))}
         </ul>
+      )}
+
+      {editingPage && (
+        <PublishHtmlModal
+          page={editingPage}
+          onClose={() => setEditingPage(null)}
+          onSaved={(saved: PublishedPage) => {
+            setPages((prev) =>
+              prev.map((p) =>
+                p.slug === editingPage.slug
+                  ? { ...p, title: saved.title, visibility: saved.visibility || p.visibility }
+                  : p,
+              ),
+            );
+          }}
+        />
       )}
     </div>
   );
@@ -114,9 +140,11 @@ export default function DashboardPagesPage() {
 function PageRow({
   page,
   onDelete,
+  onEdit,
 }: {
   page: PageItem;
   onDelete: (slug: string) => void;
+  onEdit: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -162,6 +190,10 @@ function PageRow({
           <ExternalLink size={15} />
           Open
         </a>
+        <button type="button" className="page-action-btn" onClick={onEdit}>
+          <Pencil size={15} />
+          Edit
+        </button>
         <button
           type="button"
           className="page-action-btn danger"

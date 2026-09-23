@@ -13,13 +13,14 @@ Flow:
   5. Redirects to frontend dashboard with success/error status
 """
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import RedirectResponse
 import httpx
 import secrets
 import hashlib
 import base64
 import json
+import logging
 from urllib.parse import urlencode
 
 import config
@@ -27,6 +28,8 @@ from services.token_store import save_tokens
 from datetime import datetime, timezone
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 PENDING_STATE_TABLE = "oauth_pending_state"
 
@@ -89,6 +92,45 @@ def _generate_pkce() -> tuple[str, str]:
     digest = hashlib.sha256(verifier.encode()).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
     return verifier, challenge
+
+
+def _oauth_redirect_uri(provider: str) -> str:
+    """Derive the OAuth callback URL from the app's public base URL.
+
+    The backend sits behind Caddy, which serves /api/* on the same public
+    origin as the frontend (config.FRONTEND_URL is env-configured per
+    channel: prod vs dev). Deriving the redirect URI from it keeps the
+    callback pointing at whichever channel started the flow — never a
+    hardcoded host — and matches what the provider app registers.
+    """
+    return f"{config.FRONTEND_URL}/api/oauth/{provider}/callback"
+
+
+def _identity(
+    platform: str,
+    platform_user_id,
+    username: str,
+    name: str | None = None,
+    profile_url: str | None = None,
+    avatar_url: str | None = None,
+) -> dict:
+    """Normalize a provider's /me response into one identity shape.
+
+    platform_user_id is the provider's immutable user id (canonical
+    identity); username is the display handle the enrichment pipeline
+    (Apify scrapers) keys on. Merged into the token payload before
+    save_tokens so it persists in api_tokens.raw_data.
+    """
+    out = {"platform": platform, "username": username}
+    if platform_user_id is not None:
+        out["platform_user_id"] = str(platform_user_id)
+    if name:
+        out["name"] = name
+    if profile_url:
+        out["profile_url"] = profile_url
+    if avatar_url:
+        out["avatar_url"] = avatar_url
+    return out
 
 
 # =====================================================================
@@ -213,69 +255,124 @@ async def linkedin_callback(code: str = None, state: str = None, error: str = No
 
 
 # =====================================================================
-# TWITTER / X — OAuth 2.0 with PKCE
+# GITHUB — OAuth 2.0 (authorization code, no scopes)
 # =====================================================================
 
-@router.get("/twitter/authorize")
-async def twitter_authorize(token: str):
-    """Start Twitter OAuth 2.0 PKCE flow."""
+@router.get("/github/authorize")
+async def github_authorize(token: str):
+    """Start GitHub OAuth flow.
+
+    The connected app is a GitHub App, so repo access is configured in
+    the App's settings (Repositories → Contents: Read), NOT via an OAuth
+    `scope` URL param — GitHub Apps ignore scopes entirely. The exchange
+    returns a user token (8h access + rotating refresh) which
+    services/github_sync.py refreshes.
+    """
     user = await _validate_token(token)
 
     state = secrets.token_urlsafe(32)
-    code_verifier, code_challenge = _generate_pkce()
-
-    _store_pending_state(state, user["id"], "twitter", code_verifier=code_verifier)
+    _store_pending_state(state, user["id"], "github")
 
     params = {
-        "response_type": "code",
-        "client_id": config.TWITTER_CLIENT_ID,
-        "redirect_uri": config.TWITTER_REDIRECT_URI,
-        "scope": "tweet.read tweet.write users.read dm.read dm.write offline.access",
+        "client_id": config.GITHUB_CLIENT_ID,
+        "redirect_uri": _oauth_redirect_uri("github"),
         "state": state,
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
     }
-    auth_url = f"https://twitter.com/i/oauth2/authorize?{urlencode(params)}"
+    auth_url = f"https://github.com/login/oauth/authorize?{urlencode(params)}"
     return RedirectResponse(auth_url)
 
 
-@router.get("/twitter/callback")
-async def twitter_callback(code: str = None, state: str = None, error: str = None, error_description: str = None):
-    """Exchange Twitter authorization code for tokens (with PKCE)."""
+@router.get("/github/callback")
+async def github_callback(
+    code: str = None,
+    state: str = None,
+    error: str = None,
+    error_description: str = None,
+    background_tasks: BackgroundTasks = None,
+):
+    """Exchange GitHub authorization code for tokens, then capture identity."""
     if error or not code:
         desc = error_description or error or "authorization_denied"
-        return _frontend_redirect("/dashboard", oauth="twitter", status="error", detail=desc)
-    pending = _pop_pending_state(state, "twitter")
+        return _frontend_redirect("/dashboard/settings/accounts", oauth="github", status="error", detail=desc)
+    pending = _pop_pending_state(state, "github")
     if not pending:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
 
     user_id = pending["user_id"]
-    code_verifier = pending["code_verifier"]
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            "https://api.twitter.com/2/oauth2/token",
-            data={
-                "grant_type": "authorization_code",
+            "https://github.com/login/oauth/access_token",
+            headers={"Accept": "application/json"},
+            json={
+                "client_id": config.GITHUB_CLIENT_ID,
+                "client_secret": config.GITHUB_CLIENT_SECRET,
                 "code": code,
-                "redirect_uri": config.TWITTER_REDIRECT_URI,
-                "client_id": config.TWITTER_CLIENT_ID,
-                "code_verifier": code_verifier,
+                "redirect_uri": _oauth_redirect_uri("github"),
             },
-            auth=(config.TWITTER_CLIENT_ID, config.TWITTER_CLIENT_SECRET),
         )
 
     if resp.status_code != 200:
-        return _frontend_redirect("/dashboard", oauth="twitter", status="error", detail=resp.text)
+        return _frontend_redirect("/dashboard/settings/accounts", oauth="github", status="error", detail=resp.text)
 
     token_data = resp.json()
+    if not token_data.get("access_token"):
+        return _frontend_redirect(
+            "/dashboard/settings/accounts", oauth="github", status="error", detail="Token exchange failed"
+        )
+
+    # Revalidate identity via the API (GitHub recommends this over trusting
+    # stale data). Best-effort — a failure here must not fail the connect.
+    try:
+        async with httpx.AsyncClient() as client:
+            me_resp = await client.get(
+                "https://api.github.com/user",
+                headers={
+                    "Authorization": f"Bearer {token_data['access_token']}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+        if me_resp.status_code == 200:
+            me = me_resp.json() or {}
+            if me.get("login"):
+                token_data.update(
+                    _identity(
+                        "github",
+                        me.get("id"),
+                        me["login"],
+                        name=me.get("name"),
+                        profile_url=me.get("html_url"),
+                        avatar_url=me.get("avatar_url"),
+                    )
+                )
+    except Exception:
+        pass
+
     save_tokens(
         user_id=user_id,
-        provider="twitter",
+        provider="github",
         tokens=token_data,
     )
 
-    return _frontend_redirect("/dashboard", oauth="twitter", status="success")
+    # Kick off the first repo/language sync immediately — the daily loop
+    # would otherwise pick this user up only at the next 24h scan. This is
+    # the best-effort part: it must never fail the connect itself.
+    if background_tasks is not None:
+        background_tasks.add_task(_safe_github_sync, user_id)
+
+    return _frontend_redirect("/dashboard/settings/accounts", oauth="github", status="success")
+
+
+async def _safe_github_sync(user_id: str) -> None:
+    """BackgroundTask wrapper — a GitHub sync failure must not 500 the
+    OAuth redirect, and the daily loop retries anyway."""
+    try:
+        from services.github_sync import sync_user
+        result = await sync_user(user_id)
+        logger.info("[github] post-connect sync for %s: %s", user_id, result.get("status"))
+    except Exception:
+        logger.exception("[github] post-connect sync failed for %s", user_id)
 
 
 # =====================================================================

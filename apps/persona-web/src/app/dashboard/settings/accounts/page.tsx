@@ -18,6 +18,34 @@ function LinkedinIcon({ size = 22 }: { size?: number }) {
     </svg>
   );
 }
+
+function XIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+    </svg>
+  );
+}
+
+function GithubIcon({ size = 22 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" />
+    </svg>
+  );
+}
 import { Banner, Button, Input, FieldLabel, Tag } from "@/components/ui";
 import { getSupabase } from "@/lib/supabase";
 import { useDashboard } from "@/contexts/DashboardContext";
@@ -26,7 +54,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 // Bot swapped 2026-05-20: was @zynd_persona_telegram_bot — now @zynd_brief_bot.
 const TELEGRAM_BOT = "zynd_brief_bot";
 
-type ConnId = "linkedin" | "calendar" | "email" | "telegram";
+type ConnId = "linkedin" | "calendar" | "email" | "telegram" | "twitter" | "github";
 
 interface LinkedinPreview {
   headline?: string;
@@ -37,11 +65,30 @@ interface LinkedinPreview {
   profileUrl?: string;
 }
 
+/** OAuth-only platforms: connected via a plain OAuth handshake that
+ *  captures the username (no scrape, no read/write permissions). */
+interface SocialConn {
+  connected: boolean;
+  username?: string;
+}
+
 interface ConnState {
   linkedin: { read: boolean; write: boolean; lastReadIso?: string } & LinkedinPreview;
   calendar: { connected: boolean };
   email: { connected: boolean };
   telegram: { connected: boolean };
+  /** Twitter is username-based, not OAuth: the handle is stored in the
+   *  persona profile (profile.twitter), same place the "You" page edits it.
+   *  The scrape state lives here too — `read` once real tweets have been
+   *  fetched by the background Apify run. */
+  twitter: {
+    username: string;
+    read: boolean;
+    lastReadIso?: string;
+    tweetsCount?: number;
+    interests?: string[];
+  };
+  github: SocialConn;
 }
 
 const EMPTY: ConnState = {
@@ -49,6 +96,8 @@ const EMPTY: ConnState = {
   calendar: { connected: false },
   email: { connected: false },
   telegram: { connected: false },
+  twitter: { username: "", read: false },
+  github: { connected: false },
 };
 
 const LINKEDIN_REAL_DATA_KEYS = ["headline", "experience", "education", "skills", "summary"] as const;
@@ -83,6 +132,20 @@ function timeAgo(iso: string | undefined): string {
   return `${d} day${d === 1 ? "" : "s"} ago`;
 }
 
+/** Accepts "@handle", "handle", or a profile URL like
+ *  https://x.com/handle — returns the bare handle. */
+function normalizeTwitterHandle(raw: string): string {
+  let v = raw.trim().replace(/^@/, "");
+  if (/^https?:\/\//i.test(v)) {
+    try {
+      v = new URL(v).pathname.split("/").filter(Boolean).pop() ?? v;
+    } catch {
+      // not a parseable URL — keep the raw value as-is
+    }
+  }
+  return v.replace(/[/\s]+$/, "");
+}
+
 export default function AccountsPage() {
   const { user } = useDashboard();
   const [conn, setConn] = useState<ConnState>(EMPTY);
@@ -92,20 +155,28 @@ export default function AccountsPage() {
   const [oauthFlash, setOauthFlash] =
     useState<{ tone: "success" | "danger"; msg: string } | null>(null);
   // True while a background LinkedIn scrape is believed to be in flight —
-  // covers the gap (up to a few minutes: search-by-name + profile + posts
-  // actors on Apify) between "clicked connect/refresh" and the row actually
-  // updating. Without this the card just sat there looking unchanged, which
-  // read as "nothing happened."
+  // covers the gap (up to a few minutes: profile + posts actors on Apify)
+  // between "clicked connect/refresh" and the row actually updating.
+  // Without this the card just sat there looking unchanged, which read
+  // as "nothing happened."
   const [linkedinScraping, setLinkedinScraping] = useState(false);
   const [linkedinNotice, setLinkedinNotice] = useState<string | null>(null);
-  // LinkedIn OAuth only gives us the user's name (no profile URL — that
-  // needs LinkedIn partner-tier API access we don't have), so the read
-  // path falls back to a name search that can land on the wrong person
-  // for a common name. Letting the user paste their real URL is the only
-  // way to guarantee we're scraping them, not a stranger who shares their
-  // name — this is a correction path, reachable whether or not they're
-  // already "connected".
+  // Twitter has the same gap: "saved the handle" vs "scrape landed".
+  const [twitterScraping, setTwitterScraping] = useState(false);
+  const [twitterNotice, setTwitterNotice] = useState<string | null>(null);
+  // Scraping is strictly opt-in and URL-driven: LinkedIn's OAuth only
+  // gives us the user's name (no profile URL — that needs LinkedIn
+  // partner-tier API access we don't have), so the user pastes their
+  // real URL and we scrape exactly that profile — never a guess at
+  // someone else who shares their name. This input is the correction
+  // path, reachable whether or not they're already "connected".
   const [linkedinUrlInput, setLinkedinUrlInput] = useState("");
+  // Twitter is username-based: the handle lives in the persona profile
+  // (profile.twitter), not in an OAuth token. The whole profile blob is
+  // kept so saves can merge the twitter key without clobbering anything
+  // else the user set (same pattern as the "You" page).
+  const [twitterUsernameInput, setTwitterUsernameInput] = useState("");
+  const [personaProfile, setPersonaProfile] = useState<Record<string, unknown>>({});
 
   const refresh = useCallback(async () => {
     const sb = getSupabase();
@@ -113,23 +184,56 @@ export default function AccountsPage() {
     const jwt = session?.access_token;
     if (!jwt) return;
 
-    const [connRes, linkedinRes] = await Promise.all([
+    const [connRes, linkedinRes, twitterRes, personaRes] = await Promise.all([
       fetch(`${API}/api/connections/`, {
         headers: { Authorization: `Bearer ${jwt}` },
       }),
       fetch(`${API}/api/linkedin/me`, {
         headers: { Authorization: `Bearer ${jwt}` },
       }),
+      fetch(`${API}/api/twitter/me`, {
+        headers: { Authorization: `Bearer ${jwt}` },
+      }),
+      session?.user?.id
+        ? fetch(`${API}/api/persona/${session.user.id}/status`)
+        : Promise.resolve(null),
     ]);
 
     let google = { connected: false, scopes: "" };
     let linkedinOauth = false;
     let telegram = { connected: false };
+    let github: SocialConn = { connected: false };
     if (connRes.ok) {
       const data = await connRes.json();
       google = data.connections?.google ?? google;
       linkedinOauth = data.connections?.linkedin?.connected ?? false;
       telegram = data.connections?.telegram ?? telegram;
+      github = data.connections?.github ?? github;
+    }
+
+    let twitterUsername = "";
+    if (personaRes && personaRes.ok) {
+      const data = await personaRes.json();
+      const profile = (data?.profile || {}) as Record<string, unknown>;
+      setPersonaProfile(profile);
+      twitterUsername = String(profile.twitter || "");
+    }
+
+    // Twitter scrape state — `read` once real tweets are stored (same
+    // "present alone isn't proof" logic as LinkedIn: a saved handle with
+    // a failed/never-run scrape must keep the connect/retry path visible).
+    let twitterRead = false;
+    let twitterLastReadIso: string | undefined;
+    let twitterTweetsCount: number | undefined;
+    let twitterInterests: string[] | undefined;
+    if (twitterRes.ok) {
+      const data = await twitterRes.json();
+      if (data.present && Array.isArray(data.raw_tweets) && data.raw_tweets.length > 0) {
+        twitterRead = true;
+        twitterLastReadIso = data.scraped_at || undefined;
+        twitterTweetsCount = data.tweets_count ?? data.raw_tweets.length;
+        twitterInterests = Array.isArray(data.facts) ? data.facts : undefined;
+      }
     }
 
     let linkedinRead = false;
@@ -170,6 +274,14 @@ export default function AccountsPage() {
       calendar: { connected: google.connected && scopes.includes("calendar") },
       email: { connected: google.connected && scopes.includes("gmail") },
       telegram,
+      twitter: {
+        username: twitterUsername,
+        read: twitterRead,
+        lastReadIso: twitterLastReadIso,
+        tweetsCount: twitterTweetsCount,
+        interests: twitterInterests,
+      },
+      github,
     });
     setLoading(false);
   }, []);
@@ -181,9 +293,9 @@ export default function AccountsPage() {
   // Polls /api/linkedin/me until the scrape that was just kicked off
   // actually lands (real profile fields + a scraped_at newer than
   // `sinceIso`), or gives up after ~3 minutes. That's the realistic upper
-  // bound for the search-by-name + profile + posts Apify actors combined.
-  // Without this, clicking connect/refresh looked like a no-op for however
-  // long the scrape actually took.
+  // bound for the profile + posts Apify actors combined. Without this,
+  // clicking connect/refresh looked like a no-op for however long the
+  // scrape actually took.
   const pollLinkedinUntilReady = useCallback(
     async (sinceIso: string | undefined) => {
       setLinkedinScraping(true);
@@ -229,6 +341,55 @@ export default function AccountsPage() {
     [refresh],
   );
 
+  // Polls /api/twitter/me until the scrape that was just kicked off
+  // actually lands (raw tweets stored with a scraped_at newer than
+  // `sinceIso`), or gives up after ~2 minutes. Tweet Scraper V2 usually
+  // returns in well under a minute, so this is generous headroom.
+  const pollTwitterUntilReady = useCallback(
+    async (sinceIso: string | undefined) => {
+      setTwitterScraping(true);
+      setTwitterNotice(null);
+      const sb = getSupabase();
+      const { data: { session } } = await sb.auth.getSession();
+      const jwt = session?.access_token;
+      if (!jwt) {
+        setTwitterScraping(false);
+        return;
+      }
+      const attempts = 15; // ~2 minutes at 8s apart
+      for (let i = 0; i < attempts; i++) {
+        await new Promise((r) => setTimeout(r, 8000));
+        try {
+          const res = await fetch(`${API}/api/twitter/me`, {
+            headers: { Authorization: `Bearer ${jwt}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const ready =
+              data.present &&
+              Array.isArray(data.raw_tweets) &&
+              data.raw_tweets.length > 0 &&
+              data.scraped_at &&
+              data.scraped_at !== sinceIso;
+            if (ready) {
+              await refresh();
+              setTwitterScraping(false);
+              return;
+            }
+          }
+        } catch {
+          // transient — keep polling
+        }
+      }
+      setTwitterScraping(false);
+      setTwitterNotice(
+        "Still working — this can take a couple of minutes. It'll show up here once it lands, no need to re-add the handle.",
+      );
+      await refresh();
+    },
+    [refresh],
+  );
+
   // OAuth callback flash — strip ?oauth=... and refresh state.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -255,12 +416,24 @@ export default function AccountsPage() {
         (async () => {
           const sb = getSupabase();
           const { data: { session } } = await sb.auth.getSession();
-          if (session?.access_token) {
+          if (!session?.access_token) return;
+          // Scraping requires a profile URL (name guessing is gone). Only
+          // auto-kick the scrape when one is already stored; otherwise
+          // point the user at the paste-URL field on this card.
+          const liRes = await fetch(`${API}/api/linkedin/me`, {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          }).catch(() => null);
+          const li = liRes && liRes.ok ? await liRes.json().catch(() => ({})) : {};
+          if (li.profile_url) {
             fetch(`${API}/api/linkedin/scrape`, {
               method: "POST",
               headers: { Authorization: `Bearer ${session.access_token}` },
             }).catch(() => {});
             void pollLinkedinUntilReady(undefined);
+          } else {
+            setLinkedinNotice(
+              "Connected — paste your LinkedIn profile URL below so Persona can read your profile. LinkedIn's login alone doesn't tell us which profile is yours.",
+            );
           }
         })();
       }
@@ -318,6 +491,74 @@ export default function AccountsPage() {
     }).catch(() => setWorking(null));
   };
 
+  // Twitter has no OAuth — the handle is saved straight into the persona
+  // profile (profile.twitter), merged with the rest of the profile blob so
+  // nothing else the user set gets clobbered. Saving the handle also kicks
+  // off the first scrape; the card polls until real tweets land.
+  const saveTwitterUsername = async () => {
+    const handle = normalizeTwitterHandle(twitterUsernameInput);
+    if (!user || !handle) return;
+    setWorking("twitter");
+    try {
+      const res = await fetch(`${API}/api/persona/${user.id}/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile: { ...personaProfile, twitter: handle } }),
+      });
+      if (res.ok) {
+        setTwitterUsernameInput("");
+        const sb = getSupabase();
+        const { data: { session } } = await sb.auth.getSession();
+        if (session?.access_token) {
+          const scrapeRes = await fetch(
+            `${API}/api/twitter/scrape?handle=${encodeURIComponent(handle)}`,
+            { method: "POST", headers: { Authorization: `Bearer ${session.access_token}` } },
+          ).catch(() => null);
+          if (scrapeRes && !scrapeRes.ok) {
+            const body = await scrapeRes.json().catch(() => null);
+            setTwitterNotice(
+              (body?.detail as string) || "Couldn't start the scrape — try again in a moment.",
+            );
+            await refresh();
+            return;
+          }
+          void pollTwitterUntilReady(undefined);
+          return;
+        }
+        await refresh();
+      }
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  // Manual refresh — same path as the LinkedIn card's "Refresh now".
+  const refreshTwitter = async () => {
+    const handle = conn.twitter.username;
+    if (!handle) return;
+    setWorking("twitter");
+    const sinceIso = conn.twitter.lastReadIso;
+    try {
+      const sb = getSupabase();
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session?.access_token) return;
+      const resp = await fetch(
+        `${API}/api/twitter/scrape?handle=${encodeURIComponent(handle)}`,
+        { method: "POST", headers: { Authorization: `Bearer ${session.access_token}` } },
+      );
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => null);
+        setTwitterNotice(
+          (body?.detail as string) || "Couldn't start the scrape — try again in a moment.",
+        );
+        return;
+      }
+      void pollTwitterUntilReady(sinceIso);
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const disconnect = async (which: ConnId) => {
     setWorking(which);
     try {
@@ -339,6 +580,23 @@ export default function AccountsPage() {
         ]);
       } else if (which === "telegram") {
         await fetch(`${API}/api/connections/telegram`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${jwt}` },
+        });
+      } else if (which === "twitter") {
+        await Promise.all([
+          fetch(`${API}/api/persona/${session.user.id}/profile`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ profile: { ...personaProfile, twitter: "" } }),
+          }),
+          fetch(`${API}/api/twitter/me`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${jwt}` },
+          }),
+        ]);
+      } else if (which === "github") {
+        await fetch(`${API}/api/connections/${which}`, {
           method: "DELETE",
           headers: { Authorization: `Bearer ${jwt}` },
         });
@@ -368,6 +626,14 @@ export default function AccountsPage() {
         oauthLinkedIn();
         return;
       }
+      if (conn.linkedin.write && !conn.linkedin.read) {
+        // OAuth is connected but no profile was ever scraped — scraping
+        // is URL-driven now, so point the user at the paste field instead
+        // of firing a scrape that would just skip.
+        setLinkedinNotice("Paste your LinkedIn profile URL below so Persona can read your profile.");
+        document.getElementById("linkedin-profile-url-input")?.focus();
+        return;
+      }
       await connectLinkedIn();
       return;
     }
@@ -379,29 +645,39 @@ export default function AccountsPage() {
       );
       return;
     }
+    if (id === "twitter") {
+      // No OAuth for Twitter — jump the user to the username input.
+      document.getElementById("twitter-username-input")?.focus();
+      return;
+    }
+    if (id === "github") {
+      // OAuth-only connect: redirect to the backend authorize endpoint,
+      // which bounces to the provider and back to this page with a flash.
+      setWorking(id);
+      const sb = getSupabase();
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session?.access_token) {
+        setWorking(null);
+        return;
+      }
+      window.location.href = `${API}/api/oauth/${id}/authorize?token=${session.access_token}`;
+      return;
+    }
     const url = await buildGoogleConnect(id === "email" ? "gmail" : "calendar");
     if (url) window.location.href = url;
   };
 
-  return (
-    <div className="settings-main">
-      {oauthFlash && (
-        <div style={{ marginBottom: 16 }}>
-          <Banner
-            tone={oauthFlash.tone}
-            onDismiss={() => setOauthFlash(null)}
-          >
-            {oauthFlash.msg}
-          </Banner>
-        </div>
-      )}
-      <div className="settings-header">
-        <h1 className="display-s">Connections</h1>
-        <p className="body secondary">Four things your Persona can see. Nothing else.</p>
-      </div>
-
-      <div className="connectors-grid">
-        <ConnectorCard
+  // One array of cards so the page can split them into a "Connected"
+  // section and a "Not connected" section. A card belongs to the
+  // connected group while it has a live connection — LinkedIn also
+  // counts while a background scrape is in flight, since it's
+  // connected-but-not-yet-ready rather than flatly disconnected.
+  const connectorCards = [
+    {
+      connected: conn.linkedin.read || linkedinScraping,
+      card: (
+<ConnectorCard
+          key="linkedin"
           id="linkedin"
           icon={<LinkedinIcon size={22} />}
           name="LinkedIn"
@@ -478,7 +754,7 @@ export default function AccountsPage() {
               <p className="field-hint">
                 {conn.linkedin.read
                   ? "Wrong profile above? Paste your exact URL to fix it."
-                  : "Know your URL? Paste it for a guaranteed-correct match — LinkedIn's login alone can't tell us which \"you\" you are among people with the same name."}
+                  : "Paste your profile URL and hit \u201cUse this URL\u201d — that's how Persona reads your profile. LinkedIn's login alone doesn't tell us which profile is yours."}
               </p>
               <div className="linkedin-url-row">
                 <Input
@@ -506,8 +782,13 @@ export default function AccountsPage() {
             </div>
           }
         />
-
+      ),
+    },
+    {
+      connected: conn.calendar.connected,
+      card: (
         <ConnectorCard
+          key="calendar"
           id="calendar"
           icon={<Calendar size={22} strokeWidth={1.5} />}
           name="Calendar"
@@ -524,8 +805,13 @@ export default function AccountsPage() {
           onCancelConfirm={() => setConfirming(null)}
           onConfirmDisconnect={() => disconnect("calendar")}
         />
-
+      ),
+    },
+    {
+      connected: conn.email.connected,
+      card: (
         <ConnectorCard
+          key="email"
           id="email"
           icon={<Mail size={22} strokeWidth={1.5} />}
           name="Email"
@@ -543,8 +829,13 @@ export default function AccountsPage() {
           onCancelConfirm={() => setConfirming(null)}
           onConfirmDisconnect={() => disconnect("email")}
         />
-
+      ),
+    },
+    {
+      connected: conn.telegram.connected,
+      card: (
         <ConnectorCard
+          key="telegram"
           id="telegram"
           icon={<Send size={22} strokeWidth={1.5} />}
           name="Telegram"
@@ -560,7 +851,167 @@ export default function AccountsPage() {
           onCancelConfirm={() => setConfirming(null)}
           onConfirmDisconnect={() => disconnect("telegram")}
         />
+      ),
+    },
+    {
+      connected: !!conn.twitter.username || twitterScraping,
+      card: (
+        <ConnectorCard
+          key="twitter"
+          id="twitter"
+          icon={<XIcon size={22} />}
+          name="X (Twitter)"
+          connected={!!conn.twitter.username}
+          pending={twitterScraping}
+          pendingLabel="Reading…"
+          loading={loading}
+          working={working === "twitter"}
+          confirming={confirming === "twitter"}
+          description="Your Persona reads your public X posts to learn what you're into. We only read your public profile — nothing gets posted on your behalf."
+          meta={
+            conn.twitter.read
+              ? `Read ${conn.twitter.tweetsCount ?? 0} tweet${conn.twitter.tweetsCount === 1 ? "" : "s"} · Last read ${timeAgo(conn.twitter.lastReadIso) || "recently"}`
+              : conn.twitter.username
+                ? twitterNotice || `Connected as @${conn.twitter.username} — first read in progress.`
+                : twitterNotice || undefined
+          }
+          extra={
+            conn.twitter.read ? (
+              <div className="what-we-read">
+                <div><strong>What Persona read:</strong> your latest {conn.twitter.tweetsCount ?? 0} posts</div>
+                {conn.twitter.interests && conn.twitter.interests.length > 0 && (
+                  <div>
+                    Currently into: {conn.twitter.interests.slice(0, 6).join(", ")}
+                  </div>
+                )}
+                <div>
+                  <a href={`https://x.com/${conn.twitter.username}`} target="_blank" rel="noreferrer">
+                    View the profile we scraped ↗
+                  </a>
+                </div>
+              </div>
+            ) : undefined
+          }
+          connectLabel="Add my username"
+          confirmNote="This clears your saved username and any scraped post data."
+          onConnect={() => handleConnect("twitter")}
+          onAskDisconnect={() => setConfirming("twitter")}
+          onCancelConfirm={() => setConfirming(null)}
+          onConfirmDisconnect={() => disconnect("twitter")}
+          secondaryActions={
+            conn.twitter.read && !confirming
+              ? [
+                  { label: "Refresh now", onClick: () => void refreshTwitter(), disabled: twitterScraping },
+                ]
+              : []
+          }
+          footer={
+            <div className="linkedin-url-footer">
+              <FieldLabel htmlFor="twitter-username-input">Twitter / X username</FieldLabel>
+              <p className="field-hint">
+                {conn.twitter.username
+                  ? "Wrong handle above? Paste your exact handle to fix it."
+                  : "Know your handle? Paste it — we'll read your public X profile from there."}
+              </p>
+              <div className="linkedin-url-row">
+                <Input
+                  id="twitter-username-input"
+                  type="text"
+                  placeholder="@handle or https://x.com/handle"
+                  value={twitterUsernameInput}
+                  onChange={(e) => setTwitterUsernameInput(e.target.value)}
+                  disabled={working === "twitter"}
+                />
+                <Button
+                  size="sm"
+                  variant="tertiary"
+                  disabled={!twitterUsernameInput.trim() || working === "twitter"}
+                  onClick={() => void saveTwitterUsername()}
+                >
+                  Use this handle
+                </Button>
+              </div>
+            </div>
+          }
+        />
+      ),
+    },
+    {
+      connected: conn.github.connected,
+      card: (
+        <ConnectorCard
+          key="github"
+          id="github"
+          icon={<GithubIcon size={22} />}
+          name="GitHub"
+          connected={conn.github.connected}
+          loading={loading}
+          working={working === "github"}
+          confirming={confirming === "github"}
+          description="Your Persona connects to your GitHub profile to learn what you build. Read-only — we never touch your repos."
+          meta={
+            conn.github.connected
+              ? conn.github.username
+                ? `Connected as @${conn.github.username}`
+                : "Connected"
+              : undefined
+          }
+          connectLabel="Connect my GitHub"
+          confirmNote="Your Persona will lose access to your GitHub profile."
+          onConnect={() => handleConnect("github")}
+          onAskDisconnect={() => setConfirming("github")}
+          onCancelConfirm={() => setConfirming(null)}
+          onConfirmDisconnect={() => disconnect("github")}
+        />
+      ),
+    },
+  ];
+  const connectedCards = connectorCards.filter((c) => c.connected);
+  const notConnectedCards = connectorCards.filter((c) => !c.connected);
+
+  return (
+    <div className="settings-main">
+      {oauthFlash && (
+        <div style={{ marginBottom: 16 }}>
+          <Banner
+            tone={oauthFlash.tone}
+            onDismiss={() => setOauthFlash(null)}
+          >
+            {oauthFlash.msg}
+          </Banner>
+        </div>
+      )}
+      <div className="settings-header">
+        <h1 className="display-s">Connections</h1>
+        <p className="body secondary">Six things your Persona can see. Nothing else.</p>
       </div>
+
+      {/* While loading (or before anything is connected) every card reads
+          as "Not connected", so keep a single ungrouped grid to avoid a
+          flash of mis-grouped cards. Once at least one connection exists,
+          split into a Connected section and a Not connected section. */}
+      {connectedCards.length === 0 ? (
+        <div className="connectors-grid">
+          {connectorCards.map((c) => c.card)}
+        </div>
+      ) : (
+        <>
+          <section className="connections-section">
+            <h2>Connected</h2>
+            <div className="connectors-grid">
+              {connectedCards.map((c) => c.card)}
+            </div>
+          </section>
+          {notConnectedCards.length > 0 && (
+            <section className="connections-section">
+              <h2>Not connected</h2>
+              <div className="connectors-grid">
+                {notConnectedCards.map((c) => c.card)}
+              </div>
+            </section>
+          )}
+        </>
+      )}
     </div>
   );
 }

@@ -23,7 +23,7 @@ export type OnboardingStep =
 export interface OnboardingMeta {
   /** True after the user has seen (and submitted or skipped) the LinkedIn
    *  profile-URL step, which runs before the reading animation so the
-   *  scrape can use the pasted URL instead of a risky search-by-name guess. */
+   *  scrape has a pasted URL to work with (scraping requires a URL). */
   linkedin_step_seen?: boolean;
   /** True after the S2 reading animation has played to completion at least once. */
   reading_seen?: boolean;

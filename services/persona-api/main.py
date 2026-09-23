@@ -21,6 +21,7 @@ from agent.a2a_router import router as a2a_router
 from api.meetings import router as meetings_router
 from api.telegram import router as telegram_router
 from api.linkedin import router as linkedin_router
+from api.twitter import router as twitter_router
 from api.approvals import router as approvals_router
 from api.matches import router as matches_router
 from api.todos import router as todos_router
@@ -30,6 +31,8 @@ from api.services import router as services_router
 from api.agents import router as agents_router
 from api.pages import router as pages_router
 from api.transcribe import router as transcribe_router
+from api.public_search import router as public_search_router
+from api.public_ask import router as public_ask_router
 
 # ─────────────────────────────────────────────────────────────────────
 
@@ -73,9 +76,32 @@ async def lifespan(app: FastAPI):
     from agent.proactive_loop import get_proactive_agent
     await get_proactive_agent().start()
 
+    # GitHub sync — refreshes connected users' repos/languages daily
+    # and writes new knowledge to the memory layer.
+    from agent.github_sync_loop import get_github_sync_loop
+    await get_github_sync_loop().start()
+
+    # Twitter sync — refreshes connected users' X profiles weekly and
+    # writes new interest facts to the memory layer.
+    from agent.twitter_sync_loop import get_twitter_sync_loop
+    await get_twitter_sync_loop().start()
+
+    # People suggestions — refreshes the People page's proactive "Similar
+    # people" shortlist weekly for every active persona (also seeded
+    # on persona creation and after a LinkedIn scrape — see
+    # agent/persona_manager.py and services/linkedin_scraper.py).
+    from agent.people_suggestions_loop import get_people_suggestions_loop
+    await get_people_suggestions_loop().start()
+
     yield
 
     # ── Shutdown ──
+    from agent.people_suggestions_loop import get_people_suggestions_loop as _psl
+    await _psl().stop()
+    from agent.twitter_sync_loop import get_twitter_sync_loop as _tws
+    await _tws().stop()
+    from agent.github_sync_loop import get_github_sync_loop as _ghs
+    await _ghs().stop()
     from agent.proactive_loop import get_proactive_agent as _pa
     await _pa().stop()
     from agent.a2a_router import stop_a2a_lifecycle
@@ -92,7 +118,18 @@ app = FastAPI(
     version="2.0.0",
     description="Backend for the Zynd AI social networking agent platform.",
     lifespan=lifespan,
+    # Caddy only routes /api/* to the backend (everything else hits the
+    # Next.js web app), so the OpenAPI schema + docs must live under
+    # /api/ or external callers (ChatGPT Actions, curl) get a web-app 404.
+    openapi_url="/api/openapi.json",
+    docs_url="/api/docs",
 )
+
+# ChatGPT Actions only accept OpenAPI 3.0.x schemas; FastAPI generates
+# 3.1.0 by default, which fails ChatGPT's schema validation. This is an
+# ATTRIBUTE (not a constructor kwarg) — the FastAPI docs explicitly say
+# the class doesn't take it as a parameter.
+app.openapi_version = "3.0.2"
 
 # ── CORS (allow Next.js frontend) ────────────────────────────────────
 app.add_middleware(
@@ -126,6 +163,7 @@ app.include_router(a2a_router, prefix="/api/persona", tags=["A2A"])
 app.include_router(meetings_router, prefix="/api/meetings", tags=["Meetings"])
 app.include_router(telegram_router, prefix="/api/telegram", tags=["Telegram"])
 app.include_router(linkedin_router, prefix="/api/linkedin", tags=["LinkedIn"])
+app.include_router(twitter_router, prefix="/api/twitter", tags=["Twitter"])
 app.include_router(approvals_router, prefix="/api/approvals", tags=["Approvals"])
 app.include_router(matches_router, prefix="/api/matches", tags=["Matches"])
 app.include_router(todos_router, prefix="/api/todos", tags=["Todos"])
@@ -135,6 +173,8 @@ app.include_router(services_router, prefix="/api/services", tags=["Services"])
 app.include_router(agents_router, prefix="/api/agents", tags=["Agents"])
 app.include_router(pages_router, prefix="/api/pages", tags=["Pages"])
 app.include_router(transcribe_router, prefix="/api/transcribe", tags=["Transcribe"])
+app.include_router(public_search_router, prefix="/api/public", tags=["Public"])
+app.include_router(public_ask_router, prefix="/api/public", tags=["Public"])
 
 
 # Temporary diagnostic endpoint — remove after debugging

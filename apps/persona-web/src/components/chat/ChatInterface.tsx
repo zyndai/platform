@@ -44,6 +44,7 @@ import IncomingRequestCard from "./IncomingRequestCard";
 import PublishedPageCard, { PageListCard } from "./PublishedPageCard";
 import ServicesPanel from "./ServicesPanel";
 import type { CallTarget } from "./ServicesPanel";
+import { authFetch } from "@/lib/api";
 import {
   parseSlashCommand,
   runAgentSearch,
@@ -643,7 +644,7 @@ export default function ChatInterface() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${API}/api/persona/${user.id}/status`);
+        const res = await authFetch(`${API}/api/persona/${user.id}/status`);
         if (!res.ok) return;
         const data = await res.json();
         if (!cancelled && data.deployed && typeof data.name === "string") {
@@ -1296,7 +1297,7 @@ export default function ChatInterface() {
   // toast can show + we can navigate the user there.
   const sendIntro = async (message: string): Promise<string> => {
     if (!user || !introTarget) throw new Error("Missing context");
-    const threadRes = await fetch(`${API}/api/persona/${user.id}/threads`, {
+    const threadRes = await authFetch(`${API}/api/persona/${user.id}/threads`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1310,7 +1311,7 @@ export default function ChatInterface() {
     const threadId: string | undefined = threadData?.thread?.id;
     if (!threadId) throw new Error("Couldn't open the thread.");
 
-    const sendRes = await fetch(`${API}/api/persona/${user.id}/agent-send`, {
+    const sendRes = await authFetch(`${API}/api/persona/${user.id}/agent-send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ thread_id: threadId, content: message }),
@@ -1353,7 +1354,7 @@ export default function ChatInterface() {
     setBusyId(h.thread_id);
     try {
       if (h.source_tool !== "propose_meeting") {
-        await fetch(`${API}/api/persona/threads/${h.thread_id}/mode`, {
+        await authFetch(`${API}/api/persona/threads/${h.thread_id}/mode`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ mode: "human" }),

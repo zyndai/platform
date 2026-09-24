@@ -35,6 +35,13 @@ SUPABASE_URL: str = os.getenv("SUPABASE_URL", "http://127.0.0.1:54321")
 SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
 SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
 
+# Extra bearer keys accepted as trusted internal-service callers (comma-separated),
+# in addition to SUPABASE_SERVICE_KEY which memory-layer sends today. Interim until
+# per-service zsk_ keys land — see api/guards.py.
+INTERNAL_SERVICE_KEYS: list[str] = [
+    k.strip() for k in os.getenv("INTERNAL_SERVICE_KEYS", "").split(",") if k.strip()
+]
+
 # ── Twitter / X ──────────────────────────────────────────────────────
 TWITTER_CLIENT_ID: str = os.getenv("TWITTER_CLIENT_ID", "")
 TWITTER_CLIENT_SECRET: str = os.getenv("TWITTER_CLIENT_SECRET", "")
@@ -91,6 +98,10 @@ NGROK_AUTH_TOKEN: str = os.getenv("NGROK_AUTH_TOKEN", "")
 
 # ── Telegram ─────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+# Sent by Telegram as X-Telegram-Bot-Api-Secret-Token on every webhook call once
+# registered via scripts/register_telegram_webhook.py. When set, the webhook
+# rejects requests without it.
+TELEGRAM_WEBHOOK_SECRET: str = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 
 # ── OpenAI ───────────────────────────────────────────────────────────
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")

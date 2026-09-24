@@ -18,6 +18,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabase } from "@/lib/supabase";
 import { meetingStatusLabel } from "@/lib/meetingStatus";
+import { authFetch } from "@/lib/api";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -74,7 +75,7 @@ export default function TasksPanel() {
 
     const reload = async () => {
       try {
-        const res = await fetch(`${API}/api/meetings/pending/${userId}`);
+        const res = await authFetch(`${API}/api/meetings/pending/${userId}`);
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         if (cancelled) return;
@@ -135,7 +136,7 @@ export default function TasksPanel() {
     if (!userId) return;
     setBusy(taskId);
     try {
-      const res = await fetch(`${API}/api/meetings/${taskId}/respond`, {
+      const res = await authFetch(`${API}/api/meetings/${taskId}/respond`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ actor_user_id: userId, action }),

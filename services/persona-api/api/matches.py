@@ -15,9 +15,10 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 import config
+from api.guards import Caller, self_or_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -56,7 +57,12 @@ def _build_reason(candidate: dict, my_interests: set[str]) -> str:
     return _short(first or desc or "Active on the network.", 160)
 
 @router.get("/{user_id}")
-async def get_matches(user_id: str, exclude: Optional[str] = None, limit: int = 3):
+async def get_matches(
+    user_id: str,
+    exclude: Optional[str] = None,
+    limit: int = 3,
+    caller: Caller = Depends(self_or_service()),
+):
     """Return up to `limit` personas the user might want to meet.
 
     `exclude` is an optional comma-separated list of agent_ids to skip

@@ -49,6 +49,7 @@ function GithubIcon({ size = 22 }: { size?: number }) {
 import { Banner, Button, Input, FieldLabel, Tag } from "@/components/ui";
 import { getSupabase } from "@/lib/supabase";
 import { useDashboard } from "@/contexts/DashboardContext";
+import { authFetch, getOAuthConnectCode } from "@/lib/api";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 // Bot swapped 2026-05-20: was @zynd_persona_telegram_bot — now @zynd_brief_bot.
@@ -195,7 +196,7 @@ export default function AccountsPage() {
         headers: { Authorization: `Bearer ${jwt}` },
       }),
       session?.user?.id
-        ? fetch(`${API}/api/persona/${session.user.id}/status`)
+        ? authFetch(`${API}/api/persona/${session.user.id}/status`)
         : Promise.resolve(null),
     ]);
 
@@ -451,7 +452,13 @@ export default function AccountsPage() {
     // action than reading free/busy blocks. The backend unions this request
     // with whatever scopes are already granted, so connecting one feature
     // never revokes another.
-    return `${API}/api/oauth/google/authorize?features=${features}&token=${session.access_token}`;
+    let code: string;
+    try {
+      code = await getOAuthConnectCode();
+    } catch {
+      return null;
+    }
+    return `${API}/api/oauth/google/authorize?features=${features}&code=${encodeURIComponent(code)}`;
   };
 
   const connectLinkedIn = async (force = false, profileUrl?: string) => {
@@ -485,9 +492,10 @@ export default function AccountsPage() {
   const oauthLinkedIn = () => {
     setWorking("linkedin");
     const sb = getSupabase();
-    sb.auth.getSession().then(({ data: { session } }) => {
+    sb.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.access_token) return;
-      window.location.href = `${API}/api/oauth/linkedin/authorize?token=${session.access_token}`;
+      const code = await getOAuthConnectCode();
+      window.location.href = `${API}/api/oauth/linkedin/authorize?code=${encodeURIComponent(code)}`;
     }).catch(() => setWorking(null));
   };
 
@@ -500,7 +508,7 @@ export default function AccountsPage() {
     if (!user || !handle) return;
     setWorking("twitter");
     try {
-      const res = await fetch(`${API}/api/persona/${user.id}/profile`, {
+      const res = await authFetch(`${API}/api/persona/${user.id}/profile`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ profile: { ...personaProfile, twitter: handle } }),
@@ -585,7 +593,7 @@ export default function AccountsPage() {
         });
       } else if (which === "twitter") {
         await Promise.all([
-          fetch(`${API}/api/persona/${session.user.id}/profile`, {
+          authFetch(`${API}/api/persona/${session.user.id}/profile`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ profile: { ...personaProfile, twitter: "" } }),
@@ -660,7 +668,12 @@ export default function AccountsPage() {
         setWorking(null);
         return;
       }
-      window.location.href = `${API}/api/oauth/${id}/authorize?token=${session.access_token}`;
+      try {
+        const code = await getOAuthConnectCode();
+        window.location.href = `${API}/api/oauth/${id}/authorize?code=${encodeURIComponent(code)}`;
+      } catch {
+        setWorking(null);
+      }
       return;
     }
     const url = await buildGoogleConnect(id === "email" ? "gmail" : "calendar");

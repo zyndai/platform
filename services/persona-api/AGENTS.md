@@ -58,7 +58,8 @@ Two copies of this repo run on this box, both tracking `main` on GitHub:
   Zynd identity keypair (`~/.zynd/developer.json`). Duplicate heartbeats from
   the dev backend are expected and harmless at dev traffic levels.
 - **Telegram**: only prod may register the webhook (one URL per bot). Never
-  run `register_webhook()` on the dev backend. Inbound Telegram messages only
+  run `backend/scripts/register_telegram_webhook.py` on the dev box (it also sets
+  the `TELEGRAM_WEBHOOK_SECRET` the webhook checks). Inbound Telegram messages only
   reach prod; outbound notify works from both.
 
 ### Deploy flow (dev first, then prod)

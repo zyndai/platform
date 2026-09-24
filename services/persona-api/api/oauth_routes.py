@@ -13,7 +13,7 @@ Flow:
   5. Redirects to frontend dashboard with success/error status
 """
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 import httpx
 import secrets
@@ -24,6 +24,8 @@ import logging
 from urllib.parse import urlencode
 
 import config
+from api.auth import get_current_user
+from api.guards import public
 from services.token_store import save_tokens
 from datetime import datetime, timezone
 
@@ -138,14 +140,15 @@ def _identity(
 # =====================================================================
 
 @router.get("/linkedin/authorize")
-async def linkedin_authorize(token: str, request: Request):
+@public
+async def linkedin_authorize(request: Request, code: str | None = None, token: str | None = None):
     """
     Start LinkedIn OAuth flow.
     The 'token' query param is the Supabase JWT so we can identify
     the user on callback.
     """
     # Validate user from token
-    user = await _validate_token(token)
+    user = await _authorize_user(code, token)
 
     state = secrets.token_urlsafe(32)
     _store_pending_state(state, user["id"], "linkedin")
@@ -162,6 +165,7 @@ async def linkedin_authorize(token: str, request: Request):
 
 
 @router.get("/linkedin/callback")
+@public
 async def linkedin_callback(code: str = None, state: str = None, error: str = None, error_description: str = None):
     """Exchange LinkedIn authorization code for tokens."""
     if error or not code:
@@ -259,7 +263,8 @@ async def linkedin_callback(code: str = None, state: str = None, error: str = No
 # =====================================================================
 
 @router.get("/github/authorize")
-async def github_authorize(token: str):
+@public
+async def github_authorize(code: str | None = None, token: str | None = None):
     """Start GitHub OAuth flow.
 
     The connected app is a GitHub App, so repo access is configured in
@@ -268,7 +273,7 @@ async def github_authorize(token: str):
     returns a user token (8h access + rotating refresh) which
     services/github_sync.py refreshes.
     """
-    user = await _validate_token(token)
+    user = await _authorize_user(code, token)
 
     state = secrets.token_urlsafe(32)
     _store_pending_state(state, user["id"], "github")
@@ -283,6 +288,7 @@ async def github_authorize(token: str):
 
 
 @router.get("/github/callback")
+@public
 async def github_callback(
     code: str = None,
     state: str = None,
@@ -380,7 +386,10 @@ async def _safe_github_sync(user_id: str) -> None:
 # =====================================================================
 
 @router.get("/google/authorize")
-async def google_authorize(token: str, features: str = "calendar,docs"):
+@public
+async def google_authorize(
+    features: str = "calendar,docs", code: str | None = None, token: str | None = None,
+):
     """
     Start Google OAuth flow with granular scope selection.
 
@@ -399,7 +408,7 @@ async def google_authorize(token: str, features: str = "calendar,docs"):
       - Update with EXPANDING scopes: force consent so Google re-issues
         a token covering the new scope set.
     """
-    user = await _validate_token(token)
+    user = await _authorize_user(code, token)
 
     scopes = ["openid", "email", "profile"]
     # The Google Docs `documents` scope is intentionally NOT requested — the
@@ -460,6 +469,7 @@ async def google_authorize(token: str, features: str = "calendar,docs"):
 
 
 @router.get("/google/callback")
+@public
 async def google_callback(code: str = None, state: str = None, error: str = None, error_description: str = None):
     """Exchange Google authorization code for tokens."""
     if error or not code:
@@ -501,13 +511,14 @@ async def google_callback(code: str = None, state: str = None, error: str = None
 # =====================================================================
 
 @router.get("/notion/authorize")
-async def notion_authorize(token: str):
+@public
+async def notion_authorize(code: str | None = None, token: str | None = None):
     """
     Start Notion OAuth flow.
     Note: Notion doesn't use granular scopes in the URL; 
     the user selects allowed pages in the Notion pop-up.
     """
-    user = await _validate_token(token)
+    user = await _authorize_user(code, token)
 
     state = secrets.token_urlsafe(32)
     _store_pending_state(state, user["id"], "notion")
@@ -524,6 +535,7 @@ async def notion_authorize(token: str):
 
 
 @router.get("/notion/callback")
+@public
 async def notion_callback(code: str = None, state: str = None, error: str = None, error_description: str = None):
     """Exchange Notion authorization code for tokens."""
     if error or not code:
@@ -565,6 +577,34 @@ async def notion_callback(code: str = None, state: str = None, error: str = None
 # =====================================================================
 # Helper: validate Supabase JWT to identify the user
 # =====================================================================
+
+# Provider tag for one-time connect codes in oauth_pending_state (15-min TTL,
+# single use). They replace the old ?token=<Supabase JWT> on /authorize URLs,
+# which leaked the session token into proxy logs, browser history and Referer.
+CONNECT_CODE_PROVIDER = "connect"
+
+
+@router.post("/connect-code")
+async def create_connect_code(user: dict = Depends(get_current_user)):
+    """Mint a one-time code the browser puts on /api/oauth/<provider>/authorize."""
+    code = secrets.token_urlsafe(32)
+    _store_pending_state(code, user["id"], CONNECT_CODE_PROVIDER)
+    return {"code": code, "expires_in": 900}
+
+
+async def _authorize_user(code: str | None, token: str | None) -> dict:
+    """Resolve who is starting an OAuth connect: a one-time connect code, or
+    (deprecated) the raw Supabase JWT in ?token=."""
+    if code:
+        pending = _pop_pending_state(code, CONNECT_CODE_PROVIDER)
+        if not pending:
+            raise HTTPException(status_code=401, detail="Invalid or expired connect code")
+        return {"id": pending["user_id"]}
+    if token:
+        logger.warning("[oauth] deprecated ?token= on /authorize — use POST /api/oauth/connect-code")
+        return await _validate_token(token)
+    raise HTTPException(status_code=401, detail="Missing connect code")
+
 
 async def _validate_token(token: str) -> dict:
     """Validate a Supabase JWT and return user info."""

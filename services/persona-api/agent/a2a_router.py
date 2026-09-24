@@ -30,6 +30,8 @@ from typing import Any, AsyncIterator, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
+
+from api.guards import public  # A2A routes authenticate per-message (x-zynd-auth / push bearer), not via user JWTs
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
@@ -1387,6 +1389,7 @@ async def _handle_tasks_cancel(
 # ── Endpoints ───────────────────────────────────────────────────────
 
 @router.post("/{user_id}/a2a/v1")
+@public
 async def a2a_jsonrpc(user_id: str, request: Request):
     """A2A v0.3 JSON-RPC dispatcher."""
     persona = get_persona_status(user_id)
@@ -1459,6 +1462,7 @@ async def a2a_jsonrpc(user_id: str, request: Request):
     )
 
 @router.get("/{user_id}/.well-known/agent-card.json")
+@public
 async def a2a_agent_card(user_id: str):
     """Signed A2A v0.3 agent card."""
     persona = get_persona_status(user_id)
@@ -1666,6 +1670,7 @@ async def stop_a2a_lifecycle() -> None:
         await asyncio.gather(*list(_push_tasks), return_exceptions=True)
 
 @router.post("/push/{user_id}")
+@public
 async def a2a_push_inbound(user_id: str, request: Request):
     """Inbound push notification from a peer.
 

@@ -19,6 +19,7 @@ import {
 } from "@/lib/onboarding";
 import { completeZyndOAuth } from "@/lib/zynd-oauth";
 import { captureSignupMeta } from "@/lib/signup-meta";
+import { authFetch } from "@/lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -90,7 +91,7 @@ async function fetchCalendarConnected(userId: string, jwt: string): Promise<bool
 
 async function fetchHasPersona(userId: string): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE}/api/persona/${userId}/status`);
+    const res = await authFetch(`${API_BASE}/api/persona/${userId}/status`);
     if (!res.ok) return false;
     const data = await res.json();
     return data.deployed === true;

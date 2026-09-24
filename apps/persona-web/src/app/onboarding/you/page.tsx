@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import PersonaCardForm from "@/components/settings/PersonaCardForm";
 import { useDashboard } from "@/contexts/DashboardContext";
 import { getSupabase } from "@/lib/supabase";
+import { authFetch } from "@/lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -151,7 +152,7 @@ export default function PersonaSavePage() {
     socials?: { linkedin: string; instagram: string; telegram: string };
   }) => {
     if (!user) return;
-    const res = await fetch(`${API_BASE}/api/persona/register`, {
+    const res = await authFetch(`${API_BASE}/api/persona/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -173,7 +174,7 @@ export default function PersonaSavePage() {
       if (socials.instagram) profile.instagram = socials.instagram;
       if (socials.telegram) profile.telegram = socials.telegram;
       try {
-        await fetch(`${API_BASE}/api/persona/${user.id}/profile`, {
+        await authFetch(`${API_BASE}/api/persona/${user.id}/profile`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ profile }),

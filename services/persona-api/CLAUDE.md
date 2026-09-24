@@ -125,7 +125,8 @@ Two copies of this repo run on the box, both tracking `main`:
 - Both copies share: Supabase project, LLM/API keys, memory layer, and the
   Zynd identity keypair (`~/.zynd/developer.json`).
 - **Telegram**: only prod may register the webhook (one URL per bot). Never
-  run `register_webhook()` on the dev backend.
+  run `backend/scripts/register_telegram_webhook.py` on the dev box. The webhook
+  rejects updates without `TELEGRAM_WEBHOOK_SECRET` once that env var is set.
 
 **Deploy flow (dev first, then prod):** commit + push to `main` → on each
 copy: `git pull`, `pip install -r requirements.txt` only if it changed,

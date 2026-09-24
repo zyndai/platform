@@ -43,6 +43,8 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+from api.guards import public
 from postgrest.exceptions import APIError
 from pydantic import BaseModel, Field
 import config
@@ -1120,6 +1122,7 @@ async def rotate_invite(group_id: str, user: dict = Depends(get_current_user)):
     return {"invite_token": token, "slug": r.data[0]["slug"]}
 
 @router.get("/by-invite/{token}")
+@public
 async def preview_invite(token: str):
     """
     Public, unauthenticated preview for the /g/[slug]/[token] join page.

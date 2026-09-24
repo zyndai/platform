@@ -17,6 +17,15 @@ from typing import Optional, Any, List
 
 import config
 from api.auth import get_current_user
+from api.guards import (
+    Caller,
+    current_caller,
+    ensure_actor,
+    public,
+    self_only,
+    self_or_service,
+    thread_participant,
+)
 from agent.persona_manager import (
     create_persona,
     delete_persona,
@@ -193,11 +202,12 @@ class ThreadPermissionsUpdate(BaseModel):
 # ── Persona Lifecycle ───────────────────────────────────────────────
 
 @router.get("/{user_id}/status")
-async def persona_status(user_id: str):
+async def persona_status(user_id: str, caller: Caller = Depends(self_or_service())):
     """Check if the user has a deployed persona on the network."""
     return get_persona_status(user_id)
 
 @router.get("/{user_id}/public")
+@public
 async def persona_public_card(user_id: str):
     """
     Public, unauthenticated view of a persona — drives the shareable
@@ -294,12 +304,14 @@ def _fetch_auth_user_avatar(user_id: str) -> Optional[str]:
     return pic if isinstance(pic, str) and pic else None
 
 @router.post("/register")
-async def register_persona(req: PersonaRegisterRequest):
+async def register_persona(req: PersonaRegisterRequest, caller: Caller = Depends(current_caller)):
     """
     Register a user as a discoverable agent persona on the Zynd AI Network.
     Derives an Ed25519 keypair from the developer key and registers on zns01.zynd.ai.
     """
     import traceback as _tb
+
+    ensure_actor(caller, req.user_id)
 
     webhook_base = config.ZYND_WEBHOOK_BASE_URL
     if not webhook_base:
@@ -329,7 +341,7 @@ async def register_persona(req: PersonaRegisterRequest):
         raise HTTPException(status_code=500, detail=f"Unexpected [{type(e).__name__}]: {str(e)}")
 
 @router.delete("/{user_id}")
-async def delete_user_persona(user_id: str):
+async def delete_user_persona(user_id: str, caller: Caller = Depends(self_only())):
     """Delete a user's persona — stops heartbeat, deregisters from network, marks inactive."""
     try:
         result = await delete_persona(user_id)
@@ -340,7 +352,7 @@ async def delete_user_persona(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{user_id}/account")
-async def purge_account(user_id: str):
+async def purge_account(user_id: str, caller: Caller = Depends(self_only(live=True))):
     """
     Nuclear option: wipe the user's entire account. Used by the "Delete
     Account" button in the danger zone. Removes persona (heartbeat +
@@ -444,7 +456,7 @@ async def export_account(user_id: str, user: dict = Depends(get_current_user)):
 # ── Profile Update ───────────────────────────────────────────────────
 
 @router.put("/{user_id}/profile")
-async def update_profile(user_id: str, req: PersonaProfileUpdate):
+async def update_profile(user_id: str, req: PersonaProfileUpdate, caller: Caller = Depends(self_or_service())):
     """Update a persona's profile — name, description, capabilities, social links."""
     try:
         updates = req.model_dump(exclude_none=True)
@@ -457,7 +469,7 @@ async def update_profile(user_id: str, req: PersonaProfileUpdate):
 
 # ── Brief (plain text) ─────────────────────────────────────────────
 @router.get("/{user_id}/brief")
-async def read_brief(user_id: str):
+async def read_brief(user_id: str, caller: Caller = Depends(self_or_service())):
     """Return the persona's brief text (single field, no Google Docs)."""
     try:
         return get_brief(user_id)
@@ -472,7 +484,7 @@ class BriefSave(BaseModel):
 
 
 @router.patch("/{user_id}/brief")
-async def save_brief(user_id: str, req: BriefSave):
+async def save_brief(user_id: str, req: BriefSave, caller: Caller = Depends(self_or_service())):
     """Store the persona's brief body as plain text."""
     try:
         result = save_brief_content(user_id, req.content)
@@ -494,7 +506,7 @@ async def save_brief(user_id: str, req: BriefSave):
 # log it if they've also taken over).
 
 @router.post("/{user_id}/agent-send")
-async def agent_channel_send(user_id: str, req: AgentChannelSend):
+async def agent_channel_send(user_id: str, req: AgentChannelSend, caller: Caller = Depends(self_or_service())):
     """
     Send a human-typed message on the agent channel. Used when the user
     has clicked "Take Over" in the Agent Activity tab and is replying
@@ -657,7 +669,7 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend):
 # ── Threads (create + mode toggle) ───────────────────────────────────
 
 @router.post("/{user_id}/threads")
-async def create_thread(user_id: str, req: ThreadCreateRequest):
+async def create_thread(user_id: str, req: ThreadCreateRequest, caller: Caller = Depends(self_or_service())):
     """
     Create or reuse a DM thread between this user's persona and a target agent.
     Used by the AI chat hand-off flow when the user clicks "Open Conversation"
@@ -697,7 +709,7 @@ async def create_thread(user_id: str, req: ThreadCreateRequest):
     return {"status": "created", "thread": inserted.data[0]}
 
 @router.get("/threads/{thread_id}/permissions")
-async def get_thread_permissions(thread_id: str):
+async def get_thread_permissions(thread_id: str, caller: Caller = Depends(thread_participant)):
     """Return the current per-connection permission set for a thread, with defaults filled in."""
     sb = _supabase()
     r = sb.table("dm_threads").select("permissions").eq("id", thread_id).execute()
@@ -709,7 +721,7 @@ async def get_thread_permissions(thread_id: str):
     return {"thread_id": thread_id, "permissions": merged}
 
 @router.patch("/threads/{thread_id}/permissions")
-async def update_thread_permissions(thread_id: str, req: ThreadPermissionsUpdate):
+async def update_thread_permissions(thread_id: str, req: ThreadPermissionsUpdate, caller: Caller = Depends(thread_participant)):
     """
     Merge new permission flags into the thread's permission JSONB.
     Only the keys present in the request body are touched — pass partial
@@ -745,7 +757,7 @@ class ThreadStatusUpdate(BaseModel):
     user_id: str  # whoever is acting — must be a participant
 
 @router.patch("/threads/{thread_id}/status")
-async def update_thread_status(thread_id: str, req: ThreadStatusUpdate):
+async def update_thread_status(thread_id: str, req: ThreadStatusUpdate, caller: Caller = Depends(thread_participant)):
     """Apply a ConnectionFSM transition driven by the v3 spec §3.1.3.
 
     Supports the transitions the existing UI doesn't already cover via
@@ -762,6 +774,7 @@ async def update_thread_status(thread_id: str, req: ThreadStatusUpdate):
     """
     if req.action not in ("decline", "revoke", "unblock"):
         raise HTTPException(status_code=400, detail="action must be 'decline', 'revoke', or 'unblock'")
+    ensure_actor(caller, req.user_id)
 
     sb = _supabase()
     thread_row = sb.table("dm_threads").select("*").eq("id", thread_id).execute()
@@ -810,7 +823,7 @@ async def update_thread_status(thread_id: str, req: ThreadStatusUpdate):
     return {"status": "ok", "thread_id": thread_id, "new_status": new_status, "side": side}
 
 @router.patch("/threads/{thread_id}/mode")
-async def update_thread_mode(thread_id: str, req: ThreadModeUpdate):
+async def update_thread_mode(thread_id: str, req: ThreadModeUpdate, caller: Caller = Depends(thread_participant)):
     """
     Flip the CALLER's side of a dm_thread between 'human' (taken over) and
     'agent' (AI handling). Each participant independently owns their own
@@ -818,6 +831,7 @@ async def update_thread_mode(thread_id: str, req: ThreadModeUpdate):
     """
     if req.mode not in ("human", "agent"):
         raise HTTPException(status_code=400, detail="mode must be 'human' or 'agent'")
+    ensure_actor(caller, req.user_id)
 
     sb = _supabase()
     thread_row = sb.table("dm_threads").select("*").eq("id", thread_id).execute()
@@ -848,6 +862,7 @@ async def update_thread_mode(thread_id: str, req: ThreadModeUpdate):
 # ── Search Proxy (for frontend) ──────────────────────────────────────
 
 @router.get("/search")
+@public
 async def search_personas(query: str = "persona", limit: int = 10):
     """
     Lean discovery search powering the dashboard People page.
@@ -865,6 +880,7 @@ async def search_personas(query: str = "persona", limit: int = 10):
     return await asyncio.to_thread(discover_personas, query, limit)
 
 @router.get("/avatars")
+@public
 async def personas_avatars(ids: str = ""):
     """
     Bulk-resolve avatar_url for a comma-separated list of ids, powering

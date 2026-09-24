@@ -18,6 +18,7 @@ import { QrCode as QrCodeImage } from "@/components/QrCode";
 import { getSupabase } from "@/lib/supabase";
 import { useDashboard } from "@/contexts/DashboardContext";
 import { defaultPersonaStyle, generateAvatarDataUri } from "@/lib/dicebear";
+import { authFetch } from "@/lib/api";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 // Memory service — social links are mirrored here so matches can show them.
@@ -150,7 +151,7 @@ export default function YouPage() {
       const jwt = session?.access_token;
 
       const [personaRes, linkedinRes] = await Promise.all([
-        fetch(`${API}/api/persona/${user.id}/status`),
+        authFetch(`${API}/api/persona/${user.id}/status`),
         jwt
           ? fetch(`${API}/api/linkedin/me`, {
               headers: { Authorization: `Bearer ${jwt}` },
@@ -301,7 +302,7 @@ export default function YouPage() {
       const {
         data: { session },
       } = await sb.auth.getSession();
-      const res = await fetch(`${API}/api/persona/${user.id}/profile`, {
+      const res = await authFetch(`${API}/api/persona/${user.id}/profile`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -331,7 +332,7 @@ export default function YouPage() {
       const {
         data: { session },
       } = await sb.auth.getSession();
-      const res = await fetch(`${API}/api/persona/${user.id}/profile`, {
+      const res = await authFetch(`${API}/api/persona/${user.id}/profile`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -423,7 +424,7 @@ export default function YouPage() {
     setDeleting(true);
     setDeleteError(null);
     try {
-      const res = await fetch(`${API}/api/persona/${user.id}/account`, {
+      const res = await authFetch(`${API}/api/persona/${user.id}/account`, {
         method: "DELETE",
       });
       if (!res.ok) {

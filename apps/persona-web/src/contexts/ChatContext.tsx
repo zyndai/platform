@@ -26,6 +26,7 @@ import {
 import { getSupabase } from "@/lib/supabase";
 import { useDashboard } from "@/contexts/DashboardContext";
 import type { ChatMessage } from "@/components/chat/types";
+import { authFetch } from "@/lib/api";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -244,7 +245,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API}/api/persona/${user.id}/status`,
         );
         if (!res.ok) return;

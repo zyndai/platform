@@ -7,6 +7,7 @@ import { Button, Card } from "@/components/ui";
 import { getSupabase } from "@/lib/supabase";
 import { patchOnboardingMeta } from "@/lib/onboarding";
 import { useDashboard } from "@/contexts/DashboardContext";
+import { getOAuthConnectCode } from "@/lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -28,8 +29,14 @@ export default function CalendarStep() {
     }
     // Only request the calendar scope — the Brief is stored on Zynd (not
     // Google Docs), so no `docs` scope is needed anymore.
-    const url = `${API_BASE}/api/oauth/google/authorize?features=calendar&token=${encodeURIComponent(jwt)}`;
-    window.location.href = url;
+    let code: string;
+    try {
+      code = await getOAuthConnectCode();
+    } catch {
+      setWorking(null);
+      return;
+    }
+    window.location.href = `${API_BASE}/api/oauth/google/authorize?features=calendar&code=${encodeURIComponent(code)}`;
   };
 
   const skip = async () => {

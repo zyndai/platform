@@ -33,6 +33,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 import config
+from api.guards import public
 from api.public_search import _client_ip, _rate_limited
 from mcp.tools.zynd_network import search_similar_people, search_zynd_personas
 
@@ -232,6 +233,7 @@ async def _handle_ask(question: str, mode: str | None, limit: int) -> dict:
 
 
 @router.post("/ask")
+@public
 async def ask_post(req: AskRequest, request: Request):
     """Ask in plaintext ('find me AI founders'); get a natural answer +
     structured results. Public — rate limited per IP."""
@@ -241,6 +243,7 @@ async def ask_post(req: AskRequest, request: Request):
 
 
 @router.get("/ask")
+@public
 async def ask_get(
     request: Request,
     question: str = Query(..., min_length=1, max_length=200),

@@ -27,6 +27,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from api.guards import public
 from mcp.tools.zynd_network import search_similar_people, search_zynd_personas
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,7 @@ async def _execute_search(query: str, mode: str, limit: int) -> dict:
 
 
 @router.post("/search/people")
+@public
 async def search_people(req: PeopleSearchRequest, request: Request):
     """Search personas by domain/role (mode='domain') or by similarity to
     a free-text description (mode='similar'). Public — no auth required."""
@@ -105,6 +107,7 @@ async def search_people(req: PeopleSearchRequest, request: Request):
 
 
 @router.get("/search/people")
+@public
 async def search_people_get(
     request: Request,
     query: str = Query(..., min_length=1, max_length=120),
@@ -318,6 +321,7 @@ def _public_schema(origin: str) -> dict:
 
 
 @router.get("/openapi.json", include_in_schema=False)
+@public
 async def public_openapi_schema(request: Request):
     """Minimal OpenAPI 3.0.2 schema for external callers (ChatGPT Actions).
     Point a custom GPT's Actions tab at /api/public/openapi.json. The

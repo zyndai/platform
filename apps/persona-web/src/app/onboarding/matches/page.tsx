@@ -9,6 +9,7 @@ import IntroPreviewModal from "@/components/chat/IntroPreviewModal";
 import type { PersonaHit } from "@/components/chat/types";
 import { getSupabase } from "@/lib/supabase";
 import { patchOnboardingMeta } from "@/lib/onboarding";
+import { authFetch } from "@/lib/api";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -41,7 +42,7 @@ export default function MatchesStep() {
         if (excluded.size > 0) {
           params.set("exclude", Array.from(excluded).join(","));
         }
-        const res = await fetch(`${API}/api/matches/${user.id}?${params}`);
+        const res = await authFetch(`${API}/api/matches/${user.id}?${params}`);
         if (res.ok) {
           const data = await res.json();
           setMatches(data.matches || []);
@@ -62,7 +63,7 @@ export default function MatchesStep() {
   // Pull the user's persona name once for the intro draft signature.
   useEffect(() => {
     if (!user) return;
-    fetch(`${API}/api/persona/${user.id}/status`)
+    authFetch(`${API}/api/persona/${user.id}/status`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (d?.deployed && typeof d.name === "string") setMyPersonaName(d.name);
@@ -90,7 +91,7 @@ export default function MatchesStep() {
   // first message, jump into Home where the conversation continues.
   const sendIntro = async (message: string): Promise<string> => {
     if (!user || !introTarget) throw new Error("Missing context");
-    const tRes = await fetch(`${API}/api/persona/${user.id}/threads`, {
+    const tRes = await authFetch(`${API}/api/persona/${user.id}/threads`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -102,7 +103,7 @@ export default function MatchesStep() {
     if (!tRes.ok) throw new Error(await tRes.text());
     const tid = (await tRes.json())?.thread?.id as string | undefined;
     if (!tid) throw new Error("Couldn't open the thread.");
-    const sRes = await fetch(`${API}/api/persona/${user.id}/agent-send`, {
+    const sRes = await authFetch(`${API}/api/persona/${user.id}/agent-send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ thread_id: tid, content: message }),

@@ -16,6 +16,7 @@ import { ExternalLink, MailOpen } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui";
 import type { IncomingRequest } from "./types";
+import { authFetch } from "@/lib/api";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -68,7 +69,7 @@ export default function IncomingRequestCard({
     setSending(true);
     setError(null);
     try {
-      const res = await fetch(`${API}/api/persona/${userId}/agent-send`, {
+      const res = await authFetch(`${API}/api/persona/${userId}/agent-send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ thread_id: request.threadId, content: text }),

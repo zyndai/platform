@@ -25,7 +25,7 @@ import {
   type Todo,
   useDashboardActivity,
 } from "@/contexts/DashboardActivityContext";
-import { apiPost } from "@/lib/api";
+import { apiPost, authFetch } from "@/lib/api";
 import {
   respondToGroupInvitation,
   type GroupInvitation,
@@ -106,7 +106,7 @@ export default function InboxPage() {
         if (updateError) throw updateError;
       } else {
         const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-        const res = await fetch(`${API}/api/persona/threads/${req.id}/status`, {
+        const res = await authFetch(`${API}/api/persona/threads/${req.id}/status`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "decline", user_id: user?.id }),

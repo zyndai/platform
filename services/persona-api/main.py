@@ -5,13 +5,14 @@ Registers all routers and starts the application.
 Run with:  uvicorn main:app --reload --port 8000
 """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import config
 
 # ── Routers ──────────────────────────────────────────────────────────
 from api.auth import router as auth_router
+from api.guards import public
 from api.oauth_routes import router as oauth_router
 from api.chat import router as chat_router
 from api.connections import router as connections_router
@@ -177,16 +178,8 @@ app.include_router(public_search_router, prefix="/api/public", tags=["Public"])
 app.include_router(public_ask_router, prefix="/api/public", tags=["Public"])
 
 
-# Temporary diagnostic endpoint — remove after debugging
-@app.post("/test-json")
-async def test_json(request: Request):
-    """Raw JSON echo — tests if FastAPI can parse ANY POST body."""
-    from fastapi import Request as Req
-    body = await request.json()
-    return {"received": body}
-
-
 @app.get("/health")
+@public
 async def health():
     from agent.heartbeat_manager import get_heartbeat_manager
     hb = get_heartbeat_manager()

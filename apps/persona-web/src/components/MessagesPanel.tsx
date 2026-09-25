@@ -7,6 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { getSupabase } from "@/lib/supabase";
 import { meetingStatusLabel, meetingTimeline } from "@/lib/meetingStatus";
+import { authFetch } from "@/lib/api";
 
 interface Thread {
   id: string;
@@ -147,7 +148,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     const initializeNetwork = async () => {
       let activeAgentId = sessionAgentId;
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/persona/${sessionUser.id}/status`
         );
         if (res.ok) {
@@ -319,7 +320,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
   ) => {
     const target = thread || activeThread;
     if (!target || !sessionUser) return;
-    const res = await fetch(`${API}/api/persona/threads/${target.id}/status`, {
+    const res = await authFetch(`${API}/api/persona/threads/${target.id}/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, user_id: sessionUser.id }),
@@ -368,7 +369,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     const next = myMode === "agent" ? "human" : "agent";
     const column = side === "initiator" ? "initiator_mode" : "receiver_mode";
     try {
-      const res = await fetch(`${API}/api/persona/threads/${activeThread.id}/mode`, {
+      const res = await authFetch(`${API}/api/persona/threads/${activeThread.id}/mode`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: next, user_id: sessionUser.id }),
@@ -458,7 +459,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     setAgentDraft("");
     setAgentSending(true);
     try {
-      await fetch(`${API}/api/persona/${sessionUser.id}/agent-send`, {
+      await authFetch(`${API}/api/persona/${sessionUser.id}/agent-send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -499,7 +500,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     let cancelled = false;
 
     // Initial fetch via REST so we pick up the row even if realtime is behind.
-    fetch(`${API}/api/meetings/thread/${activeThreadId}`)
+    authFetch(`${API}/api/meetings/thread/${activeThreadId}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (cancelled || !data) return;
@@ -554,7 +555,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     if (!myUserId) return;
     setMeetingBusy(taskId);
     try {
-      const res = await fetch(`${API}/api/meetings/${taskId}/respond`, {
+      const res = await authFetch(`${API}/api/meetings/${taskId}/respond`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -590,7 +591,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     if (!permissionsOpen || !activeThreadId) return;
     let cancelled = false;
     setPermissions(null);
-    fetch(`${API}/api/persona/threads/${activeThreadId}/permissions`)
+    authFetch(`${API}/api/persona/threads/${activeThreadId}/permissions`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (cancelled || !data) return;
@@ -610,7 +611,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     setPermissions({ ...permissions, [key]: next });
     setPermissionsSaving(key);
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${API}/api/persona/threads/${activeThread.id}/permissions`,
         {
           method: "PATCH",

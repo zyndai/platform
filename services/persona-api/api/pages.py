@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from api.auth import get_current_user
+from api.guards import public
 from services.page_publisher import (
     create_page,
     delete_page,
@@ -124,6 +125,7 @@ async def remove_page(slug: str, user: dict = Depends(get_current_user)):
 
 
 @router.get("/public/{slug}", response_model=PublicPageResponse)
+@public
 async def get_public_page(slug: str):
     """Public read endpoint used by /pages/[slug] to render a shared page."""
     page = get_page_public(slug)

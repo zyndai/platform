@@ -28,6 +28,36 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   return headers;
 }
 
+/**
+ * Drop-in `fetch` for backend URLs that need the signed-in user's JWT.
+ * Every user-scoped backend route now requires it (api/guards.py), so use
+ * this — or apiGet/apiPost/… — instead of a bare `fetch` for anything under
+ * /api/* that isn't explicitly public. Caller-supplied headers win.
+ */
+export async function authFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (!headers.has("Authorization")) {
+    const {
+      data: { session },
+    } = await getSupabase().auth.getSession();
+    if (session?.access_token) {
+      headers.set("Authorization", `Bearer ${session.access_token}`);
+    }
+  }
+  return fetch(url, { ...init, headers });
+}
+
+/**
+ * One-time code for /api/oauth/<provider>/authorize — replaces putting the
+ * session JWT in the URL (?token=), where it leaked into logs and history.
+ */
+export async function getOAuthConnectCode(): Promise<string> {
+  const res = await authFetch(`${API_BASE}/api/oauth/connect-code`, { method: "POST" });
+  if (!res.ok) throw new Error(`connect-code failed (${res.status})`);
+  const { code } = (await res.json()) as { code: string };
+  return code;
+}
+
 // ── SWR cache for GET responses ─────────────────────────────────────
 // Tiny in-memory cache keyed on the request path. We don't bucket by
 // user — Supabase signs the user out via a hard navigation that drops

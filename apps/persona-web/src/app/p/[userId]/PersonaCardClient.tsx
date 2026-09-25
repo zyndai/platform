@@ -21,6 +21,7 @@ import { QrCode as QrCodeImage } from "@/components/QrCode";
 import { getSupabase } from "@/lib/supabase";
 import type { PublicPersona } from "./utils";
 import { normalizeAvatar, hashHue, initials } from "./utils";
+import { authFetch } from "@/lib/api";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -71,7 +72,7 @@ export function PersonaCardClient({ persona, userId }: PersonaCardClientProps) {
         router.push(`/?next=/p/${userId}`);
         return;
       }
-      const res = await fetch(`${API}/api/persona/${myUserId}/threads`, {
+      const res = await authFetch(`${API}/api/persona/${myUserId}/threads`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -12,9 +12,18 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from api.guards import (
+    Caller,
+    assert_thread_participant,
+    current_caller,
+    ensure_actor,
+    self_or_service,
+    task_participant,
+    thread_participant,
+)
 from services import meetings as meetings_svc
 
 router = APIRouter()
@@ -45,9 +54,11 @@ class ProposalRespond(BaseModel):
 # ── Routes ───────────────────────────────────────────────────────────
 
 @router.post("")
-async def create_meeting(req: ProposalCreate):
+async def create_meeting(req: ProposalCreate, caller: Caller = Depends(current_caller)):
     """Create a meeting proposal on a thread. Called by the UI when the
     user skips the AI and proposes a time manually."""
+    ensure_actor(caller, req.actor_user_id)
+    await assert_thread_participant(caller, req.thread_id)
     try:
         row = meetings_svc.create_proposal(
             thread_id=req.thread_id,
@@ -60,8 +71,11 @@ async def create_meeting(req: ProposalCreate):
 
 
 @router.post("/{task_id}/respond")
-async def respond_to_meeting_route(task_id: str, req: ProposalRespond):
+async def respond_to_meeting_route(
+    task_id: str, req: ProposalRespond, caller: Caller = Depends(task_participant),
+):
     """Accept, counter, decline, or cancel an existing proposal."""
+    ensure_actor(caller, req.actor_user_id)
     try:
         row = meetings_svc.respond_to_proposal(
             task_id=task_id,
@@ -75,20 +89,22 @@ async def respond_to_meeting_route(task_id: str, req: ProposalRespond):
 
 
 @router.get("/thread/{thread_id}")
-async def list_thread_meetings(thread_id: str, include_resolved: bool = False):
+async def list_thread_meetings(
+    thread_id: str, include_resolved: bool = False, caller: Caller = Depends(thread_participant),
+):
     """Return all meeting tickets on a thread. Used by MessagesPanel on open."""
     rows = meetings_svc.list_for_thread(thread_id, include_resolved=include_resolved)
     return {"status": "ok", "tasks": rows}
 
 
 @router.get("/pending/{user_id}")
-async def list_pending_meetings_route(user_id: str):
+async def list_pending_meetings_route(user_id: str, caller: Caller = Depends(self_or_service())):
     """Return tickets awaiting the user's action (and those they're waiting on)."""
     return {"status": "ok", **meetings_svc.list_pending_for_user(user_id)}
 
 
 @router.get("/{task_id}")
-async def get_meeting(task_id: str):
+async def get_meeting(task_id: str, caller: Caller = Depends(task_participant)):
     row = meetings_svc.get(task_id)
     if not row:
         raise HTTPException(status_code=404, detail="Task not found")

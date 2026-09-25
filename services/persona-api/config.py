@@ -1,0 +1,205 @@
+"""
+Zynd AI Networking Agent — Backend Configuration
+
+Central config module.  Reads from .env and exposes typed settings
+used by every other module so nothing is hard-coded elsewhere.
+"""
+
+# ── Prefer IPv4 for outbound DNS ────────────────────────────────────
+# Python's getaddrinfo returns IPv6 records first when a host has both
+# AAAA and A records. On boxes whose IPv6 path is broken (common with
+# Cloudflare tunnels on residential networks), every fresh outbound
+# connection hangs ~30s on the IPv6 TLS handshake before falling back.
+# curl avoids this with Happy Eyeballs; Python doesn't. We install this
+# patch at config-import time (every backend entrypoint imports config
+# first) so every later HTTP/TLS call goes IPv4-first. Falls back to
+# whatever DNS returned if no IPv4 record exists.
+import socket as _socket
+_orig_getaddrinfo = _socket.getaddrinfo
+def _ipv4_first(host, *args, **kwargs):
+    results = _orig_getaddrinfo(host, *args, **kwargs)
+    v4 = [r for r in results if r[0] == _socket.AF_INET]
+    return v4 or results
+_socket.getaddrinfo = _ipv4_first  # type: ignore[assignment]
+
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env from the backend directory
+_env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(_env_path)
+
+# ── Supabase ─────────────────────────────────────────────────────────
+SUPABASE_URL: str = os.getenv("SUPABASE_URL", "http://127.0.0.1:54321")
+SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
+
+# ── Twitter / X ──────────────────────────────────────────────────────
+TWITTER_CLIENT_ID: str = os.getenv("TWITTER_CLIENT_ID", "")
+TWITTER_CLIENT_SECRET: str = os.getenv("TWITTER_CLIENT_SECRET", "")
+TWITTER_REDIRECT_URI: str = os.getenv(
+    "TWITTER_REDIRECT_URI", "http://localhost:8000/api/oauth/twitter/callback"
+)
+
+# ── LinkedIn ─────────────────────────────────────────────────────────
+LINKEDIN_CLIENT_ID: str = os.getenv("LINKEDIN_CLIENT_ID", "")
+LINKEDIN_CLIENT_SECRET: str = os.getenv("LINKEDIN_CLIENT_SECRET", "")
+LINKEDIN_REDIRECT_URI: str = os.getenv(
+    "LINKEDIN_REDIRECT_URI", "http://localhost:8000/api/oauth/linkedin/callback"
+)
+
+# ── Google ───────────────────────────────────────────────────────────
+GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI: str = os.getenv(
+    "GOOGLE_REDIRECT_URI", "http://localhost:8000/api/oauth/google/callback"
+)
+
+# ── Notion ───────────────────────────────────────────────────────────
+NOTION_CLIENT_ID: str = os.getenv("NOTION_CLIENT_ID", "")
+NOTION_CLIENT_SECRET: str = os.getenv("NOTION_CLIENT_SECRET", "")
+NOTION_REDIRECT_URI: str = os.getenv(
+    "NOTION_REDIRECT_URI", "http://localhost:8000/api/oauth/notion/callback"
+)
+
+# ── GitHub ───────────────────────────────────────────────────────────
+# Redirect URI is derived dynamically from FRONTEND_URL (see
+# api/oauth_routes._oauth_redirect_uri) so the callback always points at
+# the channel the request came in on (prod vs dev), never a hardcoded host.
+GITHUB_CLIENT_ID: str = os.getenv("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET: str = os.getenv("GITHUB_CLIENT_SECRET", "")
+
+# ── Zynd AI (v2 — Ed25519/zns) ──────────────────────────────────────
+# Path to the developer keypair JSON (created by `zynd init` / `zynd auth login`)
+# This is the HD root from which all user persona keys are derived.
+ZYND_DEVELOPER_KEYPAIR_PATH: str = os.getenv(
+    "ZYND_DEVELOPER_KEYPAIR_PATH",
+    os.path.expanduser("~/.zynd/developer.json")
+)
+ZYND_REGISTRY_URL: str = os.getenv("ZYND_REGISTRY_URL", "https://zns01.zynd.ai")
+# Deployer hosts the running agent/service containers. Some are live there
+# but never made it into the registry's search index, so network search
+# supplements registry results with the deployer's running deployments.
+ZYND_DEPLOYER_URL: str = os.getenv("ZYND_DEPLOYER_URL", "https://deployer.zynd.ai")
+ZYND_WEBHOOK_BASE_URL: str = os.getenv("ZYND_WEBHOOK_BASE_URL", "")
+
+# Groq — used for voice-to-text via Whisper. Free tier, no credit card.
+GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+GROQ_WHISPER_MODEL: str = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
+NGROK_AUTH_TOKEN: str = os.getenv("NGROK_AUTH_TOKEN", "")
+
+# ── Telegram ─────────────────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+
+# ── OpenAI ───────────────────────────────────────────────────────────
+OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+# ── Google Gemini ────────────────────────────────────────────────────
+GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+# ── Custom OpenAI-compatible endpoint ────────────────────────────────
+# Use this for self-hosted models, LM Studio, Ollama, or any
+# provider that exposes an OpenAI-compatible /v1/chat/completions API.
+CUSTOM_LLM_BASE_URL: str = os.getenv("CUSTOM_LLM_BASE_URL", "")
+CUSTOM_LLM_API_KEY: str = os.getenv("CUSTOM_LLM_API_KEY", "")
+CUSTOM_LLM_MODEL: str = os.getenv("CUSTOM_LLM_MODEL", "")
+
+# ── OpenRouter ───────────────────────────────────────────────────────
+OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "")
+# Model used by the public /api/public/ask endpoint. Separate from
+# OPENROUTER_MODEL so the ask endpoint can run a cheap/fast model
+# without changing the main agent's model.
+ASK_ENDPOINT_MODEL: str = os.getenv("ASK_ENDPOINT_MODEL", "")
+OPENROUTER_BASE_URL: str = os.getenv(
+    "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+)
+# Comma-separated models OpenRouter falls back to (in order) if
+# OPENROUTER_MODEL's provider errors out (e.g. upstream balance/rate-limit).
+OPENROUTER_FALLBACK_MODELS: str = os.getenv("OPENROUTER_FALLBACK_MODELS", "")
+OPENROUTER_FALLBACK_API_KEY: str = os.getenv("OPENROUTER_FALLBACK_API_KEY", "")
+
+# ── LLM Provider Selection ──────────────────────────────────────────
+# "openai", "gemini", "openrouter", or "custom"
+LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
+
+# ── Apify (LinkedIn scraping) ────────────────────────────────────────
+APIFY_API_TOKEN: str = os.getenv("APIFY_API_TOKEN", "")
+
+# ── QuickEnrich (contact & company database) ─────────────────────────
+# Powers the persona's people/company discovery tools (mcp/tools/quickenrich.py).
+# The base URL and auth header are env-driven because the deployment host and
+# the header name the service expects are environment-specific — leave
+# QUICKENRICH_BASE_URL empty and every QuickEnrich tool degrades to a clean
+# "not configured" message instead of erroring.
+QUICKENRICH_BASE_URL: str = os.getenv("QUICKENRICH_BASE_URL", "")
+QUICKENRICH_API_KEY: str = os.getenv("QUICKENRICH_API_KEY", "")
+# "X-API-Key" sends the key raw; set to "Authorization" to send "Bearer <key>".
+QUICKENRICH_AUTH_HEADER: str = os.getenv("QUICKENRICH_AUTH_HEADER", "X-API-Key")
+QUICKENRICH_TIMEOUT: float = float(os.getenv("QUICKENRICH_TIMEOUT", "30"))
+# How long a cached email/phone reveal stays usable before we pay to refresh it.
+QUICKENRICH_CACHE_TTL_DAYS: int = int(os.getenv("QUICKENRICH_CACHE_TTL_DAYS", "30"))
+
+# ── Memory Layer ──────────────────────────────────────────────────────
+# The ZYND memory layer (assertion graph from conversations).
+# When enabled, the persona queries memory-layer for user context on every
+# chat turn and ingests conversations back for long-term recall.
+MEMORY_LAYER_URL: str = os.getenv("MEMORY_LAYER_URL", "https://api.zynd.ai")
+# Shared HS256 JWT secret between agent-persona and memory-layer.
+# Must match memory-layer's JWT_SECRET. When empty, memory features are off.
+MEMORY_LAYER_JWT_SECRET: str = os.getenv("MEMORY_LAYER_JWT_SECRET", "")
+# Maximum assertions to inject into the system prompt (controls context window usage).
+MEMORY_LAYER_MAX_CONTEXT_ASSERTIONS: int = int(os.getenv("MEMORY_LAYER_MAX_CONTEXT_ASSERTIONS", "20"))
+# Minimum confidence threshold for assertions (0.0–1.0).
+MEMORY_LAYER_MIN_CONFIDENCE: float = float(os.getenv("MEMORY_LAYER_MIN_CONFIDENCE", "0.5"))
+
+# ── App ──────────────────────────────────────────────────────────────
+APP_SECRET_KEY: str = os.getenv("APP_SECRET_KEY", "change-me-in-production")
+FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+# Base URL for shareable pages created by publish_page (e.g. sslip wildcard).
+# Falls back to FRONTEND_URL if not set.
+PUBLIC_PAGE_BASE_URL: str = os.getenv("PUBLIC_PAGE_BASE_URL", "")
+
+# ── Supabase singleton ────────────────────────────────────────────────
+# One client per process — avoids rebuilding the HTTP connection pool
+# on every request (was the main source of slow API responses).
+_sb_service = None
+_sb_anon = None
+
+
+def _resilient_httpx_client():
+    """A process-lifetime connection pool eventually has a request land on
+    a connection the server already closed (idle timeout on Supabase's
+    side) — httpx surfaces that as RemoteProtocolError('Server disconnected')
+    on whatever request happened to draw it. `retries=1` makes httpx retry
+    that request once on a fresh connection instead of failing it outright."""
+    import httpx
+    return httpx.Client(transport=httpx.HTTPTransport(retries=1))
+
+
+def get_supabase():
+    global _sb_service
+    if _sb_service is None:
+        from supabase import create_client, ClientOptions
+        _sb_service = create_client(
+            SUPABASE_URL,
+            SUPABASE_SERVICE_KEY,
+            options=ClientOptions(httpx_client=_resilient_httpx_client()),
+        )
+    return _sb_service
+
+
+def get_supabase_anon():
+    global _sb_anon
+    if _sb_anon is None:
+        from supabase import create_client, ClientOptions
+        _sb_anon = create_client(
+            SUPABASE_URL,
+            SUPABASE_ANON_KEY,
+            options=ClientOptions(httpx_client=_resilient_httpx_client()),
+        )
+    return _sb_anon

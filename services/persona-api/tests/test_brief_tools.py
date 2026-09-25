@@ -1,0 +1,254 @@
+"""
+Tests for the Brief MCP tools and the `_ensure_brief_doc` helper.
+
+The Brief is now a plain-text field on `persona_agents.brief_content`; the
+Google Doc path is retired. We stub `agent.persona_manager` so these tests
+never hit Supabase. The tools are thin wrappers, so the test surface is
+mostly: did we propagate the right structured code (`no_persona`) and the
+right success payload.
+"""
+
+from __future__ import annotations
+
+import sys
+import types
+
+import pytest
+
+
+def _install_stub_persona_manager(monkeypatch, *, brief_state, persona_status=None):
+    """Replace `agent.persona_manager` in sys.modules with a stub.
+
+    Args:
+      brief_state: dict returned by get_brief() — {exists, content,
+        fallback_description}. May carry {"raises": "no_persona"} to make
+        get_brief raise.
+      persona_status: dict returned by get_persona_status(). If None, defaults
+        to a deployed persona.
+    """
+    stub = types.ModuleType("agent.persona_manager")
+
+    if persona_status is None:
+        persona_status = {
+            "deployed": True,
+            "brief_content": (brief_state.get("content") or "").strip(),
+            "name": "Test User",
+        }
+
+    state = {
+        "brief_state": dict(brief_state),
+        "persona_status": dict(persona_status),
+    }
+
+    def get_brief(user_id: str):
+        if state["brief_state"].get("raises") == "no_persona":
+            raise ValueError("No active persona.")
+        return state["brief_state"]
+
+    def get_persona_status(user_id: str):
+        return state["persona_status"]
+
+    def save_brief_content(user_id: str, content: str):
+        return {"success": True, "content": content}
+
+    stub.get_brief = get_brief
+    stub.get_persona_status = get_persona_status
+    stub.save_brief_content = save_brief_content
+
+    # Build a parent `agent` package stub too if needed, using monkeypatch
+    # so it's torn down between tests (avoids polluting `agent` import
+    # state for the rest of the suite).
+    if "agent" not in sys.modules:
+        monkeypatch.setitem(sys.modules, "agent", types.ModuleType("agent"))
+    monkeypatch.setitem(sys.modules, "agent.persona_manager", stub)
+    # If `agent` is the real package (already imported by a prior test),
+    # `from agent import persona_manager` reads the cached attribute on
+    # the package object, NOT sys.modules. Patch the attribute so the
+    # stub actually takes effect.
+    agent_pkg = sys.modules["agent"]
+    monkeypatch.setattr(agent_pkg, "persona_manager", stub, raising=False)
+    return stub
+
+
+def _reload_brief_module():
+    """Drop a cached `mcp.tools.brief` import so the lazy-import lookups
+    inside the tool functions see the stubs we just installed."""
+    sys.modules.pop("mcp.tools.brief", None)
+    import importlib
+
+    import mcp.tools.brief as brief
+
+    importlib.reload(brief)
+    return brief
+
+
+# ── _ensure_brief_doc ─────────────────────────────────────────────────
+
+
+def test_ensure_brief_doc_existing(monkeypatch):
+    _install_stub_persona_manager(monkeypatch, brief_state={"exists": True})
+    brief = _reload_brief_module()
+
+    result = brief._ensure_brief_doc("user_1")
+    assert result == {"ok": True}
+
+
+def test_ensure_brief_doc_no_persona(monkeypatch):
+    _install_stub_persona_manager(
+        monkeypatch,
+        brief_state={"exists": True},
+        persona_status={"deployed": False},
+    )
+    brief = _reload_brief_module()
+
+    result = brief._ensure_brief_doc("user_1")
+    assert result["ok"] is False
+    assert result["code"] == "no_persona"
+    assert "dashboard" in result["message"].lower()
+
+
+# ── read_my_brief ─────────────────────────────────────────────────────
+
+
+def test_read_my_brief_empty(monkeypatch):
+    _install_stub_persona_manager(
+        monkeypatch,
+        brief_state={"exists": True, "content": "", "fallback_description": "fallback"},
+    )
+    brief = _reload_brief_module()
+
+    result = brief.read_my_brief("user_1")
+    assert result["success"] is True
+    assert result["exists"] is True
+    assert result["content"] == ""
+    assert result["fallback_description"] == "fallback"
+
+
+def test_read_my_brief_happy_path(monkeypatch):
+    _install_stub_persona_manager(
+        monkeypatch,
+        brief_state={
+            "exists": True,
+            "content": "I prefer afternoons.",
+            "fallback_description": "",
+        },
+    )
+    brief = _reload_brief_module()
+
+    result = brief.read_my_brief("user_1")
+    assert result["success"] is True
+    assert result["exists"] is True
+    assert result["content"] == "I prefer afternoons."
+
+
+# ── append_to_my_brief ────────────────────────────────────────────────
+
+
+def test_append_to_my_brief(monkeypatch):
+    _install_stub_persona_manager(
+        monkeypatch,
+        brief_state={"exists": True, "content": "", "fallback_description": ""},
+    )
+    brief = _reload_brief_module()
+
+    result = brief.append_to_my_brief("user_1", "I love async patterns.")
+    assert result["success"] is True
+    assert result["appended"] == "I love async patterns."
+
+
+def test_append_empty_text_is_rejected(monkeypatch):
+    _install_stub_persona_manager(monkeypatch, brief_state={"exists": True})
+    brief = _reload_brief_module()
+
+    result = brief.append_to_my_brief("user_1", "   ")
+    assert result["success"] is False
+
+
+def test_append_propagates_no_persona(monkeypatch):
+    _install_stub_persona_manager(
+        monkeypatch,
+        brief_state={"exists": True},
+        persona_status={"deployed": False},
+    )
+    brief = _reload_brief_module()
+
+    result = brief.append_to_my_brief("user_1", "hello")
+    assert result["success"] is False
+    assert result["code"] == "no_persona"
+
+
+# ── replace_my_brief / clear_my_brief ─────────────────────────────────
+
+
+def test_replace_my_brief_happy_path(monkeypatch):
+    _install_stub_persona_manager(monkeypatch, brief_state={"exists": True})
+    brief = _reload_brief_module()
+
+    result = brief.replace_my_brief("user_1", "Brand new brief.")
+    assert result["success"] is True
+    assert result["content"] == "Brand new brief."
+
+
+def test_clear_my_brief_happy_path(monkeypatch):
+    _install_stub_persona_manager(monkeypatch, brief_state={"exists": True})
+    brief = _reload_brief_module()
+
+    result = brief.clear_my_brief("user_1")
+    assert result["success"] is True
+    assert result["content"] == ""
+
+
+# ── add_todo ─────────────────────────────────────────────────────────
+
+
+class _CapturingSB:
+    """Lightweight Supabase stub that captures the last `insert` payload
+    so a test can assert what we tried to write."""
+
+    def __init__(self):
+        self.last_insert: dict | None = None
+
+    def table(self, _name):
+        return self
+
+    def insert(self, payload):
+        self.last_insert = payload
+        return self
+
+    def execute(self):
+        return types.SimpleNamespace(data=[{"id": "todo_abc", **(self.last_insert or {})}])
+
+
+def test_add_todo_inserts_row(monkeypatch):
+    brief = _reload_brief_module()
+    import config
+
+    stub = _CapturingSB()
+    monkeypatch.setattr(config, "get_supabase", lambda: stub)
+
+    result = brief.add_todo("user_1", "Email Sarah about the demo")
+    assert result["success"] is True
+    assert result["title"] == "Email Sarah about the demo"
+    assert result["todo_id"] == "todo_abc"
+    # The agent never sets done=True itself — that's the user's job.
+    assert stub.last_insert["done"] is False
+    assert stub.last_insert["user_id"] == "user_1"
+
+
+def test_add_todo_rejects_empty_title(monkeypatch):
+    brief = _reload_brief_module()
+    result = brief.add_todo("user_1", "   ")
+    assert result["success"] is False
+
+
+def test_add_todo_truncates_overly_long_title(monkeypatch):
+    brief = _reload_brief_module()
+    import config
+
+    stub = _CapturingSB()
+    monkeypatch.setattr(config, "get_supabase", lambda: stub)
+
+    long_title = "x" * 500
+    result = brief.add_todo("user_1", long_title)
+    assert result["success"] is True
+    assert len(result["title"]) <= 200

@@ -1,0 +1,246 @@
+"use client";
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { useRouter } from "next/navigation";
+import { getSupabase } from "@/lib/supabase";
+import { type User } from "@supabase/supabase-js";
+import {
+  computeOnboardingStep,
+  readOnboardingMeta,
+  type OnboardingStep,
+} from "@/lib/onboarding";
+import { completeZyndOAuth } from "@/lib/zynd-oauth";
+import { captureSignupMeta } from "@/lib/signup-meta";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+/**
+ * Pick the user object to store on an auth event. Keep the previous
+ * reference on a pure token refresh (same id + unchanged user_metadata) so
+ * downstream effects don't re-run on every tab refocus. But ACCEPT the new
+ * object when user_metadata changed — otherwise onboarding flags written via
+ * updateUser (brief_created, skipped_brief, …) never propagate to the
+ * live context, which strands the onboarding flow on a step it already
+ * completed.
+ */
+function mergeUser(prev: User | null, next: User): User {
+  if (prev?.id !== next.id) return next;
+  const a = JSON.stringify(prev.user_metadata ?? {});
+  const b = JSON.stringify(next.user_metadata ?? {});
+  return a === b ? prev : next;
+}
+
+interface DashboardContextValue {
+  user: User | null;
+  loading: boolean;
+  hasPersona: boolean;
+  personaLoading: boolean;
+  onboardingStep: OnboardingStep | null;
+  onboardingLoading: boolean;
+  /** Cached "this user finished onboarding" hint (localStorage). Lets the shell
+   *  render immediately for returning users instead of waiting on the persona/
+   *  calendar fetches. */
+  knownOnboarded: boolean;
+  refreshPersona: () => Promise<void>;
+  refreshOnboarding: () => Promise<void>;
+  handleLogout: () => Promise<void>;
+}
+
+const DashboardContext = createContext<DashboardContextValue>({
+  user: null,
+  loading: true,
+  hasPersona: false,
+  personaLoading: true,
+  onboardingStep: null,
+  onboardingLoading: true,
+  knownOnboarded: false,
+  refreshPersona: async () => {},
+  refreshOnboarding: async () => {},
+  handleLogout: async () => {},
+});
+
+/** localStorage key for the cached onboarding-done flag, per user. */
+const onboardedKey = (userId: string) => `zynd:onboarded:${userId}`;
+
+export function useDashboard() {
+  return useContext(DashboardContext);
+}
+
+async function fetchCalendarConnected(userId: string, jwt: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/api/connections/`, {
+      headers: { Authorization: `Bearer ${jwt}` },
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    const scopes: string = data?.connections?.google?.scopes ?? "";
+    return scopes.includes("calendar");
+  } catch {
+    return false;
+  }
+}
+
+async function fetchHasPersona(userId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/api/persona/${userId}/status`);
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.deployed === true;
+  } catch {
+    return false;
+  }
+}
+
+export function DashboardProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const [hasPersona, setHasPersona] = useState(false);
+  const [personaLoading, setPersonaLoading] = useState(true);
+
+  const [onboardingStep, setOnboardingStep] = useState<OnboardingStep | null>(null);
+  const [onboardingLoading, setOnboardingLoading] = useState(true);
+
+  const recomputeOnboarding = useCallback(
+    async (currentUser: User) => {
+      setOnboardingLoading(true);
+      const sb = getSupabase();
+      const { data: { session } } = await sb.auth.getSession();
+      const jwt = session?.access_token;
+
+      const [persona, calendar] = await Promise.all([
+        fetchHasPersona(currentUser.id),
+        jwt ? fetchCalendarConnected(currentUser.id, jwt) : Promise.resolve(false),
+      ]);
+
+      setHasPersona(persona);
+      setPersonaLoading(false);
+
+      const step = computeOnboardingStep({
+        meta: readOnboardingMeta(currentUser),
+        hasPersona: persona,
+        calendarConnected: calendar,
+      });
+      setOnboardingStep(step);
+      setOnboardingLoading(false);
+
+      // Cache the terminal state so the NEXT load can skip the boot gate. The
+      // `knownOnboarded` value below is derived from this cache (re-read when
+      // onboardingStep changes), so no extra state update is needed here.
+      try {
+        if (step === "done") window.localStorage.setItem(onboardedKey(currentUser.id), "1");
+        else window.localStorage.removeItem(onboardedKey(currentUser.id));
+      } catch {
+        /* localStorage unavailable */
+      }
+
+      if (step === "done") {
+        // Front-door: if the user arrived via Zynd's OAuth, finish the hand-off now
+        // (redirects back to the originating client) instead of dropping into the app.
+        await completeZyndOAuth(jwt);
+      }
+    },
+    [],
+  );
+
+  const refreshPersona = useCallback(async () => {
+    if (!user) return;
+    setPersonaLoading(true);
+    await recomputeOnboarding(user);
+  }, [user, recomputeOnboarding]);
+
+  const refreshOnboarding = useCallback(async () => {
+    if (!user) return;
+    // Pull the freshest user so user_metadata.onboarding is current.
+    const sb = getSupabase();
+    const { data: { user: freshUser } } = await sb.auth.getUser();
+    if (freshUser) {
+      setUser(freshUser);
+      await recomputeOnboarding(freshUser);
+    }
+  }, [user, recomputeOnboarding]);
+
+  useEffect(() => {
+    const sb = getSupabase();
+    const {
+      data: { subscription },
+    } = sb.auth.onAuthStateChange((_event, session) => {
+      if (!session) {
+        router.replace("/");
+      } else {
+        // Keep the prev object on a pure token refresh, but adopt the new
+        // one when user_metadata changed (see mergeUser) so onboarding
+        // flags propagate instead of getting silently dropped.
+        setUser((prev) => mergeUser(prev, session.user));
+        setLoading(false);
+      }
+    });
+
+    sb.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        router.replace("/");
+      } else {
+        setUser((prev) => mergeUser(prev, session.user));
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [router]);
+
+  useEffect(() => {
+    if (user) {
+      void recomputeOnboarding(user);
+      // Silent one-time signup metadata capture (IP/geo/browser/OS/device).
+      // Fire-and-forget; guarded by localStorage + user_metadata.signup_meta.
+      void captureSignupMeta(user);
+    }
+  }, [user, recomputeOnboarding]);
+
+  // Derived from the localStorage cache (written by recomputeOnboarding) rather
+  // than held as state: true the moment a returning user resolves, so the shell
+  // renders without waiting on the persona/calendar fetches. The un-onboarded
+  // edge is handled by the redirect effect above, so re-reading on every step
+  // change isn't needed — keying on `user` is enough.
+  const knownOnboarded = useMemo(() => {
+    if (!user) return false;
+    try {
+      return window.localStorage.getItem(onboardedKey(user.id)) === "1";
+    } catch {
+      return false;
+    }
+  }, [user]);
+
+  const handleLogout = async () => {
+    await getSupabase().auth.signOut();
+    router.push("/");
+  };
+
+  return (
+    <DashboardContext.Provider
+      value={{
+        user,
+        loading,
+        hasPersona,
+        personaLoading,
+        onboardingStep,
+        onboardingLoading,
+        knownOnboarded,
+        refreshPersona,
+        refreshOnboarding,
+        handleLogout,
+      }}
+    >
+      {children}
+    </DashboardContext.Provider>
+  );
+}

@@ -1,0 +1,5 @@
+duckduckgo_search
+googlesearch-python
+beautifulsoup4
+flask
+requests

@@ -1,0 +1,11 @@
+# Cards API only — Postgres lives in Supabase, no Redis, no worker.
+# On the deploy box this is merged with the memory-layer compose so Caddy
+# (running there) can reach `cards:8000` over the shared network.
+services:
+  cards:
+    build: .
+    env_file: .env.prod
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    expose:
+      - "8000"

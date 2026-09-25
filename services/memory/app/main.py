@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from app.auth import issue_personal_token, verify_access_claims, verify_access_token
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool
-from app.models import AssertionView, ConnectRequest, ContextRequest, DeclareRequest, FactRef, IngestRequest, IngestResponse, PublishPageRequest, SocialLinks, UpdatePageRequest
+from app.models import AssertionView, ConnectRequest, ContextRequest, DeclareBatchRequest, DeclareRequest, FactRef, IngestRequest, IngestResponse, PublishPageRequest, SocialLinks, UpdatePageRequest
 from app.services.ingest import ingest_turns
 from app.connect import router as connect_router
 from app.docs import router as docs_router
@@ -127,6 +127,36 @@ async def current_user(authorization: str = Header(default="")) -> str:
     if row:
         return str(row["id"])
     return user_id
+
+
+async def _require_self(path_user_id: str, auth_user: str, detail: str) -> None:
+    """Path-param user routes: the id may be the caller's internal memory-layer id
+    OR their linked Supabase id (agent-persona addresses users by Supabase UUID;
+    current_user already translated the token to the internal id). Anything
+    else is someone else's data → 403."""
+    if path_user_id == auth_user:
+        return
+    linked = await get_pool().fetchval(
+        "SELECT 1 FROM users WHERE id = $1::uuid AND supabase_user_id = $2", auth_user, path_user_id
+    )
+    if not linked:
+        raise HTTPException(status_code=403, detail=detail)
+
+
+@app.get("/me/whoami")
+async def whoami(user_id: str = Depends(current_user)) -> dict:
+    """Who the bearer token belongs to — used by zynd-bridge (`zynd card`, login checks)."""
+    row = await get_pool().fetchrow(
+        "SELECT id, email, display_name, supabase_user_id FROM users WHERE id = $1::uuid", user_id
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="user not found")
+    return {
+        "user_id": str(row["id"]),
+        "email": row["email"],
+        "display_name": row["display_name"],
+        "supabase_user_id": row["supabase_user_id"],
+    }
 
 
 @app.get("/health")
@@ -291,9 +321,8 @@ async def my_context(k: int = 20, user_id: str = Depends(current_user)) -> dict:
 
 @app.get("/users/{user_id}/graph", response_model=list[AssertionView])
 async def get_graph(user_id: str, auth_user: str = Depends(current_user)) -> list[AssertionView]:
-    if user_id != auth_user:
-        raise HTTPException(status_code=403, detail="can only read your own graph")
-    return await _active_graph(user_id)
+    await _require_self(user_id, auth_user, "can only read your own graph")
+    return await _active_graph(auth_user)
 
 
 @app.get("/me/matches")
@@ -383,11 +412,10 @@ async def get_match(
     auth_user: str = Depends(current_user),
 ) -> list[dict]:
     """Top-N users whose `cluster_type` vector is nearest to this user's."""
-    if user_id != auth_user:
-        raise HTTPException(status_code=403, detail="can only query your own matches")
+    await _require_self(user_id, auth_user, "can only query your own matches")
     from app.services.matching import match_users
     try:
-        return await match_users(get_pool(), user_id, cluster_type, limit)
+        return await match_users(get_pool(), auth_user, cluster_type, limit)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -435,6 +463,23 @@ async def declare_findability(req: DeclareRequest, user_id: str = Depends(curren
     return {"status": "declared", "predicate": req.predicate, "value": req.value}
 
 
+@app.post("/me/findability/declare-batch")
+async def declare_findability_batch(req: DeclareBatchRequest, user_id: str = Depends(current_user)) -> dict:
+    """Declare up to 50 public findability facts in one call (zynd-bridge sync,
+    card onboarding). Each item is independent: invalid ones are skipped with a
+    reason, valid ones are written — one bad item never fails the batch."""
+    from app.services.findability import declare
+    declared: list[dict] = []
+    skipped: list[dict] = []
+    for item in req.declarations:
+        try:
+            await declare(get_pool(), user_id, item.predicate, item.value)
+            declared.append({"predicate": item.predicate, "value": item.value})
+        except ValueError as exc:
+            skipped.append({"predicate": item.predicate, "value": item.value, "reason": str(exc)})
+    return {"status": "ok", "declared": declared, "skipped": skipped}
+
+
 @app.post("/me/memory/declare")
 async def declare_memory_fact(req: DeclareRequest, user_id: str = Depends(current_user)) -> dict:
     """User explicitly adds a PRIVATE memory fact (stays private, never matched)."""
@@ -449,10 +494,9 @@ async def declare_memory_fact(req: DeclareRequest, user_id: str = Depends(curren
 @app.get("/export/{user_id}")
 async def export_context(user_id: str, auth_user: str = Depends(current_user)) -> dict:
     """Full active context as a portable JSON-LD packet (brief §11.1)."""
-    if user_id != auth_user:
-        raise HTTPException(status_code=403, detail="can only export your own context")
+    await _require_self(user_id, auth_user, "can only export your own context")
     from app.services.export import build_jsonld_export
-    return await build_jsonld_export(get_pool(), user_id)
+    return await build_jsonld_export(get_pool(), auth_user)
 
 
 @app.post("/context/{user_id}")
@@ -460,10 +504,9 @@ async def context_packet(
     user_id: str, req: ContextRequest, auth_user: str = Depends(current_user)
 ) -> list[dict]:
     """Top-K assertions relevant to a topic — the MCP slice over HTTP (brief §11.2)."""
-    if user_id != auth_user:
-        raise HTTPException(status_code=403, detail="can only query your own context")
+    await _require_self(user_id, auth_user, "can only query your own context")
     from app.services.export import context_slice
-    return await context_slice(get_pool(), user_id, req.topic, req.k)
+    return await context_slice(get_pool(), auth_user, req.topic, req.k)
 
 
 # ── Shareable page hosting ──────────────────────────────────────────────

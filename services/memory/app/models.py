@@ -74,6 +74,11 @@ class DeclareRequest(BaseModel):
     value: str = Field(min_length=1)
 
 
+class DeclareBatchRequest(BaseModel):
+    # zynd-bridge sends at most 50 per call (memory-client.ts declareBatch).
+    declarations: list[DeclareRequest] = Field(max_length=50)
+
+
 class ConnectRequest(BaseModel):
     target_user_id: str = Field(min_length=1)   # a user_id from findPeople / findMatches
     message: str = Field(default="Hi — we matched on ZYND, I'd love to connect.", max_length=2000)

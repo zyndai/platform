@@ -51,12 +51,52 @@ def _card() -> AgentProfileCard:
     )
 
 
-def test_update_card_claims_unowned_legacy_card(mock_sb):
+def test_update_card_refuses_legacy_unowned_claim_by_default(mock_sb, monkeypatch):
+    monkeypatch.setattr(cards_service.config, "LEGACY_UNOWNED_CLAIM", False)
+
+    ok, h = cards_service.update_card("alice", _card(), "mallory@example.com")
+
+    assert ok is False
+    assert mock_sb.payload is None
+
+
+def test_update_card_claims_legacy_unowned_card_when_enabled(mock_sb, monkeypatch):
+    monkeypatch.setattr(cards_service.config, "LEGACY_UNOWNED_CLAIM", True)
+
     ok, h = cards_service.update_card("alice", _card(), "alice@example.com")
 
     assert ok is True
     assert h == "alice"
     assert mock_sb.payload["owner_email"] == "alice@example.com"
+
+
+def test_update_card_claims_with_matching_claim_token(mock_sb):
+    token, token_hash = cards_service.new_claim_token()
+    mock_sb._rows = [{"owner_email": None, "claim_token_hash": token_hash}]
+
+    ok, _ = cards_service.update_card("alice", _card(), "alice@example.com", claim_token=token)
+
+    assert ok is True
+    assert mock_sb.payload["owner_email"] == "alice@example.com"
+    assert mock_sb.payload["claim_token_hash"] is None  # single use
+
+
+def test_update_card_rejects_wrong_or_missing_claim_token(mock_sb):
+    _, token_hash = cards_service.new_claim_token()
+    mock_sb._rows = [{"owner_email": None, "claim_token_hash": token_hash}]
+
+    assert cards_service.update_card("alice", _card(), "m@example.com", claim_token="guess")[0] is False
+    assert cards_service.update_card("alice", _card(), "m@example.com")[0] is False
+    assert mock_sb.payload is None
+
+
+def test_owner_edits_do_not_need_a_claim_token(mock_sb):
+    mock_sb._rows = [{"owner_email": "alice@example.com", "claim_token_hash": None}]
+
+    ok, _ = cards_service.update_card("alice", _card(), "alice@example.com")
+
+    assert ok is True
+    assert "claim_token_hash" not in mock_sb.payload
 
 
 def test_update_card_allows_existing_owner(mock_sb):

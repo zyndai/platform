@@ -11,6 +11,12 @@ SUPABASE_URL: str = os.getenv("SUPABASE_URL", "http://127.0.0.1:54321")
 SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
 SUPABASE_JWT_SECRET: str = os.getenv("SUPABASE_JWT_SECRET", "")
 
+# Unowned cards published after claim tokens shipped can only be claimed with
+# the one-time token returned at publish. Cards published before that have no
+# token; set LEGACY_UNOWNED_CLAIM=true to let the first signed-in editor claim
+# them (the old behaviour — lets any signed-in user take over such a card).
+LEGACY_UNOWNED_CLAIM: bool = os.getenv("LEGACY_UNOWNED_CLAIM", "false").lower() in ("1", "true", "yes")
+
 # ── LLM (OpenRouter) ──
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")

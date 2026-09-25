@@ -51,7 +51,7 @@ async def refresh_all_cards_memory() -> dict:
     """
     from services import cards as cards_service
 
-    rows = cards_service.list_published_rows()
+    rows = cards_service.list_published_rows(columns="card,handle,owner_email")
     stats = {"total": len(rows), "updated": 0, "unchanged": 0,
              "no_email": 0, "not_connected": 0, "errors": 0}
     for row in rows:

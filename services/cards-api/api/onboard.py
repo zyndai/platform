@@ -4,11 +4,12 @@ import logging
 import os
 import tempfile
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+from api.auth import verify_supabase_jwt
 from models.card import AgentProfileCard
 from publish import hooks
 from scraping import github as github_scraper
@@ -26,6 +27,8 @@ router = APIRouter()
 class PublishRequest(BaseModel):
     card: dict
     user_answers: dict[str, str] = {}
+    # Ignored: the owner comes from the verified session token. Kept so older
+    # clients that still send it don't fail validation.
     owner_email: str | None = None
     custom_handle: str | None = None
 
@@ -232,7 +235,18 @@ async def get_onboard_status(job_id: str):
 
 
 @router.post("/{job_id}/publish")
-async def publish_card(job_id: str, body: PublishRequest):
+async def publish_card(
+    job_id: str,
+    body: PublishRequest,
+    authorization: str | None = Header(default=None),
+):
+    # Ownership comes only from a verified session. An anonymous publish creates
+    # an unowned card plus a one-time claim token the publisher needs to claim it.
+    owner_email = verify_supabase_jwt(authorization) if authorization else None
+    if body.owner_email and body.owner_email != owner_email:
+        logger.warning("publish: ignoring client-supplied owner_email for job=%s", job_id)
+    claim_token, claim_token_hash = (None, None) if owner_email else cards_service.new_claim_token()
+
     job = get_job(job_id)
     if not job or not job.card:
         raise HTTPException(status_code=404, detail="job not found or not ready")
@@ -268,9 +282,13 @@ async def publish_card(job_id: str, body: PublishRequest):
         job.handle_x,
         job.scrape_raw,
         user_intent,
-        body.owner_email,
+        owner_email,
         body.custom_handle,
+        claim_token_hash,
     )
     card.handle = handle  # frontend reads published.handle for redirect
     await hooks.run_publish_hooks(card.id, handle)
-    return card.model_dump(mode="json")
+    result = card.model_dump(mode="json")
+    if claim_token:
+        result["claim_token"] = claim_token  # shown once; send as X-Claim-Token to claim
+    return result

@@ -1,9 +1,15 @@
 import json
+import logging
 
 import config
 from models.card import AgentProfileCard
 from services import cards as cards_service
 from services.embed import card_search_text, embed_text
+
+logger = logging.getLogger(__name__)
+
+# Per source (vector + full text) candidates handed to the Python scorer.
+CANDIDATES_PER_SOURCE = 200
 
 
 def _parse_embedding(raw) -> list[float]:
@@ -34,6 +40,31 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
+def _candidates(q: str, query_vec: list[float]) -> list[dict]:
+    """Rows to score: {"card", "handle", "similarity"?, "embedding"?}.
+
+    With a query, the SQL functions in db/patch_search_rpc.sql return the top
+    matches by vector similarity (HNSW) and by full-text rank. Filter-only
+    searches — or a database without those functions yet — page through every
+    published card.
+    """
+    if q:
+        sb = config.get_supabase()
+        try:
+            by_id: dict[str, dict] = {}
+            if query_vec:
+                resp = sb.rpc("match_cards", {"query_embedding": query_vec, "match_count": CANDIDATES_PER_SOURCE}).execute()
+                for r in resp.data or []:
+                    by_id[r["id"]] = {"card": r["card"], "handle": r["handle"], "similarity": r.get("similarity")}
+            resp = sb.rpc("search_cards_fts", {"q": q, "match_count": CANDIDATES_PER_SOURCE}).execute()
+            for r in resp.data or []:
+                by_id.setdefault(r["id"], {"card": r["card"], "handle": r["handle"]})
+            return list(by_id.values())
+        except Exception as exc:  # noqa: BLE001 — functions not deployed yet: degrade, don't fail search
+            logger.warning("search RPCs unavailable (%s); falling back to a full scan", exc)
+    return cards_service.list_published_rows(columns="card,handle,embedding")
+
+
 def search_agents(
     q: str = "",
     role: str = "",
@@ -44,8 +75,8 @@ def search_agents(
     experience_min: int | None = None,
     limit: int = 10,
 ) -> list[dict]:
-    rows = cards_service.list_published_rows(limit=1000)
     query_vec = embed_text(q) if q else []
+    rows = _candidates(q, query_vec)
     q_tokens = _norm(q).split() if q else []
     skill_list = [s.strip().lower() for s in skills.split(",") if s.strip()] if skills else []
     industry_norm = _norm(industry)
@@ -62,14 +93,15 @@ def search_agents(
             continue
         if row.get("handle"):
             card.handle = row["handle"]
-        emb = _parse_embedding(row.get("embedding"))
         search_text = card_search_text(card).lower()
 
         score = 0.0
         reasons: list[str] = []
 
-        if query_vec and emb:
-            sim = _cosine(query_vec, emb)
+        sim = row.get("similarity")
+        if sim is None and query_vec:
+            sim = _cosine(query_vec, _parse_embedding(row.get("embedding")))
+        if query_vec and sim:
             score += sim * 0.5
             if sim > 0.6:
                 reasons.append("Strong overall match for your query")

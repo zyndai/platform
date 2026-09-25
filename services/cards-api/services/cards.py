@@ -1,10 +1,34 @@
+import hashlib
+import hmac
 import html
+import logging
 import re
+import secrets
 
 import config
 from models.card import AgentProfileCard, CardSynthesis, Source, WritingSample
 from services import embed
 from services.jobs import new_card_id, utcnow
+
+logger = logging.getLogger(__name__)
+
+
+def new_claim_token() -> tuple[str, str]:
+    """(token, sha256 hex) for an unowned card. The token goes to the anonymous
+    publisher once; only its hash is stored."""
+    token = secrets.token_urlsafe(24)
+    return token, hash_claim_token(token)
+
+
+def hash_claim_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def can_claim(stored_hash: str | None, claim_token: str | None) -> bool:
+    """May a signed-in user take ownership of an unowned card?"""
+    if stored_hash:
+        return bool(claim_token) and hmac.compare_digest(hash_claim_token(claim_token), stored_hash)
+    return config.LEGACY_UNOWNED_CLAIM
 
 
 _HTML_TAG = re.compile(r"<[^>]+>")
@@ -274,6 +298,7 @@ def insert_card(
     user_intent: dict | None = None,
     owner_email: str | None = None,
     custom_handle: str | None = None,
+    claim_token_hash: str | None = None,
 ) -> str:
     handle = (
         _try_custom_handle(custom_handle, card.id)
@@ -296,6 +321,7 @@ def insert_card(
         "scrape_raw": scrape_raw,
         "user_intent": user_intent,
         "owner_email": owner_email,
+        "claim_token_hash": None if owner_email else claim_token_hash,
     }
     sb.table("agent_profile_cards").upsert(row, on_conflict="id").execute()
     return handle
@@ -323,6 +349,7 @@ def update_card(
     card: AgentProfileCard,
     owner_email: str,
     new_handle: str | None = None,
+    claim_token: str | None = None,
 ) -> tuple[bool, str]:
     """Update a published card in-place after verifying ownership.
 
@@ -330,13 +357,14 @@ def update_card(
     Returns (True, effective_handle) on success — effective_handle is new_handle if
     the rename succeeded, otherwise the original handle.
 
-    Cards created before the ownership feature have `owner_email` NULL —
-    the first authenticated editor claims them.
+    Unowned cards (anonymous publish) are claimed by the first signed-in editor
+    who presents the one-time claim token issued at publish. Unowned cards from
+    before claim tokens existed can only be claimed when LEGACY_UNOWNED_CLAIM is on.
     """
     sb = config.get_supabase()
     check = (
         sb.table("agent_profile_cards")
-        .select("owner_email")
+        .select("owner_email,claim_token_hash")
         .eq("handle", handle)
         .execute()
     )
@@ -344,6 +372,9 @@ def update_card(
         return False, handle
     stored_owner = check.data[0].get("owner_email")
     if stored_owner and stored_owner != owner_email:
+        return False, handle
+    if not stored_owner and not can_claim(check.data[0].get("claim_token_hash"), claim_token):
+        logger.warning("claim refused handle=%s (missing or wrong claim token)", handle)
         return False, handle
 
     effective_handle = handle
@@ -365,9 +396,11 @@ def update_card(
         "status": card.status,
         "embedding": embedding,
         "updated_at": card.updated_at,
-        # Unowned legacy cards get claimed on first edit.
+        # Unowned cards are claimed here (claim token already checked above).
         "owner_email": stored_owner or owner_email,
     }
+    if not stored_owner:
+        update_payload["claim_token_hash"] = None
     if effective_handle != handle:
         update_payload["handle"] = effective_handle
 
@@ -452,13 +485,30 @@ def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:
     return True
 
 
-def list_published_rows(limit: int = 1000) -> list[dict]:
+def list_published_rows(
+    limit: int | None = None,
+    columns: str = "card,handle,embedding,owner_email",
+    page_size: int = 1000,
+) -> list[dict]:
+    """All published rows (or the first `limit`), paged so PostgREST's per-request
+    row cap never silently truncates the result."""
     sb = config.get_supabase()
-    resp = (
-        sb.table("agent_profile_cards")
-        .select("card,handle,embedding,owner_email")
-        .eq("status", "published")
-        .limit(limit)
-        .execute()
-    )
-    return resp.data or []
+    rows: list[dict] = []
+    start = 0
+    while limit is None or len(rows) < limit:
+        end = start + page_size - 1
+        if limit is not None:
+            end = min(end, limit - 1)
+        page = (
+            sb.table("agent_profile_cards")
+            .select(columns)
+            .eq("status", "published")
+            .order("id")
+            .range(start, end)
+            .execute()
+        ).data or []
+        rows.extend(page)
+        if len(page) < end - start + 1:
+            break
+        start = end + 1
+    return rows

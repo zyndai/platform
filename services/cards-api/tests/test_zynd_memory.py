@@ -154,7 +154,7 @@ def test_refresh_cycle_updates_changed_cards(monkeypatch):
     facts = [{"predicate": "is_building", "object": "micro-SaaS"}]
     monkeypatch.setattr(
         cards_service, "list_published_rows",
-        lambda: [_row("alice", "alice@example.com"), _row("bob", "bob@example.com", facts)],
+        lambda **kw: [_row("alice", "alice@example.com"), _row("bob", "bob@example.com", facts)],
     )
     monkeypatch.setattr(
         cards_service, "_row_to_card",
@@ -175,7 +175,7 @@ def test_refresh_cycle_updates_changed_cards(monkeypatch):
 
 
 def test_refresh_cycle_skips_cards_without_email(monkeypatch):
-    monkeypatch.setattr(cards_service, "list_published_rows", lambda: [_row("alice", "")])
+    monkeypatch.setattr(cards_service, "list_published_rows", lambda **kw: [_row("alice", "")])
     monkeypatch.setattr(zynd_memory, "fetch_findability", lambda email: {"connected": True, "facts": []})
     stats = asyncio.run(zynd_memory.refresh_all_cards_memory())
 
@@ -184,7 +184,7 @@ def test_refresh_cycle_skips_cards_without_email(monkeypatch):
 
 
 def test_refresh_cycle_keeps_snapshot_on_fetch_failure(monkeypatch):
-    monkeypatch.setattr(cards_service, "list_published_rows", lambda: [_row("alice", "alice@example.com")])
+    monkeypatch.setattr(cards_service, "list_published_rows", lambda **kw: [_row("alice", "alice@example.com")])
     monkeypatch.setattr(cards_service, "_row_to_card", lambda row: AgentProfileCard.model_validate(row["card"]))
     monkeypatch.setattr(cards_service, "update_card_memory", lambda handle, f: True)
     monkeypatch.setattr(zynd_memory, "fetch_findability", lambda email: None)  # memory layer down

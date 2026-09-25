@@ -1,0 +1,174 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ZYND Ingest",
+    "description": "Send conversation turns to ZYND to build the user's private context graph.",
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.zynd.ai"
+    }
+  ],
+  "paths": {
+    "/me/context": {
+      "get": {
+        "operationId": "getContextWithProfile",
+        "summary": "Get the user's ZYND memory and persona profile in one call.",
+        "description": "Call at conversation start. Returns assertions (show statement values verbatim) and profile (persona name + social links).",
+        "security": [{ "OAuth2": ["ingest"] }],
+        "parameters": [
+          {
+            "name": "k",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "default": 20 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Context packet",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ContextPacket" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ingest": {
+      "post": {
+        "operationId": "ingestConversation",
+        "summary": "Send conversation turns for context extraction.",
+        "security": [
+          {
+            "OAuth2": [
+              "ingest"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "OAuth2": {
+        "type": "oauth2",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://api.zynd.ai/oauth/authorize",
+            "tokenUrl": "https://api.zynd.ai/oauth/token",
+            "scopes": {
+              "ingest": "Send conversation data to ZYND"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ContextPacket": {
+        "type": "object",
+        "properties": {
+          "assertions": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Fact" },
+            "description": "What ZYND knows — show statement values to the user."
+          },
+          "profile": {
+            "description": "Persona profile (name, agent_id, social links). Null if unavailable."
+          }
+        }
+      },
+      "Fact": {
+        "type": "object",
+        "properties": {
+          "statement": { "type": "string" },
+          "predicate": { "type": "string" },
+          "object": { "type": "string" },
+          "confidence": { "type": "number" }
+        }
+      },
+      "Turn": {
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "IngestRequest": {
+        "type": "object",
+        "required": [
+          "turns"
+        ],
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "source_system": {
+            "type": "string",
+            "default": "chatgpt"
+          },
+          "turns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Turn"
+            }
+          }
+        }
+      },
+      "IngestResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "chunks_inserted": {
+            "type": "integer"
+          },
+          "chunks_skipped": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:policies": "psql \"$DIRECT_URL\" -f ../db/sql/policies.sql"
+    "db:policies": "psql \"$DIRECT_URL\" -f db/sql/policies.sql"
   },
   "dependencies": {
     "@dicebear/collection": "^9.4.2",

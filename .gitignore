@@ -15,33 +15,35 @@ venv/
 .venv/
 .env
 .env.*
+!.env.example
+!.env.*.example
 node_modules/
 .DS_Store
 Thumbs.db
 *.log
 
 # Backend specific
-/backend/.env
-/backend/.agent-zynd-networking/
+/services/persona-api/.env
+/services/persona-api/.agent-zynd-networking/
 
 # Webapp specific
-/webapp/.next/
-/webapp/.vercel/
-/webapp/out/
-/webapp/build/
-/webapp/coverage/
-/webapp/*.tsbuildinfo
-/webapp/.pnp
-/webapp/.pnp.*
-/webapp/.yarn/*
-!/webapp/.yarn/patches
-!/webapp/.yarn/plugins
-!/webapp/.yarn/releases
-!/webapp/.yarn/versions
-/webapp/npm-debug.log*
-/webapp/yarn-debug.log*
-/webapp/yarn-error.log*
-/webapp/.pnpm-debug.log*
+/apps/persona-web/.next/
+/apps/persona-web/.vercel/
+/apps/persona-web/out/
+/apps/persona-web/build/
+/apps/persona-web/coverage/
+/apps/persona-web/*.tsbuildinfo
+/apps/persona-web/.pnp
+/apps/persona-web/.pnp.*
+/apps/persona-web/.yarn/*
+!/apps/persona-web/.yarn/patches
+!/apps/persona-web/.yarn/plugins
+!/apps/persona-web/.yarn/releases
+!/apps/persona-web/.yarn/versions
+/apps/persona-web/npm-debug.log*
+/apps/persona-web/yarn-debug.log*
+/apps/persona-web/yarn-error.log*
+/apps/persona-web/.pnpm-debug.log*
 
 .agent-*
 

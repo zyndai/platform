@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 # Make the contextaware package importable
-_ctx_path = str(Path(__file__).resolve().parent.parent.parent / "contextaware")
+_ctx_path = str(Path(__file__).resolve().parent.parent / "contextaware")
 if _ctx_path not in sys.path:
     sys.path.insert(0, _ctx_path)
 

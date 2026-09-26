@@ -9,15 +9,15 @@
 //   (webapp)  npm run build ALWAYS after pull, then restart
 // Production equivalent lives in /home/ubuntu/agent-persona/ecosystem.config.js.
 
-const DEV = "/home/ubuntu/agent-persona-dev";
+const DEV = "/home/ubuntu/zynd-dev"; // monorepo checkout: git clone -b dev <repo> /home/ubuntu/zynd-dev
 
 module.exports = {
   apps: [
     {
       // ── FastAPI backend (dev) ───────────────────────────────────
       name: "api-dev",
-      cwd: `${DEV}/backend`,
-      script: `${DEV}/backend/.venv/bin/uvicorn`,
+      cwd: `${DEV}/services/persona-api`,
+      script: `${DEV}/services/persona-api/.venv/bin/uvicorn`,
       // --loop asyncio: uvloop's aarch64 build intermittently corrupts the
       // heap here (malloc(): unsorted double linked list corrupted /
       // silent segfaults killing the process mid-chat-turn). Pure-Python
@@ -43,7 +43,7 @@ module.exports = {
     {
       // ── Next.js production server (dev) ─────────────────────────
       name: "web-dev",
-      cwd: `${DEV}/webapp`,
+      cwd: `${DEV}/apps/persona-web`,
       script: "/usr/bin/npx",
       args: "next start -H 127.0.0.1 -p 3002",
       interpreter: "none",

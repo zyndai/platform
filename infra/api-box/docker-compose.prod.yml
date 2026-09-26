@@ -1,5 +1,13 @@
 # Production: one box runs everything. Caddy terminates HTTPS for api.zynd.ai and
 # proxies to the API. Postgres/Redis are internal only (not exposed to the internet).
+#
+# Run from the monorepo root:
+#   docker compose -f infra/api-box/docker-compose.prod.yml up -d --build
+# Build contexts and env_files are relative to THIS file's location
+# (infra/api-box/), pointing back into services/*. Each service keeps its own
+# .env.prod alongside its code (services/memory/.env.prod,
+# services/cards-api/.env.prod) — copy the existing box env files there when
+# cutting over from the old standalone-repo checkouts.
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -26,8 +34,8 @@ services:
       retries: 10
 
   api:
-    build: .
-    env_file: .env.prod
+    build: ../../services/memory
+    env_file: ../../services/memory/.env.prod
     command: sh -c "python -m app.schema_apply && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     depends_on:
       postgres: { condition: service_healthy }
@@ -35,8 +43,8 @@ services:
     restart: unless-stopped
 
   worker:
-    build: .
-    env_file: .env.prod
+    build: ../../services/memory
+    env_file: ../../services/memory/.env.prod
     command: arq app.worker.WorkerSettings
     depends_on:
       postgres: { condition: service_healthy }
@@ -44,19 +52,19 @@ services:
     restart: unless-stopped
 
   mcp:
-    build: .
-    env_file: .env.prod
+    build: ../../services/memory
+    env_file: ../../services/memory/.env.prod
     command: uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
     depends_on:
       postgres: { condition: service_healthy }
     restart: unless-stopped
 
-  # Zynd agent profile cards API (separate codebase, merged into this compose
-  # so Caddy can reach it over the shared network). Built from ~/zynd-cards.
+  # Zynd agent profile cards API — a sibling service in this monorepo, merged
+  # into this compose so Caddy can reach it over the shared network.
   cards:
     build:
-      context: /home/ubuntu/zynd-cards
-    env_file: /home/ubuntu/zynd-cards/.env.prod
+      context: ../../services/cards-api
+    env_file: ../../services/cards-api/.env.prod
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     expose:
       - "8000"

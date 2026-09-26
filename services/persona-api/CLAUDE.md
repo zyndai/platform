@@ -81,10 +81,10 @@ areas they cover:
 
 ## Commands
 
-### Backend (`backend/`, Python/FastAPI)
+### Backend (`services/persona-api/`, Python/FastAPI)
 
 ```bash
-cd backend
+cd services/persona-api
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000     # run dev server
 pytest                                     # run all tests
@@ -92,14 +92,14 @@ pytest tests/test_a2a_ping.py              # run a single test file
 pytest tests/test_a2a_ping.py::test_name -v  # run a single test
 ```
 
-`backend/tests/conftest.py` adds `backend/` to `sys.path` so tests import
+`tests/conftest.py` adds this directory to `sys.path` so tests import
 `api.*` / `agent.*` / `mcp.*` the same way the running app does. There's no
 separate lint config in `backend/`.
 
-### Webapp (`webapp/`, Next.js 16 + React 19 + Tailwind 4)
+### Webapp (`apps/persona-web/`, Next.js 16 + React 19 + Tailwind 4)
 
 ```bash
-cd webapp
+cd apps/persona-web
 npm run dev      # dev server on 127.0.0.1 (see package.json)
 npm run build    # required before `next start` picks up any change
 npm run start
@@ -108,12 +108,14 @@ npm run lint
 
 ### Production deployment (PM2 + Caddy)
 
-Two copies of this repo run on the box, both tracking `main`:
+This is now part of the `zynd` monorepo. Two checkouts run on the box:
 
-| Channel | Code dir | pm2 apps | Backend | Web | URL |
-|---|---|---|---|---|---|
-| Prod | `/home/ubuntu/agent-persona` | `api`, `web` | 127.0.0.1:8000 | 127.0.0.1:3001 | https://persona.zynd.ai |
-| Dev | `/home/ubuntu/agent-persona-dev` | `api-dev`, `web-dev` | 127.0.0.1:8001 | 127.0.0.1:3002 | https://dev.persona.zynd.ai |
+| Channel | Branch | Code dir | pm2 apps | Backend | Web | URL |
+|---|---|---|---|---|---|---|
+| Prod | `main` | `/home/ubuntu/zynd` | `api`, `web` | 127.0.0.1:8000 | 127.0.0.1:3001 | https://persona.zynd.ai |
+| Dev | `dev` | `/home/ubuntu/zynd-dev` | `api-dev`, `web-dev` | 127.0.0.1:8001 | 127.0.0.1:3002 | https://dev.persona.zynd.ai |
+
+pm2 configs live at `infra/persona-box/ecosystem.config.js` (prod) and `infra/persona-box/ecosystem.dev.config.js` (dev).
 
 - Caddy (`/etc/caddy/Caddyfile`) fronts both: `/api/*` → backend port,
   everything else → web port. PM2 apps: prod from `ecosystem.config.js`, dev
@@ -125,12 +127,12 @@ Two copies of this repo run on the box, both tracking `main`:
 - Both copies share: Supabase project, LLM/API keys, memory layer, and the
   Zynd identity keypair (`~/.zynd/developer.json`).
 - **Telegram**: only prod may register the webhook (one URL per bot). Never
-  run `backend/scripts/register_telegram_webhook.py` on the dev box. The webhook
+  run `services/persona-api/scripts/register_telegram_webhook.py` on the dev box. The webhook
   rejects updates without `TELEGRAM_WEBHOOK_SECRET` once that env var is set.
 
 **Deploy flow (dev first, then prod):** commit + push to `main` → on each
 copy: `git pull`, `pip install -r requirements.txt` only if it changed,
-`npm run build` in `webapp/` (required — `next start` serves stale
+`npm run build` in `apps/persona-web/` (required — `next start` serves stale
 artifacts otherwise), then `pm2 restart api-dev web-dev` (dev) or
 `pm2 restart api web` (prod). Prefer per-app `pm2 restart` names over
 `pm2 restart all`, which also bounces the deployer.

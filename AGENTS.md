@@ -38,7 +38,6 @@ If a task mentions either of those by name, it's the wrong repo.
 | `services/memory` | Shared context/memory layer: ingest, matching, MCP server, OAuth for AI clients | FastAPI / Python | api.zynd.ai |
 | `infra/persona-box` | pm2 configs for the box running persona-api + persona-web | — | — |
 | `infra/api-box` | Caddy + docker-compose for the box running cards-api + memory | — | — |
-| `docs/persona` | Persona's architecture docs (identity derivation, A2A protocol, groups rollout) | — | — |
 | `packages/` | Shared code (DB migrations, contracts). **Planned, not built yet.** | — | — |
 
 **History is preserved.** Each service was merged in with `git filter-repo`,

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Detailed plan · 2026-09-26 · **nothing executed yet** |
+| **Status** | Detailed plan · 2026-09-26 · user answered §12 and confirmed Drizzle the same day · **phase A (packages/db scaffold) started** |
 | **Goal** | Cards moves off the dashboard Supabase project (**xmfj**, `xmfjvixclgqcmjmtecwv`) and into the persona project (**aafo**, `aafoguuvmaxymrtnfafn`). That covers its 4 tables, its avatars and its login. Cards and persona then share one database and one set of users (`auth.users`). Every schema change to that database, from either product, is a Drizzle migration in **`packages/db`** |
 | **Replaces** | `ZYND_CARDS_MOVE_PLAN.md` §3, P1, P3 and P4. Its P0 is folded in here (§7). Its P2 (`apps/cards-web`) is done. Its P5 (dashboard cleanup) still applies, at the end (§8 phase I) |
 | **Out of scope** | `services/memory` keeps its own Postgres. The zynd.ai dashboard keeps xmfj and its own Prisma schema. `zynd-bridge` is not touched |
@@ -35,7 +35,10 @@
 | D7 | **Cards tables are service-role only**: drop the anon `"public read published cards"` policy, revoke table grants and RPC execute from `anon`/`authenticated` | No code reads cards tables from a browser. cards-web goes through cards-api. The old policy exposed `owner_email`, `claim_token_hash` and `scrape_raw` to anyone with the anon key. xmfj already revoked `anon`/`authenticated` grants on every table, so this keeps today's effective access |
 | D8 | Drop the `persona_agents` `"Public read persona agents"` policy (`using (true)`) in its own migration, `0001` | It exposes every persona's `brief_content`, `profile` and `webhook_url` to the anon key. Checked: no code reads `persona_agents` with anon, and every RLS subquery on `persona_agents` filters `user_id = auth.uid()`, which `"Users can read own persona"` still allows (§2.4) |
 | D9 | `packages/db` is a **standalone npm package** (own lockfile, no root workspace) | Vercel builds of `apps/*` stay unchanged. Shared TS types can come later |
-| D10 | Prod migrations are applied **by a person**, staging first, then prod after a clean drift check | AGENTS.md §6: prod SQL needs a human |
+| D10 | Prod migrations are applied **by a person**. Anyone on the team may run them, after a clean drift check and a local rehearsal | AGENTS.md §6: prod SQL needs a human |
+| D11 | **There is no staging database.** `dev.persona.zynd.ai` runs against **prod aafo** (user, 2026-09-26). The rehearsal is a local scratch Postgres (stubs + pgvector), and every migration must be **expand-only**, so that the code on `dev` and on `main` both keep working against the same database. Destructive changes need two steps: expand, deploy, then contract | Any migration applied is live for dev and prod at once |
+| D12 | **Cards uses persona's login: LinkedIn (OIDC) only.** Google, GitHub and the email magic link are removed from cards-web. Magic links come back once an email provider (SMTP) is chosen, which is `null` for now | User decision. aafo already has LinkedIn configured, so no new OAuth app is needed |
+| D13 | **Remove xmfj's copies of the persona tables** once the activity check (Appendix F) proves nothing uses them. Leave `keyword_posts` alone | User decision. The dashboard code and this repo don't reference either (checked 2026-09-26) |
 
 ---
 
@@ -326,7 +329,10 @@ Deploy jobs are deliberately not part of this workflow (D10).
 
 ### 5.2 Target
 
-- **One identity provider, aafo.** Providers: Google, LinkedIn (OIDC) and email magic link. No GitHub, per the earlier platform decision.
+- **One identity provider, aafo, with persona's login: LinkedIn (OIDC) only (D12).**
+  - **cards-web change:** drop the Google buttons (`app/auth/page.tsx`, `app/create/page.tsx`, `app/agent-card/auth-bar.tsx`), the GitHub option (`app/p/[handle]/profile-auth-actions.tsx`) and the magic-link form (`signInWithOtp`).
+  - **Magic link:** returns when SMTP exists; `null` for now.
+  - **Risk this creates:** xmfj card owners who signed in with **Google** must now use a LinkedIn account with the **same email**. Appendix F counts owners by provider before cutover, so we know how many are affected. Anyone whose LinkedIn email differs gets reassigned by support (one `update` on `owner_email`/`owner_user_id`) or re-claims with a claim token.
 - **No copy of xmfj users.** Nothing in cards references an xmfj user id. xmfj also holds every dashboard developer account, which doesn't belong in persona. A card owner who already uses persona has an aafo user with a **different** UUID, so copying would create two users per person.
 - **Ownership keeps working by email.** An owner signs in to cards.zynd.ai with the same email, which creates or reuses their aafo user, and `owner_email` matches as before. Supabase auto-links identities that share a **verified** email, so Google and LinkedIn with the same email end up as one user.
 - **Linking the products:** `owner_user_id uuid → auth.users(id) on delete set null`.
@@ -357,11 +363,9 @@ Both backends accept xmfj **and** aafo tokens from D4 until 14 days after cutove
 
 ### 5.5 aafo Auth settings (a person, in dashboards)
 
-- **Google Cloud OAuth client:** add the authorized redirect URI `https://aafoguuvmaxymrtnfafn.supabase.co/auth/v1/callback`. Reuse the xmfj client or create a new "Zynd Account" client (§12).
-- **LinkedIn developer app:** add the same callback, with product "Sign In with LinkedIn using OpenID Connect".
-- **aafo → Authentication → Providers:** Google, LinkedIn (OIDC) and Email (magic link) on.
+- **OAuth apps:** none new. aafo's existing LinkedIn (OIDC) provider, the one persona uses, serves cards too (D12).
 - **aafo → Authentication → URL configuration:** keep the Site URL as it is (persona). Add `https://cards.zynd.ai/**`, `https://*-zyndai.vercel.app/**` (previews) and `http://127.0.0.1:3000/**` to the redirect allow-list.
-- **aafo → Authentication → SMTP:** set up custom SMTP (Resend/SES) before launch. The built-in mailer is heavily rate-limited, and magic links depend on it.
+- **Email magic link / SMTP:** **not now (`null`).** When an email provider is chosen, configure custom SMTP (the built-in mailer is heavily rate-limited), enable the Email provider and bring back the magic-link form in cards-web.
 - **aafo → Storage:** create a public bucket `avatars` with an INSERT/UPDATE policy for `authenticated`, limited to paths under the user's own id. Reads are public.
 
 ---
@@ -397,7 +401,9 @@ The agent writes these, and **the user runs them**. They default to dry-run.
 
 ### 6.3 Rehearsal first
 
-Run the whole of §6.2 **while live** (D6 below), into aafo staging if it exists, otherwise straight into aafo. Nothing reads aafo's cards tables until cutover, and the final copy re-truncates, so the rehearsal leaves nothing behind.
+There's no staging (D11), so the rehearsal happens in two places:
+1. **Local:** scratch Postgres with stubs + migrations 0000–0004, then `copy_tables.sh` from xmfj into it. This proves the dump loads, the generated column recomputes and the FKs hold.
+2. **Prod aafo, while live (phase G):** the same scripts into the new, still-unused cards tables. Nothing reads aafo's cards tables until cutover, and the final copy re-truncates them, so the rehearsal leaves nothing behind.
 
 ---
 
@@ -427,13 +433,13 @@ Stop after each phase, report, and wait for an OK. **A** = agent, **U** = user. 
 |---|---|---|---|---|
 | **A. Scaffold** | A | `packages/db` package, config, stubs, scripts, README, OWNERS, CI workflow, frozen READMEs; confirm the migrator's hash/`when` semantics in the pinned version | `npm ci && npm run db:check` pass; CI green on a PR | revert the PR |
 | **B. Baseline** | A, then U | §4.8 steps 1–8 (A); U runs `catalog.sql` on prod for step 5; U runs Appendix D on staging and prod | drift diff empty; `db:generate` reports nothing; `drizzle.__drizzle_migrations` holds 1 row on prod | `drop schema drizzle cascade` (tracking table only) |
-| **C. Persona fix** | A, then U | `0001`; U applies it to staging, smoke-tests persona-web (inbox, tasks, groups, realtime), then prod | an anon `GET /rest/v1/persona_agents?select=agent_id&limit=1` returns `[]`; persona-web works | `create policy "Public read persona agents" on persona_agents for select using (true);` |
-| **D. Cards schema** | A, then U | `0002`–`0004`; U runs `preflight-cards.sql`, then `db:migrate` on staging and prod | catalog shows the 4 empty tables + 3 functions; anon RPC `match_cards` is denied | `drop table x_mentions, x_conversations, x_accounts, agent_profile_cards; drop function match_cards, search_cards_fts, skill_names;` (empty tables) + delete their journal rows |
+| **C. Persona fix** | A, then U | `0001`; A rehearses it on the local scratch DB; U applies it to prod aafo (which dev.persona also uses) and smoke-tests persona-web (inbox, tasks, groups, realtime) on dev.persona, then prod | an anon `GET /rest/v1/persona_agents?select=agent_id&limit=1` returns `[]`; persona-web works | `create policy "Public read persona agents" on persona_agents for select using (true);` |
+| **D. Cards schema** | A, then U | `0002`–`0004`; A rehearses locally (needs `brew install pgvector`); U runs `preflight-cards.sql`, then `db:migrate` on prod aafo | catalog shows the 4 empty tables + 3 functions; anon RPC `match_cards` is denied | `drop table x_mentions, x_conversations, x_accounts, agent_profile_cards; drop function match_cards, search_cards_fts, skill_names;` (empty tables) + delete their journal rows |
 | **E. Code** | A, then U | §7 on a branch → `dev`; U deploys cards-api + memory with **both** issuers trusted; cards-api **still on xmfj** | tests at baseline; prod behaves as before; an aafo token is accepted by `/cards/*` auth | redeploy the previous image |
-| **F. aafo auth + storage** | U | §5.5; set Vercel env for cards-web (aafo URL/anon key, `NEXT_PUBLIC_API_URL=https://api.zynd.ai`, `NEXT_PUBLIC_SITE_URL=https://cards.zynd.ai`); open a preview deploy | on the preview, Google, LinkedIn and magic-link login work against aafo; card pages render (data via cards-api from xmfj) | disable the providers / remove the URLs |
+| **F. aafo auth + storage** | A, then U | A: cards-web goes LinkedIn-only (D12). U: §5.5 redirect URLs and `avatars` bucket; Vercel env for cards-web (aafo URL/anon key, `NEXT_PUBLIC_API_URL=https://api.zynd.ai`, `NEXT_PUBLIC_SITE_URL=https://cards.zynd.ai`); open a preview deploy | on the preview, LinkedIn login works against aafo; card pages render (data via cards-api from xmfj) | remove the redirect URLs |
 | **G. Rehearsal** | U (A reviews output) | §6.2 all scripts into aafo | `verify.sql` matches; avatars report shows 0 missing | re-truncate the aafo cards tables |
 | **H. Cutover** | U, A on call | runbook below | all checks pass | per step, below |
-| **I. Cleanup** | U + A | day +14: remove xmfj from trusted issuers; dashboard P5 (remove cards UI, add 301s; the dashboard team's branch); day +14: rename xmfj cards tables `*_retired`; day +28: drop them and the xmfj `avatars` bucket | nothing in the logs uses xmfj for cards | un-rename the tables (until day +28) |
+| **I. Cleanup** | U + A | day +14: remove xmfj from trusted issuers; dashboard P5 (remove cards UI, add 301s; the dashboard team's branch); day +14: rename xmfj cards tables `*_retired`; day +28: drop them and the xmfj `avatars` bucket. **xmfj persona copies (D13), can run any time:** U runs the activity check (Appendix F); if it's clean, U runs Appendix G part 1 (rename to `*_retired`), then part 2 (drop) 14 days later. `keyword_posts` stays | nothing in the logs uses xmfj for cards; the persona copies show no reads or writes | un-rename the tables (until the drop) |
 
 ### Phase H: cutover runbook (quiet hour, about 30–45 minutes)
 
@@ -470,10 +476,12 @@ Stop after each phase, report, and wait for an OK. **A** = agent, **U** = user. 
 | Someone changes aafo in the SQL editor | README rule; drift check in the release steps; frozen old folders |
 | A `drizzle-kit` upgrade changes the snapshot or migration-table format | exact pins; `baseline-sql.ts` tied to the pinned version; upgrade only in a dedicated PR |
 | Drizzle rename prompts turn into drop + add | answer the prompts deliberately; review generated SQL in PRs |
-| Dropping `persona_agents` public read breaks an unknown external reader | own migration `0001`, staging first, one-line rollback |
+| Dropping `persona_agents` public read breaks an unknown external reader | own migration `0001`, one-line rollback |
+| No staging: a bad migration hits dev.persona **and** prod at once | local rehearsal with stubs (CI does the same from empty on every PR); expand-only migrations (D11); drift check before every apply; rollback SQL written before applying |
+| Card owners who used Google on xmfj can't match their LinkedIn email | Appendix F counts them first; support reassigns or they re-claim (§5.2) |
 | memory relies on `persona_agents` columns | `OWNERS.md` lists memory as a consumer, and memory's owner reviews those changes |
 | Owner email differs between providers | claim tokens and support; `owner_user_id` makes reassignment one update |
-| Magic links hit the mail rate limit at launch | custom SMTP in F |
+| Magic links hit the mail rate limit | not launched until an SMTP provider exists (D12) |
 | `vector` moves from `public` (xmfj) to `extensions` (aafo) and breaks function resolution | functions get `set search_path = public, extensions`; checked in D and G |
 | xmfj persona copies are still written to by something | row-count pre-check (Appendix F) before I; the dashboard team decides their fate |
 
@@ -493,15 +501,18 @@ Stop after each phase, report, and wait for an OK. **A** = agent, **U** = user. 
 
 ---
 
-## 12. Open questions for the user
+## 12. Questions: answered 2026-09-26
 
-1. **Staging:** is there a staging Supabase project or branch for aafo? Is `dev.persona.zynd.ai` on aafo or on its own project? This decides whether C, D and G get a real rehearsal.
-2. **OAuth apps:** reuse xmfj's Google and LinkedIn OAuth apps (just add the aafo callback), or create new "Zynd Account" ones?
-3. **`keyword_posts`** in xmfj: whose is it? Nothing in this repo or the dashboard uses it.
-4. **xmfj persona-table copies:** are they a leftover from an old persona environment? The row counts in Appendix F show whether anything still writes to them.
-5. **Duplicate cards** still open (`0xsy3` / `0xsy3-pobf`, `chandan-kumar` / `chandan867`): settle them before G.
-6. **Prod migrations:** who runs them (holds the DB password)? Who's the second reviewer for `packages/db` PRs?
-7. **SMTP provider** for magic links (Resend, SES, …).
+| # | Question | Answer | Where it landed |
+|---|---|---|---|
+| 1 | Staging? | None. dev.persona uses the prod database and is only for testing logic | D11, §6.3, phases C/D |
+| 2 | OAuth apps? | Use persona's login | D12, §5.2, §5.5, phase F |
+| 3 | `keyword_posts`? | Maybe memory, but if nothing uses it, leave it as is | D13 (left alone; no code references found) |
+| 4 | xmfj persona copies? | Remove them if nothing uses them | D13, Appendix F activity check, Appendix G |
+| 5 | Who runs prod migrations / SMTP? | Anyone on the team. Magic link / SMTP is `null` for now, added once there's an email provider | D10, D12 |
+| — | Drizzle? | Confirmed | D1 |
+
+**Still open:** the duplicate cards (`0xsy3` / `0xsy3-pobf`, `chandan-kumar` / `chandan867`) need settling before phase G.
 
 ---
 
@@ -788,3 +799,90 @@ union all select 'ids+card md5', md5(string_agg(id || md5(card::text), ',' order
 union all select 'fts top10', string_agg(id, ',') from (select id from search_cards_fts('engineer', 10)) t;
 ```
 Expected difference after H3: the `ids+card md5` line changes, because avatar URLs are rewritten. Run it **before** H3 for the equality check and after H3 only for the URL report.
+
+**xmfj: card owners by login provider** (sizes the Google → LinkedIn risk in D12):
+```sql
+select coalesce(i.provider, '(no xmfj user)') as provider, count(distinct lower(c.owner_email)) as owners
+from agent_profile_cards c
+left join auth.users u on lower(u.email) = lower(c.owner_email)
+left join auth.identities i on i.user_id = u.id
+where c.owner_email is not null and c.status <> 'archived'
+group by 1 order by 2 desc;
+```
+
+**xmfj: are the persona copies used?** (D13). Run it now and again 7 days later. If `n_tup_ins/upd/del`, `seq_scan` and `idx_scan` haven't moved, and `pg_stat_statements` shows no queries against these tables, nothing uses them.
+```sql
+select relname, n_live_tup, n_tup_ins, n_tup_upd, n_tup_del, seq_scan, idx_scan, last_autoanalyze
+from pg_stat_user_tables
+where schemaname = 'public' and relname = any (array[
+  'a2a_tasks','agent_tasks','api_tokens','brief_todos','callback_results','chat_messages','dm_messages','dm_threads',
+  'enriched_companies','enriched_contacts','github_profiles','linkedin_profiles','oauth_pending_state','outbound_callbacks',
+  'pending_approvals','persona_agents','persona_group_audit_events','persona_group_constraints','persona_group_invitations',
+  'persona_group_members','persona_group_messages','persona_groups','published_pages','suggested_contact_runs',
+  'suggested_contacts','telegram_chat_history','telegram_links','twitter_profiles'])
+order by relname;
+
+select calls, left(query, 120) as query
+from extensions.pg_stat_statements
+where query ~* '(persona_agents|dm_threads|dm_messages|api_tokens|brief_todos|persona_group|chat_messages|telegram_|enriched_|suggested_contact|published_pages|outbound_callbacks|callback_results|pending_approvals|a2a_tasks|agent_tasks|oauth_pending_state|linkedin_profiles|twitter_profiles|github_profiles)'
+order by calls desc limit 50;
+```
+
+## Appendix G: removing xmfj's persona copies (D13)
+
+Run this **on xmfj only**. Double-check the project before running it, because the same table names exist in aafo, where they are live. Only run it after the activity check above comes back clean twice. None of the dashboard tables references these tables, so `cascade` only reaches their own policies, indexes, FKs and trigger.
+
+**Part 1: rename (reversible):**
+```sql
+-- guard: abort unless this is xmfj
+do $$ begin
+  if to_regclass('public.developer_keys') is null then
+    raise exception 'not xmfj: developer_keys missing, refusing to run';
+  end if;
+end $$;
+
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'a2a_tasks','agent_tasks','api_tokens','brief_todos','callback_results','chat_messages','dm_messages','dm_threads',
+    'enriched_companies','enriched_contacts','github_profiles','linkedin_profiles','oauth_pending_state','outbound_callbacks',
+    'pending_approvals','persona_agents','persona_group_audit_events','persona_group_constraints','persona_group_invitations',
+    'persona_group_members','persona_group_messages','persona_groups','published_pages','suggested_contact_runs',
+    'suggested_contacts','telegram_chat_history','telegram_links','twitter_profiles']
+  loop
+    execute format('alter table public.%I rename to %I', t, t || '_retired');
+  end loop;
+end $$;
+```
+*Rollback:* the same loop, renaming `t || '_retired'` back to `t`.
+
+**Part 2: drop (14 days after part 1, if nothing broke):**
+```sql
+do $$ begin
+  if to_regclass('public.developer_keys') is null then
+    raise exception 'not xmfj: developer_keys missing, refusing to run';
+  end if;
+end $$;
+
+-- explicit list, so it can't reach the cards tables, which phase I also renames *_retired
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'a2a_tasks','agent_tasks','api_tokens','brief_todos','callback_results','chat_messages','dm_messages','dm_threads',
+    'enriched_companies','enriched_contacts','github_profiles','linkedin_profiles','oauth_pending_state','outbound_callbacks',
+    'pending_approvals','persona_agents','persona_group_audit_events','persona_group_constraints','persona_group_invitations',
+    'persona_group_members','persona_group_messages','persona_groups','published_pages','suggested_contact_runs',
+    'suggested_contacts','telegram_chat_history','telegram_links','twitter_profiles']
+  loop
+    execute format('drop table if exists public.%I cascade', t || '_retired');
+  end loop;
+end $$;
+
+drop function if exists public.is_persona_group_member(uuid);
+drop function if exists public.is_persona_group_manager(uuid);
+drop function if exists public.persona_agents_search_vector_update();
+drop function if exists public.search_personas_fts(text, integer);
+```
+`keyword_posts` is left as it is (D13). The xmfj cards tables are handled separately, in phase I.

@@ -67,5 +67,5 @@ See `.env.local.example`. In short: `NEXT_PUBLIC_SUPABASE_URL` /
 **aafo** project (not xmfj), `NEXT_PUBLIC_API_URL` stays `api.zynd.ai`, and
 `NEXT_PUBLIC_SITE_URL=https://cards.zynd.ai`.
 
-Deploy target: Vercel project on `zyndai/zynd-platform`, **Root Directory =
+Deploy target: Vercel project on `zyndai/platform`, **Root Directory =
 `apps/cards-web`** (see `ZYND_CARDS_MOVE_PLAN.md` §4 H5).

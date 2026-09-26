@@ -39,6 +39,7 @@ If a task mentions either of those by name, it's the wrong repo.
 | `infra/persona-box` | pm2 configs for the box running persona-api + persona-web | — | — |
 | `infra/api-box` | Caddy + docker-compose for the box running cards-api + memory | — | — |
 | `packages/` | Shared code (DB migrations, contracts). **Planned, not built yet.** | — | — |
+| `docs/plans` | Architecture and migration plans behind this repo — start with `docs/plans/README.md` | — | — |
 
 **History is preserved.** Each service was merged in with `git filter-repo`,
 so `git log --follow <path>` and `git blame` walk all the way back through

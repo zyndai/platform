@@ -147,5 +147,8 @@ side effect of an unrelated change:
 ## Further reading
 
 - [`AGENTS.md`](./AGENTS.md) — full rules for any AI agent working here.
+- [`docs/plans/`](./docs/plans/) — the architecture and migration plans
+  behind this repo. Start with `docs/plans/README.md` for reading order and
+  which plans are active vs. superseded.
 - Per-service `CLAUDE.md`/`AGENTS.md`/`README.md` inside `apps/*` and
   `services/*` — stack-specific conventions.

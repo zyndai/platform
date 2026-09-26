@@ -1,6 +1,6 @@
-# packages/db: the shared aafo schema. Proves on every change that the
-# migrations apply from an empty database and that src/schema and the
-# migrations agree. Never deploys anything: prod migrations are applied by a
+# packages/db: the shared aafo database's three migration histories
+# (identity, persona, cards). Proves on every change that they apply from an
+# empty database and that each history's schema files and migrations agree. Never deploys anything: prod migrations are applied by a
 # person (packages/db/README.md).
 name: db
 
@@ -43,8 +43,8 @@ jobs:
           cache-dependency-path: packages/db/package-lock.json
       - run: npm ci
       - run: npm run typecheck
-      - name: Snapshot/journal consistency
-        run: npx drizzle-kit check
+      - name: Snapshot/journal consistency (all histories)
+        run: npm run db:check
       - name: Migration hygiene
         run: npm run db:lint
         env:
@@ -54,12 +54,14 @@ jobs:
           psql "$SCRATCH_URL" -v ON_ERROR_STOP=1 -c 'create database ci'
           psql "$CI_DB_URL" -v ON_ERROR_STOP=1 -f test/supabase-stubs.sql
           DATABASE_URL="$CI_DB_URL" npm run db:migrate -- --yes
-      - name: Schema and migrations are in sync
+      - name: Schema files and migrations are in sync (every history)
         run: |
-          npx drizzle-kit generate --name ci_should_be_empty
-          if [ -n "$(git status --porcelain migrations)" ]; then
-            echo "src/schema has changes with no migration. Run: npm run db:generate -- --name <owner>_<change>"
-            git status --porcelain migrations
+          for h in identity persona cards; do
+            npx drizzle-kit generate --config "$h/drizzle.config.ts" --name ci_should_be_empty
+          done
+          if [ -n "$(git status --porcelain -- '*/migrations')" ]; then
+            echo "A schema file changed with no migration. Run: npm run <history>:generate -- --name <owner>_<change>"
+            git status --porcelain -- '*/migrations'
             exit 1
           fi
       - name: Drift check against a fresh build (self-consistency)

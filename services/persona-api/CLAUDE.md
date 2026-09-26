@@ -206,8 +206,8 @@ Supabase/Postgres (project aafo, shared with cards). **All schema changes go
 through `packages/db`** (Drizzle migrations; see its README). The old SQL in
 `services/persona-api/db/`, `services/persona-api/supabase/migrations/` and
 `apps/persona-web/db/` is frozen history: never re-run it. The verified
-current schema is `packages/db/migrations/0000_baseline_persona.sql` plus
-the migrations after it. RLS policies on `dm_threads`/`dm_messages` accept both
+current schema is `packages/db/persona/migrations/0000_baseline_persona.sql`
+plus the migrations after it. RLS policies on `dm_threads`/`dm_messages` accept both
 Supabase user UUIDs and `agdns:` agent IDs in the same TEXT columns since a
 thread can be between two humans, a human and an agent, or two agents.
 

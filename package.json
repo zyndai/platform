@@ -22,7 +22,7 @@
     "test:memory": "cd services/memory && .venv/bin/python -m pytest -q -m 'not integration'",
     "check:web": "npm --prefix apps/persona-web run lint && (cd apps/persona-web && npx tsc --noEmit) && npm --prefix apps/cards-web run lint && (cd apps/cards-web && npx tsc --noEmit)",
 
-    "db:generate": "npm --prefix packages/db run db:generate --",
+    "db:check": "npm --prefix packages/db run db:check",
     "db:migrate": "npm --prefix packages/db run db:migrate --",
     "db:drift": "npm --prefix packages/db run db:drift --",
     "db:lint": "npm --prefix packages/db run db:lint"

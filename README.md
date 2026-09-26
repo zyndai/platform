@@ -25,7 +25,7 @@ against multiple server versions).
 | `services/memory` | Shared context layer — ingest, matching, MCP server, OAuth for ChatGPT/Claude/Cursor | FastAPI / Python | https://api.zynd.ai |
 | `infra/persona-box` | pm2 process configs for the persona server | — | — |
 | `infra/api-box` | Caddy + Docker Compose for the cards/memory server | — | — |
-| `packages/db` | The one migration history for the shared aafo database (Drizzle). See its README | — | — |
+| `packages/db` | Migrations for the shared aafo database (Drizzle), one history per Postgres schema: identity, persona (`public`), cards. See its README | — | — |
 | `packages/contracts` | Shared API contracts. **Planned, not built yet.** | — | — |
 
 Each service came from its own repo (`agent-persona`, `zynd-cards`,

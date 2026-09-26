@@ -1,9 +1,9 @@
-# Shared DB plan: cards data + login → persona DB (aafo), one Drizzle migration history
+# Shared DB plan: cards data + login → persona DB (aafo), schema-separated Drizzle migrations
 
 | | |
 |---|---|
-| **Status** | Detailed plan · 2026-09-26 · user answered §12 and confirmed Drizzle the same day · **phase A (packages/db scaffold) started** |
-| **Goal** | Cards moves off the dashboard Supabase project (**xmfj**, `xmfjvixclgqcmjmtecwv`) and into the persona project (**aafo**, `aafoguuvmaxymrtnfafn`). That covers its 4 tables, its avatars and its login. Cards and persona then share one database and one set of users (`auth.users`). Every schema change to that database, from either product, is a Drizzle migration in **`packages/db`** |
+| **Status** | 2026-09-27 · `packages/db` built with three independent histories (D14); nothing applied to prod yet. Progress: §8 |
+| **Goal** | Cards moves off the dashboard Supabase project (**xmfj**, `xmfjvixclgqcmjmtecwv`) and into the persona project (**aafo**, `aafoguuvmaxymrtnfafn`). That covers its 4 tables, its avatars and its login. Cards and persona then share one database and one set of users (`auth.users`), separated by Postgres schema: persona in `public`, cards in `cards`, the shared identity layer in `identity`. Each schema has its own independent Drizzle migration history in **`packages/db`** (D14) |
 | **Replaces** | `ZYND_CARDS_MOVE_PLAN.md` §3, P1, P3 and P4. Its P0 is folded in here (§7). Its P2 (`apps/cards-web`) is done. Its P5 (dashboard cleanup) still applies, at the end (§8 phase I) |
 | **Out of scope** | `services/memory` keeps its own Postgres. The zynd.ai dashboard keeps xmfj and its own Prisma schema. `zynd-bridge` is not touched |
 | **Evidence** | Full catalog dumps of both projects, from the query in Appendix A, run by the user in the Supabase SQL editor on 2026-09-26, plus a code read of this repo on the same day |
@@ -13,12 +13,13 @@
 ## 0. Summary
 
 1. **Tool:** Drizzle (`drizzle-kit` 0.31.x + `drizzle-orm` 0.45.x, exact pins) in `packages/db`. It manages schema and migrations only. The runtime stays on supabase-py / supabase-js.
-2. **Baseline:** migration `0000` recreates aafo's schema exactly as it is today: 28 tables, 43 extra indexes, 4 functions, 1 trigger and 72 policies. It is marked as already applied on prod and never runs there.
-3. **Persona security fix:** `0001` drops the `using (true)` read policy on `persona_agents`.
-4. **Cards schema:** `0002`–`0004` create the cards schema in aafo: `vector` extension, 4 tables, 3 functions, service-role-only access. They add one new column, `agent_profile_cards.owner_user_id → auth.users`.
-5. **Logins:** no users are copied. Card owners sign in to aafo, and ownership still matches on `owner_email`. `owner_user_id` is filled at cutover by email match, then set on every signed-in write. That shared user id is what links a card to a persona.
-6. **Data move:** `pg_dump --data-only` of the 4 tables plus a copy of the `avatars` bucket, rehearsed first, then a final copy during a short read-only window.
-7. **After cutover:** 14 days of rollback safety, then xmfj trust is removed and the xmfj cards tables and bucket are dropped.
+2. **Three histories, one per Postgres schema (D14):** `identity` (shared, empty for now), `persona` (owns `public`), `cards` (owns a new `cards` schema). Each migrates independently.
+3. **persona baseline:** persona's `0000` recreates aafo's `public` schema exactly as it is today: 28 tables, 43 extra indexes, 4 functions, 1 trigger and 72 policies. It is recorded as already applied on prod and never runs there.
+4. **Persona security fix:** persona's `0001` drops the `using (true)` read policy on `persona_agents`.
+5. **Cards:** cards' `0000`–`0002` create the `cards` schema in aafo: `vector` extension, 4 tables, 3 functions, service-role-only access, plus one new column, `cards.agent_profile_cards.owner_user_id → auth.users`.
+6. **Logins:** no users are copied. Card owners sign in to aafo, and ownership still matches on `owner_email`. `owner_user_id` is filled at cutover by email match, then set on every signed-in write. That shared user id is what links a card to a persona.
+7. **Data move:** `pg_dump --data-only` of the 4 tables (from xmfj's `public` into aafo's `cards`) plus a copy of the `avatars` bucket, rehearsed first, then a final copy during a short read-only window.
+8. **After cutover:** 14 days of rollback safety, then xmfj trust is removed and the xmfj cards tables and bucket are dropped.
 
 ---
 
@@ -27,17 +28,19 @@
 | # | Decision | Why |
 |---|---|---|
 | D1 | **Drizzle**, not Prisma. Pin `drizzle-kit@0.31.11` and `drizzle-orm@0.45.3`, the current `latest` tags (not the 1.0 betas) | Drizzle expresses RLS policies, Supabase roles, `vector(n)`, HNSW/GIN indexes and generated columns natively. Functions, triggers and publications go in hand-written migrations **inside the same ordered history**. Persona already tried Prisma (`a9b0c0e`) and removed it three weeks later (`71fcd1a`), because RLS, the realtime publication, partial indexes and the FTS trigger/RPC had to live in a side-car SQL file |
-| D2 | `packages/db` is the **only** place schema changes to aafo come from | One history, reviewable in PRs, reproducible on a fresh database |
+| D2 | `packages/db` is the **only** place schema changes to aafo come from, organised as independent histories per schema (D14) | Tracked, reviewable in PRs, reproducible on a fresh database |
 | D3 | **Only the 4 cards tables and the `avatars` bucket move**: `agent_profile_cards`, `x_accounts`, `x_mentions`, `x_conversations` | User decision. xmfj's copies of the persona tables, `keyword_posts` and the dashboard tables stay where they are (§2.3) |
 | D4 | **Login moves to aafo, and no users are copied** | Nothing in cards stores an xmfj user id, because ownership is `owner_email` (§5) |
-| D5 | Cards tables go in the **`public` schema** | cards-api's `sb.table(...)` / `sb.rpc(...)` calls then work unchanged; only the URL and key change. A `cards` schema would need PostgREST schema exposure and changes to every call |
-| D6 | `vector` goes in the **`extensions`** schema on aafo (xmfj has it in `public`) | Supabase default and lint-clean. Cards functions get `set search_path = public, extensions` |
+| D5 | ~~Cards tables go in the `public` schema~~ **Superseded by D14 (2026-09-27): cards goes in its own `cards` schema.** cards-api switches schema with one env var (`SUPABASE_DB_SCHEMA`, used as the client's default schema), so no query code changes | — |
+| D6 | `vector` goes in the **`extensions`** schema on aafo (xmfj has it in `public`) | Supabase default and lint-clean. Cards functions get `set search_path = cards, extensions` |
 | D7 | **Cards tables are service-role only**: drop the anon `"public read published cards"` policy, revoke table grants and RPC execute from `anon`/`authenticated` | No code reads cards tables from a browser. cards-web goes through cards-api. On aafo, Supabase's default grants would give `anon` full table privileges, so the old policy would expose `owner_email`, `claim_token_hash` and `scrape_raw`. On xmfj it can't be used today, because xmfj revoked `anon`/`authenticated` grants on every table. This keeps that effective access |
 | D8 | Drop the `persona_agents` `"Public read persona agents"` policy (`using (true)`) in its own migration, `0001` | It exposes every persona's `brief_content`, `profile` and `webhook_url` to the anon key. Checked: no code reads `persona_agents` with anon, and every RLS subquery on `persona_agents` filters `user_id = auth.uid()`, which `"Users can read own persona"` still allows (§2.4) |
 | D9 | `packages/db` is a **standalone npm package** (own lockfile, no root workspace) | Vercel builds of `apps/*` stay unchanged. Shared TS types can come later |
 | D10 | Prod migrations are applied **by a person**. Anyone on the team may run them, after a clean drift check and a local rehearsal | AGENTS.md §6: prod SQL needs a human |
 | D11 | **There is no staging database.** `dev.persona.zynd.ai` runs against **prod aafo** (user, 2026-09-26). The rehearsal is a local scratch Postgres (stubs + pgvector), and every migration must be **expand-only**, so that the code on `dev` and on `main` both keep working against the same database. Destructive changes need two steps: expand, deploy, then contract | Any migration applied is live for dev and prod at once |
 | D12 | **Cards uses persona's login: LinkedIn (OIDC) only.** Google, GitHub and the email magic link are removed from cards-web. Magic links come back once an email provider (SMTP) is chosen, which is `null` for now | User decision. aafo already has LinkedIn configured, so no new OAuth app is needed |
+| D14 | **Postgres schemas are the boundary; one migration history per schema** (user, 2026-09-27). `identity` = the one shared layer (reviewed by both products; empty until Stage 2, since today the shared id is `auth.users`). `persona` owns `public`. `cards` owns `cards`. Each has its own folder, its own tracking table (`drizzle.__<name>_migrations`) and its own transaction; one tool (Drizzle) and one set of scripts serve all three | Independent ownership without two tools fighting over one database: no name clashes, no shared PR queue for product-only changes, and cross-schema FKs/joins still work. persona is **not** moved into a `persona` schema now: that would touch every persona query, realtime subscription and policy on a database with no staging copy |
+| D15 | **The monorepo root is a script runner, not an npm workspace**, and local dev points persona/cards at hosted Supabase while memory's Postgres + Redis run in Docker (`docs/LOCAL_DEV.md`) | pm2 and Vercel install inside each app folder; a workspace would move lockfiles to the root. Supabase Auth is the hard part to emulate locally |
 | D13 | **Remove xmfj's copies of the persona tables** once the activity check (Appendix F) proves nothing uses them. Leave `keyword_posts` alone | User decision. The dashboard code and this repo don't reference either (checked 2026-09-26) |
 
 ---
@@ -55,7 +58,7 @@
   |---|---|
   | `services/persona-api/db/` | 30 `patch_*.sql`, plus `schema.sql` and `migrate_v2.sql` |
   | `services/persona-api/supabase/migrations/` | 3 files |
-  | `apps/persona-web/db/migrations/0000–0004` | Prisma-format leftovers, plus `db/sql/policies.sql`. `apps/persona-web/package.json` still has a `db:policies` script |
+  | `apps/persona-web/db/migrations/0000–0004` | Prisma-format leftovers, plus `db/sql/policies.sql`. `apps/persona-web/package.json` had a `db:policies` script (removed in phase A) |
   | `services/cards-api/db/` | 6 files; they miss prod columns such as `owner_email` |
 
 ### 2.2 aafo (persona), the target
@@ -115,13 +118,14 @@ Check for D8: no code reads `persona_agents` or `agent_profile_cards` with the a
 ```
                  ┌──────────────── aafo (Supabase, Postgres 17) ────────────────┐
 cards-web ──auth─┤ auth.users  ◄── the one user id for persona AND cards         │
-persona-web ─────┤ public: 28 persona tables  +  4 cards tables                  │
-                 │         agent_profile_cards.owner_user_id → auth.users(id)    │
-cards-api  ─svc──┤ extensions.vector · storage bucket `avatars`                  │
-persona-api ─svc─┤ drizzle.__drizzle_migrations  ◄── the one migration history   │
+persona-web ─────┤ public   (persona history): 28 persona tables                 │
+cards-api  ─svc──┤ cards    (cards history):   4 cards tables, owner_user_id ──► auth.users
+                 │ identity (identity history): shared layer, empty until Stage 2 │
+persona-api ─svc─┤ extensions.vector · storage bucket `avatars`                  │
+                 │ drizzle.__{identity,persona,cards}_migrations                  │
 memory ─────svc──┤ (reads persona_agents + search_personas_fts)                  │
                  └───────────────────────────────▲───────────────────────────────┘
-                                                 │ npm run db:migrate (human, staging → prod)
+                                                 │ npm run db:migrate (a person; rehearsed locally)
                          zynd-platform/packages/db  (Drizzle schema + migrations)
 
 xmfj: dashboard only (developer_keys, entities, …). Cards tables are dropped 28 days after cutover.
@@ -131,155 +135,70 @@ xmfj: dashboard only (developer_keys, entities, …). Cards tables are dropped 2
 
 ## 4. `packages/db`: design
 
-### 4.1 Layout
+The package README ([`packages/db/README.md`](../../packages/db/README.md)) is the source of truth for the layout, commands, workflow and rules. This section keeps the reasoning.
+
+### 4.1 Layout (as built)
 
 ```
 packages/db/
-├── package.json              # "@zynd/db", private, exact pins, scripts below
-├── package-lock.json
-├── drizzle.config.ts
-├── .env.example              # DATABASE_URL=postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:5432/postgres
-├── src/schema/
-│   ├── _shared.ts            # tsvector customType; re-exports authUsers, serviceRole, … from drizzle-orm/supabase
-│   ├── persona/agents.ts        # persona_agents
-│   ├── persona/dm.ts            # dm_threads, dm_messages, a2a_tasks, agent_tasks, pending_approvals
-│   ├── persona/callbacks.ts     # outbound_callbacks, callback_results
-│   ├── persona/groups.ts        # persona_groups, _members, _messages, _invitations, _constraints, _audit_events
-│   ├── persona/integrations.ts  # api_tokens, oauth_pending_state, telegram_links, telegram_chat_history,
-│   │                            #   linkedin_profiles, twitter_profiles, github_profiles
-│   ├── persona/contacts.ts      # enriched_contacts, enriched_companies, suggested_contacts, suggested_contact_runs
-│   ├── persona/content.ts       # chat_messages, brief_todos, published_pages
-│   ├── cards/cards.ts           # agent_profile_cards
-│   ├── cards/x_bot.ts           # x_accounts, x_mentions, x_conversations
-│   └── index.ts
-├── migrations/               # drizzle-kit `out`: NNNN_name.sql + meta/_journal.json + meta/NNNN_snapshot.json
-├── scripts/
-│   ├── catalog.sql           # Appendix A: the one-cell catalog query (SQL editor or psql)
-│   ├── check-drift.ts        # catalog(prod) vs catalog(scratch DB built from migrations), normalized diff
-│   ├── migrate.ts            # db:migrate — dry run by default, --yes applies, refuses xmfj and an unrecorded baseline
-│   ├── baseline-sql.ts       # prints the SQL that marks 0000 as applied (Appendix D)
-│   ├── lint-migrations.sh    # every NEW migration starts with "-- owner: persona|cards|shared"
-│   └── preflight-cards.sql   # read-only checks on aafo before 0002
-├── test/supabase-stubs.sql   # enough of Supabase to apply migrations to plain Postgres (Appendix E)
-├── introspection/            # dated catalog outputs (aafo-YYYY-MM-DD.txt) kept as evidence for the baseline
-├── OWNERS.md                 # table → owner (persona | cards | shared) and known consumers (memory!)
-└── README.md                 # the workflow in §4.6, the rules in §4.7
+├── lib/config.ts        # historyConfig(name, ownedSchemas): one drizzle-kit config per history
+├── lib/shared.ts        # FK naming, policy builders, tsvector
+├── identity/            # schema/ + migrations/ + drizzle.config.ts   → owns `identity`
+├── persona/             # schema/*.ts (28 tables) + migrations/        → owns `public`
+├── cards/               # schema/*.ts (4 tables) + migrations/         → owns `cards`
+├── scripts/             # migrate.ts, check-drift.ts, catalog.sql, baseline-sql.ts,
+│                        # lint-migrations.sh, preflight-cards.sql, projects.ts (the history registry)
+├── test/supabase-stubs.sql
+├── introspection/       # dated prod catalog exports
+├── OWNERS.md
+└── README.md
 ```
 
-**Scripts:** `db:generate` (`drizzle-kit generate`), `db:generate:custom` (`drizzle-kit generate --custom`), `db:check` (`drizzle-kit check`), `db:migrate` (`scripts/migrate.ts`: drizzle-orm's migrator, but with a dry run and real error messages; `drizzle-kit migrate` exits 1 without printing the Postgres error), `db:drift` (`scripts/check-drift.ts`), `db:baseline-sql`. There is **no** `db:push` script, and the README forbids `drizzle-kit push` against shared databases.
+Scripts: `npm run <history>:generate` / `<history>:generate:custom`, `db:check`, `db:lint`, `db:migrate` (dry run unless `--yes`; `--project <history>`), `db:drift`, `db:baseline-sql`. There is no push script.
 
-### 4.2 `drizzle.config.ts`
+### 4.2 Why one tool with three histories
 
-```ts
-import { defineConfig } from 'drizzle-kit';
-
-export default defineConfig({
-  dialect: 'postgresql',
-  schema: './src/schema/index.ts',
-  out: './migrations',
-  schemaFilter: ['public'],                 // never diff auth/storage/realtime/extensions
-  entities: { roles: { provider: 'supabase' } }, // Supabase owns anon/authenticated/service_role
-  migrations: { schema: 'drizzle', table: '__drizzle_migrations' },
-  dbCredentials: { url: process.env.DATABASE_URL! }, // session pooler / direct, port 5432
-  strict: true,
-  verbose: true,
-});
-```
+- Each history's config has `schemaFilter` = the schema it owns, so drizzle-kit never diffs, creates or drops anything in another product's schema.
+- Each records progress in its own table, so persona can apply `0005` while cards is at `0002`, without either knowing.
+- All three share the migrate/drift/lint scripts and one CI job, so there is still one way to change the database, and one place to look.
+- Ownership is by folder (`OWNERS.md`; add a `CODEOWNERS` entry per folder once the GitHub team handles exist).
 
 ### 4.3 What lives where
 
 | Kind of object | Where it's defined | How it gets into a migration |
 |---|---|---|
-| Tables, columns, defaults, PK/FK/unique/CHECK | `src/schema/**` | `db:generate` |
-| Indexes (partial, DESC, NULLS FIRST, GIN, HNSW) | `src/schema/**` | `db:generate` |
-| RLS enable, policies (incl. `to public` / `to service_role`) | `src/schema/**` (`pgPolicy`, `.enableRLS()`) | `db:generate` |
-| Generated columns (`search_tsv`) | `src/schema/**` (`customType` + `generatedAlwaysAs`) | `db:generate` |
-| Extensions, functions, triggers | hand-written SQL | `db:generate:custom` |
-| Function/table GRANT and REVOKE, realtime publication membership | hand-written SQL | `db:generate:custom` |
-| Data backfills | hand-written SQL, idempotent | `db:generate:custom` |
+| Tables, columns, defaults, PK/FK/unique/CHECK, indexes, RLS, policies, generated columns | `<history>/schema/**` | `npm run <history>:generate` |
+| Extensions, schemas' grants, functions, triggers, GRANT/REVOKE, publication, backfills | hand-written SQL | `npm run <history>:generate:custom` |
 
-To change a function or trigger, add a new custom migration with `create or replace`; never edit an old file. `OWNERS.md` lists every function and trigger with the migration that last defined it.
+To change a function or trigger, add a new custom migration with `create or replace`; never edit an old file.
 
-### 4.4 Example: `cards/cards.ts`
+### 4.4 Migrations as built
 
-```ts
-import { sql } from 'drizzle-orm';
-import { index, jsonb, pgPolicy, pgTable, text, timestamp, uuid, vector } from 'drizzle-orm/pg-core';
-import { authUsers, serviceRole } from 'drizzle-orm/supabase';
-import { tsvector } from '../_shared';
-
-export const agentProfileCards = pgTable('agent_profile_cards', {
-  id: text('id').primaryKey(),
-  status: text('status').notNull().default('draft'),
-  handleGithub: text('handle_github'),
-  handleX: text('handle_x'),
-  card: jsonb('card').notNull(),
-  searchTsv: tsvector('search_tsv').generatedAlwaysAs(sql`to_tsvector('english',
-      coalesce(card->'identity'->>'name','') || ' ' || coalesce(card->'identity'->>'headline','') || ' ' ||
-      coalesce(card->>'summary','') || ' ' || skill_names(card))`),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  publishedAt: timestamp('published_at', { withTimezone: true }),
-  handle: text('handle').unique('agent_profile_cards_handle_key'),
-  embedding: vector('embedding', { dimensions: 1536 }),
-  scrapeRaw: jsonb('scrape_raw'),
-  userIntent: jsonb('user_intent'),
-  ownerEmail: text('owner_email'),
-  suggestedPosts: jsonb('suggested_posts'),
-  claimTokenHash: text('claim_token_hash'),
-  ownerUserId: uuid('owner_user_id').references(() => authUsers.id, { onDelete: 'set null' }), // NEW
-}, (t) => [
-  index('agent_profile_cards_status_idx').on(t.status),
-  index('agent_profile_cards_tsv_idx').using('gin', t.searchTsv),
-  index('agent_profile_cards_embedding_hnsw_idx').using('hnsw', t.embedding.op('vector_cosine_ops')),
-  index('idx_cards_owner_email').on(t.ownerEmail),
-  index('agent_profile_cards_owner_user_id_idx').on(t.ownerUserId),
-  pgPolicy('service role full access on cards', {
-    as: 'permissive', for: 'all', to: serviceRole, using: sql`true`, withCheck: sql`true`,
-  }),
-]);
-```
-
-Persona tables follow the same pattern. Their policies use `to: 'public'` with the exact `using`/`withCheck` SQL from the catalog. The two tables without policies use `.enableRLS()`.
-
-### 4.5 Migrations: the first five
-
-| File | Kind | Owner | Contents | Runs on prod? |
+| History | File | Kind | Contents | Runs on prod? |
 |---|---|---|---|---|
-| `0000_baseline_persona.sql` | generated, then its SQL is **replaced** by the exact baseline (§4.8) | persona | 28 tables + constraints, 43 indexes, 4 functions + ACLs (`revoke execute … from public` on the two `is_persona_group_*`), 1 trigger, RLS on 28 tables, 72 policies, `alter publication supabase_realtime add table` × 9 | **No.** Marked applied (Appendix D) |
-| `0001_persona_drop_public_read.sql` | generated (the policy removed from `persona/agents.ts`) | persona | `drop policy "Public read persona agents" on persona_agents` | yes |
-| `0002_cards_prereqs.sql` | custom | cards | `create extension if not exists vector with schema extensions`; `skill_names(jsonb)` | yes |
-| `0003_cards_tables.sql` | generated | cards | 4 tables (+ `owner_user_id`), indexes, RLS, service-role policies | yes |
-| `0004_cards_functions_grants.sql` | custom | cards | `match_cards`, `search_cards_fts` with `set search_path = public, extensions`; revoke execute from `public, anon, authenticated`, grant to `service_role`; `revoke all` on the 4 tables `from anon, authenticated` | yes |
+| identity | `0000_identity_schema` | generated + grants | `create schema identity`; usage + default privileges for `service_role` only | yes |
+| persona | `0000_baseline_persona` | generated, then completed by hand (§4.8) | 28 tables + constraints, 43 indexes, 4 functions + ACLs, 1 trigger, RLS on 28 tables, 72 policies, realtime publication × 9 | **No.** Recorded with `db:baseline-sql` |
+| persona | `0001_persona_drop_public_read` | generated | `drop policy "Public read persona agents"` | yes (the hotfix) |
+| cards | `0000_cards_schema` | generated + custom | `create schema cards`; `service_role`-only grants and default privileges; `create extension vector with schema extensions`; `cards.skill_names()` | yes |
+| cards | `0001_cards_tables` | generated | 4 tables in `cards` (+ `owner_user_id → auth.users`), indexes (HNSW, GIN), RLS, service-role policies | yes |
+| cards | `0002_cards_search_functions` | custom | `cards.match_cards`, `cards.search_cards_fts` (`set search_path = cards, extensions`) | yes |
 
-`0001` is independent of cards and can ship first; it's a security fix. The exact SQL for 0001–0004 is in Appendix C.
+A fresh database (CI, local, a future dev project) applies identity → persona → cards.
 
-### 4.6 Workflow for any future schema change
+### 4.5 Access to the `cards` and `identity` schemas
 
-1. `git switch dev && git pull`, then create a branch.
-2. Edit `src/schema/**`, or for functions and triggers run `npm run db:generate:custom -- --name <owner>_<change>`.
-3. `npm run db:generate -- --name <owner>_<change>`, then read the SQL. Drizzle asks about renames; answer carefully, because otherwise a rename becomes drop + add.
-4. Add the `-- owner:` header. For a big-table `create index concurrently`, use a separate custom migration with a note, because each migration runs in a transaction.
-5. Locally: `DATABASE_URL=<scratch> npm run db:migrate` on a scratch cluster that has `test/supabase-stubs.sql` applied.
-6. Open a PR to `dev`. CI runs (§4.9). Call out the schema change in the PR description (AGENTS.md §6).
-7. (No staging, D11.) The local rehearsal in step 5 and CI stand in for it.
-8. **A person** runs `npm run db:drift` against prod (must be clean), then `npm run db:migrate` against prod.
-9. Code that depends on the new schema deploys **after** step 8. Additive changes go first; destructive ones need a two-step expand → contract.
+Supabase's default grants only cover `public`. The new schemas grant `usage` and default privileges to `service_role` only, and revoke function `execute` from `PUBLIC`. So anon/authenticated can't reach cards data even if a policy is wrong, which replaces the explicit revokes the single-history design needed (D7). For cards-api to query `cards` over PostgREST, a person adds `cards` to the project's API **Exposed schemas** setting (phase D).
 
-### 4.7 Rules (these go in `packages/db/README.md`)
+### 4.6–4.7 Workflow and rules
 
-- No schema changes in the Supabase SQL editor on staging or prod. An emergency hotfix done there must be committed as a migration the same day.
-- No `drizzle-kit push` against any shared database.
-- Never edit an applied migration. Add a new one.
-- Old SQL folders are frozen (§4.10), and product folders never gain new `.sql` files.
-- Anything touching `persona_agents` or `search_personas_fts` needs memory's owner as a reviewer (`OWNERS.md`).
+See `packages/db/README.md` ("Making a schema change", "Rules").
 
 ### 4.8 How the baseline is built and proven
 
 The complete aafo catalog is already in hand (§2.2), so the baseline can be built without a prod connection. It's proven against prod with the same catalog query.
 
-1. **Write** `src/schema/persona/*.ts` for all 28 tables from the catalog: columns, defaults, constraints, 43 indexes, RLS and 72 policies.
-2. **Generate:** `npm run db:generate -- --name baseline_persona` produces `0000_baseline_persona.sql` plus a snapshot. Keep the snapshot, because it represents `schema.ts`. Move the generated SQL aside as `drizzle-generated.sql` (not committed).
+1. **Write** `persona/schema/*.ts` for all 28 tables from the catalog: columns, defaults, constraints, 43 indexes, RLS and 72 policies.
+2. **Generate:** `npm run persona:generate -- --name baseline_persona` produces `0000_baseline_persona.sql` plus a snapshot. Keep the snapshot, because it represents `schema.ts`. Move the generated SQL aside as `drizzle-generated.sql` (not committed).
 3. **Replace** the SQL in `0000_baseline_persona.sql` with the full baseline:
    - Drizzle's table and index DDL.
    - The 4 functions, verbatim from the catalog, created **before** the tables whose policies call them.
@@ -290,8 +209,8 @@ The complete aafo catalog is already in hand (§2.2), so the baseline can be bui
 5. **Run the same query on prod aafo** (SQL editor, read-only) and save it to `introspection/aafo-<date>.txt`.
 6. **Compare with `check-drift.ts`**, which normalizes ordering, the `realtime.messages_*` partitions and grant lines that come from default privileges. **It must match exactly.** Any difference is fixed in `schema.ts` or `0000`, then repeat from step 2.
 7. **Check `schema.ts` against the baseline:** build scratch DB B from stubs + `drizzle-generated.sql` + the functions, trigger and publication; its tables, indexes and policies must equal A's.
-8. **Confirm no pending changes:** `npm run db:generate` must now report no changes.
-9. **Record the baseline on prod (a person):** run Appendix D once on aafo. It creates `drizzle.__drizzle_migrations` and inserts 0000's hash and timestamp.
+8. **Confirm no pending changes:** `npm run persona:generate` must now report no changes.
+9. **Record the baseline on prod (a person):** run the output of `npm run db:baseline-sql` once in the aafo SQL editor. It creates `drizzle.__persona_migrations` (renaming the earlier `__drizzle_migrations` if the first hotfix SQL was already run) and inserts 0000's hash and timestamp.
 
    The hash and timestamp format is checked against the pinned `drizzle-orm` migrator source in phase A before anyone relies on it: rows are applied only if their journal `when` is newer than the last `created_at`.
 
@@ -301,10 +220,11 @@ Local scratch cluster: Homebrew Postgres 18 on port 5544 (`initdb` + `pg_ctl`). 
 
 Triggers: `paths: packages/db/**`, on PRs to `dev` and pushes to `dev`.
 1. `npm ci` in `packages/db`.
-2. `npm run db:check`: snapshot/journal consistency.
-3. `scripts/lint-migrations.sh`: filename format, `-- owner:` header on every migration after 0000, and no edits to already-merged migration files (compared with `git diff` against the base).
-4. Postgres service `pgvector/pgvector:pg17`, then `psql -f test/supabase-stubs.sql`, then `npm run db:migrate` **from empty**.
-5. `npm run db:generate` must produce **no** new file, which proves `schema.ts` and the migrations are in sync.
+2. `npm run db:check`: snapshot/journal consistency for all three histories.
+3. `npm run db:lint`: filename format, `-- owner:` header on every migration, journals match files, and no edits to already-merged migration files.
+4. Postgres service `pgvector/pgvector:pg17`, then `psql -f test/supabase-stubs.sql`, then `npm run db:migrate -- --yes` **from empty** (identity → persona → cards).
+5. `drizzle-kit generate` for each history must produce **no** new file, which proves each history's schema files and migrations are in sync.
+6. `db:drift` against a fresh build (self-consistency of the catalog tooling).
 
 Deploy jobs are deliberately not part of this workflow (D10).
 
@@ -389,12 +309,13 @@ Row counts are still to be filled in from the pre-check (Appendix F).
 The agent writes these, and **the user runs them**. They default to dry-run.
 - **`copy_tables.sh SRC_URL DST_URL [--apply]`**
   1. `pg_dump "$SRC_URL" --data-only --no-owner --no-privileges -t public.agent_profile_cards -t public.x_accounts -t public.x_conversations -t public.x_mentions > cards_data.sql`. pg_dump writes explicit column lists, so the extra `owner_user_id` column doesn't matter.
-  2. With `--apply`: `psql "$DST_URL" -v ON_ERROR_STOP=1 --single-transaction` running `truncate x_mentions, x_conversations, x_accounts, agent_profile_cards;` and then `\i cards_data.sql`.
-  3. Prints row counts on both sides.
+  2. Retarget the dump from xmfj's `public` to aafo's `cards`: rewrite `COPY public.<table>` → `COPY cards.<table>` and `SELECT pg_catalog.setval('public.` → `'cards.` (there are no sequences today, but the script handles them), and fail if any other `public.` reference remains.
+  3. With `--apply`: `psql "$DST_URL" -v ON_ERROR_STOP=1 --single-transaction` running `truncate cards.x_mentions, cards.x_conversations, cards.x_accounts, cards.agent_profile_cards;` and then `\i cards_data.sql`.
+  4. Prints row counts on both sides.
 - **`copy_avatars.py`**
   - List the xmfj `avatars` objects (service key), download each and upload it to aafo at the same path with the same content-type, skipping anything already there with the same size.
   - Then run a single SQL rewrite:
-    `update agent_profile_cards set card = replace(card::text, '<xmfj>/storage/v1/object/public/avatars/', '<aafo>/storage/v1/object/public/avatars/')::jsonb where card::text like '%<xmfj>/storage/v1/object/public/avatars/%';`
+    `update cards.agent_profile_cards set card = replace(card::text, '<xmfj>/storage/v1/object/public/avatars/', '<aafo>/storage/v1/object/public/avatars/')::jsonb where card::text like '%<xmfj>/storage/v1/object/public/avatars/%';`
     and the same for `scrape_raw`, `user_intent` and `suggested_posts`.
   - Reports objects that are missing or failed, and URLs that still point at xmfj afterwards.
 - **`verify.sql`:** run on both sides and diff (Appendix F).
@@ -403,7 +324,7 @@ The agent writes these, and **the user runs them**. They default to dry-run.
 ### 6.3 Rehearsal first
 
 There's no staging (D11), so the rehearsal happens in two places:
-1. **Local:** scratch Postgres with stubs + migrations 0000–0004, then `copy_tables.sh` from xmfj into it. This proves the dump loads, the generated column recomputes and the FKs hold.
+1. **Local:** scratch Postgres with stubs + all three histories, then `copy_tables.sh` from xmfj into it. This proves the dump loads, the generated column recomputes and the FKs hold.
 2. **Prod aafo, while live (phase G):** the same scripts into the new, still-unused cards tables. Nothing reads aafo's cards tables until cutover, and the final copy re-truncates them, so the rehearsal leaves nothing behind.
 
 ---
@@ -412,7 +333,7 @@ There's no staging (D11), so the rehearsal happens in two places:
 
 | File | Change | Tests |
 |---|---|---|
-| `services/cards-api/config.py` | `TRUSTED_SUPABASE_URLS` (list, defaults to `[SUPABASE_URL]`), `AAFO_ISSUER`, `MAINTENANCE_READONLY` (bool) | config parsing |
+| `services/cards-api/config.py` | **Done:** `SUPABASE_DB_SCHEMA` (default `public`; `cards` after cutover) is the Supabase client's default schema, so every `sb.table()`/`sb.rpc()` follows it. To do: `TRUSTED_SUPABASE_URLS` (list, defaults to `[SUPABASE_URL]`), `AAFO_ISSUER`, `MAINTENANCE_READONLY` (bool) | config parsing |
 | `services/cards-api/api/auth.py` | Multi-issuer verification (§5.3); returns `Principal(email, sub, iss)` | a token from each issuer, an unknown issuer, a wrong `iss`, expired, HS256 legacy |
 | `services/cards-api/api/onboard.py`, `api/cards.py` | Use `principal.email` for ownership as before; set `owner_user_id` on aafo-authenticated publish/claim/edit; case-insensitive owner comparison; publish de-dup (the owner's existing published card is updated; an anonymous publish with a matching `handle_github`/`handle_x` returns `{existing: true, handle}`); `archived` hidden everywhere | extend existing tests |
 | `services/cards-api/main.py` | When `MAINTENANCE_READONLY` is on, POST/PATCH/DELETE return 503 `{"detail":"Cards is read-only for maintenance, back shortly"}` | middleware test |
@@ -428,21 +349,21 @@ All code changes follow AGENTS.md §3: branch → `dev`, with tests compared aga
 
 ## 8. Phases
 
-**Progress (2026-09-26):**
-- **Phase A: done.** `packages/db` scaffolded, with CI in `.github/workflows/db.yml`.
-- **Phase B, agent part: done.** Schema for all 28 persona tables. `0000` builds a database whose catalog matches every prod aafo entry that was checked: 103 constraints, 43 indexes, 72 policies, 4 functions with exact ACLs, trigger, publication, 112 grants and RLS flags. A byte-exact `db:drift` against a direct prod export is still the user's step.
-- **Phases C/D, migrations written:** `0001` (persona fix) and `0002`–`0004` (cards). `0002`–`0004` need pgvector to rehearse locally; CI runs them on `pgvector/pgvector:pg17`.
-- **Not done:** everything that applies to prod, the code in E, the cards-web login change in F, and G–I.
-
+**Progress (2026-09-27):**
+- **Phase A: done.** `packages/db` with three histories (D14), CI in `.github/workflows/db.yml`, root runner and local-dev docs (D15).
+- **Phase B, agent part: done.** persona's `0000` builds a database whose catalog matches every prod aafo entry that was checked: 103 constraints, 43 indexes, 72 policies, 4 functions with exact ACLs, trigger, publication, 112 grants and RLS flags. A byte-exact `db:drift` against a fresh prod export is still the user's step.
+- **Phases C/D, migrations written:** persona `0001` (fix) and cards `0000`–`0002`. The cards history needs pgvector, which isn't installed on the dev Mac; CI runs it on `pgvector/pgvector:pg17`.
+- **Hotfix pending (user):** record persona's baseline and apply `0001` on prod aafo. `zyndai/platform` is public and the exposure is described in pushed docs, so nothing more is pushed until it's live.
+- **Not done:** everything else that touches prod, the rest of E, the cards-web login change in F, and G–I.
 
 Stop after each phase, report, and wait for an OK. **A** = agent, **U** = user. Nothing touches prod unless a person runs it.
 
 | Phase | Who | What | Done when | Rollback |
 |---|---|---|---|---|
 | **A. Scaffold** | A | `packages/db` package, config, stubs, scripts, README, OWNERS, CI workflow, frozen READMEs; confirm the migrator's hash/`when` semantics in the pinned version | `npm ci && npm run db:check` pass; CI green on a PR | revert the PR |
-| **B. Baseline** | A, then U | §4.8 steps 1–8 (A); U runs `catalog.sql` on prod for step 5; U runs Appendix D on staging and prod | drift diff empty; `db:generate` reports nothing; `drizzle.__drizzle_migrations` holds 1 row on prod | `drop schema drizzle cascade` (tracking table only) |
+| **B. Baseline** | A, then U | §4.8 steps 1–8 (A); U runs `catalog.sql` on prod for step 5; U runs `db:baseline-sql` output on prod | drift diff empty; `persona:generate` reports nothing; `drizzle.__persona_migrations` holds the baseline row on prod | `drop schema drizzle cascade` (tracking tables only) |
 | **C. Persona fix** | A, then U | `0001`; A rehearses it on the local scratch DB; U applies it to prod aafo (which dev.persona also uses) and smoke-tests persona-web (inbox, tasks, groups, realtime) on dev.persona, then prod | an anon `GET /rest/v1/persona_agents?select=agent_id&limit=1` returns `[]`; persona-web works | `create policy "Public read persona agents" on persona_agents for select using (true);` |
-| **D. Cards schema** | A, then U | `0002`–`0004`; A rehearses locally (needs `brew install pgvector`); U runs `preflight-cards.sql`, then `db:migrate` on prod aafo | catalog shows the 4 empty tables + 3 functions; anon RPC `match_cards` is denied | `drop table x_mentions, x_conversations, x_accounts, agent_profile_cards; drop function match_cards, search_cards_fts, skill_names;` (empty tables) + delete their journal rows |
+| **D. Cards + identity schemas** | A, then U | identity `0000`, cards `0000`–`0002`; U runs `preflight-cards.sql`, then `db:migrate -- --project identity,cards --yes` on prod aafo; U adds `cards` to aafo → API settings → **Exposed schemas** | catalog shows the `cards` schema with 4 empty tables + 3 functions; an anon request with `Accept-Profile: cards` is denied | `drop schema cards cascade; drop schema identity;` (empty) + `drop table drizzle.__cards_migrations, drizzle.__identity_migrations` |
 | **E. Code** | A, then U | §7 on a branch → `dev`; U deploys cards-api + memory with **both** issuers trusted; cards-api **still on xmfj** | tests at baseline; prod behaves as before; an aafo token is accepted by `/cards/*` auth | redeploy the previous image |
 | **F. aafo auth + storage** | A, then U | A: cards-web goes LinkedIn-only (D12). U: §5.5 redirect URLs and `avatars` bucket; Vercel env for cards-web (aafo URL/anon key, `NEXT_PUBLIC_API_URL=https://api.zynd.ai`, `NEXT_PUBLIC_SITE_URL=https://cards.zynd.ai`); open a preview deploy | on the preview, LinkedIn login works against aafo; card pages render (data via cards-api from xmfj) | remove the redirect URLs |
 | **G. Rehearsal** | U (A reviews output) | §6.2 all scripts into aafo | `verify.sql` matches; avatars report shows 0 missing | re-truncate the aafo cards tables |
@@ -458,7 +379,7 @@ Stop after each phase, report, and wait for an OK. **A** = agent, **U** = user. 
 | H3 | `copy_avatars.py --apply` + URL rewrite | 0 missing; 0 xmfj avatar URLs left in aafo | re-run |
 | H4 | `verify.sql` on both sides | the diff shows only the expected lines (Appendix F) | stop; stay on xmfj; H1 rollback |
 | H5 | `backfill_owner_user_id.sql` on aafo | reports matched vs unmatched owners | `update … set owner_user_id = null` |
-| H6 | Switch cards-api `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` to aafo in `infra/api-box`, restart | `/cards/search` (FTS + vector), `GET /cards/<handle>`, chat widget, X-bot dry run | switch the env back to xmfj and restart; xmfj is unchanged because it was read-only |
+| H6 | Switch cards-api `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` to aafo and set `SUPABASE_DB_SCHEMA=cards` in `infra/api-box`, restart | `/cards/search` (FTS + vector), `GET /cards/<handle>`, chat widget, X-bot dry run | switch the env back to xmfj (and `SUPABASE_DB_SCHEMA=public`), restart; xmfj is unchanged because it was read-only |
 | H7 | Point `cards.zynd.ai` DNS at the Vercel project | login, claim (token and LinkedIn), create with avatar upload, edit, publish | remove the DNS record |
 | H8 | `MAINTENANCE_READONLY=false` | a new publish lands in aafo | **after this, rolling back loses writes made on aafo**: decide within the first hour, then copy those rows back to xmfj manually |
 | H9 | Watch for 24 hours: cards-api errors, auth failures, 401s by issuer | none | none |
@@ -468,7 +389,7 @@ Stop after each phase, report, and wait for an OK. **A** = agent, **U** = user. 
 ## 9. Verification checklist
 
 - **Baseline:** `catalog(prod aafo) == catalog(stubs + 0000)` after normalization.
-- **Schema/migrations in sync:** `db:generate` produces nothing after every merge.
+- **Schema/migrations in sync:** `<history>:generate` produces nothing for any history after every merge (CI checks this).
 - **Persona fix:** anon REST read of `persona_agents` returns `[]`; persona-web inbox, tasks and group realtime still update.
 - **Cards schema:** as anon, the `agent_profile_cards` REST request is denied and RPC `match_cards` is denied; as service_role, both work.
 - **Data:** equal counts per table and per `status`; equal `md5` over `id || md5(card::text)` (before the URL rewrite); `count(embedding)` equal; top 10 of the same `search_cards_fts('engineer')` and the same `match_cards(<fixed vector>)` identical on both sides.
@@ -501,7 +422,7 @@ Stop after each phase, report, and wait for an OK. **A** = agent, **U** = user. 
 |---|---|---|
 | A | about half a day | review the PR |
 | B | about 1 day (28 tables by hand + diff loop) | 2 SQL-editor runs + Appendix D |
-| C–D | about 2 hours | apply staging → prod |
+| C–D | about 2 hours | apply to prod after local rehearsal |
 | E | about 1 day with tests | deploy |
 | F | none | about 1 hour of dashboard settings |
 | G–H | on call | about 1 hour + 45-minute window |
@@ -524,55 +445,9 @@ Stop after each phase, report, and wait for an OK. **A** = agent, **U** = user. 
 
 ---
 
-## Appendix A: catalog query (`packages/db/scripts/catalog.sql`)
+## Appendix A: catalog query
 
-Read-only. It returns one text cell, so the SQL editor's 100-row limit doesn't apply. The first line identifies the project (`developer_keys=true` means xmfj).
-
-```sql
-select string_agg(line, E'\n' order by line) from (
-  select '0 project | developer_keys=' || (to_regclass('public.developer_keys') is not null)::text
-      || ' agent_profile_cards=' || (to_regclass('public.agent_profile_cards') is not null)::text as line
-  union all
-  select 'extension | ' || extname || ' | ' || extversion || ' | schema=' || extnamespace::regnamespace::text from pg_extension
-  union all
-  select 'column | ' || c.relname || '.' || a.attname || ' | ' || format_type(a.atttypid, a.atttypmod)
-    || case when a.attgenerated = 's' then ' GENERATED ALWAYS AS (' || pg_get_expr(d.adbin, d.adrelid) || ') STORED'
-            when d.adbin is not null then ' DEFAULT ' || pg_get_expr(d.adbin, d.adrelid) else '' end
-    || case when a.attnotnull then ' NOT NULL' else '' end
-  from pg_attribute a join pg_class c on c.oid = a.attrelid
-  left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
-  where c.relnamespace = 'public'::regnamespace and c.relkind = 'r' and a.attnum > 0 and not a.attisdropped
-  union all
-  select 'constraint | ' || conrelid::regclass::text || '.' || conname || ' | ' || pg_get_constraintdef(oid)
-  from pg_constraint where connamespace = 'public'::regnamespace and conrelid <> 0
-  union all
-  select 'index | ' || indexname || ' | ' || indexdef from pg_indexes where schemaname = 'public'
-  union all
-  select 'trigger | ' || t.tgrelid::regclass::text || '.' || t.tgname || ' | ' || pg_get_triggerdef(t.oid)
-  from pg_trigger t join pg_class c on c.oid = t.tgrelid
-  where not t.tgisinternal and c.relnamespace = 'public'::regnamespace
-  union all
-  select 'function | ' || p.oid::regprocedure::text || ' | acl=' || coalesce(p.proacl::text, 'default')
-      || E'\n' || pg_get_functiondef(p.oid)
-  from pg_proc p
-  where p.pronamespace = 'public'::regnamespace and p.prokind = 'f'
-    and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
-  union all
-  select 'rls | ' || relname || ' | enabled=' || relrowsecurity::text || ' forced=' || relforcerowsecurity::text
-  from pg_class where relnamespace = 'public'::regnamespace and relkind = 'r'
-  union all
-  select 'policy | ' || tablename || '.' || policyname || ' | '
-      || format('%s for %s to %s using (%s) with check (%s)', permissive, cmd, roles, qual, with_check)
-  from pg_policies where schemaname = 'public'
-  union all
-  select 'view | ' || viewname || ' | ' || definition from pg_views where schemaname = 'public'
-  union all
-  select 'publication | ' || pubname || ' | ' || schemaname || '.' || tablename from pg_publication_tables
-  union all
-  select 'grant | ' || table_name || ' -> ' || grantee || ' | ' || string_agg(privilege_type, ',' order by privilege_type)
-  from information_schema.role_table_grants where table_schema = 'public' group by table_name, grantee
-) x;
-```
+The query lives in [`packages/db/scripts/catalog.sql`](../../packages/db/scripts/catalog.sql). It is read-only, returns one text cell (so the SQL editor's 100-row limit doesn't apply), covers every schema the migrations own (`public`, `cards`, `identity`) with schema-qualified names, and its first line identifies the project (`developer_keys=true` means xmfj). The 2026-09-26 exports used an earlier, `public`-only version; re-export with the current file before running `db:drift` against prod.
 
 ## Appendix B: aafo policy inventory (72)
 
@@ -604,144 +479,14 @@ Per table: *svc* is the redundant `"Service role full access on …"` (`to publi
 
 The verbatim `using` / `with check` text comes from the catalog output saved in `packages/db/introspection/` during phase B.
 
-## Appendix C: migration SQL 0001–0004 and the backfill
+## Appendix C: migration SQL and the owner backfill
 
-```sql
--- 0001_persona_drop_public_read.sql      (generated from schema.ts)
--- owner: persona
-DROP POLICY "Public read persona agents" ON "persona_agents";
-```
-
-```sql
--- 0002_cards_prereqs.sql                  (custom)
--- owner: cards
-create extension if not exists vector with schema extensions;
-
-create or replace function public.skill_names(card jsonb) returns text
-language sql immutable as $$
-  select coalesce(string_agg(s->>'name', ' ' order by s->>'name'), '')
-  from jsonb_array_elements(coalesce(card->'skills', '[]'::jsonb)) s
-$$;
-```
-
-```sql
--- 0003_cards_tables.sql                   (generated from cards/*.ts, expected shape)
--- owner: cards
-CREATE TABLE "agent_profile_cards" (
-  "id" text PRIMARY KEY NOT NULL,
-  "status" text DEFAULT 'draft' NOT NULL,
-  "handle_github" text,
-  "handle_x" text,
-  "card" jsonb NOT NULL,
-  "search_tsv" tsvector GENERATED ALWAYS AS (to_tsvector('english',
-      coalesce(card->'identity'->>'name','') || ' ' || coalesce(card->'identity'->>'headline','') || ' ' ||
-      coalesce(card->>'summary','') || ' ' || skill_names(card))) STORED,
-  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
-  "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-  "published_at" timestamp with time zone,
-  "handle" text,
-  "embedding" vector(1536),
-  "scrape_raw" jsonb,
-  "user_intent" jsonb,
-  "owner_email" text,
-  "suggested_posts" jsonb,
-  "claim_token_hash" text,
-  "owner_user_id" uuid,
-  CONSTRAINT "agent_profile_cards_handle_key" UNIQUE("handle")
-);
-ALTER TABLE "agent_profile_cards" ENABLE ROW LEVEL SECURITY;
-
-CREATE TABLE "x_accounts" (
-  "x_user_id" text PRIMARY KEY NOT NULL,
-  "username" text NOT NULL,
-  "card_id" text,
-  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
-  "updated_at" timestamp with time zone DEFAULT now() NOT NULL
-);
-CREATE TABLE "x_conversations" (
-  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-  "x_user_id" text NOT NULL,
-  "card_id" text,
-  "status" text DEFAULT 'initial' NOT NULL,
-  "current_question" text,
-  "answered" jsonb DEFAULT '{}'::jsonb NOT NULL,
-  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
-  "updated_at" timestamp with time zone DEFAULT now() NOT NULL
-);
-CREATE TABLE "x_mentions" (
-  "tweet_id" text PRIMARY KEY NOT NULL,
-  "x_user_id" text NOT NULL,
-  "text" text,
-  "status" text DEFAULT 'processed' NOT NULL,
-  "created_at" timestamp with time zone DEFAULT now() NOT NULL
-);
-ALTER TABLE "x_accounts" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "x_conversations" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "x_mentions" ENABLE ROW LEVEL SECURITY;
-
-ALTER TABLE "agent_profile_cards" ADD CONSTRAINT "agent_profile_cards_owner_user_id_users_id_fk"
-  FOREIGN KEY ("owner_user_id") REFERENCES "auth"."users"("id") ON DELETE set null;
-ALTER TABLE "x_accounts" ADD CONSTRAINT "x_accounts_card_id_fkey"
-  FOREIGN KEY ("card_id") REFERENCES "agent_profile_cards"("id");
-ALTER TABLE "x_conversations" ADD CONSTRAINT "x_conversations_card_id_fkey"
-  FOREIGN KEY ("card_id") REFERENCES "agent_profile_cards"("id");
-
-CREATE INDEX "agent_profile_cards_status_idx" ON "agent_profile_cards" USING btree ("status");
-CREATE INDEX "agent_profile_cards_tsv_idx" ON "agent_profile_cards" USING gin ("search_tsv");
-CREATE INDEX "agent_profile_cards_embedding_hnsw_idx" ON "agent_profile_cards" USING hnsw ("embedding" vector_cosine_ops);
-CREATE INDEX "idx_cards_owner_email" ON "agent_profile_cards" USING btree ("owner_email");
-CREATE INDEX "agent_profile_cards_owner_user_id_idx" ON "agent_profile_cards" USING btree ("owner_user_id");
-CREATE INDEX "x_conversations_user_idx" ON "x_conversations" USING btree ("x_user_id");
-CREATE INDEX "x_mentions_user_idx" ON "x_mentions" USING btree ("x_user_id");
-
-CREATE POLICY "service role full access on cards" ON "agent_profile_cards" AS PERMISSIVE FOR ALL TO "service_role" USING (true) WITH CHECK (true);
-CREATE POLICY "service role full access on x_accounts" ON "x_accounts" AS PERMISSIVE FOR ALL TO "service_role" USING (true) WITH CHECK (true);
-CREATE POLICY "service role full access on x_conversations" ON "x_conversations" AS PERMISSIVE FOR ALL TO "service_role" USING (true) WITH CHECK (true);
-CREATE POLICY "service role full access on x_mentions" ON "x_mentions" AS PERMISSIVE FOR ALL TO "service_role" USING (true) WITH CHECK (true);
--- deliberately NOT recreated: "public read published cards" (D7), agent_profile_cards_handle_idx (duplicates the unique constraint)
-```
-
-```sql
--- 0004_cards_functions_grants.sql         (custom)
--- owner: cards
-create or replace function public.match_cards(query_embedding extensions.vector, match_count integer default 200)
-returns table(id text, handle text, card jsonb, similarity double precision)
-language sql stable
-set search_path = public, extensions
-as $$
-  select c.id, c.handle, c.card, 1 - (c.embedding <=> query_embedding)
-    from agent_profile_cards c
-   where c.status = 'published' and c.embedding is not null
-   order by c.embedding <=> query_embedding
-   limit match_count;
-$$;
-
-create or replace function public.search_cards_fts(q text, match_count integer default 200)
-returns table(id text, handle text, card jsonb, rank real)
-language sql stable
-set search_path = public, extensions
-as $$
-  select c.id, c.handle, c.card, ts_rank_cd(c.search_tsv, websearch_to_tsquery('english', q))
-    from agent_profile_cards c
-   where c.status = 'published'
-     and c.search_tsv @@ websearch_to_tsquery('english', q)
-   order by 4 desc
-   limit match_count;
-$$;
-
-revoke execute on function public.match_cards(extensions.vector, integer)  from public, anon, authenticated;
-revoke execute on function public.search_cards_fts(text, integer)          from public, anon, authenticated;
-grant  execute on function public.match_cards(extensions.vector, integer)  to service_role;
-grant  execute on function public.search_cards_fts(text, integer)          to service_role;
-
-revoke all on table public.agent_profile_cards, public.x_accounts, public.x_conversations, public.x_mentions
-  from anon, authenticated;
-```
+The migration SQL is in the repo and is the source of truth: `packages/db/persona/migrations/0001_persona_drop_public_read.sql`, `packages/db/cards/migrations/0000_cards_schema.sql`, `0001_cards_tables.sql`, `0002_cards_search_functions.sql`, and `packages/db/identity/migrations/0000_identity_schema.sql`.
 
 ```sql
 -- backfill_owner_user_id.sql  (run once at cutover, H5; idempotent)
 with m as (
-  update public.agent_profile_cards c
+  update cards.agent_profile_cards c
      set owner_user_id = u.id
     from auth.users u
    where c.owner_user_id is null
@@ -750,24 +495,12 @@ with m as (
   returning c.id
 )
 select (select count(*) from m) as linked,
-       (select count(*) from public.agent_profile_cards where owner_email is not null and owner_user_id is null) as unmatched;
+       (select count(*) from cards.agent_profile_cards where owner_email is not null and owner_user_id is null) as unmatched;
 ```
 
-## Appendix D: marking the baseline as applied (run once per environment)
+## Appendix D: recording persona's baseline
 
-`npm run db:baseline-sql` prints this with the real values: the sha256 of `0000_baseline_persona.sql` and its journal `when`. Before phase B relies on it, phase A checks that the table shape matches what the pinned `drizzle-orm` migrator creates and reads.
-
-```sql
-create schema if not exists drizzle;
-create table if not exists drizzle.__drizzle_migrations (
-  id serial primary key,
-  hash text not null,
-  created_at bigint
-);
-insert into drizzle.__drizzle_migrations (hash, created_at)
-select '<sha256-of-0000-file>', <journal-when-of-0000>
-where not exists (select 1 from drizzle.__drizzle_migrations);
-```
+`cd packages/db && npm run db:baseline-sql` prints the SQL to run once in the aafo SQL editor. It records persona's `0000` in `drizzle.__persona_migrations` without running it, and first renames `drizzle.__drizzle_migrations` if the earlier hotfix SQL already created it.
 
 ## Appendix E: `test/supabase-stubs.sql` (CI and scratch DBs only)
 
@@ -805,6 +538,7 @@ union all select 'embeddings', count(embedding)::text from agent_profile_cards
 union all select 'claim tokens', count(claim_token_hash)::text from agent_profile_cards
 union all select 'ids+card md5', md5(string_agg(id || md5(card::text), ',' order by id)) from agent_profile_cards
 union all select 'fts top10', string_agg(id, ',') from (select id from search_cards_fts('engineer', 10)) t;
+-- On aafo the tables and function are in the cards schema: run `set search_path = cards, public, extensions;` first.
 ```
 Expected difference after H3: the `ids+card md5` line changes, because avatar URLs are rewritten. Run it **before** H3 for the equality check and after H3 only for the URL report.
 

@@ -38,7 +38,7 @@ If a task mentions either of those by name, it's the wrong repo.
 | `services/memory` | Shared context/memory layer: ingest, matching, MCP server, OAuth for AI clients | FastAPI / Python | api.zynd.ai |
 | `infra/persona-box` | pm2 configs for the box running persona-api + persona-web | — | — |
 | `infra/api-box` | Caddy + docker-compose for the box running cards-api + memory | — | — |
-| `packages/db` | **The one migration history** for the shared aafo database (persona + cards), Drizzle — read its `README.md` before any schema change | TypeScript / Drizzle | — |
+| `packages/db` | **All migrations** for the shared aafo database, Drizzle: one independent history per Postgres schema (identity / persona=`public` / cards) — read its `README.md` before any schema change | TypeScript / Drizzle | — |
 | `packages/contracts` | Shared API contracts. **Planned, not built yet.** | — | — |
 | `docs/plans` | Architecture and migration plans behind this repo — start with `docs/plans/README.md` | — | — |
 
@@ -74,10 +74,15 @@ its life as a standalone repo, not just the merge date.
   It is reached **only** over its HTTP API — never open a direct DB
   connection to it from persona-api or cards-api, and never assume its
   tables live in the same database as persona/cards.
-- **Every schema change to that database is a migration in `packages/db`**
-  (Drizzle). Not the SQL editor, not a `.sql` file inside a service: the old
-  SQL folders are frozen. Follow `packages/db/README.md`; `packages/db/OWNERS.md`
-  says whose review a table needs.
+- **Postgres schemas are the boundary.** persona's tables are in `public`,
+  cards' in `cards`, and the one shared layer (future Zynd Account) in
+  `identity`. Each schema has its own independent migration history in
+  `packages/db/<history>/` (Drizzle), so a persona change never touches cards'
+  history and vice versa. Cross-schema FKs and joins still work.
+- **Every schema change is a migration there.** Not the SQL editor, not a
+  `.sql` file inside a service: the old SQL folders are frozen. Follow
+  `packages/db/README.md`; `packages/db/OWNERS.md` says whose review a table
+  needs.
 - **There is no staging database.** dev.persona.zynd.ai uses prod aafo, so a
   migration applied anywhere is live everywhere. Rehearse locally, keep
   migrations expand-only, and apply them only on a human's say-so (§6).
@@ -129,11 +134,13 @@ Current state:
 - ❌ **Nothing has been deployed from this checkout yet** — prod and dev
   servers for cards and memory still run the old standalone repos. Don't
   trust `infra/` as a description of what's currently live; it's the target.
-- 🟡 `packages/db` built (2026-09-26): migrations 0000 (baseline of prod
-  aafo, verified), 0001 (persona security fix), 0002–0004 (cards tables) and
-  its CI workflow. **Nothing applied to prod yet**: the baseline still has
-  to be recorded there, and 0001–0004 applied. See
+- 🟡 `packages/db` built (2026-09-27): identity `0000`; persona `0000`
+  (baseline of prod aafo, verified) and `0001` (security fix); cards
+  `0000`–`0002`; CI workflow. **Nothing applied to prod yet**: persona's
+  baseline still has to be recorded there and the rest applied. See
   `docs/plans/ZYND_DB_UNIFY_PLAN.md` §8.
+- ✅ Root runner: `npm run setup`, `npm run dev`, `npm test` from the repo
+  root (`docs/LOCAL_DEV.md`).
 - ❌ `packages/contracts` is not started. Cards still runs on the dashboard's
   Supabase project (xmfj) until the cutover in that plan.
 

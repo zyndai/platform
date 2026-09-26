@@ -1,7 +1,9 @@
 # Who owns what in the shared aafo database
 
-A change to a table needs a review from its owner, **and** from every
-service listed as a reader.
+Ownership follows the Postgres schema, and each schema has its own migration
+history (see README.md): `public` = persona, `cards` = cards,
+`identity` = shared. A change needs a review from the owner, **and** from
+every service listed as a reader.
 
 ## Tables
 
@@ -15,16 +17,18 @@ service listed as a reader.
 | `linkedin_profiles`, `twitter_profiles`, `github_profiles` | persona | — |
 | `enriched_contacts`, `enriched_companies`, `suggested_contacts`, `suggested_contact_runs` | persona | — |
 | `chat_messages`, `brief_todos`, `published_pages` | persona | — |
-| `agent_profile_cards`, `x_accounts`, `x_mentions`, `x_conversations` | cards | — (service role only; cards-web goes through cards-api) |
+| `cards.agent_profile_cards`, `cards.x_accounts`, `cards.x_mentions`, `cards.x_conversations` | cards | — (service role only; cards-web goes through cards-api) |
+| `identity.*` (empty today; Zynd Account tables in Stage 2) | shared | persona, cards |
 
 ## Functions, triggers, publication
 
 | Object | Owner | Last defined in | Called by |
 |---|---|---|---|
-| `is_persona_group_member(uuid)`, `is_persona_group_manager(uuid)` | persona | 0000 | RLS policies on group tables |
-| `persona_agents_search_vector_update()` + trigger `persona_agents_search_vector_trigger` | persona | 0000 | keeps `persona_agents.search_vector` current |
-| `search_personas_fts(text, int)` | persona | 0000 | persona-api, **memory** |
-| `skill_names(jsonb)` | cards | 0002 | generated column `agent_profile_cards.search_tsv` |
-| `match_cards(vector, int)`, `search_cards_fts(text, int)` | cards | 0004 | cards-api (`services/search.py`) |
-| publication `supabase_realtime` (9 persona tables) | persona | 0000 | persona-web realtime |
-| extension `vector` (schema `extensions`) | cards | 0002 | — |
+| `is_persona_group_member(uuid)`, `is_persona_group_manager(uuid)` | persona | persona 0000 | RLS policies on group tables |
+| `persona_agents_search_vector_update()` + trigger `persona_agents_search_vector_trigger` | persona | persona 0000 | keeps `persona_agents.search_vector` current |
+| `search_personas_fts(text, int)` | persona | persona 0000 | persona-api, **memory** |
+| `cards.skill_names(jsonb)` | cards | cards 0000 | generated column `agent_profile_cards.search_tsv` |
+| `cards.match_cards(vector, int)`, `cards.search_cards_fts(text, int)` | cards | cards 0002 | cards-api (`services/search.py`) |
+| publication `supabase_realtime` (9 persona tables) | persona | persona 0000 | persona-web realtime |
+| extension `vector` (schema `extensions`) | cards | cards 0000 | — |
+| schemas `cards`, `identity` + their grants | cards / shared | cards 0000, identity 0000 | — |

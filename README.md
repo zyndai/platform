@@ -25,7 +25,6 @@ against multiple server versions).
 | `services/memory` | Shared context layer — ingest, matching, MCP server, OAuth for ChatGPT/Claude/Cursor | FastAPI / Python | https://api.zynd.ai |
 | `infra/persona-box` | pm2 process configs for the persona server | — | — |
 | `infra/api-box` | Caddy + Docker Compose for the cards/memory server | — | — |
-| `docs/persona` | Persona's architecture docs (identity, A2A protocol, groups) | — | — |
 | `packages/` | Shared DB migrations / API contracts. **Planned, not built yet.** | — | — |
 
 Each service came from its own repo (`agent-persona`, `zynd-cards`,
@@ -148,9 +147,8 @@ side effect of an unrelated change:
 ## Further reading
 
 - [`AGENTS.md`](./AGENTS.md) — full rules for any AI agent working here.
-- [`docs/persona/architecture.md`](./docs/persona/architecture.md) — persona
-  identity model, heartbeat design, security model.
-- [`docs/persona/A2A.md`](./docs/persona/A2A.md) — the agent-to-agent
-  protocol.
+- [`docs/plans/`](./docs/plans/) — the architecture and migration plans
+  behind this repo. Start with `docs/plans/README.md` for reading order and
+  which plans are active vs. superseded.
 - Per-service `CLAUDE.md`/`AGENTS.md`/`README.md` inside `apps/*` and
   `services/*` — stack-specific conventions.

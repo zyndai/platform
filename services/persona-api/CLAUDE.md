@@ -69,15 +69,15 @@ Zynd is a multi-tenant AI agent platform: users create autonomous "personas"
 (FastAPI backend + Next.js frontend) that live on the Zynd AI Network, get
 discovered by other agents, receive messages, and take actions on behalf of
 their owner (posting tweets, scheduling calendar events, querying Notion,
-etc). Full design docs live at the repo root — read them before touching the
-areas they cover:
-
-- `architecture.md` — identity (HD Ed25519 key derivation), DB schema,
-  heartbeat manager, request flows, registry integration, security model.
-- `A2A.md` — the agent-to-agent (persona-to-persona) protocol: JSON-RPC 2.0
-  task FSM, connection FSM, permission enforcement, replay protection.
-- `GROUPS.md` — Persona Groups feature rollout notes, phase by phase.
-- `theme.md` — frontend visual design system.
+etc). The design docs that used to live at the repo root —
+`architecture.md` (identity/HD key derivation, DB schema, heartbeat manager,
+request flows, registry integration, security model), `A2A.md` (the
+agent-to-agent protocol: JSON-RPC 2.0 task FSM, connection FSM, permission
+enforcement, replay protection), `GROUPS.md` (Persona Groups rollout), and
+`theme.md` (frontend visual design system) — are **not in this repo**. Find
+them in the old standalone `agent-persona` repo's history, or
+`git log --all --oneline -- '**/architecture.md'` from this repo if they
+were ever imported. The summaries below cover the same ground at a glance.
 
 ## Commands
 

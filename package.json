@@ -1,0 +1,30 @@
+{
+  "name": "zynd-platform",
+  "private": true,
+  "description": "Root runner for the monorepo. Not an npm workspace: each app/package keeps its own lockfile and installs in its own folder, exactly as the servers and Vercel build them. See docs/LOCAL_DEV.md.",
+  "scripts": {
+    "setup": "npm run setup:web && npm run setup:py",
+    "setup:web": "npm --prefix apps/persona-web ci && npm --prefix apps/cards-web ci && npm --prefix packages/db ci",
+    "setup:py": "bash scripts/setup-python.sh",
+
+    "dev": "npx --yes concurrently@10.0.5 -k -n persona-web,cards-web,persona-api,cards-api -c blue,magenta,green,yellow \"npm:dev:persona-web\" \"npm:dev:cards-web\" \"npm:dev:persona-api\" \"npm:dev:cards-api\"",
+    "dev:persona-web": "npm --prefix apps/persona-web run dev -- -p 3000",
+    "dev:cards-web": "npm --prefix apps/cards-web run dev -- -p 3002",
+    "dev:persona-api": "cd services/persona-api && .venv/bin/uvicorn main:app --reload --host 127.0.0.1 --port 8000",
+    "dev:cards-api": "cd services/cards-api && .venv/bin/uvicorn main:app --reload --host 127.0.0.1 --port 8002",
+    "dev:memory": "npx --yes concurrently@10.0.5 -k -n memory-api,memory-mcp,memory-worker -c cyan,white,gray \"cd services/memory && .venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8001\" \"cd services/memory && .venv/bin/uvicorn app.mcp_http:app --reload --host 127.0.0.1 --port 8090\" \"cd services/memory && .venv/bin/arq app.worker.WorkerSettings\"",
+    "dev:infra": "docker compose -f infra/local/docker-compose.yml up -d --wait",
+    "dev:infra:down": "docker compose -f infra/local/docker-compose.yml down",
+
+    "test": "npm run test:persona-api; npm run test:cards-api; npm run test:memory; npm run check:web",
+    "test:persona-api": "cd services/persona-api && .venv/bin/python -m pytest -q",
+    "test:cards-api": "cd services/cards-api && .venv/bin/python -m pytest -q",
+    "test:memory": "cd services/memory && .venv/bin/python -m pytest -q -m 'not integration'",
+    "check:web": "npm --prefix apps/persona-web run lint && (cd apps/persona-web && npx tsc --noEmit) && npm --prefix apps/cards-web run lint && (cd apps/cards-web && npx tsc --noEmit)",
+
+    "db:generate": "npm --prefix packages/db run db:generate --",
+    "db:migrate": "npm --prefix packages/db run db:migrate --",
+    "db:drift": "npm --prefix packages/db run db:drift --",
+    "db:lint": "npm --prefix packages/db run db:lint"
+  }
+}

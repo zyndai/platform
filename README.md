@@ -153,3 +153,7 @@ side effect of an unrelated change:
   which plans are active vs. superseded.
 - Per-service `CLAUDE.md`/`AGENTS.md`/`README.md` inside `apps/*` and
   `services/*` — stack-specific conventions.
+
+## Running locally
+
+`npm run setup`, then `npm run dev` from the repo root. Ports, env files and where the data lives: [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md).

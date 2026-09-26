@@ -1,0 +1,14 @@
+# Local datastores for development: memory's Postgres (pgvector) + Redis.
+#
+# persona and cards are NOT here: they use Supabase (Auth + RLS + Storage +
+# Realtime), and local dev points them at a hosted Supabase project through
+# env vars instead. See docs/LOCAL_DEV.md.
+#
+#   npm run dev:infra        # start (waits until healthy)
+#   npm run dev:infra:down   # stop (data stays in the volume)
+name: zynd-local
+
+include:
+  # Postgres 5433 and Redis 6380 on the host (non-default ports, so they
+  # don't collide with a Homebrew Postgres/Redis).
+  - path: ../../services/memory/docker-compose.yml

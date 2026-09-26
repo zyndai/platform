@@ -1,38 +1,29 @@
-<!-- code-review-graph MCP tools -->
-## MCP Tools: code-review-graph
+# GEMINI.md — zynd-platform
 
-**IMPORTANT: This project has a knowledge graph. ALWAYS use the
-code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
-the codebase.** The graph is faster, cheaper (fewer tokens), and gives
-you structural context (callers, dependents, test coverage) that file
-scanning cannot.
+**Read `AGENTS.md` at the repo root before making any change.** It's the
+full, current source of truth for this repo (layout, testing, shared
+database rules, migration status) and is kept up to date; this file exists
+only because some tools don't follow cross-file references reliably, so the
+non-negotiable rules are repeated below as a safety net.
 
-### When to use graph tools FIRST
+## Non-negotiable rules
 
-- **Exploring code**: `semantic_search_nodes` or `query_graph` instead of Grep
-- **Understanding impact**: `get_impact_radius` instead of manually tracing imports
-- **Code review**: `detect_changes` + `get_review_context` instead of reading entire files
-- **Finding relationships**: `query_graph` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview` + `list_communities`
+1. **Read the local `CLAUDE.md`/`AGENTS.md`/`README.md`** inside the
+   `apps/*` or `services/*` directory you're changing before touching it —
+   this file only covers repo-wide rules.
+2. **Branch policy:** `dev` is active and auto-deploys persona (not yet
+   cards/memory — see `AGENTS.md` §7). `main` is prod, PR-only. Commit and
+   push to `dev` by default without asking; **never push to `main`**.
+3. **Shared database:** persona-api and cards-api share one Supabase
+   project; `services/memory` has its own, separate database, reached only
+   over HTTP. Coordinate any schema change — see `AGENTS.md` §4.
+4. **Test before and after** any change. Known baseline failures per
+   service are listed in `AGENTS.md` §5 — don't chase them.
+5. **Always ask a human first** for: prod deploys, prod SQL, secret
+   rotation, DNS/Vercel/GitHub settings, deleting data, or anything touching
+   auth/payments/schema. Never edit the separate `dashboard` or
+   `zynd-bridge` repos from here.
 
-Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
-
-### Key Tools
-
-| Tool | Use when |
-|------|----------|
-| `detect_changes` | Reviewing code changes — gives risk-scored analysis |
-| `get_review_context` | Need source snippets for review — token-efficient |
-| `get_impact_radius` | Understanding blast radius of a change |
-| `get_affected_flows` | Finding which execution paths are impacted |
-| `query_graph` | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes` | Finding functions/classes by name or keyword |
-| `get_architecture_overview` | Understanding high-level codebase structure |
-| `refactor_tool` | Planning renames, finding dead code |
-
-### Workflow
-
-1. The graph auto-updates on file changes (via hooks).
-2. Use `detect_changes` for code review.
-3. Use `get_affected_flows` to understand impact.
-4. Use `query_graph` pattern="tests_for" to check coverage.
+This repo is mid-migration (three formerly separate repos, merged with full
+git history 2026-09-26). `infra/` describes the target deploy layout, not
+necessarily what's live today — see `AGENTS.md` §7 before assuming otherwise.

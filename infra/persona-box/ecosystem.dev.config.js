@@ -9,7 +9,7 @@
 //   (webapp)  npm run build ALWAYS after pull, then restart
 // Production equivalent lives in /home/ubuntu/agent-persona/ecosystem.config.js.
 
-const DEV = "/home/ubuntu/zynd-dev"; // monorepo checkout: git clone -b dev <repo> /home/ubuntu/zynd-dev
+const DEV = "/home/ubuntu/zynd-platform-dev"; // monorepo checkout: git clone -b dev <repo> /home/ubuntu/zynd-platform-dev
 
 module.exports = {
   apps: [

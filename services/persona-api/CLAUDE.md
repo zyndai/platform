@@ -112,8 +112,8 @@ This is now part of the `zynd` monorepo. Two checkouts run on the box:
 
 | Channel | Branch | Code dir | pm2 apps | Backend | Web | URL |
 |---|---|---|---|---|---|---|
-| Prod | `main` | `/home/ubuntu/zynd` | `api`, `web` | 127.0.0.1:8000 | 127.0.0.1:3001 | https://persona.zynd.ai |
-| Dev | `dev` | `/home/ubuntu/zynd-dev` | `api-dev`, `web-dev` | 127.0.0.1:8001 | 127.0.0.1:3002 | https://dev.persona.zynd.ai |
+| Prod | `main` | `/home/ubuntu/zynd-platform` | `api`, `web` | 127.0.0.1:8000 | 127.0.0.1:3001 | https://persona.zynd.ai |
+| Dev | `dev` | `/home/ubuntu/zynd-platform-dev` | `api-dev`, `web-dev` | 127.0.0.1:8001 | 127.0.0.1:3002 | https://dev.persona.zynd.ai |
 
 pm2 configs live at `infra/persona-box/ecosystem.config.js` (prod) and `infra/persona-box/ecosystem.dev.config.js` (dev).
 

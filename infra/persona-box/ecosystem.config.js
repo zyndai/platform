@@ -11,17 +11,17 @@
 //                                          a systemd unit that runs `pm2
 //                                          resurrect` at boot — run it once)
 
-// Monorepo checkout: git clone -b main <repo> /home/ubuntu/zynd
+// Monorepo checkout: git clone -b main <repo> /home/ubuntu/zynd-platform
 module.exports = {
   apps: [
     {
       // ── FastAPI backend ───────────────────────────────────────────
       name: "api",
-      cwd: "/home/ubuntu/zynd/services/persona-api",
+      cwd: "/home/ubuntu/zynd-platform/services/persona-api",
       // Run uvicorn out of the project venv so requirements.txt deps
       // resolve. PM2 spawns this directly — no shell — so the binary
       // path has to be explicit.
-      script: "/home/ubuntu/zynd/services/persona-api/.venv/bin/uvicorn",
+      script: "/home/ubuntu/zynd-platform/services/persona-api/.venv/bin/uvicorn",
       args: "main:app --host 127.0.0.1 --port 8000 --workers 1",
       // PM2 defaults to fork mode for non-Node scripts, which is what
       // we want — uvicorn manages its own worker count.
@@ -54,7 +54,7 @@ module.exports = {
     {
       // ── Next.js production server ─────────────────────────────────
       name: "web",
-      cwd: "/home/ubuntu/zynd/apps/persona-web",
+      cwd: "/home/ubuntu/zynd-platform/apps/persona-web",
       // Use the npx shim that systemd was using — same binary that's
       // on $PATH for the ubuntu user. `next start` requires `next build`
       // to have been run beforehand (build artifacts in .next/).

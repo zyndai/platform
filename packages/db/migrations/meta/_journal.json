@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1790429838838,
+      "tag": "0000_baseline_persona",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790430024353,
+      "tag": "0001_persona_drop_public_read",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790430029907,
+      "tag": "0002_cards_prereqs",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790430056998,
+      "tag": "0003_cards_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790430071619,
+      "tag": "0004_cards_functions_grants",
+      "breakpoints": true
+    }
+  ]
+}

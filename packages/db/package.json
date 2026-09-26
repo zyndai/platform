@@ -1,0 +1,27 @@
+{
+  "name": "@zynd/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The one migration history for the shared aafo Supabase database (persona + cards). See README.md.",
+  "type": "module",
+  "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:generate:custom": "drizzle-kit generate --custom",
+    "db:check": "drizzle-kit check",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:drift": "tsx scripts/check-drift.ts",
+    "db:baseline-sql": "tsx scripts/baseline-sql.ts",
+    "db:lint": "bash scripts/lint-migrations.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "@types/pg": "8.23.1",
+    "dotenv": "18.0.4",
+    "drizzle-kit": "0.31.11",
+    "drizzle-orm": "0.45.3",
+    "pg": "8.23.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

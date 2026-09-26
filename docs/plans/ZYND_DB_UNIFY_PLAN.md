@@ -32,7 +32,7 @@
 | D4 | **Login moves to aafo, and no users are copied** | Nothing in cards stores an xmfj user id, because ownership is `owner_email` (§5) |
 | D5 | Cards tables go in the **`public` schema** | cards-api's `sb.table(...)` / `sb.rpc(...)` calls then work unchanged; only the URL and key change. A `cards` schema would need PostgREST schema exposure and changes to every call |
 | D6 | `vector` goes in the **`extensions`** schema on aafo (xmfj has it in `public`) | Supabase default and lint-clean. Cards functions get `set search_path = public, extensions` |
-| D7 | **Cards tables are service-role only**: drop the anon `"public read published cards"` policy, revoke table grants and RPC execute from `anon`/`authenticated` | No code reads cards tables from a browser. cards-web goes through cards-api. The old policy exposed `owner_email`, `claim_token_hash` and `scrape_raw` to anyone with the anon key. xmfj already revoked `anon`/`authenticated` grants on every table, so this keeps today's effective access |
+| D7 | **Cards tables are service-role only**: drop the anon `"public read published cards"` policy, revoke table grants and RPC execute from `anon`/`authenticated` | No code reads cards tables from a browser. cards-web goes through cards-api. On aafo, Supabase's default grants would give `anon` full table privileges, so the old policy would expose `owner_email`, `claim_token_hash` and `scrape_raw`. On xmfj it can't be used today, because xmfj revoked `anon`/`authenticated` grants on every table. This keeps that effective access |
 | D8 | Drop the `persona_agents` `"Public read persona agents"` policy (`using (true)`) in its own migration, `0001` | It exposes every persona's `brief_content`, `profile` and `webhook_url` to the anon key. Checked: no code reads `persona_agents` with anon, and every RLS subquery on `persona_agents` filters `user_id = auth.uid()`, which `"Users can read own persona"` still allows (§2.4) |
 | D9 | `packages/db` is a **standalone npm package** (own lockfile, no root workspace) | Vercel builds of `apps/*` stay unchanged. Shared TS types can come later |
 | D10 | Prod migrations are applied **by a person**. Anyone on the team may run them, after a clean drift check and a local rehearsal | AGENTS.md §6: prod SQL needs a human |
@@ -155,7 +155,8 @@ packages/db/
 ├── migrations/               # drizzle-kit `out`: NNNN_name.sql + meta/_journal.json + meta/NNNN_snapshot.json
 ├── scripts/
 │   ├── catalog.sql           # Appendix A: the one-cell catalog query (SQL editor or psql)
-│   ├── check-drift.sh        # catalog(prod) vs catalog(scratch DB built from migrations), normalized diff
+│   ├── check-drift.ts        # catalog(prod) vs catalog(scratch DB built from migrations), normalized diff
+│   ├── migrate.ts            # db:migrate — dry run by default, --yes applies, refuses xmfj and an unrecorded baseline
 │   ├── baseline-sql.ts       # prints the SQL that marks 0000 as applied (Appendix D)
 │   ├── lint-migrations.sh    # every NEW migration starts with "-- owner: persona|cards|shared"
 │   └── preflight-cards.sql   # read-only checks on aafo before 0002
@@ -165,7 +166,7 @@ packages/db/
 └── README.md                 # the workflow in §4.6, the rules in §4.7
 ```
 
-**Scripts:** `db:generate` (`drizzle-kit generate`), `db:generate:custom` (`drizzle-kit generate --custom`), `db:check` (`drizzle-kit check`), `db:migrate` (`drizzle-kit migrate`), `db:drift` (`scripts/check-drift.sh`), `db:baseline-sql`. There is **no** `db:push` script, and the README forbids `drizzle-kit push` against shared databases.
+**Scripts:** `db:generate` (`drizzle-kit generate`), `db:generate:custom` (`drizzle-kit generate --custom`), `db:check` (`drizzle-kit check`), `db:migrate` (`scripts/migrate.ts`: drizzle-orm's migrator, but with a dry run and real error messages; `drizzle-kit migrate` exits 1 without printing the Postgres error), `db:drift` (`scripts/check-drift.ts`), `db:baseline-sql`. There is **no** `db:push` script, and the README forbids `drizzle-kit push` against shared databases.
 
 ### 4.2 `drizzle.config.ts`
 
@@ -261,7 +262,7 @@ Persona tables follow the same pattern. Their policies use `to: 'public'` with t
 4. Add the `-- owner:` header. For a big-table `create index concurrently`, use a separate custom migration with a note, because each migration runs in a transaction.
 5. Locally: `DATABASE_URL=<scratch> npm run db:migrate` on a scratch cluster that has `test/supabase-stubs.sql` applied.
 6. Open a PR to `dev`. CI runs (§4.9). Call out the schema change in the PR description (AGENTS.md §6).
-7. **A person** runs `npm run db:drift` against staging, then `npm run db:migrate` there, then smoke-tests.
+7. (No staging, D11.) The local rehearsal in step 5 and CI stand in for it.
 8. **A person** runs `npm run db:drift` against prod (must be clean), then `npm run db:migrate` against prod.
 9. Code that depends on the new schema deploys **after** step 8. Additive changes go first; destructive ones need a two-step expand → contract.
 
@@ -287,7 +288,7 @@ The complete aafo catalog is already in hand (§2.2), so the baseline can be bui
    - The publication lines.
 4. **Build scratch DB A:** stubs + `0000`. Run `scripts/catalog.sql` on A and save the output.
 5. **Run the same query on prod aafo** (SQL editor, read-only) and save it to `introspection/aafo-<date>.txt`.
-6. **Compare with `check-drift.sh`**, which normalizes ordering, the `realtime.messages_*` partitions and grant lines that come from default privileges. **It must match exactly.** Any difference is fixed in `schema.ts` or `0000`, then repeat from step 2.
+6. **Compare with `check-drift.ts`**, which normalizes ordering, the `realtime.messages_*` partitions and grant lines that come from default privileges. **It must match exactly.** Any difference is fixed in `schema.ts` or `0000`, then repeat from step 2.
 7. **Check `schema.ts` against the baseline:** build scratch DB B from stubs + `drizzle-generated.sql` + the functions, trigger and publication; its tables, indexes and policies must equal A's.
 8. **Confirm no pending changes:** `npm run db:generate` must now report no changes.
 9. **Record the baseline on prod (a person):** run Appendix D once on aafo. It creates `drizzle.__drizzle_migrations` and inserts 0000's hash and timestamp.
@@ -426,6 +427,13 @@ All code changes follow AGENTS.md §3: branch → `dev`, with tests compared aga
 ---
 
 ## 8. Phases
+
+**Progress (2026-09-26):**
+- **Phase A: done.** `packages/db` scaffolded, with CI in `.github/workflows/db.yml`.
+- **Phase B, agent part: done.** Schema for all 28 persona tables. `0000` builds a database whose catalog matches every prod aafo entry that was checked: 103 constraints, 43 indexes, 72 policies, 4 functions with exact ACLs, trigger, publication, 112 grants and RLS flags. A byte-exact `db:drift` against a direct prod export is still the user's step.
+- **Phases C/D, migrations written:** `0001` (persona fix) and `0002`–`0004` (cards). `0002`–`0004` need pgvector to rehearse locally; CI runs them on `pgvector/pgvector:pg17`.
+- **Not done:** everything that applies to prod, the code in E, the cards-web login change in F, and G–I.
+
 
 Stop after each phase, report, and wait for an OK. **A** = agent, **U** = user. Nothing touches prod unless a person runs it.
 

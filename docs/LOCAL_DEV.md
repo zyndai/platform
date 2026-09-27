@@ -23,6 +23,63 @@ committed; no key is hard-coded anywhere in the code):
 | `services/cards-api/.env.example` | `services/cards-api/.env` |
 | `services/memory/.env.example` | `services/memory/.env` |
 
+## Env vars
+
+"Supabase" below means one Supabase project's values (Settings → API):
+the project URL, the anon key (public) and the service-role key (secret,
+backend only). Today that is aafo (prod); see the warning further down.
+
+### Minimum to boot everything
+
+| Where | Variable | Value locally |
+|---|---|---|
+| `apps/persona-web/.env.local` | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase URL + anon key |
+| | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` |
+| | `NEXT_PUBLIC_MEMORY_API_URL` | `http://localhost:8001` |
+| `apps/cards-web/.env.local` | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase URL + anon key |
+| | `SUPABASE_SERVICE_ROLE_KEY` | service-role key (server-side only) |
+| | `NEXT_PUBLIC_API_URL` | `http://localhost:8002` (cards-api) |
+| | `NEXT_PUBLIC_ZYND_API_URL` | `http://localhost:8001` (memory: token exchange, findability) |
+| | `NEXT_PUBLIC_SITE_URL` | `http://localhost:3002` |
+| `services/persona-api/.env` | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY` | Supabase URL + both keys |
+| | `FRONTEND_URL`, `PUBLIC_PAGE_BASE_URL` | `http://localhost:3000` |
+| | `MEMORY_LAYER_URL` | `http://localhost:8001` |
+| | `MEMORY_LAYER_JWT_SECRET` | **same value as memory's `JWT_SECRET`** |
+| | one LLM: `LLM_PROVIDER` + its key (`OPENAI_API_KEY`, or `OPENROUTER_API_KEY` + `OPENROUTER_MODEL`, or `GEMINI_API_KEY`, …) | your key |
+| `services/cards-api/.env` | `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | Supabase URL + service-role key |
+| | `SUPABASE_DB_SCHEMA` | `cards` on aafo (once the cards migrations are applied); `public` on the old xmfj project |
+| | `SUPABASE_JWT_SECRET` | the project's legacy JWT secret (only for old HS256 tokens; can stay empty) |
+| | `OPENROUTER_API_KEY` (+ optional `OPENROUTER_MODEL`), `OPENAI_API_KEY` (embeddings for search) | your keys |
+| | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_AI_KEY` | only for the profile chat widget (Workers AI) |
+| | `FRONTEND_URL`, `SITE_BASE_URL`, `API_BASE_URL` | `http://localhost:3002`, `http://localhost:3002`, `http://localhost:8002` |
+| | `MEMORY_LAYER_URL`, `MEMORY_SERVICE_TOKEN` | `http://localhost:8001`, **same value as memory's `MEMORY_SERVICE_TOKEN`** |
+| `services/memory/.env` | `DATABASE_URL`, `REDIS_URL` | defaults already match `npm run dev:infra` (`localhost:5433`, `localhost:6380`) |
+| | `JWT_SECRET`, `MEMORY_SERVICE_TOKEN` | any random strings, shared with persona-api / cards-api as above |
+| | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY` | Supabase values: memory verifies Supabase logins (`/token/exchange`) and reads `persona_agents` |
+| | `PERSONA_ENABLED` | `true` to turn on the persona-network features (link, connect, message); off by default |
+| | `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` | embeddings + fact extraction (or `MOCK_LLM=true` to skip both) |
+| | `PUBLIC_BASE_URL`, `MCP_PUBLIC_BASE_URL` | `http://localhost:8001`, `http://localhost:8090` |
+| | `CORS_ORIGINS` | add `http://localhost:3002`: the default only allows `:3000` |
+| | `ENABLE_DEV_BEARER=true`, `DEV_BEARER_TOKEN` | optional: call memory's API with a static token while developing |
+| `packages/db` | `DATABASE_URL` | only when running migrations; session-pooler URL, port 5432 |
+| `infra/local` | none | Postgres/Redis credentials are fixed (`zynd`/`zynd`) |
+
+**Values that must match across services:** persona-api `MEMORY_LAYER_JWT_SECRET` = memory `JWT_SECRET`;
+cards-api `MEMORY_SERVICE_TOKEN` = memory `MEMORY_SERVICE_TOKEN`.
+
+### Optional, per feature
+
+Everything else in the `.env.example` files turns on one integration and
+can stay empty until you work on it: Google/LinkedIn/Twitter/GitHub/Notion
+OAuth apps (persona-api, memory), Telegram (`TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_WEBHOOK_SECRET`), enrichment (`QUICKENRICH_*`, `APIFY_*`), web
+search (`EXA_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`), the X bot
+(`X_*`), SEO pings (`INDEXNOW_KEY`, `BING_*`), analytics
+(`NEXT_PUBLIC_GA_ID`, `NEXT_PUBLIC_ANALYTICS_ID`) and the Zynd network
+(`ZYND_*`, `NGROK_AUTH_TOKEN`). OAuth logins in the browser also need
+`http://localhost:3000/**` and `http://localhost:3002/**` in the Supabase
+project's Auth redirect URLs.
+
 ## Run
 
 ```bash

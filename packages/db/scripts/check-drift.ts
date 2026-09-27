@@ -102,10 +102,17 @@ async function buildScratch(serverUrl: string, upto: Record<string, string>): Pr
 
   const work = mkdtempSync(join(tmpdir(), 'zynd-drift-'));
   try {
+    // The stubs set the database's search_path (adding `extensions`, where
+    // `vector` lives). That only applies to NEW sessions, so load them on one
+    // connection and migrate on a fresh one, as Supabase and CI do.
+    const stubs = new pg.Client({ connectionString: dbUrl.toString() });
+    await stubs.connect();
+    await stubs.query(readFileSync(join(root, 'test/supabase-stubs.sql'), 'utf8'));
+    await stubs.end();
+
     const client = new pg.Client({ connectionString: dbUrl.toString() });
     await client.connect();
     try {
-      await client.query(readFileSync(join(root, 'test/supabase-stubs.sql'), 'utf8'));
       for (const { name } of HISTORIES) {
         // Copy the history so --upto can trim its journal without touching the repo.
         const folder = join(work, name);

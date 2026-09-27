@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1790431248410,
+      "tag": "0000_cards_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790431277839,
+      "tag": "0001_cards_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790431288763,
+      "tag": "0002_cards_search_functions",
+      "breakpoints": true
+    }
+  ]
+}

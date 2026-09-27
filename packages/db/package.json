@@ -1,0 +1,31 @@
+{
+  "name": "@zynd/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Migrations for the shared aafo database: three independent histories (identity, persona, cards), one per Postgres schema. See README.md.",
+  "type": "module",
+  "scripts": {
+    "persona:generate": "drizzle-kit generate --config persona/drizzle.config.ts",
+    "persona:generate:custom": "drizzle-kit generate --config persona/drizzle.config.ts --custom",
+    "cards:generate": "drizzle-kit generate --config cards/drizzle.config.ts",
+    "cards:generate:custom": "drizzle-kit generate --config cards/drizzle.config.ts --custom",
+    "identity:generate": "drizzle-kit generate --config identity/drizzle.config.ts",
+    "identity:generate:custom": "drizzle-kit generate --config identity/drizzle.config.ts --custom",
+    "db:check": "drizzle-kit check --config identity/drizzle.config.ts && drizzle-kit check --config persona/drizzle.config.ts && drizzle-kit check --config cards/drizzle.config.ts",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:drift": "tsx scripts/check-drift.ts",
+    "db:baseline-sql": "tsx scripts/baseline-sql.ts",
+    "db:lint": "bash scripts/lint-migrations.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "@types/pg": "8.23.1",
+    "dotenv": "18.0.4",
+    "drizzle-kit": "0.31.11",
+    "drizzle-orm": "0.45.3",
+    "pg": "8.23.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,4 +1,7 @@
 # Root directories and files to exclude
+# The root package.json is a script runner, not a workspace: a root lockfile
+# would change Next.js's project-root detection for apps/*. Install per app.
+/package-lock.json
 /.zyndai-agent/
 /supabase/
 /out.txt

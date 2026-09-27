@@ -25,7 +25,8 @@ against multiple server versions).
 | `services/memory` | Shared context layer — ingest, matching, MCP server, OAuth for ChatGPT/Claude/Cursor | FastAPI / Python | https://api.zynd.ai |
 | `infra/persona-box` | pm2 process configs for the persona server | — | — |
 | `infra/api-box` | Caddy + Docker Compose for the cards/memory server | — | — |
-| `packages/` | Shared DB migrations / API contracts. **Planned, not built yet.** | — | — |
+| `packages/db` | Migrations for the shared aafo database (Drizzle), one history per Postgres schema: identity, persona (`public`), cards. See its README | — | — |
+| `packages/contracts` | Shared API contracts. **Planned, not built yet.** | — | — |
 
 Each service came from its own repo (`agent-persona`, `zynd-cards`,
 `memory-layer`) and was merged in with full git history — `git log --follow
@@ -152,3 +153,7 @@ side effect of an unrelated change:
   which plans are active vs. superseded.
 - Per-service `CLAUDE.md`/`AGENTS.md`/`README.md` inside `apps/*` and
   `services/*` — stack-specific conventions.
+
+## Running locally
+
+`npm run setup`, then `npm run dev` from the repo root. Ports, env files and where the data lives: [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md).

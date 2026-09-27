@@ -6,8 +6,7 @@
     "dev": "next dev -H 127.0.0.1",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "db:policies": "psql \"$DIRECT_URL\" -f db/sql/policies.sql"
+    "lint": "eslint"
   },
   "dependencies": {
     "@dicebear/collection": "^9.4.2",

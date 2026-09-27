@@ -10,6 +10,11 @@ load_dotenv(_env_path)
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "http://127.0.0.1:54321")
 SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
 SUPABASE_JWT_SECRET: str = os.getenv("SUPABASE_JWT_SECRET", "")
+# Postgres schema holding the cards tables and RPC functions. "public" on the
+# dashboard project (xmfj) today; "cards" once cards runs on the shared aafo
+# database (packages/db/cards). The schema must be listed in the project's
+# API "Exposed schemas" setting.
+SUPABASE_DB_SCHEMA: str = os.getenv("SUPABASE_DB_SCHEMA") or "public"
 
 # Unowned cards published after claim tokens shipped can only be claimed with
 # the one-time token returned at publish. Cards published before that have no
@@ -64,9 +69,13 @@ MEMORY_REFRESH_INTERVAL_HOURS: int = int(os.getenv("MEMORY_REFRESH_INTERVAL_HOUR
 def _get_supabase():
     global _sb_service
     if _sb_service is None:
-        from supabase import create_client
+        from supabase import ClientOptions, create_client
 
-        _sb_service = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        _sb_service = create_client(
+            SUPABASE_URL,
+            SUPABASE_SERVICE_KEY,
+            options=ClientOptions(schema=SUPABASE_DB_SCHEMA),
+        )
     return _sb_service
 
 

@@ -38,7 +38,8 @@ If a task mentions either of those by name, it's the wrong repo.
 | `services/memory` | Shared context/memory layer: ingest, matching, MCP server, OAuth for AI clients | FastAPI / Python | api.zynd.ai |
 | `infra/persona-box` | pm2 configs for the box running persona-api + persona-web | — | — |
 | `infra/api-box` | Caddy + docker-compose for the box running cards-api + memory | — | — |
-| `packages/` | Shared code (DB migrations, contracts). **Planned, not built yet.** | — | — |
+| `packages/db` | **All migrations** for the shared aafo database, Drizzle: one independent history per Postgres schema (identity / persona=`public` / cards) — read its `README.md` before any schema change | TypeScript / Drizzle | — |
+| `packages/contracts` | Shared API contracts. **Planned, not built yet.** | — | — |
 | `docs/plans` | Architecture and migration plans behind this repo — start with `docs/plans/README.md` | — | — |
 
 **History is preserved.** Each service was merged in with `git filter-repo`,
@@ -73,10 +74,21 @@ its life as a standalone repo, not just the merge date.
   It is reached **only** over its HTTP API — never open a direct DB
   connection to it from persona-api or cards-api, and never assume its
   tables live in the same database as persona/cards.
-- There is no single migrations folder yet (`packages/db` is planned but not
-  built). Until it exists, **coordinate any schema change with whoever owns
-  the other services** before merging — don't assume your migration is the
-  only one in flight.
+- **Postgres schemas are the boundary.** persona's tables are in `public`,
+  cards' in `cards`, and the one shared layer (future Zynd Account) in
+  `identity`. Each schema has its own independent migration history in
+  `packages/db/<history>/` (Drizzle), so a persona change never touches cards'
+  history and vice versa. Cross-schema FKs and joins still work.
+- **Every schema change is a migration there.** Not the SQL editor, not a
+  `.sql` file inside a service: the old SQL folders are frozen. Follow
+  `packages/db/README.md`; `packages/db/OWNERS.md` says whose review a table
+  needs.
+- **There is no staging database.** dev.persona.zynd.ai uses prod aafo, so a
+  migration applied anywhere is live everywhere. Rehearse locally, keep
+  migrations expand-only, and apply them only on a human's say-so (§6).
+- `services/memory` also *reads* aafo (`persona_agents`,
+  `search_personas_fts`) with the service key. Changes to those need
+  memory's owner in the loop.
 
 ## 5. Testing — before *and* after every change
 
@@ -122,8 +134,15 @@ Current state:
 - ❌ **Nothing has been deployed from this checkout yet** — prod and dev
   servers for cards and memory still run the old standalone repos. Don't
   trust `infra/` as a description of what's currently live; it's the target.
-- ❌ `packages/db`, `packages/contracts`, CI, and a shared Supabase project
-  for cards are not started.
+- 🟡 `packages/db` built (2026-09-27): identity `0000`; persona `0000`
+  (baseline of prod aafo, verified) and `0001` (security fix); cards
+  `0000`–`0002`; CI workflow. **Nothing applied to prod yet**: persona's
+  baseline still has to be recorded there and the rest applied. See
+  `docs/plans/ZYND_DB_UNIFY_PLAN.md` §8.
+- ✅ Root runner: `npm run setup`, `npm run dev`, `npm test` from the repo
+  root (`docs/LOCAL_DEV.md`).
+- ❌ `packages/contracts` is not started. Cards still runs on the dashboard's
+  Supabase project (xmfj) until the cutover in that plan.
 
 If a task depends on any of the above being finished, check with a
 maintainer rather than assuming the repo layout matches the live servers.

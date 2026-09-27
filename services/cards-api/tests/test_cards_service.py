@@ -215,3 +215,38 @@ def test_merge_scraped_posts_skips_thin_and_html():
     merged = cards_service.merge_scraped_posts(llm, x_posts, None)
     assert len(merged) == 1
     assert merged[0].excerpt == "Cookie got a facelift. Its agent & LLM friendly."
+
+# ── owner_user_id only where the column exists (aafo's cards schema) ─────────
+
+@pytest.mark.parametrize("writes, expected", [(False, None), (True, "sub-aafo")])
+def test_insert_card_sends_owner_user_id_only_on_cards_schema(monkeypatch, writes, expected):
+    """xmfj's agent_profile_cards has no owner_user_id column; sending it there
+    makes PostgREST reject the whole publish."""
+    sb = MagicMock()
+    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(cards_service.config, "WRITES_OWNER_USER_ID", writes)
+    monkeypatch.setattr(cards_service, "_assign_handle", lambda *a: "alice")
+    monkeypatch.setattr(cards_service.embed, "card_search_text", lambda card: "t")
+    monkeypatch.setattr(cards_service.embed, "embed_text", lambda text: [0.1])
+
+    cards_service.insert_card(_card(), None, None, owner_email="a@x.io", owner_user_id="sub-aafo")
+
+    row = sb.table.return_value.upsert.call_args.args[0]
+    assert row.get("owner_user_id") == expected
+    assert ("owner_user_id" in row) is writes
+
+
+@pytest.mark.parametrize("writes", [False, True])
+def test_update_card_sends_owner_user_id_only_on_cards_schema(mock_sb, monkeypatch, writes):
+    mock_sb._rows = [{"owner_email": "alice@example.com"}]
+    monkeypatch.setattr(cards_service.config, "WRITES_OWNER_USER_ID", writes)
+
+    ok, _ = cards_service.update_card("alice", _card(), "Alice@Example.com", owner_user_id="sub-aafo")
+
+    assert ok  # owner match is case-insensitive
+    assert ("owner_user_id" in mock_sb.payload) is writes
+
+
+def test_like_literal_and_postgrest_quote_escape_special_characters():
+    assert cards_service._like_literal("a_b%c@x.io") == "a\\_b\\%c@x.io"
+    assert cards_service._postgrest_quote('evil,handle.eq.x"') == '"evil,handle.eq.x\\""'

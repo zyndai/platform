@@ -48,7 +48,8 @@ const SANS = "var(--zc-sans), system-ui, -apple-system, sans-serif";
 const DISPLAY = "var(--zc-display), system-ui, sans-serif";
 const MONO = "var(--zc-mono), ui-monospace, monospace";
 
-type Phase   = "form" | "working" | "review" | "error";
+// "exists": publish found a card this person (or these GitHub/X handles) already has.
+type Phase   = "form" | "working" | "review" | "error" | "exists";
 type UrlKind = "github" | "x" | "linkedin" | "website";
 
 // ─── source palette (small colour square per source, per the design) ─────────
@@ -378,6 +379,7 @@ function CreateProfilePageContent() {
   // Set once publishing succeeds — flips the review column into the
   // post-publish "claim your card" screen.
   const [published, setPublished] = useState<string | null>(null);
+  const [existsHandle, setExistsHandle] = useState<string | null>(null);
   const [memoryStep, setMemoryStep] = useState<"ask" | "done">("ask");
   const [copied, setCopied] = useState(false);
   const [urlWarnings, setUrlWarnings] = useState<ScrapeWarning[]>([]);
@@ -673,6 +675,13 @@ function CreateProfilePageContent() {
       });
       if (!res.ok) throw new Error((await res.text()) || `Status ${res.status}`);
       const publishedCard = await res.json();
+      // One card per person: the API returns {existing, handle} instead of
+      // creating a second card for the same owner or the same GitHub/X handles.
+      if (publishedCard.existing) {
+        setExistsHandle(publishedCard.handle);
+        setPhase("exists");
+        return;
+      }
       const publishedHandle = publishedCard.handle || publishedCard.id;
       // Anonymous publish: the API returns a one-time claim token, required to
       // take ownership after signing in (sent as X-Claim-Token).
@@ -1181,10 +1190,6 @@ function CreateProfilePageContent() {
                       style={{ background: T.surface, color: T.ink, border: `1px solid ${T.border}`, borderRadius: "18px", padding: "16px 22px", font: `500 15px/1 ${SANS}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", textDecoration: "none" }}>
                       View profile <span>↗</span>
                     </a>
-                    <button type="button" onClick={() => setExistingHandle(null)}
-                      style={{ background: "none", border: "none", padding: "8px 0", font: `400 13px/1 ${SANS}`, color: T.faint, cursor: "pointer", textAlign: "left" }}>
-                      Create a new profile instead →
-                    </button>
                     </div>
                   </div>
                   )}
@@ -1510,6 +1515,32 @@ function CreateProfilePageContent() {
                   </div>
                 );
               })()}
+
+              {/* ── EXISTS: publish found a card this person already has ── */}
+              {phase === "exists" && existsHandle && (
+                <div className="zc-card zc-step-card" style={{ padding: "30px", display: "flex", flexDirection: "column", gap: "18px", justifyContent: "center", alignItems: "flex-start" }}>
+                  <div className="zc-question" style={{ maxWidth: "520px" }}>
+                    {authenticated ? "You already have a card." : "This profile already has a card."}
+                  </div>
+                  <p style={{ font: `400 15px/1.65 ${SANS}`, color: T.soft, maxWidth: "460px", textWrap: "pretty", margin: 0 }}>
+                    {authenticated
+                      ? "Each person has one card, so this one wasn't published. Edit your existing card to add anything new."
+                      : "A card for this GitHub or X profile already exists. If it's yours, open it and sign in with LinkedIn to claim it."}
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px", width: "100%", maxWidth: "400px" }}>
+                    {authenticated && (
+                      <a href={`/p/${existsHandle}/edit`} className="zc-cta"
+                        style={{ background: T.accent, color: "#fff", borderRadius: "18px", padding: "18px 22px", font: `600 15px/1 ${DISPLAY}`, display: "flex", alignItems: "center", justifyContent: "space-between", textDecoration: "none", letterSpacing: "-.01em" }}>
+                        Edit my card <span style={{ font: `400 16px/1 ${SANS}` }}>→</span>
+                      </a>
+                    )}
+                    <a href={`/p/${existsHandle}`} className="zc-ghost"
+                      style={{ background: T.surface, color: T.ink, border: `1px solid ${T.border}`, borderRadius: "18px", padding: "16px 22px", font: `500 15px/1 ${SANS}`, display: "flex", alignItems: "center", justifyContent: "space-between", textDecoration: "none" }}>
+                      {authenticated ? "View my card" : "Open the card"} <span>↗</span>
+                    </a>
+                  </div>
+                </div>
+              )}
 
               {/* ── ERROR ── */}
               {phase === "error" && (

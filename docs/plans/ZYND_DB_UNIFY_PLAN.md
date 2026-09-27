@@ -349,12 +349,12 @@ All code changes follow AGENTS.md §3: branch → `dev`, with tests compared aga
 
 ## 8. Phases
 
-**Progress (2026-09-27):**
-- **Phase A: done.** `packages/db` with three histories (D14), CI in `.github/workflows/db.yml`, root runner and local-dev docs (D15).
-- **Phase B, agent part: done.** persona's `0000` builds a database whose catalog matches every prod aafo entry that was checked: 103 constraints, 43 indexes, 72 policies, 4 functions with exact ACLs, trigger, publication, 112 grants and RLS flags. A byte-exact `db:drift` against a fresh prod export is still the user's step.
-- **Phases C/D, migrations written:** persona `0001` (fix) and cards `0000`–`0002`. The cards history needs pgvector, which isn't installed on the dev Mac; CI runs it on `pgvector/pgvector:pg17`.
-- **Hotfix pending (user):** record persona's baseline and apply `0001` on prod aafo. `zyndai/platform` is public and the exposure is described in pushed docs, so nothing more is pushed until it's live.
-- **Not done:** everything else that touches prod, the rest of E, the cards-web login change in F, and G–I.
+**Progress (2026-09-28):**
+- **A, B, C: done.** persona's baseline recorded on prod and `0001` applied; the anon key can no longer read `persona_agents` (checked 2026-09-28).
+- **D: done on prod.** identity and cards histories applied; `cards` is in the API's exposed schemas (an anon request gets "permission denied for schema cards", as designed).
+- **E: code done** (`0f164d6`, fixes in the verification commit after it): cards-api and memory trust both projects, `owner_user_id` is written only once cards-api points at the `cards` schema (`WRITES_OWNER_USER_ID`), maintenance switch, one-card-per-owner publish. **Not deployed:** set `TRUSTED_SUPABASE_URLS`, `AAFO_ISSUER` (cards-api) and `TRUSTED_SUPABASE_PROJECTS` (memory), then deploy.
+- **F: code done** (`a7774d0`, `5adf726`, and the `exists` screen): cards-web is LinkedIn-only, avatar uploads go under the user's own folder, and a duplicate publish shows a proper screen. On aafo the `avatars` bucket exists. **Not verified from here:** the aafo Auth redirect URLs, the bucket's upload policy, and the Vercel project/env (preview deploy).
+- **Not done:** G (copy scripts + rehearsal), H (cutover), I (cleanup).
 
 Stop after each phase, report, and wait for an OK. **A** = agent, **U** = user. Nothing touches prod unless a person runs it.
 

@@ -315,3 +315,21 @@ def test_maintenance_mode_off_by_default_allows_writes(monkeypatch):
 
     client = TestClient(app)
     assert client.post("/x").status_code == 200
+
+
+def test_maintenance_503_carries_cors_headers():
+    """The real app wraps the maintenance switch in CORS, so a browser sees the
+    503 message rather than a CORS failure."""
+    import main as main_module
+
+    old = main_module.config.MAINTENANCE_READONLY
+    main_module.config.MAINTENANCE_READONLY = True
+    try:
+        client = TestClient(main_module.app)
+        origin = main_module.config.FRONTEND_URL
+        resp = client.post("/cards/anything/refresh-memory", headers={"Origin": origin})
+        assert resp.status_code == 503
+        assert resp.headers.get("access-control-allow-origin") == origin
+    finally:
+        main_module.config.MAINTENANCE_READONLY = old
+

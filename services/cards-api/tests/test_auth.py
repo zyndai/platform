@@ -74,17 +74,34 @@ def test_unmatched_issuer_falls_back_to_hs256_and_fails_without_secret(monkeypat
 
 
 def test_unmatched_issuer_falls_back_to_hs256_legacy_secret(monkeypatch):
+    # The legacy secret belongs to SUPABASE_URL's project; its tokens carry that issuer.
     monkeypatch.setattr(config, "TRUSTED_SUPABASE_URLS", ["https://aafo.example"])
+    monkeypatch.setattr(config, "SUPABASE_URL", "https://xmfj.example")
     monkeypatch.setattr(config, "SUPABASE_JWT_SECRET", "legacy-secret")
     legacy_token = jwt.encode(
-        {"email": "legacy@example.com", "sub": "sub-legacy", "iss": "https://untrusted.example/auth/v1"},
+        {"email": "legacy@example.com", "sub": "sub-legacy", "iss": "https://xmfj.example/auth/v1"},
         "legacy-secret",
         algorithm="HS256",
     )
 
     principal = verify_supabase_jwt(f"Bearer {legacy_token}")
 
-    assert principal == Principal(email="legacy@example.com", sub="sub-legacy", iss="https://untrusted.example/auth/v1")
+    assert principal == Principal(email="legacy@example.com", sub="sub-legacy", iss="https://xmfj.example/auth/v1")
+
+
+def test_hs256_legacy_token_claiming_another_projects_issuer_is_rejected(monkeypatch):
+    """A legacy-secret token must not be able to pose as aafo (whose `sub` gets
+    stamped into owner_user_id)."""
+    monkeypatch.setattr(config, "TRUSTED_SUPABASE_URLS", ["https://xmfj.example"])
+    monkeypatch.setattr(config, "SUPABASE_URL", "https://xmfj.example")
+    monkeypatch.setattr(config, "SUPABASE_JWT_SECRET", "legacy-secret")
+    forged = jwt.encode(
+        {"email": "mallory@example.com", "sub": "sub-x", "iss": "https://aafo.example/auth/v1"},
+        "legacy-secret",
+        algorithm="HS256",
+    )
+
+    assert verify_supabase_jwt(f"Bearer {forged}") is None
 
 
 def test_no_or_malformed_authorization_header_returns_none():

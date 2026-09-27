@@ -33,6 +33,12 @@ AAFO_ISSUER: str = os.getenv("AAFO_ISSUER", "")
 # unify plan). POST/PATCH/PUT/DELETE return 503; reads keep working.
 MAINTENANCE_READONLY: bool = os.getenv("MAINTENANCE_READONLY", "false").lower() in ("1", "true", "yes")
 
+# owner_user_id exists only on aafo (cards.agent_profile_cards), not on xmfj's
+# public.agent_profile_cards. Until the cutover switches SUPABASE_DB_SCHEMA to
+# "cards", never send it: PostgREST rejects writes naming an unknown column.
+# Cards written before then get owner_user_id from the cutover backfill (by email).
+WRITES_OWNER_USER_ID: bool = SUPABASE_DB_SCHEMA == "cards"
+
 # Unowned cards published after claim tokens shipped can only be claimed with
 # the one-time token returned at publish. Cards published before that have no
 # token; set LEGACY_UNOWNED_CLAIM=true to let the first signed-in editor claim

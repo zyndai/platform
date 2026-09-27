@@ -87,8 +87,10 @@ def verify_supabase_jwt(authorization: str | None) -> Principal | None:
         except Exception:
             pass  # kid not in JWKS or wrong alg — try HS256 fallback
 
-    # HS256 fallback — legacy shared secret, pinned to whichever single
-    # project that secret belongs to (not multi-issuer).
+    # HS256 fallback — legacy shared secret. It belongs to one project
+    # (SUPABASE_URL), so the token's issuer must be that project's; otherwise
+    # a legacy token could claim another project's issuer (e.g. aafo's) and
+    # get its `sub` stamped into owner_user_id.
     if not config.SUPABASE_JWT_SECRET:
         logger.error("no trusted issuer matched and SUPABASE_JWT_SECRET not configured")
         return None
@@ -97,6 +99,7 @@ def verify_supabase_jwt(authorization: str | None) -> Principal | None:
             token,
             config.SUPABASE_JWT_SECRET,
             algorithms=["HS256"],
+            issuer=f"{config.SUPABASE_URL.rstrip('/')}/auth/v1",
             options={"verify_aud": False},
         )
         email = payload.get("email")

@@ -323,8 +323,9 @@ def insert_card(
         "user_intent": user_intent,
         "owner_email": owner_email,
         "claim_token_hash": None if owner_email else claim_token_hash,
-        "owner_user_id": owner_user_id,
     }
+    if owner_user_id and config.WRITES_OWNER_USER_ID:
+        row["owner_user_id"] = owner_user_id
     sb.table("agent_profile_cards").upsert(row, on_conflict="id").execute()
     return handle
 
@@ -335,7 +336,7 @@ def get_card_by_owner(email: str) -> tuple[AgentProfileCard, str] | None:
     resp = (
         sb.table("agent_profile_cards")
         .select("card,handle")
-        .eq("owner_email", email)
+        .ilike("owner_email", _like_literal(email))
         .order("created_at", desc=True)
         .limit(1)
         .execute()
@@ -344,6 +345,18 @@ def get_card_by_owner(email: str) -> tuple[AgentProfileCard, str] | None:
     if not rows:
         return None
     return _row_to_card(rows[0]), rows[0]["handle"]
+
+
+def _like_literal(value: str) -> str:
+    """Escape LIKE wildcards so ilike() is a case-insensitive exact match
+    (emails often contain `_`, which LIKE would treat as "any character")."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _postgrest_quote(value: str) -> str:
+    """Quote a value inside a PostgREST or() filter so commas, dots or
+    parentheses in it can't change the filter's meaning."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def get_card_by_social_handle(handle_github: str | None, handle_x: str | None) -> tuple[AgentProfileCard, str] | None:
@@ -357,9 +370,9 @@ def get_card_by_social_handle(handle_github: str | None, handle_x: str | None) -
     sb = config.get_supabase()
     filters = []
     if handle_github:
-        filters.append(f"handle_github.eq.{handle_github}")
+        filters.append(f"handle_github.eq.{_postgrest_quote(handle_github)}")
     if handle_x:
-        filters.append(f"handle_x.eq.{handle_x}")
+        filters.append(f"handle_x.eq.{_postgrest_quote(handle_x)}")
     resp = (
         sb.table("agent_profile_cards")
         .select("card,handle")
@@ -433,7 +446,7 @@ def update_card(
     }
     if not stored_owner:
         update_payload["claim_token_hash"] = None
-    if owner_user_id:
+    if owner_user_id and config.WRITES_OWNER_USER_ID:
         update_payload["owner_user_id"] = owner_user_id
     if effective_handle != handle:
         update_payload["handle"] = effective_handle

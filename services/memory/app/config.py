@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     # Supabase access token server-side before issuing a ZYND token.
     supabase_url: str = ""
     supabase_anon_key: str = ""
+    # Supabase project(s) whose tokens memory trusts, "url|anon_key" pairs
+    # comma-separated. Empty (default) falls back to supabase_url/supabase_anon_key
+    # alone — single-project behavior unchanged. During the aafo migration this
+    # holds both xmfj and aafo so cards-web/persona-web sessions from either work.
+    trusted_supabase_projects: str = ""
     # Persona network integration (agent-persona backend). service_key authenticates
     # service-to-service calls + Supabase PostgREST reads of dm_threads (D3).
     persona_base_url: str = "https://persona.zynd.ai"
@@ -92,6 +97,18 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def trusted_supabase_project_list(self) -> list[tuple[str, str]]:
+        if not self.trusted_supabase_projects:
+            return [(self.supabase_url, self.supabase_anon_key)] if self.supabase_url else []
+        pairs: list[tuple[str, str]] = []
+        for entry in self.trusted_supabase_projects.split(","):
+            entry = entry.strip()
+            if "|" in entry:
+                url, key = entry.split("|", 1)
+                pairs.append((url.strip(), key.strip()))
+        return pairs
 
     # M5 matching gates (brief §6.1).
     match_min_assertions: int = 5   # data-quality floor: skip thin profiles

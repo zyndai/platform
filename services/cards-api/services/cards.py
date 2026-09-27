@@ -299,6 +299,7 @@ def insert_card(
     owner_email: str | None = None,
     custom_handle: str | None = None,
     claim_token_hash: str | None = None,
+    owner_user_id: str | None = None,
 ) -> str:
     handle = (
         _try_custom_handle(custom_handle, card.id)
@@ -322,6 +323,7 @@ def insert_card(
         "user_intent": user_intent,
         "owner_email": owner_email,
         "claim_token_hash": None if owner_email else claim_token_hash,
+        "owner_user_id": owner_user_id,
     }
     sb.table("agent_profile_cards").upsert(row, on_conflict="id").execute()
     return handle
@@ -344,12 +346,42 @@ def get_card_by_owner(email: str) -> tuple[AgentProfileCard, str] | None:
     return _row_to_card(rows[0]), rows[0]["handle"]
 
 
+def get_card_by_social_handle(handle_github: str | None, handle_x: str | None) -> tuple[AgentProfileCard, str] | None:
+    """Return (card, handle) for the most recent published card matching either handle.
+
+    Used by onboard.py's publish_card to detect an anonymous re-publish of the
+    same identity so it never forks a second card (get_card_by_owner is the
+    equivalent check for a signed-in publish)."""
+    if not handle_github and not handle_x:
+        return None
+    sb = config.get_supabase()
+    filters = []
+    if handle_github:
+        filters.append(f"handle_github.eq.{handle_github}")
+    if handle_x:
+        filters.append(f"handle_x.eq.{handle_x}")
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("card,handle")
+        .eq("status", "published")
+        .or_(",".join(filters))
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    rows = resp.data or []
+    if not rows:
+        return None
+    return _row_to_card(rows[0]), rows[0]["handle"]
+
+
 def update_card(
     handle: str,
     card: AgentProfileCard,
     owner_email: str,
     new_handle: str | None = None,
     claim_token: str | None = None,
+    owner_user_id: str | None = None,
 ) -> tuple[bool, str]:
     """Update a published card in-place after verifying ownership.
 
@@ -371,7 +403,7 @@ def update_card(
     if not check.data:
         return False, handle
     stored_owner = check.data[0].get("owner_email")
-    if stored_owner and stored_owner != owner_email:
+    if stored_owner and stored_owner.lower() != owner_email.lower():
         return False, handle
     if not stored_owner and not can_claim(check.data[0].get("claim_token_hash"), claim_token):
         logger.warning("claim refused handle=%s (missing or wrong claim token)", handle)
@@ -401,6 +433,8 @@ def update_card(
     }
     if not stored_owner:
         update_payload["claim_token_hash"] = None
+    if owner_user_id:
+        update_payload["owner_user_id"] = owner_user_id
     if effective_handle != handle:
         update_payload["handle"] = effective_handle
 

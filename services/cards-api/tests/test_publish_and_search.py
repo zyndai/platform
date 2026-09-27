@@ -8,8 +8,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import config
 from api import cards as cards_api
 from api import onboard as onboard_api
+from api.auth import Principal
 from models.card import AgentProfileCard
 from services import cards as cards_service
 from services import search as search_service
@@ -35,19 +37,23 @@ def publish_client(monkeypatch):
 
     captured = {}
 
-    def fake_insert(card, gh, x, raw, intent, owner_email, custom_handle, claim_token_hash=None):
-        captured.update(owner_email=owner_email, claim_token_hash=claim_token_hash)
+    def fake_insert(card, gh, x, raw, intent, owner_email, custom_handle, claim_token_hash=None, owner_user_id=None):
+        captured.update(owner_email=owner_email, claim_token_hash=claim_token_hash, owner_user_id=owner_user_id)
         return "alice"
 
     monkeypatch.setattr(onboard_api.cards_service, "insert_card", fake_insert)
+    # No existing card for anyone in these tests — the dedup lookups always miss.
+    monkeypatch.setattr(onboard_api.cards_service, "get_card_by_owner", lambda email: None)
+    monkeypatch.setattr(onboard_api.cards_service, "get_card_by_social_handle", lambda gh, x: None)
 
     async def no_hooks(*_a, **_k):
         return None
 
     monkeypatch.setattr(onboard_api.hooks, "run_publish_hooks", no_hooks)
+    monkeypatch.setattr(config, "AAFO_ISSUER", "https://aafo.example/auth/v1")
     monkeypatch.setattr(
         onboard_api, "verify_supabase_jwt",
-        lambda auth: "alice@example.com" if auth == "Bearer good" else None,
+        lambda auth: Principal("alice@example.com", "sub-alice", "https://aafo.example/auth/v1") if auth == "Bearer good" else None,
     )
     app = FastAPI()
     app.include_router(onboard_api.router, prefix="/onboard")
@@ -78,6 +84,46 @@ def test_publish_takes_owner_from_the_session(publish_client):
     assert "claim_token" not in resp.json()
 
 
+def test_publish_stamps_owner_user_id_only_for_aafo_sessions(publish_client):
+    client, captured = publish_client
+    body = {"card": _card_json()}
+
+    client.post("/onboard/j1/publish", json=body, headers={"Authorization": "Bearer good"})
+
+    assert captured["owner_user_id"] == "sub-alice"
+
+
+def test_publish_refuses_to_recreate_an_existing_owned_card(publish_client, monkeypatch):
+    client, captured = publish_client
+    monkeypatch.setattr(
+        onboard_api.cards_service, "get_card_by_owner",
+        lambda email: (AgentProfileCard.model_validate(_card_json()), "alice") if email == "alice@example.com" else None,
+    )
+    body = {"card": _card_json()}
+
+    resp = client.post("/onboard/j1/publish", json=body, headers={"Authorization": "Bearer good"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"existing": True, "handle": "alice"}
+    assert captured == {}  # insert_card never called
+
+
+def test_anonymous_publish_refuses_to_recreate_a_matching_handle(publish_client, monkeypatch):
+    client, captured = publish_client
+    onboard_api.get_job("j1").handle_github = "octocat"
+    monkeypatch.setattr(
+        onboard_api.cards_service, "get_card_by_social_handle",
+        lambda gh, x: (AgentProfileCard.model_validate(_card_json()), "octo") if gh == "octocat" else None,
+    )
+    body = {"card": _card_json()}
+
+    resp = client.post("/onboard/j1/publish", json=body)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"existing": True, "handle": "octo"}
+    assert captured == {}
+
+
 # ── Refresh endpoints need a real owner ──────────────────────────────
 
 class _Rows:
@@ -103,7 +149,10 @@ def cards_client(monkeypatch):
     sb = MagicMock()
     sb.table.return_value = rows
     monkeypatch.setattr(cards_api.config, "get_supabase", lambda: sb)
-    monkeypatch.setattr(cards_api, "verify_supabase_jwt", lambda auth: "mallory@example.com" if auth else None)
+    monkeypatch.setattr(
+        cards_api, "verify_supabase_jwt",
+        lambda auth: Principal("mallory@example.com", "sub-mallory", "https://xmfj.example/auth/v1") if auth else None,
+    )
     monkeypatch.setattr(cards_api.cards_service, "get_card_by_handle",
                         lambda h: AgentProfileCard.model_validate(_card_json()))
     app = FastAPI()
@@ -129,15 +178,16 @@ def test_patch_passes_claim_token_header_through(cards_client, monkeypatch):
     client, _ = cards_client
     seen = {}
 
-    def fake_update(handle, card, email, new_handle=None, claim_token=None):
-        seen.update(claim_token=claim_token, email=email)
+    def fake_update(handle, card, email, new_handle=None, claim_token=None, owner_user_id=None):
+        seen.update(claim_token=claim_token, email=email, owner_user_id=owner_user_id)
         return True, handle
 
     monkeypatch.setattr(cards_api.cards_service, "update_card", fake_update)
     resp = client.patch("/cards/by-handle/alice", json=_card_json(),
                         headers={"Authorization": "Bearer x", "X-Claim-Token": "tok"})
     assert resp.status_code == 200
-    assert seen == {"claim_token": "tok", "email": "mallory@example.com"}
+    # cards_client's session issuer isn't aafo, so owner_user_id stays unset.
+    assert seen == {"claim_token": "tok", "email": "mallory@example.com", "owner_user_id": None}
 
 
 # ── Paged listing ────────────────────────────────────────────────────
@@ -226,3 +276,42 @@ def test_search_falls_back_to_scan_when_rpcs_missing(monkeypatch):
     results = search_service.search_agents(q="engineer")
 
     assert [r["handle"] for r in results] == ["alice"]
+
+
+# ── Maintenance read-only switch ────────────────────────────────────
+
+def test_maintenance_mode_blocks_writes_but_not_reads(monkeypatch):
+    import main as main_module
+
+    monkeypatch.setattr(main_module.config, "MAINTENANCE_READONLY", True)
+    app = FastAPI()
+    app.middleware("http")(main_module.maintenance_readonly)
+
+    @app.get("/x")
+    async def get_x():
+        return {"ok": True}
+
+    @app.post("/x")
+    async def post_x():
+        return {"ok": True}
+
+    client = TestClient(app)
+    assert client.get("/x").status_code == 200
+    resp = client.post("/x")
+    assert resp.status_code == 503
+    assert "read-only" in resp.json()["detail"]
+
+
+def test_maintenance_mode_off_by_default_allows_writes(monkeypatch):
+    import main as main_module
+
+    monkeypatch.setattr(main_module.config, "MAINTENANCE_READONLY", False)
+    app = FastAPI()
+    app.middleware("http")(main_module.maintenance_readonly)
+
+    @app.post("/x")
+    async def post_x():
+        return {"ok": True}
+
+    client = TestClient(app)
+    assert client.post("/x").status_code == 200

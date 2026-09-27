@@ -48,20 +48,29 @@ def _verified_identity(user: dict) -> tuple[str, str, str] | None:
 
 
 async def _fetch_user(access_token: str) -> dict | None:
-    if not access_token or not (settings.supabase_url and settings.supabase_anon_key):
+    """Try each trusted Supabase project's /auth/v1/user in turn.
+
+    A token only validates against the project that issued it, so at most
+    one project in the (currently at most 2, during the aafo migration)
+    trusted list ever returns 200 for a given token.
+    """
+    if not access_token:
         return None
-    url = settings.supabase_url.rstrip("/") + "/auth/v1/user"
-    try:
-        async with httpx.AsyncClient(timeout=8) as client:
-            resp = await client.get(url, headers={
-                "Authorization": f"Bearer {access_token}",
-                "apikey": settings.supabase_anon_key,
-            })
-    except httpx.HTTPError:
-        return None
-    if resp.status_code != 200:
-        return None
-    return resp.json()
+    for url, anon_key in settings.trusted_supabase_project_list:
+        if not (url and anon_key):
+            continue
+        endpoint = url.rstrip("/") + "/auth/v1/user"
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                resp = await client.get(endpoint, headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "apikey": anon_key,
+                })
+        except httpx.HTTPError:
+            continue
+        if resp.status_code == 200:
+            return resp.json()
+    return None
 
 
 async def supabase_identity(access_token: str) -> tuple[str, str, str] | None:

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 import config
 from api.agents import router as agents_router
@@ -66,6 +67,17 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def maintenance_readonly(request, call_next):
+    if config.MAINTENANCE_READONLY and request.method in ("POST", "PATCH", "PUT", "DELETE"):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Cards is read-only for maintenance, back shortly"},
+        )
+    return await call_next(request)
+
 
 app.include_router(onboard_router, prefix="/onboard", tags=["Onboard"])
 app.include_router(ask_router, prefix="/ask", tags=["Ask"])

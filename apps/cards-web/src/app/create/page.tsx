@@ -857,8 +857,13 @@ function CreateProfilePageContent() {
   async function uploadPhoto(file: File) {
     setPhotoUploading(true);
     try {
+      // Anonymous onboarding (not yet signed in) has nowhere RLS-safe to
+      // write — fall back to a local preview, same as any other upload
+      // failure below. Storage RLS scopes writes to the uploader's own
+      // folder — see ZYND_DB_UNIFY_PLAN.md §5.5.
+      if (!user) throw new Error("not signed in");
       const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-      const path = `avatars/${Date.now()}.${ext}`;
+      const path = `${user.id}/${Date.now()}.${ext}`;
       const supabase = createClient();
       const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: true });
       if (error) throw error;

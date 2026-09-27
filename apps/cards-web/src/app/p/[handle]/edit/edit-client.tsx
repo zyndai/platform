@@ -233,8 +233,12 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
   async function uploadAvatar(file: File): Promise<string | null> {
     try {
       const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return URL.createObjectURL(file);
       const ext = file.name.split(".").pop() ?? "jpg";
-      const path = `avatars/${handle}-${Date.now()}.${ext}`;
+      // Storage RLS scopes writes to the uploader's own folder — see
+      // ZYND_DB_UNIFY_PLAN.md §5.5.
+      const path = `${user.id}/${handle}-${Date.now()}.${ext}`;
       const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: true });
       if (error) return URL.createObjectURL(file);
       const { data } = supabase.storage.from("avatars").getPublicUrl(path);

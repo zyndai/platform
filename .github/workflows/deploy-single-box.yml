@@ -1,0 +1,95 @@
+# CD for the single box (infra/single-box/README.md): when `main` changes, run
+# the CI checks, then SSH to the box and run infra/single-box/deploy.sh, which
+# rebuilds and restarts only the services whose files changed and health-checks
+# them. Never applies DB migrations (packages/db is applied by a person).
+#
+# Manual runs (Actions tab -> Run workflow) skip the checks so a rollback isn't
+# blocked by them: give a commit sha from main to roll to, `force_all` to
+# rebuild everything, or `plan_only` to see what a deploy would do.
+#
+# Needs three repository secrets (see README, "CI/CD"): DEPLOY_HOST,
+# DEPLOY_SSH_KEY, DEPLOY_HOST_KEY. Only `push` to main and manual dispatch
+# trigger this, never pull requests, so forks can't reach the secrets.
+name: deploy-single-box
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Commit sha on main to deploy (blank = latest main; an older sha rolls back)'
+        required: false
+        default: ''
+      force_all:
+        description: 'Rebuild and restart every service'
+        type: boolean
+        default: false
+      plan_only:
+        description: 'Show what would change; deploy nothing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-single-box
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: checks
+    # `checks` is skipped on manual runs; a skipped need would otherwise skip us too.
+    if: ${{ !cancelled() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Build the deploy arguments
+        id: args
+        env:
+          REF: ${{ inputs.ref }}
+          FORCE_ALL: ${{ inputs.force_all }}
+          PLAN_ONLY: ${{ inputs.plan_only }}
+        run: |
+          args="main"
+          if [[ -n "$REF" ]]; then
+            [[ "$REF" =~ ^[0-9a-f]{7,40}$ ]] || { echo "::error::ref must be a commit sha (7-40 hex characters)"; exit 1; }
+            args="$REF"
+          fi
+          [[ "$FORCE_ALL" == "true" ]] && args="$args --force-all"
+          [[ "$PLAN_ONLY" == "true" ]] && args="$args --plan"
+          echo "value=$args" >> "$GITHUB_OUTPUT"
+
+      - name: Set up SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST_KEY: ${{ secrets.DEPLOY_HOST_KEY }}
+        run: |
+          missing=()
+          for v in DEPLOY_HOST DEPLOY_SSH_KEY DEPLOY_HOST_KEY; do [[ -n "${!v}" ]] || missing+=("$v"); done
+          if ((${#missing[@]})); then
+            echo "::error::Missing repository secret(s): ${missing[*]}. See infra/single-box/README.md, CI/CD."
+            exit 1
+          fi
+          umask 077
+          install -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          # Pinned host key, not trust-on-first-use.
+          printf '%s %s\n' "$DEPLOY_HOST" "$DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          ARGS: ${{ steps.args.outputs.value }}
+        run: |
+          # The key on the server is restricted to a forced command (deploy.sh), so
+          # these arguments are all it will ever accept.
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 \
+              "ubuntu@${DEPLOY_HOST}" "$ARGS"

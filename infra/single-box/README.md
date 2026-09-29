@@ -58,6 +58,53 @@ It refuses to boot without the Zynd developer keypair at
 re-derives every active persona's key on startup. Use the same key the live
 persona boxes use, or every derived key is wrong.
 
+## CI/CD
+
+`.github/workflows/ci.yml` runs on PRs to `main`/`dev` and pushes to `dev`:
+web lint, typecheck and build, and the three Python suites. Both gates are
+**ratchets**: `main` has pre-existing failures (AGENTS.md §5 baselines; ESLint
+errors AGENTS.md doesn't list), so they fail only on *new* ones. The numbers
+live in `ci.yml` (`baseline` / `lint_baseline`); lower one when you fix
+something, never raise it to turn a build green.
+
+`.github/workflows/deploy-single-box.yml` runs on every push to `main`: it
+calls CI, and if that passes it SSHes to the box and runs
+[`deploy.sh`](deploy.sh), which moves the checkout to the new commit, rebuilds
+and restarts **only the services whose files changed**, and health-checks them.
+A failed web build restores the previous `.next` and restarts nothing. It never
+applies DB migrations and never touches Caddy (it prints a note if the
+Caddyfile drifted). Manual runs (Actions -> deploy-single-box -> Run workflow)
+skip the CI checks and take `ref` (a commit on `main`, to roll back),
+`force_all` and `plan_only`.
+
+By hand on the box: `infra/single-box/deploy.sh [--plan] [--force-all] [sha]`.
+
+### One-time setup (needs a person: it grants access and sets repo secrets)
+
+1. **On the box, as root:** let `ubuntu` drive Docker and add a CI key that can
+   run *only* `deploy.sh` (no shell, no forwarding):
+   ```bash
+   usermod -aG docker ubuntu     # docker group is root-equivalent; the forced-command key below is what limits it
+   install -d -m700 -o ubuntu -g ubuntu /home/ubuntu/.ssh
+   echo 'restrict,command="/home/ubuntu/zynd-platform/infra/single-box/deploy.sh" <PUBLIC KEY> github-actions-deploy' >> /home/ubuntu/.ssh/authorized_keys
+   chown ubuntu:ubuntu /home/ubuntu/.ssh/authorized_keys && chmod 600 /home/ubuntu/.ssh/authorized_keys
+   ```
+   Generate the pair with `ssh-keygen -t ed25519 -N '' -C github-actions-deploy -f ci_deploy`.
+2. **GitHub -> Settings -> Secrets and variables -> Actions**, three repository secrets:
+
+   | Secret | Value |
+   |---|---|
+   | `DEPLOY_HOST` | the box's IP or hostname |
+   | `DEPLOY_SSH_KEY` | the private key (`ci_deploy`), whole file |
+   | `DEPLOY_HOST_KEY` | the box's public host key: `cut -d' ' -f1-2 /etc/ssh/ssh_host_ed25519_key.pub` (pinned, not trust-on-first-use) |
+
+3. Optional: branch protection on `main` requiring the `ci` checks; an
+   Actions *environment* with required reviewers if deploys should need approval.
+
+Anyone who can push to `main` can run code as `ubuntu` on the box through this
+pipeline, same as a normal CD setup. The workflow never runs for pull requests,
+so forks can't reach the secrets.
+
 ## Update
 
 ```bash

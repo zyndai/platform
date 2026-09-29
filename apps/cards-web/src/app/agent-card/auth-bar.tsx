@@ -13,7 +13,7 @@ export function AgentCardAuthBar() {
   function signIn() {
     setAuthNext("/agent-card", "card");
     createClient().auth.signInWithOAuth({
-      provider: "google",
+      provider: "linkedin_oidc",
       options: { redirectTo: CALLBACK() },
     });
   }

@@ -6,10 +6,10 @@ import { setAuthNext } from "@/lib/auth/next-cookie";
 import { getMyCard, updateCard, type AgentProfileCard } from "@/lib/cards";
 
 export function ProfileSignIn({ handle }: { handle: string }) {
-  function signIn(provider: "google" | "github") {
+  function signIn() {
     setAuthNext(`/p/${encodeURIComponent(handle)}`, "card");
     createClient().auth.signInWithOAuth({
-      provider,
+      provider: "linkedin_oidc",
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
   }
@@ -17,7 +17,7 @@ export function ProfileSignIn({ handle }: { handle: string }) {
   return (
     <button
       type="button"
-      onClick={() => signIn("google")}
+      onClick={() => signIn()}
       className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full font-mono text-[12px]! font-semibold cursor-pointer hover:opacity-90 transition-opacity"
       style={{ background: "#7B72E9", color: "#fff", border: "none" }}
     >

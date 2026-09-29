@@ -339,6 +339,9 @@ async def handle_onboarding_answer(tweet_id: str, username: str, x_user_id: str,
 # ── polling loop ─────────────────────────────────────────────────────────────
 
 async def poll_once() -> None:
+    if config.MAINTENANCE_READONLY:
+        logger.info("poll_once skipped — maintenance read-only")
+        return
     try:
         try:
             _bot_id = bot_user_id()

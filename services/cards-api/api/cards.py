@@ -45,10 +45,10 @@ async def search_cards(q: str = Query("", max_length=200)):
 # /mine must come before /{card_id} so FastAPI doesn't match "mine" as a card_id
 @router.get("/mine")
 async def get_my_card(authorization: str | None = Header(default=None)):
-    email = verify_supabase_jwt(authorization)
-    if not email:
+    principal = verify_supabase_jwt(authorization)
+    if not principal:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    result = await asyncio.to_thread(cards_service.get_card_by_owner, email)
+    result = await asyncio.to_thread(cards_service.get_card_by_owner, principal.email)
     if not result:
         return None
     card, handle = result
@@ -82,8 +82,8 @@ async def patch_card(
     authorization: str | None = Header(default=None),
     x_claim_token: str | None = Header(default=None),
 ):
-    email = verify_supabase_jwt(authorization)
-    if not email:
+    principal = verify_supabase_jwt(authorization)
+    if not principal:
         raise HTTPException(status_code=401, detail="Unauthorized")
     # Extract new_handle before model validation (not a card field)
     new_handle: str | None = body.pop("new_handle", None)
@@ -91,8 +91,9 @@ async def patch_card(
         card = AgentProfileCard.model_validate(body)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Invalid card data: {exc}") from exc
+    owner_user_id = principal.sub if principal.iss == config.AAFO_ISSUER else None
     ok, effective_handle = await asyncio.to_thread(
-        cards_service.update_card, handle, card, email, new_handle, x_claim_token
+        cards_service.update_card, handle, card, principal.email, new_handle, x_claim_token, owner_user_id
     )
     if not ok:
         raise HTTPException(status_code=403, detail="Not the card owner")
@@ -116,8 +117,8 @@ async def refresh_linkedin(
     Body (optional JSON): {"linkedin_url": "https://linkedin.com/in/handle"}
     Falls back to the URL stored in card.identity.links.linkedin.
     """
-    email = verify_supabase_jwt(authorization)
-    if not email:
+    principal = verify_supabase_jwt(authorization)
+    if not principal:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     card = await asyncio.to_thread(cards_service.get_card_by_handle, handle)
@@ -151,7 +152,7 @@ async def refresh_linkedin(
     stored_owner = row.get("owner_email")
     if not stored_owner:
         raise HTTPException(status_code=403, detail="claim this card before refreshing it")
-    if stored_owner != email:
+    if stored_owner.lower() != principal.email.lower():
         raise HTTPException(status_code=403, detail="not the card owner")
 
     card_json = row["card"]
@@ -175,8 +176,8 @@ async def refresh_github(
     Body (optional JSON): {"github_handle": "octocat"}
     Falls back to the handle stored in card.identity.links.github.
     """
-    email = verify_supabase_jwt(authorization)
-    if not email:
+    principal = verify_supabase_jwt(authorization)
+    if not principal:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     card = await asyncio.to_thread(cards_service.get_card_by_handle, handle)
@@ -213,7 +214,7 @@ async def refresh_github(
     stored_owner = row.get("owner_email")
     if not stored_owner:
         raise HTTPException(status_code=403, detail="claim this card before refreshing it")
-    if stored_owner != email:
+    if stored_owner.lower() != principal.email.lower():
         raise HTTPException(status_code=403, detail="not the card owner")
 
     card_json = row["card"]
@@ -241,8 +242,8 @@ async def refresh_memory(
     points (public findability facts) show up immediately instead of waiting
     for the 6-hourly cron. Owner-only.
     """
-    email = verify_supabase_jwt(authorization)
-    if not email:
+    principal = verify_supabase_jwt(authorization)
+    if not principal:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     card = await asyncio.to_thread(cards_service.get_card_by_handle, handle)
@@ -258,11 +259,11 @@ async def refresh_memory(
     stored_owner = stored.data[0].get("owner_email")
     if not stored_owner:
         raise HTTPException(status_code=403, detail="claim this card before refreshing it")
-    if stored_owner != email:
+    if stored_owner.lower() != principal.email.lower():
         raise HTTPException(status_code=403, detail="not the card owner")
 
     from services.zynd_memory import fetch_findability
-    payload = fetch_findability(email)
+    payload = fetch_findability(principal.email)
     zynd_memory: list[dict] | None = None
     if payload and payload.get("connected"):
         zynd_memory = payload.get("facts") or []

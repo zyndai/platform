@@ -16,6 +16,29 @@ SUPABASE_JWT_SECRET: str = os.getenv("SUPABASE_JWT_SECRET", "")
 # API "Exposed schemas" setting.
 SUPABASE_DB_SCHEMA: str = os.getenv("SUPABASE_DB_SCHEMA") or "public"
 
+# Supabase project(s) whose tokens cards-api trusts for auth (not DB access —
+# SUPABASE_URL above is still the only project queried). Comma-separated
+# project base URLs; defaults to just SUPABASE_URL so single-project deploys
+# need no new config. During the aafo migration this holds both xmfj and aafo.
+TRUSTED_SUPABASE_URLS: list[str] = [
+    u.strip() for u in os.getenv("TRUSTED_SUPABASE_URLS", "").split(",") if u.strip()
+] or [SUPABASE_URL]
+
+# aafo's issuer — the one project whose `sub` claim is a real auth.users id
+# that the cards.agent_profile_cards.owner_user_id FK can reference. xmfj's
+# `sub` values don't exist in aafo's auth.users, so they're never stamped.
+AAFO_ISSUER: str = os.getenv("AAFO_ISSUER", "")
+
+# Blocks writes during the aafo data cutover window (Phase G/H of the DB
+# unify plan). POST/PATCH/PUT/DELETE return 503; reads keep working.
+MAINTENANCE_READONLY: bool = os.getenv("MAINTENANCE_READONLY", "false").lower() in ("1", "true", "yes")
+
+# owner_user_id exists only on aafo (cards.agent_profile_cards), not on xmfj's
+# public.agent_profile_cards. Until the cutover switches SUPABASE_DB_SCHEMA to
+# "cards", never send it: PostgREST rejects writes naming an unknown column.
+# Cards written before then get owner_user_id from the cutover backfill (by email).
+WRITES_OWNER_USER_ID: bool = SUPABASE_DB_SCHEMA == "cards"
+
 # Unowned cards published after claim tokens shipped can only be claimed with
 # the one-time token returned at publish. Cards published before that have no
 # token; set LEGACY_UNOWNED_CLAIM=true to let the first signed-in editor claim

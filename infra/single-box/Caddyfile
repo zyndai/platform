@@ -1,0 +1,17 @@
+# Host Caddy for the single-box "ports mode" deployment (install to /etc/caddy/Caddyfile).
+# Plain HTTP on a port: no domain, so no automatic HTTPS.
+#
+# persona: persona-web and persona-api must share an origin, same rule as the
+# live persona box: /api/* -> backend, everything else -> the Next.js app.
+{
+	auto_https off
+}
+
+:3000 {
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3001
+	}
+}

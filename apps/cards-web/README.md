@@ -16,8 +16,8 @@ production auth yet:
   needed there.
 - **Auth does not work yet.** Login/claim/create/edit need the aafo (persona)
   Supabase project to have: the `vector` extension enabled, an `avatars`
-  storage bucket, and Google/LinkedIn/email auth providers turned on — see
-  `ZYND_CARDS_MOVE_PLAN.md` §4, items H2–H4 (those need your access to the
+  storage bucket, and the LinkedIn auth provider turned on (D12: LinkedIn
+  only) — see `ZYND_DB_UNIFY_PLAN.md` §5.5 (those need your access to the
   Supabase dashboard, not something this app can do for you).
 - **cards-api itself** doesn't yet trust the aafo project's tokens — that's
   phase P0 (`services/cards-api/api/auth.py`, `TRUSTED_SUPABASE_URLS`), a
@@ -34,9 +34,10 @@ production auth yet:
   business, not ours. Rewrote minimal equivalents here — same interface
   shape where callers needed it (`{ ready, authenticated, user }`), no
   Prisma, no developer lookup.
-- Dropped GitHub as a login provider (cards login is Google, LinkedIn, and
-  email magic link per the decided plan); added the magic-link form, which
-  didn't exist in the dashboard.
+- Dropped Google, GitHub and the email magic link as login providers — cards
+  login is LinkedIn only (D12 in `ZYND_DB_UNIFY_PLAN.md`, superseding the
+  earlier Google+LinkedIn+magic-link decision in `ZYND_CARDS_MOVE_PLAN.md`).
+  Magic link comes back once an email provider (SMTP) is chosen.
 - `lib/seo.ts`, `sitemap.ts`, `llms.txt`, `llms-full.txt`, `api/indexnow` are
   rewritten to be card-only and point at `cards.zynd.ai` instead of
   `www.zynd.ai` — the dashboard's versions mixed in registry/blog content

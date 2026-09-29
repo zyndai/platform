@@ -3,8 +3,8 @@
 /**
  * Session state for cards.zynd.ai — deliberately minimal compared to the
  * dashboard's useAuth: no `developer`/Prisma coupling (that's the dashboard's
- * own product, not ours) and no GitHub login (cards login is Google,
- * LinkedIn, and email magic link only). Ported callers only ever destructure
+ * own product, not ours) and LinkedIn-only login (D12 — Google, GitHub and
+ * the email magic link are removed). Ported callers only ever destructure
  * `ready` / `authenticated` / `user`, so that's all this exposes.
  */
 

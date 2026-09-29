@@ -48,7 +48,8 @@ const SANS = "var(--zc-sans), system-ui, -apple-system, sans-serif";
 const DISPLAY = "var(--zc-display), system-ui, sans-serif";
 const MONO = "var(--zc-mono), ui-monospace, monospace";
 
-type Phase   = "form" | "working" | "review" | "error";
+// "exists": publish found a card this person (or these GitHub/X handles) already has.
+type Phase   = "form" | "working" | "review" | "error" | "exists";
 type UrlKind = "github" | "x" | "linkedin" | "website";
 
 // ─── source palette (small colour square per source, per the design) ─────────
@@ -340,23 +341,6 @@ function CreateProfilePageContent() {
   // Supabase allowlists match redirect URLs exactly, and a `?next=` query
   // breaks that match — GoTrue then falls back to its Site URL (localhost).
   const loginRedirect = `${typeof window !== "undefined" ? window.location.origin : ""}/auth/callback`;
-  // Keep the query string (e.g. the `?url=` seeded by /agent-card) so the
-  // pasted link survives the OAuth round trip.
-  const setNextCookie = () => {
-    if (published) {
-      setClaimHandle(published);
-      return;
-    }
-    const next =
-      typeof window !== "undefined"
-        ? `${window.location.pathname}${window.location.search}`
-        : "/create";
-    setAuthNext(next, "card");
-  };
-  const login = () => {
-    setNextCookie();
-    createClient().auth.signInWithOAuth({ provider: "google", options: { redirectTo: loginRedirect } });
-  };
   const loginWithLinkedin = () => {
     if (published) setClaimHandle(published);
     else setAuthNext("/create", "card");
@@ -395,6 +379,7 @@ function CreateProfilePageContent() {
   // Set once publishing succeeds — flips the review column into the
   // post-publish "claim your card" screen.
   const [published, setPublished] = useState<string | null>(null);
+  const [existsHandle, setExistsHandle] = useState<string | null>(null);
   const [memoryStep, setMemoryStep] = useState<"ask" | "done">("ask");
   const [copied, setCopied] = useState(false);
   const [urlWarnings, setUrlWarnings] = useState<ScrapeWarning[]>([]);
@@ -690,6 +675,13 @@ function CreateProfilePageContent() {
       });
       if (!res.ok) throw new Error((await res.text()) || `Status ${res.status}`);
       const publishedCard = await res.json();
+      // One card per person: the API returns {existing, handle} instead of
+      // creating a second card for the same owner or the same GitHub/X handles.
+      if (publishedCard.existing) {
+        setExistsHandle(publishedCard.handle);
+        setPhase("exists");
+        return;
+      }
       const publishedHandle = publishedCard.handle || publishedCard.id;
       // Anonymous publish: the API returns a one-time claim token, required to
       // take ownership after signing in (sent as X-Claim-Token).
@@ -874,8 +866,13 @@ function CreateProfilePageContent() {
   async function uploadPhoto(file: File) {
     setPhotoUploading(true);
     try {
+      // Anonymous onboarding (not yet signed in) has nowhere RLS-safe to
+      // write — fall back to a local preview, same as any other upload
+      // failure below. Storage RLS scopes writes to the uploader's own
+      // folder — see ZYND_DB_UNIFY_PLAN.md §5.5.
+      if (!user) throw new Error("not signed in");
       const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-      const path = `avatars/${Date.now()}.${ext}`;
+      const path = `${user.id}/${Date.now()}.${ext}`;
       const supabase = createClient();
       const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: true });
       if (error) throw error;
@@ -1146,11 +1143,6 @@ function CreateProfilePageContent() {
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452z"/></svg>
                             Claim with LinkedIn
                           </button>
-                          <button type="button" onClick={login}
-                            style={{ width: "100%", background: T.ink, color: "#fff", border: "none", borderRadius: "14px", padding: "16px 22px", font: `600 15px/1 ${DISPLAY}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", letterSpacing: "-.01em" }}>
-                            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z" fill="#fff" fillOpacity=".9"/><path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.859-3.048.859-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z" fill="#fff" fillOpacity=".7"/><path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332Z" fill="#fff" fillOpacity=".5"/><path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58Z" fill="#fff" fillOpacity=".3"/></svg>
-                            Sign in with Google
-                          </button>
                           <p style={{ font: `400 12px/1.5 ${SANS}`, color: T.faint, margin: 0, textAlign: "center" }}>
                             Sign in, then paste any memory API key (mem0, Zep, Letta, supermemory). We detect the provider and preview key facts. Nothing is public until you approve.
                           </p>
@@ -1198,10 +1190,6 @@ function CreateProfilePageContent() {
                       style={{ background: T.surface, color: T.ink, border: `1px solid ${T.border}`, borderRadius: "18px", padding: "16px 22px", font: `500 15px/1 ${SANS}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", textDecoration: "none" }}>
                       View profile <span>↗</span>
                     </a>
-                    <button type="button" onClick={() => setExistingHandle(null)}
-                      style={{ background: "none", border: "none", padding: "8px 0", font: `400 13px/1 ${SANS}`, color: T.faint, cursor: "pointer", textAlign: "left" }}>
-                      Create a new profile instead →
-                    </button>
                     </div>
                   </div>
                   )}
@@ -1527,6 +1515,32 @@ function CreateProfilePageContent() {
                   </div>
                 );
               })()}
+
+              {/* ── EXISTS: publish found a card this person already has ── */}
+              {phase === "exists" && existsHandle && (
+                <div className="zc-card zc-step-card" style={{ padding: "30px", display: "flex", flexDirection: "column", gap: "18px", justifyContent: "center", alignItems: "flex-start" }}>
+                  <div className="zc-question" style={{ maxWidth: "520px" }}>
+                    {authenticated ? "You already have a card." : "This profile already has a card."}
+                  </div>
+                  <p style={{ font: `400 15px/1.65 ${SANS}`, color: T.soft, maxWidth: "460px", textWrap: "pretty", margin: 0 }}>
+                    {authenticated
+                      ? "Each person has one card, so this one wasn't published. Edit your existing card to add anything new."
+                      : "A card for this GitHub or X profile already exists. If it's yours, open it and sign in with LinkedIn to claim it."}
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px", width: "100%", maxWidth: "400px" }}>
+                    {authenticated && (
+                      <a href={`/p/${existsHandle}/edit`} className="zc-cta"
+                        style={{ background: T.accent, color: "#fff", borderRadius: "18px", padding: "18px 22px", font: `600 15px/1 ${DISPLAY}`, display: "flex", alignItems: "center", justifyContent: "space-between", textDecoration: "none", letterSpacing: "-.01em" }}>
+                        Edit my card <span style={{ font: `400 16px/1 ${SANS}` }}>→</span>
+                      </a>
+                    )}
+                    <a href={`/p/${existsHandle}`} className="zc-ghost"
+                      style={{ background: T.surface, color: T.ink, border: `1px solid ${T.border}`, borderRadius: "18px", padding: "16px 22px", font: `500 15px/1 ${SANS}`, display: "flex", alignItems: "center", justifyContent: "space-between", textDecoration: "none" }}>
+                      {authenticated ? "View my card" : "Open the card"} <span>↗</span>
+                    </a>
+                  </div>
+                </div>
+              )}
 
               {/* ── ERROR ── */}
               {phase === "error" && (

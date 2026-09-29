@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+import config
 from api.auth import verify_supabase_jwt
 from models.card import AgentProfileCard
 from publish import hooks
@@ -242,7 +243,8 @@ async def publish_card(
 ):
     # Ownership comes only from a verified session. An anonymous publish creates
     # an unowned card plus a one-time claim token the publisher needs to claim it.
-    owner_email = verify_supabase_jwt(authorization) if authorization else None
+    principal = verify_supabase_jwt(authorization) if authorization else None
+    owner_email = principal.email if principal else None
     if body.owner_email and body.owner_email != owner_email:
         logger.warning("publish: ignoring client-supplied owner_email for job=%s", job_id)
     claim_token, claim_token_hash = (None, None) if owner_email else cards_service.new_claim_token()
@@ -250,6 +252,20 @@ async def publish_card(
     job = get_job(job_id)
     if not job or not job.card:
         raise HTTPException(status_code=404, detail="job not found or not ready")
+
+    # A card can never be recreated or replaced through publish once one
+    # already exists for this owner (or, anonymously, for these social
+    # handles) — point back at it instead. Refreshing specific fields on an
+    # owned card has its own endpoints (cards.py's refresh-*).
+    if principal:
+        existing = await asyncio.to_thread(cards_service.get_card_by_owner, principal.email)
+    else:
+        existing = await asyncio.to_thread(
+            cards_service.get_card_by_social_handle, job.handle_github, job.handle_x
+        )
+    if existing:
+        _, existing_handle = existing
+        return {"existing": True, "handle": existing_handle}
 
     card = AgentProfileCard.model_validate(body.card)
     now = utcnow()
@@ -275,6 +291,7 @@ async def publish_card(
 
     user_intent = answers if answers else None
 
+    owner_user_id = principal.sub if principal and principal.iss == config.AAFO_ISSUER else None
     handle = await asyncio.to_thread(
         cards_service.insert_card,
         card,
@@ -285,6 +302,7 @@ async def publish_card(
         owner_email,
         body.custom_handle,
         claim_token_hash,
+        owner_user_id,
     )
     card.handle = handle  # frontend reads published.handle for redirect
     await hooks.run_publish_hooks(card.id, handle)

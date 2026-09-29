@@ -3,10 +3,9 @@ import { createServerClient } from "@supabase/ssr";
 import { safeNextPath } from "@/lib/auth/next-cookie";
 
 /**
- * OAuth (Google/LinkedIn) and email-magic-link callback. Deliberately
- * simpler than the dashboard's: no Prisma developer lookup, no
- * destinationAfterLogin routing table — just "go back where the user was
- * trying to go, or the directory."
+ * OAuth (LinkedIn, D12) callback. Deliberately simpler than the dashboard's:
+ * no Prisma developer lookup, no destinationAfterLogin routing table — just
+ * "go back where the user was trying to go, or the directory."
  */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);

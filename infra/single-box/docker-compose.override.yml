@@ -1,0 +1,29 @@
+# Single-box overlay for infra/api-box/docker-compose.prod.yml ("ports mode").
+#
+# api-box assumes Caddy runs *in* the compose network and nothing else needs to
+# reach the containers. On a single box with no domains, the services are
+# reached directly by IP:port, so:
+#   - memory API / MCP / cards-api publish their ports on all interfaces
+#     (open them in the host firewall: see infra/single-box/README.md)
+#   - the compose Caddy is parked behind a profile so `up -d` doesn't start it
+#
+# Usage (from the repo root):
+#   docker compose -p zynd -f infra/api-box/docker-compose.prod.yml \
+#     -f infra/single-box/docker-compose.override.yml \
+#     --env-file ~/.zynd-box/compose.env up -d
+#
+# Note: Docker publishes these ports through its own iptables chain, which
+# bypasses ufw's INPUT rules. Publishing 8001/8002/8090 here is what exposes
+# them; the ufw rules only document (and gate the non-Docker) ports.
+services:
+  api:
+    ports:
+      - "8001:8000"
+  mcp:
+    ports:
+      - "8090:8090"
+  cards:
+    ports:
+      - "8002:8000"
+  caddy:
+    profiles: ["docker-caddy"]

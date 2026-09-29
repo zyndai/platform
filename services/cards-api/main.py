@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 import config
 from api.agents import router as agents_router
@@ -54,6 +55,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Zynd Cards API", version="1.0.0", lifespan=lifespan)
 
+# Registered before CORSMiddleware so CORS wraps it (the last middleware added
+# runs first): the 503 then carries CORS headers and browsers show the message
+# instead of a CORS error.
+@app.middleware("http")
+async def maintenance_readonly(request, call_next):
+    if config.MAINTENANCE_READONLY and request.method in ("POST", "PATCH", "PUT", "DELETE"):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Cards is read-only for maintenance, back shortly"},
+        )
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -66,6 +80,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
 
 app.include_router(onboard_router, prefix="/onboard", tags=["Onboard"])
 app.include_router(ask_router, prefix="/ask", tags=["Ask"])

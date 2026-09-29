@@ -93,8 +93,39 @@ jobs:
           umask 077
           install -d ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
-          # Pinned host key, not trust-on-first-use.
-          printf '%s %s\n' "$DEPLOY_HOST" "$DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
+
+          # Sanity-check the private key without printing any of it.
+          head -n 1 ~/.ssh/deploy_key | grep -q -- '-----BEGIN OPENSSH PRIVATE KEY-----' \
+            || { echo "::error::DEPLOY_SSH_KEY must be the whole private key file, starting with the -----BEGIN OPENSSH PRIVATE KEY----- line"; exit 1; }
+          ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null 2>&1 \
+            || { echo "::error::DEPLOY_SSH_KEY is not a valid private key (missing END line, or line breaks lost when pasting?)"; exit 1; }
+
+          # Pinned host key, not trust-on-first-use. Take "<type> <base64>" from whatever
+          # was pasted, so a leading host name, a trailing comment or quotes don't break it.
+          hostkey="$(printf '%s' "$DEPLOY_HOST_KEY" | tr -d '\r"'"'" | awk '
+            { for (i = 1; i < NF; i++) if ($i ~ /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521))$/) { print $i, $(i+1); exit } }')"
+          if [[ -z "$hostkey" ]]; then
+            # Only the base64 part was pasted: every ed25519 host key starts with this fixed prefix.
+            b64="$(printf '%s' "$DEPLOY_HOST_KEY" | tr -d '\r"'"'" | grep -oE 'AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/=]+' | head -n 1 || true)"
+            [[ -n "$b64" ]] && hostkey="ssh-ed25519 $b64"
+          fi
+          if [[ -z "$hostkey" ]]; then
+            echo "::error::DEPLOY_HOST_KEY has no host key in it. It must be one line, 'ssh-ed25519 AAAA...', i.e. the output of: cut -d' ' -f1-2 /etc/ssh/ssh_host_ed25519_key.pub"
+            exit 1
+          fi
+          printf '%s %s\n' "$DEPLOY_HOST" "$hostkey" > ~/.ssh/known_hosts
+
+          # Compare with what the server actually presents, and say so if they differ
+          # (fingerprints of public host keys only).
+          if [[ "$hostkey" == ssh-ed25519* ]]; then
+            scanned="$(ssh-keyscan -T 10 -t ed25519 "$DEPLOY_HOST" 2>/dev/null | awk '{print $2, $3}' | head -n 1)"
+            if [[ -z "$scanned" ]]; then
+              echo "::warning::could not reach the server on port 22 to double-check the pinned host key"
+            elif [[ "$scanned" != "$hostkey" ]]; then
+              echo "::error::DEPLOY_HOST_KEY does not match the key the server presents. Pinned: $(echo "$hostkey" | ssh-keygen -lf - | cut -d' ' -f2)  Server: $(echo "$scanned" | ssh-keygen -lf - | cut -d' ' -f2)"
+              exit 1
+            fi
+          fi
 
       - name: Deploy
         env:

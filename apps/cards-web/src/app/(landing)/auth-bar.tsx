@@ -11,7 +11,7 @@ export function AgentCardAuthBar() {
   const { ready, authenticated, handle } = useMyCard();
 
   function signIn() {
-    setAuthNext("/agent-card", "card");
+    setAuthNext("/", "card");
     createClient().auth.signInWithOAuth({
       provider: "linkedin_oidc",
       options: { redirectTo: CALLBACK() },
@@ -21,7 +21,7 @@ export function AgentCardAuthBar() {
   async function signOut() {
     const { error } = await createClient().auth.signOut();
     if (error) console.error("Sign out failed:", error);
-    window.location.href = "/agent-card";
+    window.location.href = "/";
   }
 
   return (

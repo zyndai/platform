@@ -2,7 +2,7 @@
 
 The standalone frontend for **cards.zynd.ai** — ported out of the `dashboard`
 repo's `app/(site)/{p,create,profile,directory,find,search,tag,for-ai}` and
-`app/agent-card`, per `ZYND_CARDS_MOVE_PLAN.md` phase P2. It talks to the
+`app/agent-card` (now the `/` landing page, `app/(landing)`), per `ZYND_CARDS_MOVE_PLAN.md` phase P2. It talks to the
 existing `services/cards-api` (still `api.zynd.ai`, unchanged) for card data,
 and to a Supabase project for login.
 
@@ -43,7 +43,7 @@ production auth yet:
   `www.zynd.ai` — the dashboard's versions mixed in registry/blog content
   that doesn't belong here. `api/indexnow` uses its own IndexNow key (Bing
   requires the key file to be hosted on the exact host it's submitted for).
-- Everything else — `p/[handle]/**`, `agent-card/**`, `profile/[id]`,
+- Everything else — `p/[handle]/**`, the `(landing)` page, `profile/[id]`,
   `directory`, `find`, `search`, `tag/[skill]`, `for-ai`, `lib/cards.ts`,
   `lib/memory*.ts`, `lib/claim-tokens.ts`, `lib/supabase/*`,
   `components/memory/*`, `ProfileChatWidget`, `useMyCard` — ported with no

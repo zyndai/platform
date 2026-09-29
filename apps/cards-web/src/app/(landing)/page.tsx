@@ -11,7 +11,7 @@ import { Typewriter } from "./typewriter";
 import { AgentCardAuthBar } from "./auth-bar";
 
 /**
- * `/agent-card` — the standalone Zynd landing page.
+ * `/` — the standalone Zynd landing page.
  *
  * Static marketing markup, with two live hooks into the create flow:
  *  - every "Create your Living Profile" / "Claim Handle" CTA links to /create

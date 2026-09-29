@@ -454,7 +454,7 @@ function CreateProfilePageContent() {
       });
   }, [authenticated, editHandle]);
 
-  // Seeded from the /agent-card paste bar: `?url=<link>` lands here as the
+  // Seeded from the landing page paste bar: `?url=<link>` lands here as the
   // first source chip so the visitor never retypes what they already pasted.
   const seededUrl = searchParams.get("url");
   const seededRef = useRef(false);
@@ -465,7 +465,7 @@ function CreateProfilePageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seededUrl]);
 
-  // Pre-fill the custom handle field when the user arrives from /agent-card
+  // Pre-fill the custom handle field when the user arrives from the landing page
   // with ?handle=<slug> — they typed it there so honour it exactly.
   const seededHandle = searchParams.get("handle");
   const seededHandleRef = useRef(false);

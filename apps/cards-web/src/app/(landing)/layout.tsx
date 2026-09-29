@@ -6,14 +6,14 @@ export const metadata: Metadata = {
   title: "Zynd — The Living Professional Identity for Technical Builders and Agents",
   description:
     "Zynd synthesizes GitHub, LinkedIn, X and your website into one living professional profile — browsable by people, searchable by AI agents.",
-  alternates: { canonical: "/agent-card" },
+  alternates: { canonical: "/" },
 };
 
 /**
- * Standalone root layout. `/agent-card` deliberately sits OUTSIDE the `(site)`
- * route group so it does not inherit globals.css / zynd-ui.css — the page ships
- * its own compiled Tailwind v3 stylesheet and would otherwise fight the app's
- * Tailwind 4 preflight.
+ * Standalone root layout for `/`. The landing page deliberately sits OUTSIDE
+ * the `(site)` route group so it does not inherit globals.css / zynd-ui.css —
+ * the page ships its own compiled Tailwind v3 stylesheet and would otherwise
+ * fight the app's Tailwind 4 preflight.
  */
 export default function AgentCardLayout({
   children,

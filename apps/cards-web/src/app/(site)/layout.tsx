@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Script from "next/script";
 import { Providers } from "@/components/providers";
 import { getServerAuth } from "@/lib/auth/server";
-import "./globals.css";
+import "../globals.css";
 import "@/zynd-ui.css";
 
 const SITE_URL = "https://cards.zynd.ai";

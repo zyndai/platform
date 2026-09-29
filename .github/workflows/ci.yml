@@ -8,11 +8,11 @@
 # a red build green. packages/db has its own workflow (db.yml).
 name: ci
 
+# Runs on pull requests, and is called by deploy-single-box.yml for pushes to
+# main and dev (so a push isn't checked twice).
 on:
   pull_request:
     branches: [main, dev]
-  push:
-    branches: [dev]
   workflow_call:
 
 permissions:

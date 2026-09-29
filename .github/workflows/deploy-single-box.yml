@@ -1,24 +1,32 @@
-# CD for the single box (infra/single-box/README.md): when `main` changes, run
-# the CI checks, then SSH to the box and run infra/single-box/deploy.sh, which
-# rebuilds and restarts only the services whose files changed and health-checks
-# them. Never applies DB migrations (packages/db is applied by a person).
+# CD for the single box (infra/single-box/README.md). The box runs two
+# environments off the same code: `main` -> prod, `dev` -> dev. When either
+# branch changes, run the CI checks, then SSH to the box and run
+# infra/single-box/deploy.sh for that environment, which rebuilds and restarts
+# only the services whose files changed and health-checks them. Never applies
+# DB migrations (packages/db is applied by a person).
 #
 # Manual runs (Actions tab -> Run workflow) skip the checks so a rollback isn't
-# blocked by them: give a commit sha from main to roll to, `force_all` to
-# rebuild everything, or `plan_only` to see what a deploy would do.
+# blocked by them: pick the environment, and give a commit sha on that branch to
+# roll to, `force_all` to rebuild everything, or `plan_only` to see what a
+# deploy would do.
 #
 # Needs three repository secrets (see README, "CI/CD"): DEPLOY_HOST,
-# DEPLOY_SSH_KEY, DEPLOY_HOST_KEY. Only `push` to main and manual dispatch
+# DEPLOY_SSH_KEY, DEPLOY_HOST_KEY. Only `push` to main/dev and manual dispatch
 # trigger this, never pull requests, so forks can't reach the secrets.
 name: deploy-single-box
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
     inputs:
+      environment:
+        description: 'Which instance to deploy: prod (branch main) or dev (branch dev)'
+        type: choice
+        options: [prod, dev]
+        default: prod
       ref:
-        description: 'Commit sha on main to deploy (blank = latest main; an older sha rolls back)'
+        description: 'Commit sha on that environment''s branch (blank = latest; an older sha rolls back)'
         required: false
         default: ''
       force_all:
@@ -52,17 +60,22 @@ jobs:
       - name: Build the deploy arguments
         id: args
         env:
+          # push to dev -> dev instance, push to main -> prod; a manual run picks.
+          ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref_name == 'dev' && 'dev' || 'prod') }}
           REF: ${{ inputs.ref }}
           FORCE_ALL: ${{ inputs.force_all }}
           PLAN_ONLY: ${{ inputs.plan_only }}
         run: |
-          args="main"
+          [[ "$ENVIRONMENT" == "prod" || "$ENVIRONMENT" == "dev" ]] || { echo "::error::unknown environment '$ENVIRONMENT'"; exit 1; }
+          args="latest"
           if [[ -n "$REF" ]]; then
             [[ "$REF" =~ ^[0-9a-f]{7,40}$ ]] || { echo "::error::ref must be a commit sha (7-40 hex characters)"; exit 1; }
             args="$REF"
           fi
+          args="$args --env=$ENVIRONMENT"
           [[ "$FORCE_ALL" == "true" ]] && args="$args --force-all"
           [[ "$PLAN_ONLY" == "true" ]] && args="$args --plan"
+          echo "Deploying the $ENVIRONMENT instance: $args"
           echo "value=$args" >> "$GITHUB_OUTPUT"
 
       - name: Set up SSH

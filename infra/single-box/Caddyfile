@@ -73,6 +73,58 @@ api.zynd.ai {
 	}
 }
 
+# ── DEV instance (branch `dev`; see docker-compose.dev.yml, ecosystem.dev.config.js) ──
+# Same shape as prod above, on the dev.* names and the dev ports. Everything is
+# localhost-only behind these HTTPS names; no extra public ports.
+
+dev.persona.zynd.ai {
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8100
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3101
+	}
+}
+
+dev.persona.api.zynd.ai {
+	reverse_proxy 127.0.0.1:8100
+}
+
+dev.cards.zynd.ai {
+	reverse_proxy 127.0.0.1:3102
+}
+
+dev.cards.api.zynd.ai {
+	reverse_proxy 127.0.0.1:8102
+}
+
+dev.api.zynd.ai {
+	handle /mcp* {
+		reverse_proxy 127.0.0.1:8190
+	}
+	handle /.well-known/oauth-protected-resource* {
+		reverse_proxy 127.0.0.1:8190
+	}
+	handle /v1/service* {
+		reverse_proxy 127.0.0.1:8101
+	}
+	handle /cards* {
+		reverse_proxy 127.0.0.1:8102
+	}
+	handle /ask* {
+		reverse_proxy 127.0.0.1:8102
+	}
+	handle /onboard* {
+		reverse_proxy 127.0.0.1:8102
+	}
+	handle /v1* {
+		reverse_proxy 127.0.0.1:8102
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8101
+	}
+}
+
 # Plain-HTTP IP access to persona (persona-web and persona-api on one origin).
 # The web apps are built against the domains above, so this is only useful for
 # poking at persona-api directly (http://<ip>:3000/api/...).

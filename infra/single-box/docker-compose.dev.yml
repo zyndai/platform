@@ -1,0 +1,49 @@
+# Dev instance's containers (branch `dev`), next to prod's on the same box.
+# Separate compose project (`zynd-dev`) from prod's (`zynd`), but on prod's
+# network so they reach the same Postgres and Redis ("same DB for now").
+#
+# What is here, and what deliberately is not:
+#   - api-dev, mcp-dev  memory's API and MCP server running dev-branch code
+#   - cards-dev         cards-api running dev-branch code
+#   - NO worker: memory's nightly cron jobs (decay, resolution, recompute,
+#     orphan cleanup) would run twice on the shared database. Jobs the dev API
+#     enqueues are picked up by prod's worker from the shared Redis.
+#   - NO postgres/redis of its own.
+# Ports are published on 127.0.0.1 only; host Caddy serves them on the dev.*
+# domains (infra/single-box/Caddyfile).
+#
+# Usage: DEV_ROOT=/home/ubuntu/zynd-platform-dev docker compose -p zynd-dev \
+#          -f infra/single-box/docker-compose.dev.yml up -d --build
+# (deploy.sh --env=dev does exactly this.) Requires prod's stack to be up: it
+# owns the `zynd_default` network, `postgres` and `redis`.
+#
+# Env files: ${DEV_ROOT}/services/memory/.env.prod and .../cards-api/.env.prod,
+# generated from prod's with the dev.* URLs; memory-dev points at the shared DB
+# and `http://api-dev:8000` is how cards-dev reaches memory-dev.
+services:
+  api-dev:
+    build: ${DEV_ROOT}/services/memory
+    env_file: ${DEV_ROOT}/services/memory/.env.prod
+    command: sh -c "python -m app.schema_apply && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "127.0.0.1:8101:8000"
+    restart: unless-stopped
+  mcp-dev:
+    build: ${DEV_ROOT}/services/memory
+    env_file: ${DEV_ROOT}/services/memory/.env.prod
+    command: uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
+    ports:
+      - "127.0.0.1:8190:8090"
+    restart: unless-stopped
+  cards-dev:
+    build: ${DEV_ROOT}/services/cards-api
+    env_file: ${DEV_ROOT}/services/cards-api/.env.prod
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "127.0.0.1:8102:8000"
+    restart: unless-stopped
+
+networks:
+  default:
+    name: zynd_default
+    external: true

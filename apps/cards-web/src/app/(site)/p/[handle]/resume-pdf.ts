@@ -114,6 +114,11 @@ function prettyUrl(url: string): string {
   return pdfSafe(url.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, ""));
 }
 
+/** Only real web URLs become PDF link annotations. */
+function linkTarget(url: string | null | undefined): string | null {
+  return url && /^https?:\/\//i.test(url) ? url : null;
+}
+
 function dateRange(job: ResumeWorkItem): string {
   const start = clean(job.start_date);
   const end = clean(job.end_date);
@@ -207,24 +212,30 @@ export async function buildResumePdf(data: ResumeData): Promise<Blob> {
     doc.text(meta.join("   ·   "), M, y);
   }
 
-  // Wrapped by whole links, so a separator never dangles at a line end.
-  const linkParts = data.links.map((l) => prettyUrl(l.url)).filter(Boolean);
+  // Each link is its own clickable annotation. Wrapped by whole links, so a
+  // separator never dangles at a line end.
+  const linkParts = data.links
+    .map((l) => ({ text: prettyUrl(l.url), url: linkTarget(l.url) }))
+    .filter((l) => l.text);
   if (linkParts.length) {
     y += 13;
     font("normal", 8.5, SLATE);
     const SEP = "   ·   ";
-    let line = "";
+    const sepW = doc.getTextWidth(SEP);
+    let x = M;
     for (const part of linkParts) {
-      const next = line ? line + SEP + part : part;
-      if (line && doc.getTextWidth(next) > CW) {
-        doc.text(line, M, y);
+      const w = doc.getTextWidth(part.text);
+      if (x > M && x + sepW + w > M + CW) {
         y += 11;
-        line = part;
-      } else {
-        line = next;
+        x = M;
+      } else if (x > M) {
+        doc.text(SEP, x, y);
+        x += sepW;
       }
+      if (part.url) doc.textWithLink(part.text, x, y, { url: part.url });
+      else doc.text(part.text, x, y);
+      x += w;
     }
-    if (line) doc.text(line, M, y);
   }
 
   y += 12;
@@ -358,7 +369,14 @@ export async function buildResumePdf(data: ResumeData): Promise<Blob> {
       if (tail) {
         ensure(12);
         font("normal", 8, MUTED);
-        doc.text(doc.splitTextToSize(tail, CW)[0], M, y);
+        const shown = doc.splitTextToSize(tail, CW)[0] as string;
+        doc.text(shown, M, y);
+        // The URL closes the line; link it when it wasn't cut off by the wrap.
+        const target = linkTarget(proj.url);
+        if (target && url && shown === tail) {
+          const urlW = doc.getTextWidth(url);
+          doc.link(M + doc.getTextWidth(tail) - urlW, y - 8, urlW, 10.5, { url: target });
+        }
         y += 12;
       }
 
@@ -375,7 +393,10 @@ export async function buildResumePdf(data: ResumeData): Promise<Blob> {
     doc.setLineWidth(0.6);
     doc.line(M, PH - 44, M + CW, PH - 44);
     font("normal", 7.8, MUTED);
-    doc.text(`Live profile · ${prettyUrl(data.profileUrl)}`, M, PH - 30);
+    const profileLink = linkTarget(data.profileUrl);
+    const footer = `Live profile · ${prettyUrl(data.profileUrl)}`;
+    if (profileLink) doc.textWithLink(footer, M, PH - 30, { url: profileLink });
+    else doc.text(footer, M, PH - 30);
     doc.text(`${p} / ${pages}`, M + CW, PH - 30, { align: "right" });
   }
 

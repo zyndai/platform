@@ -273,6 +273,26 @@ async def refresh_memory(
     return {"zynd_memory": zynd_memory}
 
 
+@router.get("/by-handle/{handle}/suggested-posts")
+async def suggested_posts(handle: str):
+    from services.suggested_posts import get_suggested_posts
+
+    result = await asyncio.to_thread(get_suggested_posts, handle)
+    if not result:
+        raise HTTPException(status_code=404, detail="card not found")
+    return result
+
+
+@router.get("/by-handle/{handle}/suggested-people")
+async def suggested_people(handle: str):
+    from services.suggested_people import get_suggested_people
+
+    result = await asyncio.to_thread(get_suggested_people, handle)
+    if not result:
+        raise HTTPException(status_code=404, detail="card not found")
+    return result
+
+
 @router.get("/{card_id}")
 async def get_card(card_id: str):
     card = await asyncio.to_thread(cards_service.get_card, card_id)

@@ -114,8 +114,8 @@ const QUESTIONS: { id: string; label: string; type: QuestionType; options?: stri
     label: "Where are you based?",
   },
   {
-    id: "calendly_url", type: "text",
-    label: "Got a Calendly?",
+    id: "booking", type: "text",
+    label: "Got a booking link?",
   },
 ];
 
@@ -373,6 +373,7 @@ function CreateProfilePageContent() {
   });
   const [locationInput, setLocationInput] = useState("");
   const [calendlyInput, setCalendlyInput] = useState("");
+  const [googleCalInput, setGoogleCalInput] = useState("");
 
   const [jobDone, setJobDone] = useState(false);
   const [existingHandle, setExistingHandle] = useState<string | null>(null);
@@ -659,8 +660,9 @@ function CreateProfilePageContent() {
           if (parts.length > 0) userAnswers[q.id] = parts.join(", ");
         } else if (q.id === "location" && locationInput.trim()) {
           userAnswers["location"] = locationInput.trim();
-        } else if (q.id === "calendly_url" && calendlyInput.trim()) {
-          userAnswers["calendly_url"] = calendlyInput.trim();
+        } else if (q.id === "booking") {
+          if (calendlyInput.trim()) userAnswers["calendly_url"] = calendlyInput.trim();
+          if (googleCalInput.trim()) userAnswers["google_calendar_url"] = googleCalInput.trim();
         }
       }
       const res = await fetch(`${CARDS_API}/onboard/${jobId}/publish`, {
@@ -1451,24 +1453,34 @@ function CreateProfilePageContent() {
                       </div>
                     )}
 
-                    {q.type === "text" && q.id === "calendly_url" && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: "9px" }}>
-                        <input
-                          type="url"
-                          value={calendlyInput}
-                          onChange={e => setCalendlyInput(e.target.value)}
-                          placeholder="https://calendly.com/yourname"
-                          autoFocus
-                          className="zc-field"
-                          style={{
-                            width: "100%", padding: "20px 22px", borderRadius: "18px",
-                            border: `1px solid ${calendlyInput ? T.accent : T.border}`,
-                            background: T.surface, color: T.ink, font: `400 15px/1 ${SANS}`,
-                            outline: "none", boxSizing: "border-box", transition: "border-color .12s",
-                          }}
-                          onKeyDown={e => { if (e.key === "Enter") advanceQuestion(); }}
-                        />
-                        <span style={{ font: `400 12px/1 ${SANS}`, color: T.faint }}>optional — skip if you prefer</span>
+                    {q.type === "text" && q.id === "booking" && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                        {[
+                          { label: "Calendly", value: calendlyInput, set: setCalendlyInput, placeholder: "https://calendly.com/yourname" },
+                          { label: "Google Calendar", value: googleCalInput, set: setGoogleCalInput, placeholder: "https://calendar.app.google/…" },
+                        ].map((f, i) => (
+                          <label key={f.label} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                            <span style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".14em", textTransform: "uppercase", color: T.muted }}>{f.label}</span>
+                            <input
+                              type="url"
+                              value={f.value}
+                              onChange={e => f.set(e.target.value)}
+                              placeholder={f.placeholder}
+                              autoFocus={i === 0}
+                              className="zc-field"
+                              style={{
+                                width: "100%", padding: "20px 22px", borderRadius: "18px",
+                                border: `1px solid ${f.value ? T.accent : T.border}`,
+                                background: T.surface, color: T.ink, font: `400 15px/1 ${SANS}`,
+                                outline: "none", boxSizing: "border-box", transition: "border-color .12s",
+                              }}
+                              onKeyDown={e => { if (e.key === "Enter") advanceQuestion(); }}
+                            />
+                          </label>
+                        ))}
+                        <span style={{ font: `400 12px/1.5 ${SANS}`, color: T.faint }}>
+                          optional — add either or both. For Google Calendar, share your appointment schedule&apos;s booking page link.
+                        </span>
                       </div>
                     )}
 

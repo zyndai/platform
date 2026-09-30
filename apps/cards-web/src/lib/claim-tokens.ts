@@ -38,6 +38,43 @@ export function forgetClaimToken(handle: string): void {
   }
 }
 
+/** Did this browser publish `handle` anonymously, and so can still claim it? */
+export function hasClaimToken(handle: string): boolean {
+  return typeof read()[handle] === "string";
+}
+
+/** useSyncExternalStore subscription: another tab publishing or claiming changes the answer. */
+export function subscribeClaimTokens(onChange: () => void): () => void {
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === KEY || e.key === null) onChange();
+  };
+  window.addEventListener("storage", onStorage);
+  return () => window.removeEventListener("storage", onStorage);
+}
+
+// Survives the LinkedIn OAuth round-trip (same tab, same origin) so the claim
+// can finish on return without a second click.
+const INTENT_KEY = "zynd_claim_intent";
+
+export function markClaimIntent(handle: string): void {
+  try {
+    sessionStorage.setItem(INTENT_KEY, handle);
+  } catch {
+    /* storage unavailable — the claim button still works, it just needs a click */
+  }
+}
+
+/** True once, right after a sign-in started from "Claim this card" on `handle`. */
+export function takeClaimIntent(handle: string): boolean {
+  try {
+    if (sessionStorage.getItem(INTENT_KEY) !== handle) return false;
+    sessionStorage.removeItem(INTENT_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** `{ "X-Claim-Token": … }` when this browser published `handle` anonymously. */
 export function claimHeaders(handle: string): Record<string, string> {
   const token = read()[handle];

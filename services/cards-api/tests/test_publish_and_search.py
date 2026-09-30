@@ -38,7 +38,7 @@ def publish_client(monkeypatch):
     captured = {}
 
     def fake_insert(card, gh, x, raw, intent, owner_email, custom_handle, claim_token_hash=None, owner_user_id=None):
-        captured.update(owner_email=owner_email, claim_token_hash=claim_token_hash, owner_user_id=owner_user_id)
+        captured.update(card=card, owner_email=owner_email, claim_token_hash=claim_token_hash, owner_user_id=owner_user_id)
         return "alice"
 
     monkeypatch.setattr(onboard_api.cards_service, "insert_card", fake_insert)
@@ -70,6 +70,33 @@ def test_publish_ignores_client_supplied_owner_email(publish_client):
     assert captured["owner_email"] is None                 # not the victim
     assert resp.json()["claim_token"]                      # anonymous → claim token
     assert captured["claim_token_hash"] == cards_service.hash_claim_token(resp.json()["claim_token"])
+
+
+def test_publish_stores_calendly_and_google_calendar_links(publish_client):
+    client, captured = publish_client
+    body = {
+        "card": _card_json(),
+        "user_answers": {
+            "calendly_url": "calendly.com/alice",
+            "google_calendar_url": " https://calendar.app.google/abc123 ",
+        },
+    }
+
+    resp = client.post("/onboard/j1/publish", json=body)
+
+    assert resp.status_code == 200
+    assert captured["card"].calendly_url == "https://calendly.com/alice"   # scheme added
+    assert captured["card"].google_calendar_url == "https://calendar.app.google/abc123"
+    assert resp.json()["google_calendar_url"] == "https://calendar.app.google/abc123"
+
+
+def test_booking_links_drop_non_http_urls():
+    card = AgentProfileCard.model_validate(
+        {**_card_json(), "calendly_url": "javascript://%0aalert(1)", "google_calendar_url": "ftp://calendar.google.com/x"}
+    )
+    assert card.calendly_url is None
+    assert card.google_calendar_url is None
+    assert AgentProfileCard.model_validate({**_card_json(), "google_calendar_url": "   "}).google_calendar_url is None
 
 
 def test_publish_takes_owner_from_the_session(publish_client):

@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 import config
 from api.auth import verify_supabase_jwt
-from models.card import AgentProfileCard
+from models.card import AgentProfileCard, normalize_booking_url
 from publish import hooks
 from scraping import github as github_scraper
 from scraping import linkedin as linkedin_scraper
@@ -286,8 +286,10 @@ async def publish_card(
         card.love_talking_about = [x.strip() for x in answers["love_talking"].split(",") if x.strip()]
     if answers.get("location") and not card.identity.location:
         card.identity.location = answers["location"]
-    if answers.get("calendly_url"):
-        card.calendly_url = answers["calendly_url"].strip() or None
+    # Attribute assignment skips the model's validators, so normalize here.
+    for key in ("calendly_url", "google_calendar_url"):
+        if answers.get(key):
+            setattr(card, key, normalize_booking_url(answers[key]))
 
     user_intent = answers if answers else None
 

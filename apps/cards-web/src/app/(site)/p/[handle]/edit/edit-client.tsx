@@ -265,6 +265,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
   const [newSkillName, setNewSkillName] = useState("");
   const [newSkillLevel, setNewSkillLevel] = useState("intermediate");
   const [calInput, setCalInput] = useState(draft.calendly_url ?? "");
+  const [gcalInput, setGcalInput] = useState(draft.google_calendar_url ?? "");
 
   function addSkill() {
     const name = newSkillName.trim();
@@ -294,6 +295,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
       love_talking_about: oTalking,
       skills: skillList,
       calendly_url: calInput.trim() || null,
+      google_calendar_url: gcalInput.trim() || null,
     };
   }
 
@@ -813,10 +815,14 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
               <p className="pe-help">Your public handle and a scheduling link, if you take meetings.</p>
               <div className="pe-fields">
                 <div>
-                  <label className="pe-lab">Booking link</label>
+                  <label className="pe-lab">Calendly</label>
                   <input value={calInput} onChange={(e) => setCalInput(e.target.value)} className="ei" placeholder="https://calendly.com/…" />
                 </div>
                 <div>
+                  <label className="pe-lab">Google Calendar</label>
+                  <input value={gcalInput} onChange={(e) => setGcalInput(e.target.value)} className="ei" placeholder="https://calendar.app.google/…" />
+                </div>
+                <div className="full">
                   <label className="pe-lab">Profile URL</label>
                   <div style={{ display: "flex", alignItems: "center", background: "#fff", border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden" }}>
                     <span style={{ padding: "0 0 0 16px", fontSize: 14, color: T.muted, flexShrink: 0 }}>zynd.ai/p/</span>

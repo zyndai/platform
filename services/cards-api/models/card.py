@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -18,6 +20,18 @@ def _coerce_experience(v):
         return int(v)
     except (TypeError, ValueError):
         return None
+
+
+def normalize_booking_url(v) -> str | None:
+    """Booking links render as a public <a href>: add a missing https:// (people
+    paste "calendly.com/me"), and drop anything that still isn't an http(s) URL."""
+    if not isinstance(v, str) or not v.strip():
+        return None
+    url = v.strip()
+    if "://" not in url:
+        url = f"https://{url}"
+    parsed = urlparse(url)
+    return url if parsed.scheme in ("http", "https") and parsed.netloc else None
 
 
 def _coerce_industries(v):
@@ -140,6 +154,10 @@ class AgentProfileCard(BaseModel):
     x_stats: dict | None = None
     contribution_stats: dict | None = None
     calendly_url: str | None = None
+    # Google Calendar appointment-schedule booking page (calendar.app.google/…
+    # or calendar.google.com/calendar/appointments/…). Separate from
+    # calendly_url so agents reading the card never see a mislabelled link.
+    google_calendar_url: str | None = None
     # Structured LinkedIn work experience entries extracted at scrape time.
     # Each entry: {title, company, company_logo, employment_type, start_date,
     #              end_date, duration, location, description}
@@ -157,6 +175,11 @@ class AgentProfileCard(BaseModel):
     @classmethod
     def _coerce_industries_card(cls, v):
         return _coerce_industries(v)
+
+    @field_validator("calendly_url", "google_calendar_url", mode="before")
+    @classmethod
+    def _normalize_booking_urls(cls, v):
+        return normalize_booking_url(v)
 
 
 class CardSynthesis(BaseModel):

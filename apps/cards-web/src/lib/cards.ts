@@ -113,6 +113,8 @@ export interface AgentProfileCard {
   contribution_stats?: ContributionStats | null;
   endorsement?: Endorsement | null;
   calendly_url?: string | null;
+  /** Google Calendar appointment-schedule booking page. */
+  google_calendar_url?: string | null;
   /** Structured LinkedIn work history extracted at scrape time. */
   work_experience?: Array<{
     title: string;

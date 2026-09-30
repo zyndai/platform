@@ -18,7 +18,7 @@ import { SkillMatrix } from "./skill-matrix";
 import { ShareQrGroup, CopyPermalinkIcon } from "./share-controls";
 import type { ResumeData } from "./resume-pdf";
 import { EditCardButton } from "./edit-card-button";
-import { ProfileSignIn, ClaimIfCreator } from "./profile-auth-actions";
+import { ProfileSignIn, ClaimCardButton } from "./profile-auth-actions";
 import { CountUp } from "./count-up";
 import { AutoScroll } from "./auto-scroll";
 import { ContributionHeatmap } from "./contribution-heatmap";
@@ -400,7 +400,10 @@ export default async function PersonPage({ params }: PageProps) {
   const ghLogin = usernameFromUrl(identity.links?.github);
   const ghExtras = ghLogin ? await fetchGithubExtras(ghLogin) : null;
   const xUrl = safeUrl(identity.links?.x);
-  const calendlyUrl = safeUrl(card.calendly_url);
+  const bookingLinks = [
+    { label: "Calendly", url: safeUrl(card.calendly_url) },
+    { label: "Google Calendar", url: safeUrl(card.google_calendar_url) },
+  ].filter((l): l is { label: string; url: string } => !!l.url);
 
   const memoryFacts = (card.zynd_memory ?? []) as Array<Record<string, unknown>>;
 
@@ -499,7 +502,7 @@ export default async function PersonPage({ params }: PageProps) {
   const xAvatar = safeUrl(card.x_stats?.avatar) ?? avatarUrl;
   const xImpressions = v.x.impressions != null && String(v.x.impressions).trim() !== "—" ? v.x.impressions : null;
   const showMemory = memoryTotal > 0;
-  const socialSlots = [showLinkedin, showX, showMemory, !!calendlyUrl].filter(Boolean).length;
+  const socialSlots = [showLinkedin, showX, showMemory, bookingLinks.length > 0].filter(Boolean).length;
   const weekLabels = ["S", "M", "T", "W", "T", "F", "S"];
   const todayIdx = new Date().getDay();
 
@@ -665,7 +668,7 @@ export default async function PersonPage({ params }: PageProps) {
               <ShareQrGroup url={canonical} name={identity.name || "Profile"} handle={card.handle ?? card.id} avatarUrl={avatarUrl} resume={resumeData} />
               {isOwner && <EditCardButton handle={card.handle ?? card.id} />}
               {!isSignedIn && <ProfileSignIn handle={card.handle ?? handle} />}
-              {isSignedIn && !isOwner && <ClaimIfCreator handle={card.handle ?? handle} card={card} />}
+              {isSignedIn && !isOwner && <ClaimCardButton handle={card.handle ?? handle} card={card} />}
             </div>
           </header>
 
@@ -1016,8 +1019,8 @@ export default async function PersonPage({ params }: PageProps) {
               </div>
             )}
 
-            {/* ── BOOK A CALL (only when calendlyUrl exists) ── */}
-            {calendlyUrl && (
+            {/* ── BOOK A CALL (only when a Calendly or Google Calendar link exists) ── */}
+            {bookingLinks.length > 0 && (
               <div
                 className="pf-book-card pf-social-card"
                 style={{ background: "linear-gradient(160deg, #2563eb 0%, #1d4ed8 48%, #1e3a8a 100%)", borderRadius: 20, padding: 16, color: "#fff" }}
@@ -1068,16 +1071,22 @@ export default async function PersonPage({ params }: PageProps) {
                 </div>
                 </div>
 
-                <a
-                  href={calendlyUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="pf-book-cta pf-mono pf-social-cta"
-                  style={{ gap: 8, background: "#fff", color: "#1e3a8a", cursor: "pointer", letterSpacing: "0.04em" }}
-                >
-                  Book intro call
-                  <span aria-hidden>→</span>
-                </a>
+                {/* One link: the usual CTA. Both: one button per provider. */}
+                <div style={{ display: "flex", gap: 8, marginTop: "auto" }}>
+                  {bookingLinks.map((l) => (
+                    <a
+                      key={l.label}
+                      href={l.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="pf-book-cta pf-mono pf-social-cta"
+                      style={{ flex: 1, gap: 8, background: "#fff", color: "#1e3a8a", cursor: "pointer", letterSpacing: "0.04em" }}
+                    >
+                      {bookingLinks.length > 1 ? l.label : "Book intro call"}
+                      <span aria-hidden>→</span>
+                    </a>
+                  ))}
+                </div>
               </div>
             )}
 

@@ -1,5 +1,13 @@
+import pytest
+
 from models.card import AgentProfileCard
 from services import suggested_people as people_service
+
+
+@pytest.fixture(autouse=True)
+def _disable_quickenrich(monkeypatch):
+    monkeypatch.setattr(people_service.config, "QUICKENRICH_BASE_URL", "")
+    monkeypatch.setattr(people_service.config, "QUICKENRICH_API_KEY", "")
 
 
 def _card(handle, **fields):
@@ -124,7 +132,7 @@ def test_no_matches_and_unknown_interest_return_empty(monkeypatch):
         lambda **_kw: (_ for _ in ()).throw(AssertionError("should not scan without recognized interests")),
     )
 
-    assert people_service.get_suggested_people("jane") == {"handle": "jane", "people": []}
+    assert people_service.get_suggested_people("jane") == {"handle": "jane", "people": [], "outside": []}
 
 
 def test_missing_card_returns_none(monkeypatch):
@@ -182,6 +190,8 @@ def test_public_endpoint_returns_people(monkeypatch):
             "card": _card("alex", working_on=["Building with AI"]).model_dump(),
         }],
     )
+    monkeypatch.setattr(people_service.config, "QUICKENRICH_BASE_URL", "")
+    monkeypatch.setattr(people_service.config, "QUICKENRICH_API_KEY", "")
     app = FastAPI()
     app.include_router(cards_api.router, prefix="/cards")
 
@@ -189,3 +199,97 @@ def test_public_endpoint_returns_people(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["people"][0]["handle"] == "alex"
+    assert response.json()["outside"] == []
+
+
+def test_outside_empty_when_quickenrich_not_configured(monkeypatch):
+    requester = _card("jane", connect_with=["Founders"])
+    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
+    monkeypatch.setattr(people_service.cards_service, "list_published_rows", lambda **_kw: [])
+    monkeypatch.setattr(people_service, "search_outside", lambda _card, _rows: (_ for _ in ()).throw(AssertionError("should not search")))
+    monkeypatch.setattr(people_service.config, "QUICKENRICH_BASE_URL", "")
+    monkeypatch.setattr(people_service.config, "QUICKENRICH_API_KEY", "")
+
+    result = people_service.get_suggested_people("jane")
+
+    assert result["outside"] == []
+
+
+def test_outside_drops_zynd_linkedin_and_caps_at_two(monkeypatch):
+    requester = _card("jane", connect_with=["Founders"])
+    zynd = _card("alex", working_on=["Building with AI"])
+    zynd.identity.links = {"linkedin": "https://www.linkedin.com/in/alex"}
+    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
+    monkeypatch.setattr(
+        people_service.cards_service,
+        "list_published_rows",
+        lambda **_kw: [{"handle": "alex", "card": zynd.model_dump()}],
+    )
+    monkeypatch.setattr(people_service.config, "QUICKENRICH_BASE_URL", "https://qe.example")
+    monkeypatch.setattr(people_service.config, "QUICKENRICH_API_KEY", "k")
+    monkeypatch.setattr(
+        people_service,
+        "search_outside",
+        lambda _card, taken: [
+            {"name": "Alex", "title": "Founder", "company": "Acme", "linkedin_url": "https://www.linkedin.com/in/alex"},
+            {"name": "Pat", "title": "Founder", "company": "Beta", "linkedin_url": "https://linkedin.com/in/pat"},
+            {"name": "Sam", "title": "Founder", "company": "Gamma", "linkedin_url": "https://linkedin.com/in/sam"},
+            {"name": "NoUrl", "title": "Founder", "company": "Delta", "linkedin_url": ""},
+        ],
+    )
+
+    result = people_service.get_suggested_people("jane")
+
+    assert [p["linkedin_url"] for p in result["outside"]] == [
+        "https://linkedin.com/in/pat",
+        "https://linkedin.com/in/sam",
+    ]
+
+
+def test_outside_keeps_people_without_linkedin(monkeypatch):
+    requester = _card("jane", connect_with=["Founders"])
+    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
+    monkeypatch.setattr(people_service.cards_service, "list_published_rows", lambda **_kw: [])
+    monkeypatch.setattr(people_service.config, "QUICKENRICH_BASE_URL", "https://qe.example")
+    monkeypatch.setattr(people_service.config, "QUICKENRICH_API_KEY", "k")
+    monkeypatch.setattr(
+        people_service,
+        "search_outside",
+        lambda _card, taken: [
+            {"name": "Pat", "title": "Mentor", "company": "Acme", "linkedin_url": ""},
+        ],
+    )
+
+    result = people_service.get_suggested_people("jane")
+
+    assert result["outside"][0]["name"] == "Pat"
+    assert "email" not in result["outside"][0]
+    assert result["outside"][0]["source"] == "quickenrich"
+
+
+def test_outside_search_bodies_titles_then_keywords_india_only():
+    card = _card(
+        "jane",
+        connect_with=["Founders", "Engineers", "Investors"],
+        working_on=["Building with AI", "Open source", "B2B SaaS"],
+        love_talking_about=["Agentic AI"],
+    )
+    bodies = people_service.outside_search_bodies(card)
+    assert len(bodies) == 2
+    assert bodies[0]["title"]["include"] == ["Founder", "Investor"]
+    assert "bio_li" not in bodies[0]
+    assert bodies[1]["bio_li"]["include"] == ["AI", "open source"]
+    assert "title" not in bodies[1]
+    for body in bodies:
+        assert body["country_code"]["include"] == ["IN"]
+        assert body["per_page"] == 4
+        assert "has_email" not in body
+
+
+def test_outside_search_bodies_keywords_only_when_no_titles():
+    card = _card("jane", working_on=["Building with AI"], connect_with=[])
+    bodies = people_service.outside_search_bodies(card)
+    assert len(bodies) == 1
+    assert bodies[0]["bio_li"]["include"] == ["AI"]
+    assert "title" not in bodies[0]
+    assert bodies[0]["country_code"]["include"] == ["IN"]

@@ -6,6 +6,7 @@ you pass `--apply`. xmfj is only ever read.
 
 | Script | Does | Where it writes |
 |---|---|---|
+| `export_xmfj.py` | **Read-only snapshot** of xmfj's cards data + card owners' accounts into local JSON, to inspect before restoring | local files only |
 | `copy_tables.sh` | `agent_profile_cards`, `x_accounts`, `x_conversations`, `x_mentions`: xmfj `public` → aafo `cards` | aafo |
 | `copy_auth.sh` | Card owners' accounts (`auth.users` + `auth.identities`) xmfj → aafo, same user ids | aafo auth |
 | `copy_avatars.py` | `avatars` storage bucket, same paths and content-types | aafo storage |
@@ -28,6 +29,19 @@ Put the secrets in your shell only (`read -s`), never in a file in the repo:
 ```bash
 read -rs XMFJ_URL; read -rs AAFO_URL; export XMFJ_URL AAFO_URL
 ```
+
+## Look before you restore: `export_xmfj.py`
+
+```bash
+cd services/cards-api/scripts/migrate_to_persona
+python export_xmfj.py --env-file ../../../../../dashboard/.env     # or XMFJ_SUPABASE_URL + XMFJ_SERVICE_KEY
+# optional, adds password hashes: XMFJ_DB_URL='postgresql://…:5432/postgres' (needs psql)
+```
+
+Writes `xmfj_export_<date>/` (git-ignored, owner-only) with the 4 cards tables,
+the card owners' accounts, a listing of the `avatars` bucket and a manifest.
+It never reads the dashboard's own tables or other users, and never writes to
+any database. Delete the folder when the restore is done.
 
 ## Run order
 

@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 import config
 from api.auth import verify_supabase_jwt
-from models.card import AgentProfileCard
+from models.card import AgentProfileCard, normalize_booking_url
 from publish import hooks
 from scraping import github as github_scraper
 from scraping import linkedin as linkedin_scraper
@@ -44,6 +44,12 @@ def _classify_url(url: str) -> str:
     if host == "linkedin.com" or host.endswith(".linkedin.com"):
         return "linkedin"
     return "website"
+
+
+def _profile_link(url: str) -> str:
+    """A pasted profile URL as a card link: share-sheet query strings and fragments dropped."""
+    from urllib.parse import urlparse
+    return urlparse(url)._replace(query="", fragment="").geturl()
 
 
 def _handle_from_url(url: str) -> str | None:
@@ -123,6 +129,7 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
         linkedin_stats_data: dict | None = None
 
         linkedin_url_used: str | None = None
+        x_url_used: str | None = None
         if expanded:
             results = await asyncio.gather(*[_safe_fetch_url(u) for u in expanded])
             for (orig_url, (kind, text, stats)) in zip(expanded, results):
@@ -132,6 +139,8 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
                     x_texts.append(text)
                     if stats and not x_stats_data:
                         x_stats_data = stats
+                    if not x_url_used:
+                        x_url_used = orig_url
                 elif kind == "linkedin":
                     linkedin_texts.append(text)
                     if stats and not linkedin_stats_data:
@@ -157,9 +166,14 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
             linkedin_text="\n\n".join(linkedin_texts) or None,
         )
 
-        # Store LinkedIn URL in identity.links so refresh-linkedin endpoint can use it
+        # A profile URL the user gave us, and that scraped fine, beats the LLM's
+        # rendering of it: the LLM "tidies" slugs (drops LinkedIn's -798a6a228
+        # style suffix), which breaks the link and refresh-linkedin, which
+        # re-scrapes whatever is stored here.
         if linkedin_url_used:
-            synth.identity.links.setdefault("linkedin", linkedin_url_used)
+            synth.identity.links["linkedin"] = _profile_link(linkedin_url_used)
+        if x_url_used:
+            synth.identity.links["x"] = _profile_link(x_url_used)
 
         # Deterministic avatar priority: LinkedIn > X > GitHub. The LLM's guess
         # (if any) is overridden by real scraped photo URLs.
@@ -286,8 +300,10 @@ async def publish_card(
         card.love_talking_about = [x.strip() for x in answers["love_talking"].split(",") if x.strip()]
     if answers.get("location") and not card.identity.location:
         card.identity.location = answers["location"]
-    if answers.get("calendly_url"):
-        card.calendly_url = answers["calendly_url"].strip() or None
+    # Attribute assignment skips the model's validators, so normalize here.
+    for key in ("calendly_url", "google_calendar_url"):
+        if answers.get(key):
+            setattr(card, key, normalize_booking_url(answers[key]))
 
     user_intent = answers if answers else None
 

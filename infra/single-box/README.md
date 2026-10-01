@@ -1,20 +1,59 @@
-# infra/single-box: whole monorepo on one box, reached by IP:port
+# infra/single-box: whole monorepo on one box
 
 The repo's other `infra/` folders describe two boxes with domains
 (`persona-box` = pm2, `api-box` = compose + Caddy). This folder runs **every**
-service on one Ubuntu box with no domains, over plain HTTP on ports.
+service on one Ubuntu box: host Caddy serves five HTTPS domains, and the
+backends are also reachable directly by IP:port.
 First used on `169.58.17.193` (2026-09-29).
 
-| Port | What | Runs as |
+| Domain | What | Behind Caddy |
 |---|---|---|
-| 3000 | persona-web, and persona-api under `/api/*` | host Caddy -> pm2 `web` (:3001) + pm2 `api` (:8000) |
-| 3002 | cards-web | pm2 `cards-web` |
-| 8001 | memory API | Docker (`api`) |
-| 8090 | memory MCP (`/mcp`) | Docker (`mcp`) |
-| 8002 | cards-api | Docker (`cards`) |
+| `persona.zynd.ai` | persona-web; `/api/*` -> persona-api (same rule as the live persona box) | pm2 `web` :3001, pm2 `api` :8000 |
+| `persona.api.zynd.ai` | persona-api | pm2 `api` :8000 |
+| `cards.zynd.ai` | cards-web | pm2 `cards-web` :3002 |
+| `cards.api.zynd.ai` | cards-api | Docker `cards` :8002 |
+| `api.zynd.ai` | memory API; `/mcp*` -> MCP; legacy `/cards* /ask* /onboard* /v1*` -> cards-api (as in `infra/api-box/Caddyfile`) | Docker `api` :8001, `mcp` :8090 |
 
-Memory's Postgres (pgvector) and Redis are Docker-internal only. The worker has
-no port. persona-api's own :8000 stays on localhost.
+Direct ports (plain HTTP, open in ufw): 8001 memory, 8090 memory MCP, 8002
+cards-api, 3002 cards-web, 3000 persona (`/api/*` -> backend, rest -> web).
+Memory's Postgres (pgvector) and Redis are Docker-internal only. The worker
+has no port. persona-api's own :8000 stays on localhost.
+
+Certificates: Caddy issues them itself once a name's A record points at the
+box and ports 80/443 are open. Until then the HTTPS names don't work; after
+pointing DNS, `sudo systemctl reload caddy` retries issuance immediately.
+
+## Two environments: `main` -> prod, `dev` -> dev
+
+The box runs both, from two checkouts, sharing the same databases for now:
+
+| | prod | dev |
+|---|---|---|
+| branch / checkout | `main` / `/home/ubuntu/zynd-platform` | `dev` / `/home/ubuntu/zynd-platform-dev` |
+| persona-web / persona-api | `persona.zynd.ai` / `persona.api.zynd.ai` | `dev.persona.zynd.ai` / `dev.persona.api.zynd.ai` |
+| cards-web / cards-api | `cards.zynd.ai` / `cards.api.zynd.ai` | `dev.cards.zynd.ai` / `dev.cards.api.zynd.ai` |
+| memory (+ MCP at `/mcp`) | `api.zynd.ai` | `dev.api.zynd.ai` |
+| pm2 apps (`ecosystem*.config.js`) | `api` :8000, `web` :3001, `cards-web` :3002 | `api-dev` :8100, `web-dev` :3101, `cards-web-dev` :3102 |
+| containers (compose project) | `zynd`: postgres, redis, api :8001, worker, mcp :8090, cards :8002 | `zynd-dev`: api-dev :8101, mcp-dev :8190, cards-dev :8102 |
+
+Dev's ports are all 127.0.0.1, served only through the `dev.*` HTTPS names
+(no extra public ports). Same DB for now means:
+
+- **aafo (Supabase)** is shared by both, as everywhere else in this repo.
+- **memory's Postgres and Redis** are prod's: dev's containers join prod's
+  Docker network (`zynd_default`). Dev-branch code runs against the same rows.
+- **No dev memory worker**: its nightly cron jobs (decay, resolution,
+  recompute, orphan cleanup) would run twice on the shared database. Jobs the
+  dev API enqueues are consumed by prod's worker from the shared Redis.
+- **persona-api runs its background loops in both** (heartbeats, brief watcher,
+  syncs), same as the old prod-and-dev pair on the persona box. Neither has a
+  Telegram token, and `ZYND_WEBHOOK_BASE_URL` and the OAuth redirect URIs stay
+  on the prod names in both (persona-api `CLAUDE.md`).
+- **Supabase Auth redirect URLs** must list every origin that signs in:
+  `https://dev.persona.zynd.ai/**` and `https://dev.cards.zynd.ai/**` for dev.
+
+The dev env files are copies of prod's with the `dev.*` URLs, generated on the
+box; splitting the databases later means pointing dev's env at new ones.
 
 ## Bring-up
 
@@ -37,7 +76,7 @@ sudo install -m644 infra/single-box/Caddyfile /etc/caddy/Caddyfile && sudo syste
 pm2 start infra/single-box/ecosystem.config.js --only web,cards-web && pm2 save
 # 6. firewall (SSH first, then the service ports, in and out)
 sudo ufw allow in 22/tcp
-for p in 3000 3002 8001 8002 8090; do sudo ufw allow in $p/tcp; sudo ufw allow out $p/tcp; done
+for p in 80 443 3000 3002 8001 8002 8090; do sudo ufw allow in $p/tcp; sudo ufw allow out $p/tcp; done
 sudo ufw enable
 ```
 
@@ -50,6 +89,57 @@ It refuses to boot without the Zynd developer keypair at
 `~/.zynd/developer.json` (or `ZYND_DEVELOPER_KEYPAIR_PATH`) because it
 re-derives every active persona's key on startup. Use the same key the live
 persona boxes use, or every derived key is wrong.
+
+## CI/CD
+
+`.github/workflows/ci.yml` runs on PRs to `main`/`dev` (and is called by the
+deploy workflow for pushes): web lint, typecheck and build, and the three
+Python suites. Both gates are
+**ratchets**: `main` has pre-existing failures (AGENTS.md §5 baselines; ESLint
+errors AGENTS.md doesn't list), so they fail only on *new* ones. The numbers
+live in `ci.yml` (`baseline` / `lint_baseline`); lower one when you fix
+something, never raise it to turn a build green.
+
+`.github/workflows/deploy-single-box.yml` runs on every push to `main` (deploys
+**prod**) and to `dev` (deploys **dev**): it calls CI, and if that passes it
+SSHes to the box and runs [`deploy.sh`](deploy.sh) for that environment, which
+moves that checkout to the new commit, rebuilds and restarts **only the
+services whose files changed**, and health-checks them. A failed web build
+restores the previous `.next` and restarts nothing. It never applies DB
+migrations and never touches Caddy (it prints a note if the Caddyfile
+drifted). Manual runs (Actions -> deploy-single-box -> Run workflow) skip the
+CI checks and take `environment` (prod or dev), `ref` (a commit on that
+environment's branch, to roll back), `force_all` and `plan_only`.
+
+By hand on the box: `infra/single-box/deploy.sh [--env=dev|prod] [--plan] [--force-all] [sha]`.
+The forced-command SSH key below runs prod's checkout's copy of the script,
+which routes to either environment, so it must be a version that knows `--env`.
+
+### One-time setup (needs a person: it grants access and sets repo secrets)
+
+1. **On the box, as root:** let `ubuntu` drive Docker and add a CI key that can
+   run *only* `deploy.sh` (no shell, no forwarding):
+   ```bash
+   usermod -aG docker ubuntu     # docker group is root-equivalent; the forced-command key below is what limits it
+   install -d -m700 -o ubuntu -g ubuntu /home/ubuntu/.ssh
+   echo 'restrict,command="/home/ubuntu/zynd-platform/infra/single-box/deploy.sh" <PUBLIC KEY> github-actions-deploy' >> /home/ubuntu/.ssh/authorized_keys
+   chown ubuntu:ubuntu /home/ubuntu/.ssh/authorized_keys && chmod 600 /home/ubuntu/.ssh/authorized_keys
+   ```
+   Generate the pair with `ssh-keygen -t ed25519 -N '' -C github-actions-deploy -f ci_deploy`.
+2. **GitHub -> Settings -> Secrets and variables -> Actions**, three repository secrets:
+
+   | Secret | Value |
+   |---|---|
+   | `DEPLOY_HOST` | the box's IP or hostname |
+   | `DEPLOY_SSH_KEY` | the private key (`ci_deploy`), whole file |
+   | `DEPLOY_HOST_KEY` | the box's public host key: `cut -d' ' -f1-2 /etc/ssh/ssh_host_ed25519_key.pub` (pinned, not trust-on-first-use) |
+
+3. Optional: branch protection on `main` requiring the `ci` checks; an
+   Actions *environment* with required reviewers if deploys should need approval.
+
+Anyone who can push to `main` can run code as `ubuntu` on the box through this
+pipeline, same as a normal CD setup. The workflow never runs for pull requests,
+so forks can't reach the secrets.
 
 ## Update
 
@@ -74,6 +164,17 @@ memory `JWT_SECRET`; cards-api `MEMORY_SERVICE_TOKEN` = memory
 network (`MEMORY_LAYER_URL=http://api:8000`); persona-api over
 `http://127.0.0.1:8001`.
 
+Where the domains go (server-side env, none committed). The web values are
+baked in at build time: rebuild and `pm2 restart web cards-web` after changing.
+
+| File | Values |
+|---|---|
+| `apps/persona-web/.env.local` | `NEXT_PUBLIC_API_URL=https://persona.api.zynd.ai`, `NEXT_PUBLIC_MEMORY_API_URL` and `NEXT_PUBLIC_ZYND_API_URL=https://api.zynd.ai`, `NEXT_PUBLIC_PAGE_BASE_URL` and `NEXT_PUBLIC_SITE_URL=https://persona.zynd.ai` |
+| `apps/cards-web/.env.local` | `NEXT_PUBLIC_API_URL=https://cards.api.zynd.ai`, `NEXT_PUBLIC_ZYND_API_URL=https://api.zynd.ai`, `NEXT_PUBLIC_SITE_URL=https://cards.zynd.ai` |
+| `services/persona-api/.env` | `FRONTEND_URL` and `PUBLIC_PAGE_BASE_URL=https://persona.zynd.ai` (`FRONTEND_URL` is the only CORS origin) |
+| `services/cards-api/.env.prod` | `FRONTEND_URL` and `SITE_BASE_URL=https://cards.zynd.ai`, `API_BASE_URL=https://cards.api.zynd.ai` |
+| `services/memory/.env.prod` | `PUBLIC_BASE_URL=https://api.zynd.ai`, `MCP_PUBLIC_BASE_URL=https://api.zynd.ai/mcp`, `CORS_ORIGINS=https://persona.zynd.ai,https://cards.zynd.ai` |
+
 Deliberate choices, same as the live dev channel (persona-api `CLAUDE.md`):
 
 - `ZYND_WEBHOOK_BASE_URL` and the OAuth redirect URIs **stay on prod**
@@ -85,11 +186,13 @@ Deliberate choices, same as the live dev channel (persona-api `CLAUDE.md`):
 - cards-api runs against aafo's `cards` schema (`SUPABASE_DB_SCHEMA=cards`),
   trusting aafo's issuer; the tables are empty until the cards cutover.
 
-## Limits of IP:port access
+## Cutover caveats
 
-- Sign-in (Supabase OAuth) and the OAuth "connect" flows redirect to the
-  Supabase / provider-registered URLs. `http://<ip>:3000/**` and
-  `http://<ip>:3002/**` are not in aafo's Auth redirect list, and the provider
-  callbacks point at prod, so browser login will not complete here until a
-  human adds them (or real domains are pointed at the box).
-- Everything is plain HTTP.
+- `persona.zynd.ai` and `api.zynd.ai` currently belong to the live boxes.
+  Pointing them here is a prod cutover: this box's memory Postgres is a fresh,
+  empty database, so users' memory data and MCP client grants stay on the old
+  api box until they are migrated. cards data is still on xmfj (cards-api here
+  reads aafo's empty `cards` schema).
+- Sign-in uses aafo's Auth redirect list: `persona.zynd.ai/**` and
+  `cards.zynd.ai/**` are already in it; the web apps are built against the
+  domains, so they don't work from a bare IP.

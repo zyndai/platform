@@ -115,7 +115,7 @@ def assemble_card(
         user = github_data.get("user", {})
         html_url = user.get("html_url")
         if html_url:
-            synth.identity.links.setdefault("github", html_url)
+            synth.identity.links["github"] = html_url  # the API's URL, not the LLM's guess
         sources.append(
             Source(
                 platform="github",

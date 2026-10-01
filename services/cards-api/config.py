@@ -88,6 +88,12 @@ MEMORY_LAYER_URL: str = os.getenv("MEMORY_LAYER_URL", "https://api.zynd.ai")
 MEMORY_SERVICE_TOKEN: str = os.getenv("MEMORY_SERVICE_TOKEN", "")
 MEMORY_REFRESH_INTERVAL_HOURS: int = int(os.getenv("MEMORY_REFRESH_INTERVAL_HOURS", "6"))
 
+# ── QuickEnrich (free contact-finder only; cards-api owns this client) ──
+QUICKENRICH_BASE_URL: str = os.getenv("QUICKENRICH_BASE_URL", "")
+QUICKENRICH_API_KEY: str = os.getenv("QUICKENRICH_API_KEY", "")
+QUICKENRICH_AUTH_HEADER: str = os.getenv("QUICKENRICH_AUTH_HEADER", "Authorization")
+QUICKENRICH_TIMEOUT: float = float(os.getenv("QUICKENRICH_TIMEOUT", "30"))
+
 
 def _get_supabase():
     global _sb_service

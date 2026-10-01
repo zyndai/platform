@@ -17,7 +17,7 @@ every service listed as a reader.
 | `linkedin_profiles`, `twitter_profiles`, `github_profiles` | persona | — |
 | `enriched_contacts`, `enriched_companies`, `suggested_contacts`, `suggested_contact_runs` | persona | — |
 | `chat_messages`, `brief_todos`, `published_pages` | persona | — |
-| `cards.agent_profile_cards`, `cards.x_accounts`, `cards.x_mentions`, `cards.x_conversations` | cards | — (service role only; cards-web goes through cards-api) |
+| `cards.agent_profile_cards`, `cards.x_accounts`, `cards.x_mentions`, `cards.x_conversations`, `cards.keyword_posts` | cards | — (service role only; cards-web goes through cards-api) |
 | `identity.*` (empty today; Zynd Account tables in Stage 2) | shared | persona, cards |
 
 ## Functions, triggers, publication

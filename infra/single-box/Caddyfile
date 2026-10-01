@@ -1,13 +1,134 @@
-# Host Caddy for the single-box "ports mode" deployment (install to /etc/caddy/Caddyfile).
-# Plain HTTP on a port: no domain, so no automatic HTTPS.
-#
-# persona: persona-web and persona-api must share an origin, same rule as the
-# live persona box: /api/* -> backend, everything else -> the Next.js app.
+# Host Caddy for the single-box deployment (install to /etc/caddy/Caddyfile).
+# Caddy gets and renews the Let's Encrypt certificates itself, but only once
+# each hostname's A record points at this box and ports 80/443 are open.
+# After pointing DNS here, `sudo systemctl reload caddy` retries issuance
+# immediately instead of waiting for Caddy's backoff.
+
 {
-	auto_https off
+	# Let's Encrypt only. Ubuntu's Caddy 2.6.2 tries ZeroSSL first, and ZeroSSL's
+	# legacy EAB registration endpoint is gone (HTTP 422 caddy_legacy_user_removed),
+	# which makes every issuance attempt error out. Setting acme_ca drops the
+	# ZeroSSL issuer. Not needed on a current Caddy.
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
 }
 
-:3000 {
+# persona-web. /api/* also goes to persona-api on this host, same rule as the
+# live persona box: the OAuth callbacks and A2A URLs registered with providers
+# and the registry are https://persona.zynd.ai/api/...
+persona.zynd.ai {
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3001
+	}
+}
+
+# persona-api on its own host (what persona-web's NEXT_PUBLIC_API_URL points at).
+persona.api.zynd.ai {
+	reverse_proxy 127.0.0.1:8000
+}
+
+# cards-web
+cards.zynd.ai {
+	reverse_proxy 127.0.0.1:3002
+}
+
+# cards-api on its own host (what cards-web's NEXT_PUBLIC_API_URL points at).
+cards.api.zynd.ai {
+	reverse_proxy 127.0.0.1:8002
+}
+
+# memory API, plus the legacy paths clients already call on api.zynd.ai
+# (same routing as infra/api-box/Caddyfile).
+api.zynd.ai {
+	# Remote MCP endpoint (streamable-HTTP) for Claude/Cursor/any MCP client.
+	handle /mcp* {
+		reverse_proxy 127.0.0.1:8090
+	}
+	# OAuth protected-resource metadata (RFC 9728), served by FastMCP.
+	handle /.well-known/oauth-protected-resource* {
+		reverse_proxy 127.0.0.1:8090
+	}
+	# Memory-layer service-to-service endpoint (called by cards).
+	# MUST stay above /v1*: that prefix otherwise routes to cards.
+	handle /v1/service* {
+		reverse_proxy 127.0.0.1:8001
+	}
+	# Legacy cards paths on the memory host.
+	handle /cards* {
+		reverse_proxy 127.0.0.1:8002
+	}
+	handle /ask* {
+		reverse_proxy 127.0.0.1:8002
+	}
+	handle /onboard* {
+		reverse_proxy 127.0.0.1:8002
+	}
+	handle /v1* {
+		reverse_proxy 127.0.0.1:8002
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8001
+	}
+}
+
+# ── DEV instance (branch `dev`; see docker-compose.dev.yml, ecosystem.dev.config.js) ──
+# Same shape as prod above, on the dev.* names and the dev ports. Everything is
+# localhost-only behind these HTTPS names; no extra public ports.
+
+dev.persona.zynd.ai {
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8100
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3101
+	}
+}
+
+dev.persona.api.zynd.ai {
+	reverse_proxy 127.0.0.1:8100
+}
+
+dev.cards.zynd.ai {
+	reverse_proxy 127.0.0.1:3102
+}
+
+dev.cards.api.zynd.ai {
+	reverse_proxy 127.0.0.1:8102
+}
+
+dev.api.zynd.ai {
+	handle /mcp* {
+		reverse_proxy 127.0.0.1:8190
+	}
+	handle /.well-known/oauth-protected-resource* {
+		reverse_proxy 127.0.0.1:8190
+	}
+	handle /v1/service* {
+		reverse_proxy 127.0.0.1:8101
+	}
+	handle /cards* {
+		reverse_proxy 127.0.0.1:8102
+	}
+	handle /ask* {
+		reverse_proxy 127.0.0.1:8102
+	}
+	handle /onboard* {
+		reverse_proxy 127.0.0.1:8102
+	}
+	handle /v1* {
+		reverse_proxy 127.0.0.1:8102
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8101
+	}
+}
+
+# Plain-HTTP IP access to persona (persona-web and persona-api on one origin).
+# The web apps are built against the domains above, so this is only useful for
+# poking at persona-api directly (http://<ip>:3000/api/...).
+http://:3000 {
 	handle /api/* {
 		reverse_proxy 127.0.0.1:8000
 	}

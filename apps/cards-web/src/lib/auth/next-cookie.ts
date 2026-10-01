@@ -18,7 +18,7 @@ export function safeNextPath(raw: string | null | undefined): string | null {
 }
 
 export function setAuthNext(path: string, intent?: "card"): void {
-  const next = isSafePath(path) ? path : "/agent-card";
+  const next = isSafePath(path) ? path : "/";
   document.cookie = `${NEXT_COOKIE}=${encodeURIComponent(next)}; path=/; samesite=lax`;
   if (intent === "card") {
     document.cookie = `${INTENT_COOKIE}=card; path=/; samesite=lax`;

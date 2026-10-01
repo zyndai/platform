@@ -1,0 +1,97 @@
+# CI for the monorepo: web apps (lint ratchet, typecheck, build) and the three
+# Python services (tests against AGENTS.md §5's known baselines). Never
+# deploys. deploy-single-box.yml calls this before deploying `main`.
+#
+# The two gates are ratchets, not zero-tolerance: main has pre-existing failures
+# (AGENTS.md §5 baselines; ESLint errors that AGENTS.md doesn't list). They fail
+# only on NEW ones. Lower a number when you fix something; never raise it to turn
+# a red build green. packages/db has its own workflow (db.yml).
+name: ci
+
+# Runs on pull requests, and is called by deploy-single-box.yml for pushes to
+# main and dev (so a push isn't checked twice).
+on:
+  pull_request:
+    branches: [main, dev]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: web (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { app: persona-web, lint_baseline: 24 }
+          - { app: cards-web, lint_baseline: 3 }
+    defaults:
+      run:
+        working-directory: apps/${{ matrix.app }}
+    env:
+      # Placeholders so `next build` can prerender. None of these are secrets.
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+      NEXT_PUBLIC_API_URL: https://api.example.test
+      NEXT_PUBLIC_SITE_URL: https://example.test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/${{ matrix.app }}/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Lint (ratchet)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/eslint-baseline.sh" ${{ matrix.lint_baseline }}
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build
+        # Turbopack first, like production. persona-web is pinned to next@16.2.1,
+        # whose Turbopack font handler fails on some Google Fonts responses
+        # ("next/font/google queries have exactly one entry": seen on a GitHub
+        # runner for Geist; the same build passes elsewhere, and cards-web on
+        # next@16.3.6 is unaffected). If that happens, retry with webpack: a real
+        # code error fails both builds and stays red; only the bundler bug is
+        # let through, with a warning. Fix at the source by bumping persona-web's
+        # Next to the version cards-web uses.
+        run: |
+          npm run build && exit 0
+          echo "::warning title=Turbopack build failed::retrying with webpack to tell a code error from the next/font/google Turbopack bug on old Next"
+          npm run build -- --webpack
+
+  python:
+    name: python (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # baseline = the known failures in AGENTS.md §5 (measured on a clean checkout with no .env)
+          - service: persona-api
+            baseline: 5
+            install: pip install -r requirements.txt pytest pytest-asyncio
+            test: python -m pytest -q
+          - service: cards-api
+            baseline: 2
+            install: pip install -r requirements.txt pytest pytest-asyncio
+            test: python -m pytest -q
+          - service: memory
+            baseline: 9
+            install: pip install uv && uv sync
+            test: uv run pytest -q -m "not integration"
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install
+        run: ${{ matrix.install }}
+      - name: Tests (no new failures over the baseline)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/pytest-baseline.sh" ${{ matrix.baseline }} -- ${{ matrix.test }}

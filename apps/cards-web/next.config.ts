@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // The landing page used to live at /agent-card (as it still does on the
+  // dashboard); here it is the site root.
+  async redirects() {
+    return [{ source: "/agent-card", destination: "/", permanent: true }];
+  },
   async headers() {
     return [
       {

@@ -114,8 +114,8 @@ const QUESTIONS: { id: string; label: string; type: QuestionType; options?: stri
     label: "Where are you based?",
   },
   {
-    id: "calendly_url", type: "text",
-    label: "Got a Calendly?",
+    id: "booking", type: "text",
+    label: "Got a booking link?",
   },
 ];
 
@@ -373,6 +373,7 @@ function CreateProfilePageContent() {
   });
   const [locationInput, setLocationInput] = useState("");
   const [calendlyInput, setCalendlyInput] = useState("");
+  const [googleCalInput, setGoogleCalInput] = useState("");
 
   const [jobDone, setJobDone] = useState(false);
   const [existingHandle, setExistingHandle] = useState<string | null>(null);
@@ -454,7 +455,7 @@ function CreateProfilePageContent() {
       });
   }, [authenticated, editHandle]);
 
-  // Seeded from the /agent-card paste bar: `?url=<link>` lands here as the
+  // Seeded from the landing page paste bar: `?url=<link>` lands here as the
   // first source chip so the visitor never retypes what they already pasted.
   const seededUrl = searchParams.get("url");
   const seededRef = useRef(false);
@@ -465,7 +466,7 @@ function CreateProfilePageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seededUrl]);
 
-  // Pre-fill the custom handle field when the user arrives from /agent-card
+  // Pre-fill the custom handle field when the user arrives from the landing page
   // with ?handle=<slug> — they typed it there so honour it exactly.
   const seededHandle = searchParams.get("handle");
   const seededHandleRef = useRef(false);
@@ -659,8 +660,9 @@ function CreateProfilePageContent() {
           if (parts.length > 0) userAnswers[q.id] = parts.join(", ");
         } else if (q.id === "location" && locationInput.trim()) {
           userAnswers["location"] = locationInput.trim();
-        } else if (q.id === "calendly_url" && calendlyInput.trim()) {
-          userAnswers["calendly_url"] = calendlyInput.trim();
+        } else if (q.id === "booking") {
+          if (calendlyInput.trim()) userAnswers["calendly_url"] = calendlyInput.trim();
+          if (googleCalInput.trim()) userAnswers["google_calendar_url"] = googleCalInput.trim();
         }
       }
       const res = await fetch(`${CARDS_API}/onboard/${jobId}/publish`, {
@@ -1019,18 +1021,82 @@ function CreateProfilePageContent() {
           .zc-panel { padding: 28px 26px; gap: 24px; }
           .zc-root h1.zc-panel-title { font-size: 40px; }
           .zc-step-card { flex: none; }
+          /* Stacked layout: let the page grow and scroll naturally. With the
+             fixed-height shell the panel + form were squeezed into whatever
+             height was left between the header and footer (the form ended up
+             in a ~190px window scrolling inside itself). */
+          .zc-root { height: auto; min-height: 100dvh; overflow: visible; display: flex; flex-direction: column; }
+          .zc-shell { flex: 1 0 auto; height: auto; overflow: visible; }
+          .zc-grid { flex: none; }
+          .zc-col { overflow: visible; }
         }
         @media (max-width: 640px) {
-          .zc-root { padding: 16px 12px 56px; }
-          .zc-shell { border-radius: 26px; padding: 20px 16px 24px; gap: 16px; }
-          .zc-panel { border-radius: 22px; }
-          .zc-root h1.zc-panel-title { font-size: 34px; }
+          .zc-root { padding: 12px 10px 20px; }
+          .zc-shell { border-radius: 26px; padding: 18px 12px 22px; gap: 16px; }
+          .zc-grid, .zc-col { gap: 12px; }
+          .zc-panel { border-radius: 22px; padding: 22px 18px 18px; gap: 18px; }
+          .zc-root h1.zc-panel-title { font-size: 30px; }
           .zc-question { font-size: 26px; }
-          .zc-card { border-radius: 22px; }
-          .zc-ctarow { grid-template-columns: minmax(0,1fr); }
-          .zc-inputbox { padding: 16px; }
-          .zc-inputbox input { font-size: 13px !important; }
+          .zc-card { border-radius: 22px; padding: 20px 18px !important; }
+          .zc-live-card { padding: 28px 18px 24px !important; gap: 18px !important; }
+          .zc-ctarow { grid-template-columns: minmax(0,1fr); gap: 12px; }
+          .zc-inputbox { padding: 14px 16px !important; }
           .zc-cta { padding: 20px 22px !important; }
+
+          /* never overflow sideways: long URLs / handles / error text wrap */
+          .zc-root p, .zc-root h1, .zc-root .zc-question, .zc-row-main { overflow-wrap: anywhere; }
+          .zc-chipbox { max-width: 100%; min-width: 0; }
+          .zc-clip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          /* 16px+ inputs — iOS Safari zooms the page on focus below that */
+          .zc-root input:not([type="file"]), .zc-root textarea { font-size: 16px !important; min-width: 0; }
+
+          /* tap targets: grow the hit area of tiny text buttons without moving
+             anything (padding out, matching negative margin back in) */
+          .zc-x, .zc-rowbtn, .zc-tap { padding: 14px 12px !important; margin: -14px -12px !important; }
+          .zc-tap-end { margin-left: auto !important; }
+          .zc-btn, .zc-quick { min-height: 40px; }
+          .zc-dirlink { padding: 13px 6px; margin: -13px -6px; }
+          .zc-pencil::after { content: ""; position: absolute; inset: -10px; }
+          .zc-photo-actions { gap: 24px !important; }
+
+          /* header / panel */
+          .zc-badge { padding: 8px 13px !important; max-width: 100%; }
+          .zc-badge-text { letter-spacing: .1em !important; line-height: 1.35 !important; }
+          .zc-panel-live { flex-wrap: wrap; gap: 8px 12px !important; }
+          .zc-handle-pill { max-width: 100%; overflow-wrap: anywhere; line-height: 1.35 !important; }
+
+          /* questions */
+          .zc-chips { gap: 8px !important; }
+          .zc-chips .zc-opt:not([aria-label]) { padding: 12px 15px !important; }
+          .zc-custom-input { flex: 1 1 140px; width: auto !important; }
+          .zc-bigfield { padding: 16px !important; border-radius: 16px !important; }
+          .zc-navrow, .zc-navgroup { gap: 8px !important; }
+          .zc-navrow button { padding: 13px 16px !important; }
+
+          /* post-publish */
+          .zc-live-pill { max-width: 100%; padding: 6px 6px 6px 16px !important; gap: 8px !important; }
+          .zc-live-url { min-width: 0; overflow-wrap: anywhere; font-size: 13px !important; line-height: 1.35 !important; text-align: left; }
+          .zc-copy { min-height: 40px; padding: 0 16px !important; }
+
+          /* review */
+          .zc-fixrow { flex-wrap: wrap !important; }
+          .zc-fixrow input { flex: 1 1 100% !important; }
+          .zc-row-post { flex-wrap: wrap; row-gap: 6px; }
+          .zc-row-label { width: auto !important; flex-basis: 100%; padding-top: 0 !important; }
+          .zc-headrow { flex-wrap: wrap; gap: 6px 12px; }
+          .zc-addrow { flex-wrap: wrap; }
+          .zc-addbox { flex: 1 1 100% !important; padding: 12px 14px !important; }
+          .zc-addrow > button { flex: 1 1 100% !important; }
+          /* custom-handle field: prefix above the input so long slugs have room */
+          .zc-handle-prefix { position: static !important; transform: none !important; margin-bottom: 8px; font-size: 13px !important; }
+          .zc-handle-input { padding: 13px 92px 13px 15px !important; }
+          .zc-handle-status { top: auto !important; bottom: 18px !important; transform: none !important; }
+
+          /* footer: stack the tagline and the three steps */
+          .zc-foot { flex-direction: column; align-items: flex-start !important; gap: 16px !important; padding-top: 16px !important; }
+          .zc-foot-tag { padding-right: 0 !important; margin-right: 0 !important; border-right: none !important; }
+          .zc-foot-steps { flex: none !important; flex-direction: column; gap: 14px !important; width: 100%; }
+          .zc-foot-step { flex: none !important; padding-left: 0 !important; margin-left: 0 !important; border-left: none !important; }
         }
         @media (prefers-reduced-motion: reduce) {
           .zc-chip-enter { animation: none; }
@@ -1048,7 +1114,7 @@ function CreateProfilePageContent() {
               <img src="/assets/zynd-logo.png" alt="Zynd" style={{ height: "20px", width: "auto", display: "block" }} />
               <span style={{ font: `600 16px/1 ${DISPLAY}`, color: T.ink, letterSpacing: "-.01em" }}>Zynd Profile</span>
             </div>
-            <Link href="/directory" className="zc-back"
+            <Link href="/directory" className="zc-back zc-dirlink"
               style={{ display: "flex", alignItems: "center", gap: "8px", font: `500 12px/1 ${SANS}`, letterSpacing: ".1em", color: T.muted, textDecoration: "none" }}>
               <span style={{ fontSize: "14px" }}>←</span> Directory
             </Link>
@@ -1060,9 +1126,9 @@ function CreateProfilePageContent() {
             <div className="zc-panel">
               <span style={{ position: "absolute", top: "18px", right: "18px", width: "13px", height: "13px", borderTop: "2px solid rgba(255,255,255,.6)", borderRight: "2px solid rgba(255,255,255,.6)" }} />
 
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", background: "rgba(255,255,255,.16)", border: "1px solid rgba(255,255,255,.34)", borderRadius: "999px", padding: "8px 15px", width: "fit-content" }}>
+              <div className="zc-badge" style={{ display: "flex", alignItems: "center", gap: "8px", background: "rgba(255,255,255,.16)", border: "1px solid rgba(255,255,255,.34)", borderRadius: "999px", padding: "8px 15px", width: "fit-content" }}>
                 <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#fff", display: "block" }} />
-                <span style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".14em", textTransform: "uppercase", color: "#fff" }}>{panel.badge}</span>
+                <span className="zc-badge-text" style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".14em", textTransform: "uppercase", color: "#fff" }}>{panel.badge}</span>
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
@@ -1072,9 +1138,9 @@ function CreateProfilePageContent() {
 
               <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: "12px" }}>
                 <div style={{ height: "1px", background: "rgba(255,255,255,.28)" }} />
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px" }}>
+                <div className="zc-panel-live" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px" }}>
                   <span style={{ font: `400 12px/1.5 ${SANS}`, color: T.onPanel }}>{liveHandle ? "Live at" : "Publishes at"}</span>
-                  <span style={{ font: `500 12px/1 ${MONO}`, color: "#fff", background: "rgba(255,255,255,.16)", borderRadius: "8px", padding: "7px 10px" }}>
+                  <span className="zc-handle-pill" style={{ font: `500 12px/1 ${MONO}`, color: "#fff", background: "rgba(255,255,255,.16)", borderRadius: "8px", padding: "7px 10px" }}>
                     zynd.ai/p/{liveHandle || (customHandle.length >= 2 ? customHandle : "you")}
                   </span>
                 </div>
@@ -1101,7 +1167,7 @@ function CreateProfilePageContent() {
                     />
                   </div>
                   ) : (
-                  <div className="zc-card" style={{ width: "100%", maxWidth: "480px", padding: "44px 40px 40px", display: "flex", flexDirection: "column", alignItems: "center", gap: "22px", textAlign: "center" }}>
+                  <div className="zc-card zc-live-card" style={{ width: "100%", maxWidth: "480px", padding: "44px 40px 40px", display: "flex", flexDirection: "column", alignItems: "center", gap: "22px", textAlign: "center" }}>
 
                     <div style={{ width: "58px", height: "58px", borderRadius: "50%", background: T.accent, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -1114,9 +1180,9 @@ function CreateProfilePageContent() {
                       <p style={{ font: `700 30px/1.15 ${DISPLAY}`, color: T.ink, letterSpacing: "-.03em", margin: 0 }}>
                         You&apos;re live
                       </p>
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "999px", padding: "10px 12px 10px 18px" }}>
-                        <span style={{ font: `500 14px/1 ${MONO}`, color: T.ink }}>zynd.ai/p/{published}</span>
-                        <button type="button" onClick={() => { navigator.clipboard?.writeText(`https://zynd.ai/p/${published}`).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1600); }}
+                      <div className="zc-live-pill" style={{ display: "flex", alignItems: "center", gap: "10px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "999px", padding: "10px 12px 10px 18px" }}>
+                        <span className="zc-live-url" style={{ font: `500 14px/1 ${MONO}`, color: T.ink }}>zynd.ai/p/{published}</span>
+                        <button type="button" className="zc-copy" onClick={() => { navigator.clipboard?.writeText(`https://zynd.ai/p/${published}`).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1600); }}
                           style={{ background: T.ink, color: "#fff", border: "none", borderRadius: "999px", padding: "7px 14px", font: `600 11px/1 ${MONO}`, letterSpacing: ".04em", cursor: "pointer", flexShrink: 0 }}>
                           {copied ? "Copied" : "Copy"}
                         </button>
@@ -1226,8 +1292,8 @@ function CreateProfilePageContent() {
                     {urls.length > 0 && (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
                         {urls.map(url => (
-                          <div key={url} className="zc-chip-enter" style={{ display: "flex", alignItems: "center", gap: "9px", background: T.accent, borderRadius: "999px", padding: "8px 13px" }}>
-                            <span style={{ font: `500 12px/1 ${MONO}`, color: "#fff" }}>{shortenUrl(url)}</span>
+                          <div key={url} className="zc-chip-enter zc-chipbox" style={{ display: "flex", alignItems: "center", gap: "9px", background: T.accent, borderRadius: "999px", padding: "8px 13px" }}>
+                            <span className="zc-clip" style={{ font: `500 12px/1 ${MONO}`, color: "#fff" }}>{shortenUrl(url)}</span>
                             <button type="button" className="zc-x" onClick={() => removeUrl(url)} aria-label={`Remove ${shortenUrl(url)}`}
                               style={{ font: `400 13px/1 ${SANS}`, color: "rgba(255,255,255,.7)", background: "none", border: "none", padding: 0, cursor: "pointer" }}>×</button>
                           </div>
@@ -1284,7 +1350,7 @@ function CreateProfilePageContent() {
                         {resume ? resume.name : "Upload PDF or DOCX"}
                       </span>
                       {resume && (
-                        <button type="button" onClick={e => { e.stopPropagation(); setResume(null); }} aria-label="Remove résumé"
+                        <button type="button" className="zc-tap zc-tap-end" onClick={e => { e.stopPropagation(); setResume(null); }} aria-label="Remove résumé"
                           style={{ marginLeft: "auto", font: `400 15px/1 ${SANS}`, color: T.muted, background: "none", border: "none", cursor: "pointer", padding: 0 }}>×</button>
                       )}
                     </div>
@@ -1360,7 +1426,7 @@ function CreateProfilePageContent() {
                     <div className="zc-question">{q.label}</div>
 
                     {q.type === "chips" && q.options && (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "center" }}>
+                      <div className="zc-chips" style={{ display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "center" }}>
                         {q.options.map(opt => {
                           const on = (selections[q.id] ?? new Set<string>()).has(opt);
                           return (
@@ -1393,6 +1459,7 @@ function CreateProfilePageContent() {
                         <input
                           ref={el => { customRefs.current[q.id] = el; }}
                           type="text"
+                          className="zc-custom-input"
                           value={customs[q.id] ?? ""}
                           onChange={e => setCustoms(p => {
                             const out = { ...p, [q.id]: e.target.value };
@@ -1438,7 +1505,7 @@ function CreateProfilePageContent() {
                           onChange={e => setLocationInput(e.target.value)}
                           placeholder="e.g. San Francisco, CA"
                           autoFocus
-                          className="zc-field"
+                          className="zc-field zc-bigfield"
                           style={{
                             width: "100%", padding: "20px 22px", borderRadius: "18px",
                             border: `1px solid ${locationInput ? T.accent : T.border}`,
@@ -1451,28 +1518,38 @@ function CreateProfilePageContent() {
                       </div>
                     )}
 
-                    {q.type === "text" && q.id === "calendly_url" && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: "9px" }}>
-                        <input
-                          type="url"
-                          value={calendlyInput}
-                          onChange={e => setCalendlyInput(e.target.value)}
-                          placeholder="https://calendly.com/yourname"
-                          autoFocus
-                          className="zc-field"
-                          style={{
-                            width: "100%", padding: "20px 22px", borderRadius: "18px",
-                            border: `1px solid ${calendlyInput ? T.accent : T.border}`,
-                            background: T.surface, color: T.ink, font: `400 15px/1 ${SANS}`,
-                            outline: "none", boxSizing: "border-box", transition: "border-color .12s",
-                          }}
-                          onKeyDown={e => { if (e.key === "Enter") advanceQuestion(); }}
-                        />
-                        <span style={{ font: `400 12px/1 ${SANS}`, color: T.faint }}>optional — skip if you prefer</span>
+                    {q.type === "text" && q.id === "booking" && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                        {[
+                          { label: "Calendly", value: calendlyInput, set: setCalendlyInput, placeholder: "https://calendly.com/yourname" },
+                          { label: "Google Calendar", value: googleCalInput, set: setGoogleCalInput, placeholder: "https://calendar.app.google/…" },
+                        ].map((f, i) => (
+                          <label key={f.label} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                            <span style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".14em", textTransform: "uppercase", color: T.muted }}>{f.label}</span>
+                            <input
+                              type="url"
+                              value={f.value}
+                              onChange={e => f.set(e.target.value)}
+                              placeholder={f.placeholder}
+                              autoFocus={i === 0}
+                              className="zc-field zc-bigfield"
+                              style={{
+                                width: "100%", padding: "20px 22px", borderRadius: "18px",
+                                border: `1px solid ${f.value ? T.accent : T.border}`,
+                                background: T.surface, color: T.ink, font: `400 15px/1 ${SANS}`,
+                                outline: "none", boxSizing: "border-box", transition: "border-color .12s",
+                              }}
+                              onKeyDown={e => { if (e.key === "Enter") advanceQuestion(); }}
+                            />
+                          </label>
+                        ))}
+                        <span style={{ font: `400 12px/1.5 ${SANS}`, color: T.faint }}>
+                          optional — add either or both. For Google Calendar, share your appointment schedule&apos;s booking page link.
+                        </span>
                       </div>
                     )}
 
-                    <div style={{ marginTop: "auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+                    <div className="zc-navrow" style={{ marginTop: "auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
                       <button type="button" className="zc-ghost" onClick={retreatQuestion}
                         disabled={questionIndex === 0}
                         style={{
@@ -1484,7 +1561,7 @@ function CreateProfilePageContent() {
                         }}>
                         ← Back
                       </button>
-                      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                      <div className="zc-navgroup" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                         <button type="button" className="zc-ghost" onClick={onNext}
                           style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: "999px", padding: "14px 26px", font: `500 15px/1 ${SANS}`, color: T.soft, cursor: "pointer" }}>
                           Skip
@@ -1501,9 +1578,9 @@ function CreateProfilePageContent() {
                         <div style={{ height: "1px", background: T.border }} />
                         <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
                           {urls.map(url => (
-                            <span key={url} style={{ display: "flex", alignItems: "center", gap: "8px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "999px", padding: "7px 12px" }}>
+                            <span key={url} className="zc-chipbox" style={{ display: "flex", alignItems: "center", gap: "8px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "999px", padding: "7px 12px" }}>
                               <KindSquare kind={detectKind(url)} size={11} />
-                              <span style={{ font: `500 12px/1 ${MONO}`, color: T.soft }}>{shortenUrl(url)}</span>
+                              <span className="zc-clip" style={{ font: `500 12px/1 ${MONO}`, color: T.soft }}>{shortenUrl(url)}</span>
                             </span>
                           ))}
                           <span style={{ font: `400 13px/1 ${SANS}`, color: jobDone ? T.accentHi : T.faint }}>
@@ -1577,7 +1654,7 @@ function CreateProfilePageContent() {
                               aria-label="Dismiss warning">×</button>
                           </div>
                           {fixingUrl === w.url ? (
-                            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                            <div className="zc-fixrow" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                               <input
                                 type="text"
                                 value={fixUrlInput}
@@ -1591,18 +1668,18 @@ function CreateProfilePageContent() {
                                 className="zc-field"
                                 style={{ flex: 1, padding: "10px 14px", fontSize: "13px", border: `1px solid ${T.accent}`, borderRadius: "10px", background: T.surface, color: T.ink, outline: "none", fontFamily: MONO }}
                               />
-                              <button type="button" disabled={!fixUrlInput.trim()}
+                              <button type="button" className="zc-btn" disabled={!fixUrlInput.trim()}
                                 onClick={() => { if (fixUrlInput.trim()) fixAndReExtract(w.url, fixUrlInput.trim()); }}
                                 style={{ background: T.accent, color: "#fff", border: "none", borderRadius: "10px", padding: "10px 16px", font: `600 12px/1 ${SANS}`, cursor: fixUrlInput.trim() ? "pointer" : "not-allowed", opacity: fixUrlInput.trim() ? 1 : 0.5, flexShrink: 0 }}>
                                 Re-scrape ↺
                               </button>
-                              <button type="button" onClick={() => { setFixingUrl(null); setFixUrlInput(""); }}
+                              <button type="button" className="zc-btn" onClick={() => { setFixingUrl(null); setFixUrlInput(""); }}
                                 style={{ background: "none", border: "none", padding: "10px 8px", font: `400 12px/1 ${SANS}`, color: T.faint, cursor: "pointer" }}>
                                 Cancel
                               </button>
                             </div>
                           ) : (
-                            <button type="button"
+                            <button type="button" className="zc-btn"
                               onClick={() => { setFixingUrl(w.url); setFixUrlInput(""); }}
                               style={{ background: T.ink, color: "#fff", border: "none", borderRadius: "10px", padding: "10px 18px", font: `600 12px/1 ${DISPLAY}`, cursor: "pointer", width: "fit-content" }}>
                               Fix URL and re-scrape →
@@ -1620,7 +1697,7 @@ function CreateProfilePageContent() {
                     <div style={{ display: "flex", alignItems: "flex-start", gap: "14px" }}>
                       <div style={{ position: "relative", flexShrink: 0 }}>
                         <Avatar url={card.identity.avatar_url} name={card.identity.name} />
-                        <button type="button" onClick={() => { setShowPhotoInput(p => !p); setPhotoUrlInput(""); }}
+                        <button type="button" className="zc-pencil" aria-label="Change photo" onClick={() => { setShowPhotoInput(p => !p); setPhotoUrlInput(""); }}
                           style={{ position: "absolute", bottom: 0, right: 0, width: "22px", height: "22px", borderRadius: "50%", background: T.ink, border: `2px solid ${T.card}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                           <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M11 2 14 5 5 14H2v-3L11 2z" stroke="#fff" strokeWidth="1.5" strokeLinejoin="round"/></svg>
                         </button>
@@ -1629,7 +1706,7 @@ function CreateProfilePageContent() {
                         <span style={{ font: `400 13px/1.4 ${SANS}`, color: T.soft }}>
                           {card.identity.avatar_url ? "Profile photo — from scraped sources" : "No photo found"}
                         </span>
-                        <div style={{ display: "flex", gap: "12px" }}>
+                        <div className="zc-photo-actions" style={{ display: "flex", gap: "12px" }}>
                           <button type="button" className="zc-rowbtn" onClick={() => { setShowPhotoInput(p => !p); setPhotoUrlInput(""); }}>
                             {showPhotoInput ? "Cancel" : "Change photo"}
                           </button>
@@ -1658,7 +1735,7 @@ function CreateProfilePageContent() {
                                   }
                                 }}
                               />
-                              <button type="button" disabled={!photoUrlInput.trim()}
+                              <button type="button" className="zc-btn" disabled={!photoUrlInput.trim()}
                                 onClick={() => { updateCard({ identity: { ...card.identity, avatar_url: photoUrlInput.trim() } }); setShowPhotoInput(false); setPhotoUrlInput(""); }}
                                 style={{ background: T.accent, color: "#fff", border: "none", borderRadius: "10px", padding: "9px 16px", font: `600 12px/1 ${SANS}`, cursor: photoUrlInput.trim() ? "pointer" : "not-allowed", opacity: photoUrlInput.trim() ? 1 : 0.5, flexShrink: 0 }}>
                                 Set
@@ -1669,7 +1746,7 @@ function CreateProfilePageContent() {
                               <span style={{ font: `400 11px/1 ${SANS}`, color: T.faint }}>or</span>
                               <div style={{ height: "1px", background: T.border, flex: 1 }} />
                             </div>
-                            <button type="button" disabled={photoUploading} onClick={() => photoFileRef.current?.click()}
+                            <button type="button" className="zc-btn" disabled={photoUploading} onClick={() => photoFileRef.current?.click()}
                               style={{ background: T.surface, color: T.soft, border: `1px dashed ${T.dashed}`, borderRadius: "10px", padding: "9px 14px", font: `500 12px/1 ${SANS}`, cursor: "pointer", textAlign: "center" }}>
                               {photoUploading ? "Uploading…" : "↑ Upload photo (JPG / PNG / WebP)"}
                             </button>
@@ -1683,9 +1760,9 @@ function CreateProfilePageContent() {
                     {Object.entries(card.identity.links).some(([, v]) => v) && (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
                         {Object.entries(card.identity.links).filter(([, v]) => v).map(([key, url]) => (
-                          <span key={key} style={{ display: "flex", alignItems: "center", gap: "9px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "999px", padding: "8px 13px" }}>
+                          <span key={key} className="zc-chipbox" style={{ display: "flex", alignItems: "center", gap: "9px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "999px", padding: "8px 13px" }}>
                             <KindSquare kind={detectKind(url)} size={11} />
-                            <span style={{ font: `500 12px/1 ${MONO}`, color: T.soft }}>{shortenUrl(url)}</span>
+                            <span className="zc-clip" style={{ font: `500 12px/1 ${MONO}`, color: T.soft }}>{shortenUrl(url)}</span>
                             <button type="button" className="zc-rowbtn" aria-label={`Remove ${key} link`}
                               onClick={() => updateCard({ identity: { ...card.identity, links: { ...card.identity.links, [key]: "" } } })}>×</button>
                           </span>
@@ -1702,8 +1779,8 @@ function CreateProfilePageContent() {
                           <div style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".14em", textTransform: "uppercase", color: T.muted, marginBottom: "9px" }}>
                             Profile URL <span style={{ font: `400 10px/1 ${SANS}`, textTransform: "none", letterSpacing: 0, color: T.faint }}>— optional, set your custom slug</span>
                           </div>
-                          <div style={{ position: "relative" }}>
-                            <div style={{ position: "absolute", left: "15px", top: "50%", transform: "translateY(-50%)", font: `400 14px/1 ${MONO}`, color: T.faint, pointerEvents: "none", whiteSpace: "nowrap" }}>
+                          <div className="zc-handle-wrap" style={{ position: "relative" }}>
+                            <div className="zc-handle-prefix" style={{ position: "absolute", left: "15px", top: "50%", transform: "translateY(-50%)", font: `400 14px/1 ${MONO}`, color: T.faint, pointerEvents: "none", whiteSpace: "nowrap" }}>
                               zynd.ai/p/
                             </div>
                             <input
@@ -1711,7 +1788,7 @@ function CreateProfilePageContent() {
                               value={customHandle}
                               onChange={e => onCustomHandleChange(e.target.value)}
                               placeholder="your-handle"
-                              className="zc-field"
+                              className="zc-field zc-handle-input"
                               style={{
                                 width: "100%", padding: "13px 15px 13px 98px",
                                 fontSize: "15px", fontFamily: MONO,
@@ -1720,7 +1797,7 @@ function CreateProfilePageContent() {
                               }}
                             />
                             {customHandle.length >= 2 && (
-                              <span style={{ position: "absolute", right: "14px", top: "50%", transform: "translateY(-50%)", font: `400 12px/1 ${SANS}`, color: handleChecking ? T.faint : handleAvailable === false ? "#C2401F" : handleAvailable === true ? "#16A34A" : T.faint }}>
+                              <span className="zc-handle-status" style={{ position: "absolute", right: "14px", top: "50%", transform: "translateY(-50%)", font: `400 12px/1 ${SANS}`, color: handleChecking ? T.faint : handleAvailable === false ? "#C2401F" : handleAvailable === true ? "#16A34A" : T.faint }}>
                                 {handleChecking ? "checking…" : handleAvailable === false ? "taken" : handleAvailable === true ? "available ✓" : ""}
                               </span>
                             )}
@@ -1801,8 +1878,8 @@ function CreateProfilePageContent() {
                             const key = sampleKey(i);
                             const off = excluded.has(key);
                             return (
-                              <div key={key} className={`zc-row${off ? " off" : ""}`}>
-                                <span style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, paddingTop: "4px", flexShrink: 0, width: "26px" }}>
+                              <div key={key} className={`zc-row zc-row-post${off ? " off" : ""}`}>
+                                <span className="zc-row-label" title={w.platform} style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, paddingTop: "4px", flexShrink: 0, width: "60px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                   {w.platform}
                                 </span>
                                 <span className="zc-row-main zc-clamp2" style={{ flex: 1, minWidth: 0, font: `400 14px/1.5 ${SANS}`, color: T.ink }}>
@@ -1823,7 +1900,7 @@ function CreateProfilePageContent() {
                   {/* ── Add more sources ── */}
                   {!editHandle && (
                     <div className="zc-card" style={{ padding: "22px 24px", display: "flex", flexDirection: "column", gap: "14px" }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div className="zc-headrow" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <span style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".14em", textTransform: "uppercase", color: T.muted }}>Add more sources</span>
                         <span style={{ font: `400 12px/1 ${SANS}`, color: T.faint }}>re-extract with additional profiles</span>
                       </div>
@@ -1831,17 +1908,17 @@ function CreateProfilePageContent() {
                       {addMoreUrls.length > 0 && (
                         <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
                           {addMoreUrls.map(url => (
-                            <div key={url} style={{ display: "flex", alignItems: "center", gap: "8px", background: T.accent, borderRadius: "999px", padding: "7px 12px" }}>
-                              <span style={{ font: `500 11px/1 ${MONO}`, color: "#fff" }}>{shortenUrl(url)}</span>
-                              <button type="button" onClick={() => setAddMoreUrls(p => p.filter(u => u !== url))}
+                            <div key={url} className="zc-chipbox" style={{ display: "flex", alignItems: "center", gap: "8px", background: T.accent, borderRadius: "999px", padding: "7px 12px" }}>
+                              <span className="zc-clip" style={{ font: `500 11px/1 ${MONO}`, color: "#fff" }}>{shortenUrl(url)}</span>
+                              <button type="button" className="zc-x" aria-label={`Remove ${shortenUrl(url)}`} onClick={() => setAddMoreUrls(p => p.filter(u => u !== url))}
                                 style={{ font: `400 13px/1 ${SANS}`, color: "rgba(255,255,255,.7)", background: "none", border: "none", padding: 0, cursor: "pointer" }}>×</button>
                             </div>
                           ))}
                         </div>
                       )}
 
-                      <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: "8px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "10px 14px" }}>
+                      <div className="zc-addrow" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                        <div className="zc-addbox" style={{ flex: 1, display: "flex", alignItems: "center", gap: "8px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "12px", padding: "10px 14px" }}>
                           <input
                             ref={addMoreInputRef}
                             type="text"
@@ -1862,7 +1939,7 @@ function CreateProfilePageContent() {
                             style={{ flex: 1, border: "none", outline: "none", background: "transparent", font: `400 13px/1 ${MONO}`, color: T.ink }}
                           />
                         </div>
-                        <button type="button" onClick={() => addMoreFileRef.current?.click()}
+                        <button type="button" className="zc-btn" onClick={() => addMoreFileRef.current?.click()}
                           style={{ background: addMoreResume ? T.accent : T.surface, color: addMoreResume ? "#fff" : T.soft, border: `1px solid ${addMoreResume ? T.accent : T.border}`, borderRadius: "12px", padding: "10px 14px", font: `500 12px/1 ${SANS}`, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}>
                           {addMoreResume ? `✓ ${addMoreResume.name.slice(0, 14)}…` : "↑ Resume"}
                         </button>
@@ -1881,7 +1958,7 @@ function CreateProfilePageContent() {
                       </div>
 
                       {(addMoreUrls.length > 0 || addMoreResume) && (
-                        <button type="button" onClick={reExtract}
+                        <button type="button" className="zc-btn" onClick={reExtract}
                           style={{ background: T.ink, color: "#fff", border: "none", borderRadius: "12px", padding: "12px 20px", font: `600 13px/1 ${DISPLAY}`, cursor: "pointer", display: "flex", alignItems: "center", gap: "10px", width: "fit-content", letterSpacing: "-.01em" }}>
                           Re-extract with these sources <span style={{ font: `400 14px/1 ${SANS}` }}>↺</span>
                         </button>
@@ -1907,19 +1984,19 @@ function CreateProfilePageContent() {
           </div>
 
           {/* ── tagline footer row — inside shell, always visible ── */}
-          <div style={{ marginTop: "auto", borderTop: `1px solid ${T.border}`, paddingTop: "20px", display: "flex", alignItems: "center", gap: "0", flexWrap: "wrap" }}>
-            <div style={{ flex: "0 0 auto", paddingRight: "32px", marginRight: "32px", borderRight: `1px solid ${T.border}` }}>
+          <div className="zc-foot" style={{ marginTop: "auto", borderTop: `1px solid ${T.border}`, paddingTop: "20px", display: "flex", alignItems: "center", gap: "0", flexWrap: "wrap" }}>
+            <div className="zc-foot-tag" style={{ flex: "0 0 auto", paddingRight: "32px", marginRight: "32px", borderRight: `1px solid ${T.border}` }}>
               <p style={{ font: `700 22px/1.1 ${DISPLAY}`, color: T.ink, letterSpacing: "-.03em", margin: 0, whiteSpace: "nowrap" }}>
                 Your work,<br />discoverable by AI.
               </p>
             </div>
-            <div style={{ display: "flex", gap: "0", flex: 1, minWidth: 0 }}>
+            <div className="zc-foot-steps" style={{ display: "flex", gap: "0", flex: 1, minWidth: 0 }}>
               {[
                 { num: "01", label: "Add your profiles", desc: "GitHub · LinkedIn · X · any URL" },
                 { num: "02", label: "We scrape the public web", desc: "No passwords, no permissions" },
                 { num: "03", label: "You review and approve", desc: "Edit every line before it goes live" },
               ].map(({ num, label, desc }, i) => (
-                <div key={num} style={{ flex: 1, minWidth: 0, paddingLeft: i > 0 ? "24px" : "0", borderLeft: i > 0 ? `1px solid ${T.border}` : "none", marginLeft: i > 0 ? "24px" : "0", display: "flex", flexDirection: "column", gap: "5px" }}>
+                <div key={num} className="zc-foot-step" style={{ flex: 1, minWidth: 0, paddingLeft: i > 0 ? "24px" : "0", borderLeft: i > 0 ? `1px solid ${T.border}` : "none", marginLeft: i > 0 ? "24px" : "0", display: "flex", flexDirection: "column", gap: "5px" }}>
                   <span style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".14em", color: T.faint }}>{num}</span>
                   <span style={{ font: `600 13px/1.3 ${DISPLAY}`, color: T.ink, letterSpacing: "-.01em" }}>{label}</span>
                   <span style={{ font: `400 12px/1.4 ${SANS}`, color: T.soft }}>{desc}</span>

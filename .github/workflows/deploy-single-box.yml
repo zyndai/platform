@@ -1,0 +1,139 @@
+# CD for the single box (infra/single-box/README.md). The box runs two
+# environments off the same code: `main` -> prod, `dev` -> dev. When either
+# branch changes, run the CI checks, then SSH to the box and run
+# infra/single-box/deploy.sh for that environment, which rebuilds and restarts
+# only the services whose files changed and health-checks them. Never applies
+# DB migrations (packages/db is applied by a person).
+#
+# Manual runs (Actions tab -> Run workflow) skip the checks so a rollback isn't
+# blocked by them: pick the environment, and give a commit sha on that branch to
+# roll to, `force_all` to rebuild everything, or `plan_only` to see what a
+# deploy would do.
+#
+# Needs three repository secrets (see README, "CI/CD"): DEPLOY_HOST,
+# DEPLOY_SSH_KEY, DEPLOY_HOST_KEY. Only `push` to main/dev and manual dispatch
+# trigger this, never pull requests, so forks can't reach the secrets.
+name: deploy-single-box
+
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Which instance to deploy: prod (branch main) or dev (branch dev)'
+        type: choice
+        options: [prod, dev]
+        default: prod
+      ref:
+        description: 'Commit sha on that environment''s branch (blank = latest; an older sha rolls back)'
+        required: false
+        default: ''
+      force_all:
+        description: 'Rebuild and restart every service'
+        type: boolean
+        default: false
+      plan_only:
+        description: 'Show what would change; deploy nothing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-single-box
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: checks
+    # `checks` is skipped on manual runs; a skipped need would otherwise skip us too.
+    if: ${{ !cancelled() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Build the deploy arguments
+        id: args
+        env:
+          # push to dev -> dev instance, push to main -> prod; a manual run picks.
+          ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref_name == 'dev' && 'dev' || 'prod') }}
+          REF: ${{ inputs.ref }}
+          FORCE_ALL: ${{ inputs.force_all }}
+          PLAN_ONLY: ${{ inputs.plan_only }}
+        run: |
+          [[ "$ENVIRONMENT" == "prod" || "$ENVIRONMENT" == "dev" ]] || { echo "::error::unknown environment '$ENVIRONMENT'"; exit 1; }
+          args="latest"
+          if [[ -n "$REF" ]]; then
+            [[ "$REF" =~ ^[0-9a-f]{7,40}$ ]] || { echo "::error::ref must be a commit sha (7-40 hex characters)"; exit 1; }
+            args="$REF"
+          fi
+          args="$args --env=$ENVIRONMENT"
+          [[ "$FORCE_ALL" == "true" ]] && args="$args --force-all"
+          [[ "$PLAN_ONLY" == "true" ]] && args="$args --plan"
+          echo "Deploying the $ENVIRONMENT instance: $args"
+          echo "value=$args" >> "$GITHUB_OUTPUT"
+
+      - name: Set up SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST_KEY: ${{ secrets.DEPLOY_HOST_KEY }}
+        run: |
+          missing=()
+          for v in DEPLOY_HOST DEPLOY_SSH_KEY DEPLOY_HOST_KEY; do [[ -n "${!v}" ]] || missing+=("$v"); done
+          if ((${#missing[@]})); then
+            echo "::error::Missing repository secret(s): ${missing[*]}. See infra/single-box/README.md, CI/CD."
+            exit 1
+          fi
+          umask 077
+          install -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+
+          # Sanity-check the private key without printing any of it.
+          head -n 1 ~/.ssh/deploy_key | grep -q -- '-----BEGIN OPENSSH PRIVATE KEY-----' \
+            || { echo "::error::DEPLOY_SSH_KEY must be the whole private key file, starting with the -----BEGIN OPENSSH PRIVATE KEY----- line"; exit 1; }
+          ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null 2>&1 \
+            || { echo "::error::DEPLOY_SSH_KEY is not a valid private key (missing END line, or line breaks lost when pasting?)"; exit 1; }
+
+          # Pinned host key, not trust-on-first-use. Take "<type> <base64>" from whatever
+          # was pasted, so a leading host name, a trailing comment or quotes don't break it.
+          hostkey="$(printf '%s' "$DEPLOY_HOST_KEY" | tr -d '\r"'"'" | awk '
+            { for (i = 1; i < NF; i++) if ($i ~ /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521))$/) { print $i, $(i+1); exit } }')"
+          if [[ -z "$hostkey" ]]; then
+            # Only the base64 part was pasted: every ed25519 host key starts with this fixed prefix.
+            b64="$(printf '%s' "$DEPLOY_HOST_KEY" | tr -d '\r"'"'" | grep -oE 'AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/=]+' | head -n 1 || true)"
+            [[ -n "$b64" ]] && hostkey="ssh-ed25519 $b64"
+          fi
+          if [[ -z "$hostkey" ]]; then
+            echo "::error::DEPLOY_HOST_KEY has no host key in it. It must be one line, 'ssh-ed25519 AAAA...', i.e. the output of: cut -d' ' -f1-2 /etc/ssh/ssh_host_ed25519_key.pub"
+            exit 1
+          fi
+          printf '%s %s\n' "$DEPLOY_HOST" "$hostkey" > ~/.ssh/known_hosts
+
+          # Compare with what the server actually presents, and say so if they differ
+          # (fingerprints of public host keys only).
+          if [[ "$hostkey" == ssh-ed25519* ]]; then
+            scanned="$(ssh-keyscan -T 10 -t ed25519 "$DEPLOY_HOST" 2>/dev/null | awk '{print $2, $3}' | head -n 1)"
+            if [[ -z "$scanned" ]]; then
+              echo "::warning::could not reach the server on port 22 to double-check the pinned host key"
+            elif [[ "$scanned" != "$hostkey" ]]; then
+              echo "::error::DEPLOY_HOST_KEY does not match the key the server presents. Pinned: $(echo "$hostkey" | ssh-keygen -lf - | cut -d' ' -f2)  Server: $(echo "$scanned" | ssh-keygen -lf - | cut -d' ' -f2)"
+              exit 1
+            fi
+          fi
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          ARGS: ${{ steps.args.outputs.value }}
+        run: |
+          # The key on the server is restricted to a forced command (deploy.sh), so
+          # these arguments are all it will ever accept.
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 \
+              "ubuntu@${DEPLOY_HOST}" "$ARGS"

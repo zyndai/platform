@@ -1304,7 +1304,7 @@ export default async function PersonPage({ params }: PageProps) {
                 <CopyPermalinkIcon url={`https://${permalink}`} />
               </div>
               <Link href="/directory" className="hover:text-slate-800">DIRECTORY</Link>
-              <Link href={`/p/${card.handle ?? card.id}/agent`} className="hover:text-slate-800">AGENT_API</Link>
+              <a href={`/p/${card.handle ?? card.id}/data.json`} className="hover:text-slate-800">AGENT_API</a>
               <Link href="/create" className="hover:text-slate-800">CREATE</Link>
             </div>
           </footer>

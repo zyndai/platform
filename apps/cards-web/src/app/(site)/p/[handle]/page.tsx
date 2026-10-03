@@ -344,7 +344,9 @@ export default async function PersonPage({ params }: PageProps) {
   const { identity } = card;
   const v = buildView(card);
   const canonical = cardCanonicalUrl(card);
-  const permalink = `zynd.ai/p/${card.handle || card.id}`;
+  // Shown and copied without the scheme; this is where the card actually lives
+  // (cards.zynd.ai), and the /profile/<id> form when it has no handle.
+  const permalink = canonical.replace(/^https?:\/\//, "");
 
   const initials = (identity.name || "?")
     .split(/\s+/).map((p) => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
@@ -637,7 +639,7 @@ export default async function PersonPage({ params }: PageProps) {
           .pf-book-badges { flex-wrap: wrap !important; gap: 6px !important; }
           .pf-footer { flex-direction: column; align-items: flex-start !important; }
           .pf-footer-links { flex-wrap: wrap !important; gap: 8px !important; }
-          .pf-permalink-badge { max-width: calc(100vw - 48px) !important; min-width: 0 !important; overflow: hidden !important; }
+          .pf-permalink-badge { flex: 1 1 100%; max-width: calc(100vw - 48px) !important; min-width: 0 !important; overflow: hidden !important; }
           .pf-permalink-text { overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; max-width: 160px !important; }
           .pf-social-head { flex-wrap: wrap; gap: 6px; }
           /* nowrap + ellipsis so long handles like "in/very-long-username" truncate cleanly */
@@ -1304,7 +1306,7 @@ export default async function PersonPage({ params }: PageProps) {
                 <CopyPermalinkIcon url={`https://${permalink}`} />
               </div>
               <Link href="/directory" className="hover:text-slate-800">DIRECTORY</Link>
-              <Link href={`/p/${card.handle ?? card.id}/agent`} className="hover:text-slate-800">AGENT_API</Link>
+              <a href={`/p/${card.handle ?? card.id}/data.json`} className="hover:text-slate-800">AGENT_API</a>
               <Link href="/create" className="hover:text-slate-800">CREATE</Link>
             </div>
           </footer>

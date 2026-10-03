@@ -1,0 +1,2 @@
+# exports hold emails and password hashes: never commit them
+xmfj_export*/

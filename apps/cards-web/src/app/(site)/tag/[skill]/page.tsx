@@ -10,12 +10,28 @@ interface PageProps {
   params: Promise<{ skill: string }>;
 }
 
-function decodeSkill(raw: string): string {
-  return decodeURIComponent(raw).replace(/-/g, " ").toLowerCase();
+// A skill's URL slug is its lowercased name with whitespace turned into "-".
+// That is lossy ("Zero-Knowledge proofs" and "zero knowledge proofs" share a
+// slug), so never try to reverse it back into a name: compare slugs instead.
+function skillSlug(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, "-");
 }
 
 function encodeSkill(name: string): string {
-  return encodeURIComponent(name.toLowerCase().replace(/\s+/g, "-"));
+  return encodeURIComponent(skillSlug(name));
+}
+
+function slugFromParam(raw: string): string {
+  try {
+    return decodeURIComponent(raw).toLowerCase();
+  } catch {
+    return raw.toLowerCase();
+  }
+}
+
+// Display-only guess used when there is no card to read the real name from.
+function decodeSkill(raw: string): string {
+  return slugFromParam(raw).replace(/-/g, " ");
 }
 
 function buildJsonLd(skill: string, cards: AgentProfileCard[]) {
@@ -81,19 +97,22 @@ function levelMeta(level: string) {
 
 export default async function TagPage({ params }: PageProps) {
   const { skill: rawSkill } = await params;
-  const skill = decodeSkill(rawSkill);
+  const slug = slugFromParam(rawSkill);
 
   const allCards = await listCards();
   const cards = allCards.filter((c) =>
-    c.skills.some((s) => s.name.toLowerCase() === skill)
+    c.skills.some((s) => skillSlug(s.name) === slug)
   );
 
   if (cards.length === 0) notFound();
 
   // For each matched card, find the specific skill entry (for level display)
   function matchedSkill(card: AgentProfileCard) {
-    return card.skills.find((s) => s.name.toLowerCase() === skill);
+    return card.skills.find((s) => skillSlug(s.name) === slug);
   }
+
+  // Show the skill's real name (hyphens intact), lowercased like before.
+  const skill = (matchedSkill(cards[0])?.name ?? decodeSkill(rawSkill)).toLowerCase();
 
   const BASE = "https://cards.zynd.ai";
 
@@ -248,7 +267,7 @@ export default async function TagPage({ params }: PageProps) {
                       {card.skills.length > 1 && (
                         <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", position: "relative", zIndex: 2 }}>
                           {card.skills
-                            .filter((sk) => sk.name.toLowerCase() !== skill)
+                            .filter((sk) => skillSlug(sk.name) !== slug)
                             .slice(0, 4)
                             .map((sk) => (
                               <Link

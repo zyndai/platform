@@ -64,6 +64,10 @@ function AuthPageContent() {
         <p style={{ marginTop: "20px", fontSize: "14px", color: "#999" }}>
           Secure authentication powered by Supabase
         </p>
+        <p style={{ marginTop: "8px", fontSize: "12px", color: "#666", lineHeight: 1.5 }}>
+          You&apos;ll be redirected to LinkedIn to sign in. Zynd never sees or stores
+          your LinkedIn password.
+        </p>
       </div>
     </div>
   );

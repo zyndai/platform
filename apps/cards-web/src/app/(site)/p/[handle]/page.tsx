@@ -18,7 +18,7 @@ import { SkillMatrix } from "./skill-matrix";
 import { ShareQrGroup, CopyPermalinkIcon } from "./share-controls";
 import type { ResumeData } from "./resume-pdf";
 import { EditCardButton } from "./edit-card-button";
-import { ProfileSignIn, ClaimCardButton } from "./profile-auth-actions";
+import { ProfileSignIn, ClaimCardButton, ProfileSignOut } from "./profile-auth-actions";
 import { CountUp } from "./count-up";
 import { AutoScroll } from "./auto-scroll";
 import { ContributionHeatmap } from "./contribution-heatmap";
@@ -671,6 +671,7 @@ export default async function PersonPage({ params }: PageProps) {
               {isOwner && <EditCardButton handle={card.handle ?? card.id} />}
               {!isSignedIn && <ProfileSignIn handle={card.handle ?? handle} />}
               {isSignedIn && !isOwner && <ClaimCardButton handle={card.handle ?? handle} card={card} />}
+              {isSignedIn && <ProfileSignOut />}
             </div>
           </header>
 

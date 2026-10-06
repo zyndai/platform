@@ -545,6 +545,27 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
           </header>
 
           <div className="pe-stack">
+            <section className="pe-sec" id="connect-mcp">
+              <div className="pe-kicker">Coding agents</div>
+              <div className="pe-title">Add MCP</div>
+              <p className="pe-help">
+                Copy a config with your private key into Claude Code, Cursor, or VS Code.
+                Your agent reports what you work on; you review facts before they go public.
+              </p>
+              <McpConnectPanel tone="light" />
+            </section>
+
+            <section className="pe-sec">
+              <div className="pe-kicker">Review</div>
+              <div className="pe-title">Facts from your coding agents</div>
+              <SuggestedFactsReview
+                tone="light"
+                onChanged={() => {
+                  void syncMemory();
+                }}
+              />
+            </section>
+
             <section className="pe-sec">
               <div className="pe-kicker">Identity</div>
               <div className="pe-title">How you appear</div>
@@ -734,24 +755,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
               </section>
             </div>
 
-            <div className="pe-split">
-              <section className="pe-sec">
-                <div className="pe-kicker">Agents</div>
-                <div className="pe-title">Connect MCP</div>
-                <McpConnectPanel tone="light" />
-              </section>
 
-              <section className="pe-sec">
-                <div className="pe-kicker">Review</div>
-                <div className="pe-title">Coding agent facts</div>
-                <SuggestedFactsReview
-                  tone="light"
-                  onChanged={() => {
-                    void syncMemory();
-                  }}
-                />
-              </section>
-            </div>
 
             <section className="pe-sec">
               <div className="pe-kicker">Craft</div>

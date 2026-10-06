@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MessageCircle, X, ArrowUp } from "lucide-react";
 
 interface ProfileChatWidgetProps {
@@ -14,6 +14,28 @@ interface ChatMessage {
 }
 
 const MAX_HISTORY = 8;
+
+function linkify(text: string): ReactNode {
+  const re = /(https?:\/\/[^\s<>"']+)/g;
+  const out: ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > last) out.push(text.slice(last, match.index));
+    let url = match[0];
+    const trailing = url.match(/[.,;:!?)]+$/)?.[0];
+    if (trailing) url = url.slice(0, -trailing.length);
+    out.push(
+      <a key={key++} href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#4f46e5", textDecoration: "underline" }}>
+        {url}
+      </a>
+    );
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
 
 export function ProfileChatWidget({ handle, personName }: ProfileChatWidgetProps) {
   const [open, setOpen] = useState(false);
@@ -214,7 +236,9 @@ export function ProfileChatWidget({ handle, personName }: ProfileChatWidgetProps
               boxShadow: m.role === "assistant" ? "0 1px 3px rgba(0,0,0,0.05)" : "none",
               wordBreak: "break-word",
             }}>
-              {m.content || (
+              {m.content ? (
+                m.role === "assistant" ? linkify(m.content) : m.content
+              ) : (
                 <span style={{ display: "inline-flex", gap: "3px", color: "#999" }}>
                   <span style={{ animation: "dot 1.2s infinite", animationDelay: "0ms" }}>•</span>
                   <span style={{ animation: "dot 1.2s infinite", animationDelay: "200ms" }}>•</span>

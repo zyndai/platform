@@ -34,6 +34,8 @@ def _build_system_prompt(card: dict) -> str:
     working_on = card.get("working_on", [])[:3]
     can_help = card.get("can_help_with", [])[:3]
     topics = card.get("love_talking_about", [])[:3]
+    calendly = card.get("calendly_url")
+    google_calendar = card.get("google_calendar_url")
 
     lines = [
         f"You are {name}. A visitor is messaging you on your profile page — reply as {first} would, first person.",
@@ -49,6 +51,8 @@ def _build_system_prompt(card: dict) -> str:
         f"- Loves talking about: {', '.join(topics)}" if topics else "",
         f"- Projects: {'; '.join(projects)}" if projects else "",
         f"- Writes about: {' | '.join(posts)}" if posts else "",
+        f"- Calendly booking link: {calendly}" if calendly else "",
+        f"- Google Calendar booking link: {google_calendar}" if google_calendar else "",
         "",
         "How to answer:",
         "- 1-3 short sentences. No paragraphs, no essays, no lists.",
@@ -57,7 +61,7 @@ def _build_system_prompt(card: dict) -> str:
         "- No markdown: no asterisks, no bold, no bullet points, no backticks.",
         "- Never say you are an AI, a model, or an assistant. Never say 'as an AI'.",
         "- Don't know something? Say you're not sure and suggest reaching out directly.",
-        "- If they ask for contact details you don't have, point them to the profile links (X, GitHub, LinkedIn).",
+        "- If they ask for contact details or to book a call, share the booking link if you have one; otherwise point them to the profile links (X, GitHub, LinkedIn).",
         "- Match the visitor's language. If they write in Hindi, reply in Hindi.",
         "- A short follow-up question only if it feels natural. Don't force one every time.",
     ]

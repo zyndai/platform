@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { setAuthNext } from "@/lib/auth/next-cookie";
 import { getMyCard, updateCard, type AgentProfileCard } from "@/lib/cards";
 import { hasClaimToken, markClaimIntent, subscribeClaimTokens, takeClaimIntent } from "@/lib/claim-tokens";
+import { useAuth } from "@/hooks/useAuth";
 
 const PILL_CLASS =
   "inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full font-mono text-[12px]! font-semibold cursor-pointer hover:opacity-90 transition-opacity disabled:opacity-60";
@@ -88,6 +89,22 @@ export function ClaimCardButton({ handle, card }: { handle: string; card: AgentP
   return (
     <button type="button" onClick={claim} disabled={status === "claiming"} className={PILL_CLASS} style={PILL_STYLE}>
       {status === "claiming" ? "Claiming…" : status === "failed" ? "Claim failed · retry" : "Claim this card"}
+    </button>
+  );
+}
+
+/** Signed-in header action: lets anyone who is signed in sign back out. */
+export function ProfileSignOut() {
+  const { authenticated, logout } = useAuth();
+  if (!authenticated) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => logout()}
+      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full font-mono text-[12px]! font-semibold cursor-pointer hover:opacity-90 transition-opacity"
+      style={{ background: "transparent", color: "#64748b", border: "1px solid #e2e8f0" }}
+    >
+      Sign out
     </button>
   );
 }

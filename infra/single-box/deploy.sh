@@ -39,7 +39,7 @@ configure_env() {
       COMPOSE=(docker compose -p zynd -f infra/api-box/docker-compose.prod.yml
                -f infra/single-box/docker-compose.override.yml --env-file "$BOX/compose.env")
       COMPOSE_TOUCHED='^(infra/api-box/docker-compose\.prod\.yml|infra/single-box/docker-compose\.override\.yml)$'
-      MEMORY_SERVICES=(postgres redis api worker mcp); CARDS_SERVICES=(cards)
+      MEMORY_SERVICES=(postgres redis api worker mcp cards-mcp); CARDS_SERVICES=(cards)
       P_API=8000; P_WEB=3001; P_CARDS_WEB=3002; P_MEMORY=8001; P_CARDS_API=8002 ;;
     dev)
       REPO="${ZYND_ROOT_DEV:-/home/ubuntu/zynd-platform-dev}"; BRANCH=dev

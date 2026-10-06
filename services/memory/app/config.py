@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # MCP RemoteAuthProvider to advertise OAuth discovery endpoints. If the MCP
     # server runs on a different host/port than the API, set this explicitly.
     mcp_public_base_url: str = "http://localhost:8090"
+    # Public base URL of the cards MCP server (coding-agent connector served by
+    # app.cards_mcp). Same reasoning as mcp_public_base_url.
+    cards_mcp_public_base_url: str = "http://localhost:8091"
     oauth_client_id: str = "zynd-chatgpt"
     oauth_client_secret: str = "zynd-oauth-secret"
     # Second confidential client: the Hermes Deployer. It runs the same

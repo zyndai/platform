@@ -238,6 +238,113 @@ async def service_findability(identifier: str, authorization: str = Header(defau
     return {"connected": True, "facts": facts}
 
 
+@app.post("/v1/service/cards-connect")
+async def cards_connect(body: dict, authorization: str = Header(default="")) -> dict:
+    """Mint a long-lived MCP token for a cards user (service-to-service).
+
+    Called by the cards backend when a signed-in cards user clicks "Connect MCP".
+    Cards vouches for the caller's identity — {"email", "display_name"?,
+    "supabase_user_id"?} in the body — after verifying their Supabase session
+    itself. The email is the ownership key (same upsert as /token/exchange), so
+    this works for xmfj and aafo cards users alike during the migration.
+    Auth: Bearer MEMORY_SERVICE_TOKEN (shared secret, same value both services).
+
+    Returns {"token", "mcp_url"} — the token authenticates the cards MCP server
+    (app.cards_mcp) and, because it is the standard ZYND access JWT, every other
+    ZYND surface that accepts the user token. It is long-lived
+    (mcp_token_ttl_seconds); regenerating replaces nothing, so "disconnect"
+    is the user revoking from the dashboard (revoke_user_tokens).
+    """
+    token = authorization.removeprefix("Bearer ").strip()
+    if not settings.memory_service_token or not hmac.compare_digest(
+        token, settings.memory_service_token
+    ):
+        raise HTTPException(status_code=401, detail="invalid service token")
+    email = (body.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=422, detail="email is required")
+    display_name = (body.get("display_name") or "").strip()
+    supabase_user_id = (body.get("supabase_user_id") or "").strip() or None
+
+    row = await get_pool().fetchrow(
+        """INSERT INTO users (email, display_name, supabase_user_id) VALUES ($1, $2, $3)
+           ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name,
+                 supabase_user_id = COALESCE(EXCLUDED.supabase_user_id, users.supabase_user_id)
+           RETURNING id""",
+        email, display_name or email.split("@", 1)[0], supabase_user_id,
+    )
+    base = settings.cards_mcp_public_base_url.rstrip("/")
+    return {"token": issue_personal_token(str(row["id"])), "mcp_url": f"{base}/cards-mcp"}
+
+
+async def _service_caller(authorization: str, email: str) -> str:
+    """Validate MEMORY_SERVICE_TOKEN and resolve the caller's memory uid by email.
+
+    Shared by the /v1/service cards endpoints: cards-api vouches for the user,
+    we resolve them here. Raises HTTPException on any failure."""
+    token = authorization.removeprefix("Bearer ").strip()
+    if not settings.memory_service_token or token != settings.memory_service_token:
+        raise HTTPException(status_code=401, detail="invalid service token")
+    email = (email or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=422, detail="email is required")
+    uid = await get_pool().fetchval("SELECT id FROM users WHERE lower(email) = $1", email)
+    if not uid:
+        raise HTTPException(status_code=404, detail="no ZYND account for this email")
+    return str(uid)
+
+
+@app.get("/v1/service/suggestions/{email}")
+async def service_suggestions(email: str, authorization: str = Header(default="")) -> dict:
+    """Findability-eligible facts that are still private — review candidates.
+
+    Called by the cards backend (review UI after a coding agent reports facts
+    through the cards MCP server). Auth: Bearer MEMORY_SERVICE_TOKEN."""
+    user_id = await _service_caller(authorization, email)
+    from app.services.findability import get_suggestions
+    return {"suggestions": await get_suggestions(get_pool(), user_id)}
+
+
+@app.post("/v1/service/approve")
+async def service_approve(body: dict, authorization: str = Header(default="")) -> dict:
+    """Publish one private findability fact onto the user's public card."""
+    user_id = await _service_caller(authorization, body.get("email", ""))
+    predicate = (body.get("predicate") or "").strip()
+    value = (body.get("value") or "").strip()
+    if not predicate or not value:
+        raise HTTPException(status_code=422, detail="predicate and value are required")
+    from app.services.findability import approve
+    if not await approve(get_pool(), user_id, predicate, value):
+        raise HTTPException(status_code=404, detail="no matching private findability fact")
+    return {"status": "approved", "predicate": predicate, "value": value}
+
+
+@app.post("/v1/service/revoke")
+async def service_revoke(body: dict, authorization: str = Header(default="")) -> dict:
+    """Take one fact off the user's public card (stays in private memory)."""
+    user_id = await _service_caller(authorization, body.get("email", ""))
+    predicate = (body.get("predicate") or "").strip()
+    value = (body.get("value") or "").strip()
+    if not predicate or not value:
+        raise HTTPException(status_code=422, detail="predicate and value are required")
+    from app.services.findability import revoke
+    if not await revoke(get_pool(), user_id, predicate, value):
+        raise HTTPException(status_code=404, detail="no matching public fact")
+    return {"status": "revoked", "predicate": predicate, "value": value}
+
+
+@app.post("/v1/service/disconnect")
+async def service_disconnect(body: dict, authorization: str = Header(default="")) -> dict:
+    """Revoke every ZYND token for a user (service-to-service).
+
+    Called by the cards backend when a user disconnects their MCP connector:
+    sign-out is the only way to kill a long-lived personal token."""
+    user_id = await _service_caller(authorization, body.get("email", ""))
+    from app.services.sessions import revoke_user_tokens
+    await revoke_user_tokens(get_pool(), user_id)
+    return {"status": "signed_out", "note": "Reconnect from the Zynd cards dashboard to sign back in."}
+
+
 @app.post("/me/social-links")
 async def set_my_social_links(body: SocialLinks, authorization: str = Header(default="")) -> dict:
     """Store the caller's public social links in memory-layer, synced from the persona

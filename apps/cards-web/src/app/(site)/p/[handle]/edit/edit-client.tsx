@@ -15,6 +15,8 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { factLabel } from "@/lib/memory-facts";
 import { MemoryProviderOnboard } from "@/components/memory/MemoryProviderOnboard";
+import { McpConnectPanel } from "@/components/mcp/McpConnectPanel";
+import { SuggestedFactsReview } from "@/components/mcp/SuggestedFactsReview";
 import { ContributionHeatmap } from "../contribution-heatmap";
 import { CountUp } from "../count-up";
 
@@ -729,6 +731,25 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                 ) : (
                   <p style={{ fontSize: 14, color: T.muted }}>Add a LinkedIn URL above, then use Refresh GitHub &amp; LinkedIn.</p>
                 )}
+              </section>
+            </div>
+
+            <div className="pe-split">
+              <section className="pe-sec">
+                <div className="pe-kicker">Agents</div>
+                <div className="pe-title">Connect MCP</div>
+                <McpConnectPanel tone="light" />
+              </section>
+
+              <section className="pe-sec">
+                <div className="pe-kicker">Review</div>
+                <div className="pe-title">Coding agent facts</div>
+                <SuggestedFactsReview
+                  tone="light"
+                  onChanged={() => {
+                    void syncMemory();
+                  }}
+                />
               </section>
             </div>
 

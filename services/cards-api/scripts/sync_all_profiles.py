@@ -58,6 +58,8 @@ async def sync_one(row: dict) -> str:
 
     li_posts = None
     x_posts = None
+    li_avatar = None
+    x_avatar = None
     changed = []
 
     async with _SEM:
@@ -72,6 +74,7 @@ async def sync_one(row: dict) -> str:
                 changed.append(f"jobs={len(jobs)}")
             if stats:
                 li_posts = stats.get("posts_raw")
+                li_avatar = stats.get("avatar")
                 ls = dict(card.get("linkedin_stats") or {})
                 for k in ("connections", "posts", "avatar"):
                     if stats.get(k) is not None:
@@ -88,6 +91,7 @@ async def sync_one(row: dict) -> str:
                 x_stats = None
             if x_stats:
                 x_posts = x_stats.get("posts_raw")
+                x_avatar = x_stats.get("avatar")
                 xs = dict(card.get("x_stats") or {})
                 for k in ("followers", "posts", "avatar", "handle", "impressions"):
                     if x_stats.get(k) is not None:
@@ -95,6 +99,9 @@ async def sync_one(row: dict) -> str:
                 if xs:
                     card["x_stats"] = xs
                     changed.append("x-stats")
+
+    if cards_service.refresh_avatar(card, li_avatar, x_avatar):
+        changed.append("avatar")
 
     if li_posts or x_posts:
         existing = _as_samples(card.get("writing_samples"))

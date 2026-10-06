@@ -186,6 +186,52 @@ def pick_avatar(linkedin_avatar: str | None, x_avatar: str | None, github_avatar
     return ""
 
 
+def refresh_avatar(card: dict, linkedin_avatar: str | None, x_avatar: str | None) -> bool:
+    """Patch identity.avatar_url from freshly scraped platform avatars.
+
+    Only overwrites when a scraped avatar is present and different; the existing
+    avatar (e.g. a GitHub fallback) is left untouched when neither platform
+    returned a usable one. Returns True when the card changed."""
+    identity = dict(card.get("identity") or {})
+    candidate = pick_avatar(linkedin_avatar, x_avatar, None)
+    if candidate and candidate != identity.get("avatar_url"):
+        identity["avatar_url"] = candidate
+        card["identity"] = identity
+        return True
+    return False
+
+
+def apply_linkedin_avatar(card: dict, avatar: str | None) -> str:
+    """Sync a card's avatar after a fresh LinkedIn scrape.
+
+    Photo present: store it in linkedin_stats and identity.avatar_url.
+    Photo removed (avatar is None): drop the stale LinkedIn avatar so the
+    frontend falls back to GitHub/X instead of a dead signed URL.
+    Returns 'set' | 'cleared' | 'none' (nothing changed)."""
+    if avatar:
+        stats = dict(card.get("linkedin_stats") or {})
+        identity = dict(card.get("identity") or {})
+        if stats.get("avatar") == avatar and identity.get("avatar_url") == avatar:
+            return "none"
+        stats["avatar"] = avatar
+        card["linkedin_stats"] = stats
+        identity["avatar_url"] = avatar
+        card["identity"] = identity
+        return "set"
+    changed = False
+    stats = dict(card.get("linkedin_stats") or {})
+    if "avatar" in stats:
+        del stats["avatar"]
+        card["linkedin_stats"] = stats
+        changed = True
+    identity = dict(card.get("identity") or {})
+    if identity.get("avatar_url") and "licdn" in str(identity["avatar_url"]):
+        identity["avatar_url"] = ""
+        card["identity"] = identity
+        changed = True
+    return "cleared" if changed else "none"
+
+
 def merge_scraped_posts(
     llm_samples: list[WritingSample],
     x_posts: list[dict] | None,

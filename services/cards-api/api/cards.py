@@ -1,6 +1,9 @@
 import asyncio
 import ipaddress
+import logging
+import re
 import socket
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -9,6 +12,9 @@ import config
 from api.auth import verify_supabase_jwt
 from models.card import AgentProfileCard
 from services import cards as cards_service
+from services.jobs import utcnow
+
+logger = logging.getLogger(__name__)
 
 
 def _validate_linkedin_url(u: str) -> str:
@@ -157,6 +163,10 @@ async def refresh_linkedin(
 
     card_json = row["card"]
     card_json["work_experience"] = work_experience
+
+    # Photo may have changed or been removed — sync the avatar with LinkedIn.
+    cards_service.apply_linkedin_avatar(card_json, (stats or {}).get("avatar"))
+
     card_json["updated_at"] = utcnow()
     sb.table("agent_profile_cards").update(
         {"card": card_json, "updated_at": card_json["updated_at"]}
@@ -291,6 +301,68 @@ async def suggested_people(handle: str):
     if not result:
         raise HTTPException(status_code=404, detail="card not found")
     return result
+
+
+_AVATAR_REFRESH_LAST: dict[str, datetime] = {}
+_AVATAR_REFRESH_RUNNING: set[str] = set()
+_AVATAR_REFRESH_MIN_INTERVAL = timedelta(hours=6)
+
+
+async def _refresh_avatar_job(handle: str) -> None:
+    """Background re-scrape of one card's LinkedIn avatar (self-heal)."""
+    try:
+        card = await asyncio.to_thread(cards_service.get_card_by_handle, handle)
+        if not card:
+            return
+        linkedin_url = (card.identity.links or {}).get("linkedin") or ""
+        if not linkedin_url:
+            return
+        from scraping import linkedin as linkedin_scraper
+
+        _, stats = await linkedin_scraper.fetch_linkedin_profile(linkedin_url)
+        avatar = (stats or {}).get("avatar")
+        sb = config.get_supabase()
+        resp = sb.table("agent_profile_cards").select("card").eq("handle", handle).execute()
+        if not resp.data:
+            return
+        card_json = dict(resp.data[0]["card"])
+        action = cards_service.apply_linkedin_avatar(card_json, avatar)
+        if action != "none":
+            card_json["updated_at"] = utcnow()
+            sb.table("agent_profile_cards").update(
+                {"card": card_json, "updated_at": card_json["updated_at"]}
+            ).eq("handle", handle).execute()
+        logger.info("avatar self-heal handle=%s action=%s", handle, action)
+    except Exception as exc:
+        logger.warning("avatar self-heal failed handle=%s: %s", handle, exc)
+    finally:
+        _AVATAR_REFRESH_RUNNING.discard(handle)
+        _AVATAR_REFRESH_LAST[handle] = utcnow()
+
+
+@router.post("/internal/refresh-avatar/{handle}")
+async def internal_refresh_avatar(
+    handle: str,
+    x_avatar_refresh_token: str | None = Header(default=None),
+):
+    """Self-heal trigger from the cards-web image proxy.
+
+    Called when a stored LinkedIn avatar URL starts failing (photo changed or
+    removed): re-scrape that profile in the background and update the card's
+    avatar. Guarded by a shared token and a per-handle interval so an open
+    endpoint can't be used to burn Apify credits."""
+    if not re.match(r"^[a-zA-Z0-9_-]{1,80}$", handle):
+        raise HTTPException(status_code=400, detail="bad handle")
+    if not config.AVATAR_REFRESH_TOKEN or x_avatar_refresh_token != config.AVATAR_REFRESH_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    last = _AVATAR_REFRESH_LAST.get(handle)
+    if last and (utcnow() - last) < _AVATAR_REFRESH_MIN_INTERVAL:
+        return {"status": "skipped", "handle": handle}
+    if handle in _AVATAR_REFRESH_RUNNING:
+        return {"status": "already queued", "handle": handle}
+    _AVATAR_REFRESH_RUNNING.add(handle)
+    asyncio.create_task(_refresh_avatar_job(handle))
+    return {"status": "queued", "handle": handle}
 
 
 @router.get("/{card_id}")

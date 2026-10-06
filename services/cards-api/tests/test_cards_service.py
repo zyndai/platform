@@ -149,6 +149,26 @@ def test_pick_avatar_skips_invalid_and_returns_empty():
     assert cards_service.pick_avatar(None, None, None) == ""
 
 
+def test_refresh_avatar_updates_identity_avatar_url():
+    card = {"identity": {"name": "Alice", "avatar_url": "https://old.example/a.jpg", "links": {}}}
+
+    assert cards_service.refresh_avatar(card, "https://media.licdn.com/new.jpg", None) is True
+    assert card["identity"]["avatar_url"] == "https://media.licdn.com/new.jpg"
+
+
+def test_refresh_avatar_keeps_existing_when_nothing_new():
+    card = {"identity": {"name": "Alice", "avatar_url": "https://avatars.githubusercontent.com/c", "links": {}}}
+
+    assert cards_service.refresh_avatar(card, None, None) is False
+    assert card["identity"]["avatar_url"] == "https://avatars.githubusercontent.com/c"
+
+
+def test_refresh_avatar_unchanged_is_noop():
+    card = {"identity": {"name": "Alice", "avatar_url": "https://media.licdn.com/a.jpg", "links": {}}}
+
+    assert cards_service.refresh_avatar(card, "https://media.licdn.com/a.jpg", None) is False
+
+
 def test_merge_scraped_posts_injects_both_platforms():
     from models.card import WritingSample
 

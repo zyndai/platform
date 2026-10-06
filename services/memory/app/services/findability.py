@@ -94,35 +94,81 @@ async def get_card(pool: asyncpg.Pool, user_id: str) -> list[dict]:
             for r in rows]
 
 
+# Predicates coding agents commonly produce that should surface for review.
+# Broader than FINDABILITY_PREDICATES — approve() maps these onto a public
+# findability predicate before publishing.
+_REVIEW_PREDICATES = list(FINDABILITY_PREDICATES | frozenset({
+    "has_skill", "is_working_on", "is_creating", "intends_to",
+    "is_responsible_for",
+}))
+
+# Map review predicates onto the public findability card vocabulary.
+# (has_collaborator is intentionally omitted — open_to/is_seeking are enums.)
+_APPROVE_AS: dict[str, str] = {
+    "has_skill": "has_expertise_in",
+    "is_working_on": "is_building",
+    "is_creating": "is_building",
+    "intends_to": "is_building",
+    "is_responsible_for": "is_building",
+}
+
+
 async def get_suggestions(pool: asyncpg.Pool, user_id: str) -> list[dict]:
-    """Inferred findability-eligible facts NOT yet public — "ZYND noticed this. Keep it?"."""
+    """Inferred facts NOT yet public — "ZYND noticed this. Keep it?".
+
+    Includes findability predicates plus coding-agent predicates (has_skill,
+    is_working_on, …) so the cards MCP review UI can surface what agents report.
+    """
     rows = await pool.fetch(
         """SELECT a.predicate, e.canonical_name AS object, a.confidence
              FROM assertions a JOIN entities e ON e.id = a.object_entity_id
             WHERE a.user_id = $1 AND a.valid_until IS NULL AND a.is_public = false
               AND a.source <> 'declared' AND a.predicate = ANY($2::text[])
             ORDER BY a.confidence DESC""",
-        user_id, _FINDABILITY,
+        user_id, _REVIEW_PREDICATES,
     )
     return [{"predicate": r["predicate"], "object": r["object"],
              "confidence": round(float(r["confidence"]), 4)} for r in rows]
 
 
 async def approve(pool: asyncpg.Pool, user_id: str, predicate: str, object_name: str) -> bool:
-    """Publish an inferred fact onto the card. Only findability predicates are publishable."""
-    if predicate not in FINDABILITY_PREDICATES:
+    """Publish an inferred fact onto the card.
+
+    Findability predicates publish in place. Coding-agent predicates
+    (has_skill, is_working_on, …) are promoted to their findability equivalent
+    via declare() so they appear on the public card.
+    """
+    object_name = (object_name or "").strip()
+    if not object_name:
         return False
+    if predicate in FINDABILITY_PREDICATES:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(_LOOKUP, user_id, predicate, object_name)
+            if row is None:
+                return False
+            await conn.execute(
+                """UPDATE assertions SET is_public = true, approved_at = now(),
+                      source = CASE WHEN source = 'inferred' THEN 'both' ELSE source END
+                    WHERE id = $1""",
+                row["id"],
+            )
+        await recompute_user_embeddings(pool, user_id)
+        return True
+    public_pred = _APPROVE_AS.get(predicate)
+    if not public_pred:
+        return False
+    # Confirm the private inferred fact exists, then declare the public form.
     async with pool.acquire() as conn:
         row = await conn.fetchrow(_LOOKUP, user_id, predicate, object_name)
         if row is None:
             return False
+        # Soft-clear the private suggestion so it leaves the review queue.
         await conn.execute(
-            """UPDATE assertions SET is_public = true, approved_at = now(),
-                  source = CASE WHEN source = 'inferred' THEN 'both' ELSE source END
+            """UPDATE assertions SET source = 'declared', version = version + 1
                 WHERE id = $1""",
             row["id"],
         )
-    await recompute_user_embeddings(pool, user_id)  # rebuild the public match vector
+    await declare(pool, user_id, public_pred, object_name)
     return True
 
 

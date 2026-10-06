@@ -99,6 +99,14 @@ QUICKENRICH_API_KEY: str = os.getenv("QUICKENRICH_API_KEY", "")
 QUICKENRICH_AUTH_HEADER: str = os.getenv("QUICKENRICH_AUTH_HEADER", "Authorization")
 QUICKENRICH_TIMEOUT: float = float(os.getenv("QUICKENRICH_TIMEOUT", "30"))
 
+# ── Morning digest (SMTP + GitHub Actions cron) ──
+SMTP_HOST: str = os.getenv("SMTP_HOST", "")
+SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER: str = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM: str = os.getenv("SMTP_FROM", "")
+CRON_SECRET: str = os.getenv("CRON_SECRET", "")
+
 
 def _get_supabase():
     global _sb_service

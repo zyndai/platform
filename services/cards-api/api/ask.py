@@ -24,7 +24,7 @@ async def ask_get(q: str = Query("", max_length=200), limit: int = Query(10, ge=
     results = await asyncio.to_thread(
         search_service.search_agents, q, "", "", "", "", "", None, limit
     )
-    return {"query": q, "results": results}
+    return {"query": q, "results": results, "numberOfItems": len(results)}
 
 
 @router.post("")
@@ -32,4 +32,4 @@ async def ask_post(body: AskRequest, limit: int = Query(10, ge=1, le=50)):
     results = await asyncio.to_thread(
         search_service.search_agents, body.q, "", "", "", "", "", None, limit
     )
-    return {"query": body.q, "results": results}
+    return {"query": body.q, "results": results, "numberOfItems": len(results)}

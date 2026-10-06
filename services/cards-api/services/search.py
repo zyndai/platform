@@ -158,4 +158,6 @@ def search_agents(
         )
 
     results.sort(key=lambda r: r["match_score"], reverse=True)
+    if q:
+        results = [r for r in results if r["match_score"] >= 0.2]
     return results[:limit]

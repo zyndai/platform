@@ -8,7 +8,8 @@ import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
 import { useAuth } from "@/hooks/useAuth";
 import { createClient } from "@/lib/supabase/client";
 import { CARDS_API } from "@/lib/cards";
-import { setAuthNext, setClaimHandle } from "@/lib/auth/next-cookie";
+import { setClaimHandle } from "@/lib/auth/next-cookie";
+import { startLinkedInOAuth } from "@/lib/auth/session";
 import type { AgentProfileCard, OnboardStatus, Project, ScrapeWarning, WritingSample } from "@/lib/cards";
 import { MemoryProviderOnboard } from "@/components/memory/MemoryProviderOnboard";
 import { claimHeaders, forgetClaimToken, saveClaimToken } from "@/lib/claim-tokens";
@@ -340,11 +341,9 @@ function CreateProfilePageContent() {
   // Carry the post-OAuth destination in a cookie, not a query string. Some
   // Supabase allowlists match redirect URLs exactly, and a `?next=` query
   // breaks that match — GoTrue then falls back to its Site URL (localhost).
-  const loginRedirect = `${typeof window !== "undefined" ? window.location.origin : ""}/auth/callback`;
   const loginWithLinkedin = () => {
     if (published) setClaimHandle(published);
-    else setAuthNext("/create", "card");
-    createClient().auth.signInWithOAuth({ provider: "linkedin_oidc", options: { redirectTo: loginRedirect } });
+    void startLinkedInOAuth(published ? `/p/${encodeURIComponent(published)}` : "/create", "card");
   };
 
   const [phase, setPhase] = useState<Phase>("form");

@@ -80,7 +80,7 @@ export default function AgentCardPage() {
 </nav>
 {/* Quick Action CTA */}
 <div className="flex items-center gap-3">
-<a className="text-xs font-mono font-medium text-white/80 hover:text-white px-3 py-2 transition-colors hidden lg:block" href="https://www.zynd.ai">Explore Network</a>
+<a className="text-xs font-mono font-medium text-white/80 hover:text-white px-3 py-2 transition-colors hidden lg:block" href="/directory">Explore Network</a>
 <AgentCardAuthBar />
 </div>
 </div>
@@ -926,10 +926,10 @@ export default function AgentCardPage() {
 {/* Footer navigation links */}
 <div className="flex flex-wrap gap-7 text-xs font-mono text-[#8E8E88]">
 <a className="hover:text-white transition-colors" href="#">Manifesto</a>
-<a className="hover:text-white transition-colors" href="#">Discovery Index</a>
-<a className="hover:text-white transition-colors" href="#">Agent Specs</a>
-<a className="hover:text-white transition-colors" href="#">Privacy</a>
-<a className="hover:text-white transition-colors" href="#">Terms</a>
+<a className="hover:text-white transition-colors" href="/directory">Discovery Index</a>
+<a className="hover:text-white transition-colors" href="/for-ai">Agent Specs</a>
+<a className="hover:text-white transition-colors" href="https://persona.zynd.ai/privacy">Privacy</a>
+<a className="hover:text-white transition-colors" href="https://persona.zynd.ai/terms">Terms</a>
 </div>
 </div>
 {/* Copyright and status bar */}

@@ -11,6 +11,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabase } from "@/lib/supabase";
+import { clientOrigin } from "@/lib/origin";
 import { type User } from "@supabase/supabase-js";
 import {
   computeOnboardingStep,
@@ -222,8 +223,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const handleLogout = async () => {
-    await getSupabase().auth.signOut();
-    router.push("/");
+    try {
+      const { error } = await getSupabase().auth.signOut();
+      if (error) console.error("Sign out failed:", error.message);
+    } catch (err) {
+      console.error("Sign out failed:", err);
+    }
+    window.location.assign(`${clientOrigin()}/`);
   };
 
   return (

@@ -91,6 +91,16 @@ export default async function FindPage({ searchParams }: PageProps) {
         <p style={{ color: "#c00" }}>Search unavailable. Try again shortly.</p>
       )}
 
+      {q && data && data.results.length === 0 && (
+        <p style={{ color: "#555" }}>
+          No one matches that search.{" "}
+          <Link href="/create" style={{ color: "#5b7cfa" }}>
+            Create your card
+          </Link>{" "}
+          so people can find you.
+        </p>
+      )}
+
       {data && (
         <>
           {data.clarification_hints && data.clarification_hints.length > 0 && (

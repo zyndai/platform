@@ -68,6 +68,15 @@ function githubAvatar(url: string | null | undefined, size = 400): string | null
   }
 }
 
+function imgProxy(src: string | null | undefined, fallback?: string | null, handle?: string | null): string | undefined {
+  const qs = new URLSearchParams();
+  if (src) qs.set("url", src);
+  if (fallback) qs.set("fallback", fallback);
+  if (handle) qs.set("handle", handle);
+  if (!qs.has("url") && !qs.has("fallback")) return undefined;
+  return `/api/img?${qs.toString()}`;
+}
+
 function usernameFromUrl(url: string | null | undefined): string | null {
   if (!url) return null;
   return url.replace(/\/+$/, "").split("/").pop() || null;
@@ -356,7 +365,10 @@ export default async function PersonPage({ params }: PageProps) {
     ? [nameParts.slice(0, -1).join(" "), nameParts[nameParts.length - 1]]
     : nameParts;
 
-  const avatarUrl = safeUrl(identity.avatar_url) ?? githubAvatar(identity.links?.github);
+  const rawAvatar = safeUrl(identity.avatar_url);
+  const ghAvatar = githubAvatar(identity.links?.github);
+  const avatarUrl = rawAvatar ?? ghAvatar;
+  const heroAvatarSrc = imgProxy(rawAvatar, ghAvatar, card.handle || handle);
   const verified = card.review?.status === "human_approved";
   const skills = card.skills.slice().sort((a, b) => b.evidence_count - a.evidence_count);
 
@@ -500,8 +512,8 @@ export default async function PersonPage({ params }: PageProps) {
   const ghFollowing = ghExtras?.following ?? null;
   const ghBio = ghExtras?.bio;
   const ghContribTotal = contributions?.total ?? (typeof v.github.commits === "number" ? v.github.commits : null);
-  const linkedinAvatar = safeUrl(card.linkedin_stats?.avatar) ?? avatarUrl;
-  const xAvatar = safeUrl(card.x_stats?.avatar) ?? avatarUrl;
+  const linkedinAvatarSrc = imgProxy(safeUrl(card.linkedin_stats?.avatar) ?? rawAvatar, ghAvatar, card.handle || handle);
+  const xAvatarSrc = imgProxy(safeUrl(card.x_stats?.avatar) ?? rawAvatar, ghAvatar, card.handle || handle);
   const xImpressions = v.x.impressions != null && String(v.x.impressions).trim() !== "—" ? v.x.impressions : null;
   const showMemory = memoryTotal > 0;
   const socialSlots = [showLinkedin, showX, showMemory, bookingLinks.length > 0].filter(Boolean).length;
@@ -667,7 +679,7 @@ export default async function PersonPage({ params }: PageProps) {
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                 SYNTHESIS_ACTIVE
               </span>
-              <ShareQrGroup url={canonical} name={identity.name || "Profile"} handle={card.handle ?? card.id} avatarUrl={avatarUrl} resume={resumeData} />
+              <ShareQrGroup url={canonical} name={identity.name || "Profile"} handle={card.handle ?? card.id} avatarUrl={heroAvatarSrc ?? avatarUrl} resume={resumeData} />
               {isOwner && <EditCardButton handle={card.handle ?? card.id} />}
               {!isSignedIn && <ProfileSignIn handle={card.handle ?? handle} />}
               {isSignedIn && !isOwner && <ClaimCardButton handle={card.handle ?? handle} card={card} />}
@@ -684,12 +696,11 @@ export default async function PersonPage({ params }: PageProps) {
               style={{ background: "#6d64f6", borderRadius: 20, color: "#fff", display: "flex", flexDirection: "column", minHeight: 0 }}
             >
               <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
-                {avatarUrl ? (
+                {heroAvatarSrc ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={avatarUrl}
+                    src={heroAvatarSrc}
                     alt={identity.name}
-                    referrerPolicy="no-referrer"
                     className="pf-hero-avatar"
                     style={{ width: 104, height: 104, borderRadius: 18, border: "2px solid rgba(255,255,255,0.35)", objectFit: "cover", flexShrink: 0, display: "block" }}
                   />
@@ -893,9 +904,9 @@ export default async function PersonPage({ params }: PageProps) {
                   ) : null}
                 </div>
                 <div className="pf-social-id">
-                  {linkedinAvatar ? (
+                  {linkedinAvatarSrc ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={linkedinAvatar} alt="" referrerPolicy="no-referrer" style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(255,255,255,0.35)", flexShrink: 0 }} />
+                    <img src={linkedinAvatarSrc} alt="" style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(255,255,255,0.35)", flexShrink: 0 }} />
                   ) : (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44"><circle cx="22" cy="22" r="22" fill="rgba(255,255,255,0.2)"/><text x="22" y="24" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-family="system-ui" font-size="14" font-weight="800">${initials}</text></svg>`)}`} alt="" width={44} height={44} style={{ width: 44, height: 44, borderRadius: "50%", flexShrink: 0 }} />
@@ -950,9 +961,9 @@ export default async function PersonPage({ params }: PageProps) {
                   ) : null}
                 </div>
                 <div className="pf-social-id">
-                  {xAvatar ? (
+                  {xAvatarSrc ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={xAvatar} alt="" referrerPolicy="no-referrer" style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(255,255,255,0.2)", flexShrink: 0 }} />
+                    <img src={xAvatarSrc} alt="" style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(255,255,255,0.2)", flexShrink: 0 }} />
                   ) : (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44"><circle cx="22" cy="22" r="22" fill="rgba(255,255,255,0.12)"/><text x="22" y="24" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-family="system-ui" font-size="14" font-weight="800">${initials}</text></svg>`)}`} alt="" width={44} height={44} style={{ width: 44, height: 44, borderRadius: "50%", flexShrink: 0 }} />
@@ -1114,9 +1125,8 @@ export default async function PersonPage({ params }: PageProps) {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
                       <img
-                        src={githubAvatar(githubUrl, 80) ?? `https://github.com/${encodeURIComponent(ghLogin || githubHandle)}.png?size=80`}
+                        src={imgProxy(githubAvatar(githubUrl, 80) ?? `https://github.com/${encodeURIComponent(ghLogin || githubHandle)}.png?size=80`, undefined, card.handle || handle)}
                         alt=""
-                        referrerPolicy="no-referrer"
                         style={{ width: 44, height: 44, borderRadius: 12, objectFit: "cover", border: "1px solid #e2e8f0", flexShrink: 0, background: "#f8fafc" }}
                       />
                       <div style={{ minWidth: 0 }}>

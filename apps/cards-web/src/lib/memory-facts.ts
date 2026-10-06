@@ -8,20 +8,28 @@ export type MemoryFact = {
 
 export const MEMORY_GROUPS: Record<string, { label: string; icon: string }> = {
   is_building: { label: "Currently building", icon: "⚙️" },
+  is_working_on: { label: "Working on", icon: "⚙️" },
+  is_creating: { label: "Creating", icon: "✨" },
+  intends_to: { label: "Planning", icon: "🎯" },
   is_learning: { label: "Learning", icon: "📚" },
   is_seeking: { label: "Seeking", icon: "🤝" },
   open_to: { label: "Open to", icon: "🤝" },
   has_expertise_in: { label: "Expert in", icon: "🧠" },
+  has_skill: { label: "Skilled in", icon: "🛠️" },
   is_affiliated_with: { label: "Works at", icon: "🏢" },
   is_located_in: { label: "Based in", icon: "📍" },
 };
 
 export const MEMORY_GROUP_ORDER = [
   "is_building",
+  "is_working_on",
+  "is_creating",
+  "intends_to",
   "is_learning",
   "is_seeking",
   "open_to",
   "has_expertise_in",
+  "has_skill",
   "is_affiliated_with",
   "is_located_in",
 ];
@@ -43,7 +51,9 @@ const ENUM_LABELS: Record<string, string> = {
 
 export function factLabel(fact: Pick<MemoryFact, "predicate" | "object">): string {
   const raw = ENUM_LABELS[fact.object] ?? fact.object.trim();
+  const group = MEMORY_GROUPS[fact.predicate];
   if (fact.predicate === "is_building") return raw.replace(/^building\s+/i, "");
+  if (group) return `${group.label}: ${raw}`;
   return raw;
 }
 

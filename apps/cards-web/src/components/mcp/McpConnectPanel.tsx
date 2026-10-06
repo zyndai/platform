@@ -89,12 +89,12 @@ export function McpConnectPanel({
     <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 14 }}>
       <div>
         <div style={{ font: `700 22px/1.15 ${DISPLAY}`, color: ink, letterSpacing: "-0.03em" }}>
-          Connect your coding agent
+          Get your MCP config
         </div>
         <p style={{ margin: "6px 0 0", font: `400 14px/1.55 ${SANS}`, color: muted, maxWidth: 460 }}>
-          Claude Code, Cursor, and other MCP clients can report what they learn about
-          you — skills, languages, projects — into your card&apos;s memory. You review
-          everything before it goes public.
+          Generate a private key + URL, copy the JSON, and paste it into Claude Code,
+          Cursor, Cline, or VS Code. Your agent then reports skills, languages, and
+          projects into this card — you approve what goes public.
         </p>
       </div>
 
@@ -220,7 +220,7 @@ export function McpConnectPanel({
             alignSelf: "flex-start",
           }}
         >
-          {busy === "connect" ? "Generating…" : "Get my MCP URL"}
+          {busy === "connect" ? "Generating…" : "Generate MCP config + key"}
         </button>
       )}
 

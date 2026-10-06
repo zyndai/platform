@@ -17,6 +17,7 @@ import {
   useState,
 } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { clientOrigin } from "@/lib/auth/origin";
 import type { User } from "@supabase/supabase-js";
 
 export interface AuthSnapshot {
@@ -63,8 +64,16 @@ export function AuthProvider({ initial, children }: AuthProviderProps) {
   }, []);
 
   const logout = useCallback(async () => {
-    await supabase.auth.signOut();
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) console.error("Sign out failed:", error.message);
+    } catch (err) {
+      console.error("Sign out failed:", err);
+    }
     setUser(null);
+    // Hard navigation: router.push keeps the SSR session snapshot, so sign-out
+    // looks like a no-op. Absolute origin also leaves http://0.0.0.0.
+    window.location.assign(new URL("/", clientOrigin()).href);
   }, [supabase]);
 
   return (

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, Plug, MessageSquareText, Waypoints, FileOutput } from "lucide-react";
 import { getSupabase } from "@/lib/supabase";
+import { clientOrigin } from "@/lib/origin";
 import { captureZyndOAuthReq } from "@/lib/zynd-oauth";
 import { Monogram } from "@/components/ui";
 
@@ -98,7 +99,7 @@ export function LandingClientWrapper() {
     const sb = getSupabase();
     const { error } = await sb.auth.signInWithOAuth({
       provider,
-      options: { redirectTo: window.location.origin },
+      options: { redirectTo: clientOrigin() },
     });
     if (error) {
       setPending(null);

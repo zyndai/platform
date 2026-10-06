@@ -6,7 +6,7 @@
 //   pm2 restart api web cards-web
 //
 // Ports: persona-api 127.0.0.1:8000 and persona-web 127.0.0.1:3001 sit behind
-// Caddy on :3000 (Caddyfile); cards-web is served directly on :3002.
+// Caddy on :3000 (Caddyfile); cards-web is reverse-proxied from Caddy to 127.0.0.1:3002.
 // `next start` needs `npm run build` first, and NEXT_PUBLIC_* values are baked
 // in at build time, so rebuild after changing an app's .env.local.
 const ROOT = process.env.ZYND_ROOT || "/home/ubuntu/zynd-platform";
@@ -47,13 +47,13 @@ module.exports = {
       name: "cards-web",
       cwd: `${ROOT}/apps/cards-web`,
       script: "/usr/bin/npx",
-      args: "next start -H 0.0.0.0 -p 3002",
+      args: "next start -H 127.0.0.1 -p 3002",
       interpreter: "none",
       instances: 1,
       autorestart: true,
       max_restarts: 10,
       max_memory_restart: "1G",
-      env: { NODE_ENV: "production", PORT: "3002", HOSTNAME: "0.0.0.0" },
+      env: { NODE_ENV: "production", PORT: "3002", HOSTNAME: "127.0.0.1" },
       merge_logs: true,
       time: true,
     },

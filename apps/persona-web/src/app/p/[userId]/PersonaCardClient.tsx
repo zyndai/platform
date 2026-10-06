@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { QrCode as QrCodeImage } from "@/components/QrCode";
 import { getSupabase } from "@/lib/supabase";
+import { clientOrigin } from "@/lib/origin";
 import type { PublicPersona } from "./utils";
 import { normalizeAvatar, hashHue, initials } from "./utils";
 import { authFetch } from "@/lib/api";
@@ -45,11 +46,11 @@ export function PersonaCardClient({ persona, userId }: PersonaCardClientProps) {
   const showBooking = persona.visibility?.calendar !== false;
 
   const publicHref = typeof window !== "undefined" && userId
-    ? new URL(`/p/${userId}`, window.location.origin).toString()
+    ? new URL(`/p/${userId}`, clientOrigin()).toString()
     : "";
 
   const publicUrl = typeof window !== "undefined" && userId
-    ? `${window.location.host}/p/${String(userId).slice(0, 8)}`
+    ? `${new URL(clientOrigin()).host}/p/${String(userId).slice(0, 8)}`
     : "your card";
 
   const handleConnect = useCallback(async () => {

@@ -10,6 +10,7 @@ import config
 from api.agents import router as agents_router
 from api.cards import router as cards_router
 from api.health import router as health_router
+from api.mcp import router as mcp_router
 from api.onboard import router as onboard_router
 from api.ask import router as ask_router
 from api.chat import router as chat_router
@@ -85,6 +86,7 @@ app.add_middleware(
 app.include_router(onboard_router, prefix="/onboard", tags=["Onboard"])
 app.include_router(ask_router, prefix="/ask", tags=["Ask"])
 app.include_router(cards_router, prefix="/cards", tags=["Cards"])
+app.include_router(mcp_router, prefix="/cards", tags=["MCP connector"])
 app.include_router(agents_router, prefix="/v1/agents", tags=["Agents"])
 app.include_router(chat_router, prefix="/v1/chat", tags=["Chat"])
 app.include_router(health_router, prefix="/health", tags=["Health"])

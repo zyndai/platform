@@ -5,28 +5,18 @@
  * link). Magic link comes back once an email provider (SMTP) is chosen.
  */
 
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import { setAuthNext } from "@/lib/auth/next-cookie";
+import { startLinkedInOAuth } from "@/lib/auth/session";
 
 function AuthPageContent() {
   const searchParams = useSearchParams();
-  const error = searchParams.get("error");
+  const [oauthError, setOauthError] = useState<string | null>(searchParams.get("error"));
 
-  const loginRedirect = `${typeof window !== "undefined" ? window.location.origin : ""}/auth/callback`;
-
-  const withNextCookie = () => {
-    const next =
-      typeof window !== "undefined"
-        ? searchParams.get("next") || "/directory"
-        : "/directory";
-    setAuthNext(next);
-  };
-
-  const loginWithLinkedin = () => {
-    withNextCookie();
-    createClient().auth.signInWithOAuth({ provider: "linkedin_oidc", options: { redirectTo: loginRedirect } });
+  const loginWithLinkedin = async () => {
+    const next = searchParams.get("next") || "/directory";
+    const message = await startLinkedInOAuth(next);
+    if (message) setOauthError(message);
   };
 
   return (
@@ -44,7 +34,7 @@ function AuthPageContent() {
           Sign in to <span style={{ color: "#8B5CF6" }}>Zynd Cards</span>
         </h1>
 
-        {error && (
+        {oauthError && (
           <p style={{ color: "#f87171", fontSize: "14px", marginBottom: "16px" }}>
             Sign-in failed — please try again.
           </p>

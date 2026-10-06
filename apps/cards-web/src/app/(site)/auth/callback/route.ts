@@ -1,24 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { safeNextPath } from "@/lib/auth/next-cookie";
-
-const HOST_RE = /^[a-z0-9.-]+(:\d+)?$/i;
-
-/**
- * The origin the browser is actually on. Behind Caddy, `next start` builds
- * request.url from its own bind address (https://localhost:3102 on dev,
- * https://0.0.0.0:3002 on prod), so redirecting there strands the user.
- * Caddy passes the real Host through and replaces any client-sent
- * X-Forwarded-* headers; without a proxy (`next dev`) request.url is right.
- */
-function publicOrigin(request: NextRequest): string {
-  const fallback = new URL(request.url);
-  const host = (request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "").split(",")[0].trim();
-  if (!HOST_RE.test(host)) return fallback.origin;
-  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0].trim();
-  const proto = forwardedProto === "https" || forwardedProto === "http" ? forwardedProto : fallback.protocol.slice(0, -1);
-  return `${proto}://${host}`;
-}
+import { requestOrigin } from "@/lib/auth/origin";
 
 /**
  * OAuth (LinkedIn, D12) callback. Deliberately simpler than the dashboard's:
@@ -27,7 +10,7 @@ function publicOrigin(request: NextRequest): string {
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const origin = publicOrigin(request);
+  const origin = requestOrigin(request);
   const code = searchParams.get("code");
   const cookieNext = safeNextPath(request.cookies.get("zynd_next")?.value);
   const queryNext = safeNextPath(searchParams.get("next"));

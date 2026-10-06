@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { setAuthNext } from "@/lib/auth/next-cookie";
+import { oauthCallbackUrl } from "@/lib/auth/origin";
 import { getMyCard, updateCard, type AgentProfileCard } from "@/lib/cards";
 import { hasClaimToken, markClaimIntent, subscribeClaimTokens, takeClaimIntent } from "@/lib/claim-tokens";
 import { useAuth } from "@/hooks/useAuth";
@@ -30,7 +31,7 @@ export function ProfileSignIn({ handle }: { handle: string }) {
     setAuthNext(`/p/${encodeURIComponent(handle)}`, "card");
     createClient().auth.signInWithOAuth({
       provider: "linkedin_oidc",
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
+      options: { redirectTo: oauthCallbackUrl() },
     });
   }
 

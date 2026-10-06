@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   CalendarDays,
@@ -16,6 +15,7 @@ import { AvatarPicker, Button, EmptyState, FieldLabel, Input, Textarea } from "@
 import DeleteAccountModal from "@/components/settings/DeleteAccountModal";
 import { QrCode as QrCodeImage } from "@/components/QrCode";
 import { getSupabase } from "@/lib/supabase";
+import { clientOrigin } from "@/lib/origin";
 import { useDashboard } from "@/contexts/DashboardContext";
 import { defaultPersonaStyle, generateAvatarDataUri } from "@/lib/dicebear";
 import { authFetch } from "@/lib/api";
@@ -110,7 +110,7 @@ function intoTags(v: unknown): string[] {
 }
 
 export default function YouPage() {
-  const router = useRouter();
+
   const { user } = useDashboard();
 
   const [persona, setPersona] = useState<Persona | null>(null);
@@ -225,7 +225,7 @@ export default function YouPage() {
   // both the QR component and the copy/share handlers no-op on empty.
   const publicHref = useMemo(() => {
     if (typeof window === "undefined" || !user?.id) return "";
-    return new URL(`/p/${user.id}`, window.location.origin).toString();
+    return new URL(`/p/${user.id}`, clientOrigin()).toString();
   }, [user?.id]);
   // Pretty display form — host + full path, no scheme. Survives SSR by
   // checking window first. Kept as the real path (not a truncated id) so
@@ -233,7 +233,7 @@ export default function YouPage() {
   // long ids overflow with an ellipsis in CSS instead of being lied about.
   const publicDisplay = useMemo(() => {
     if (typeof window === "undefined" || !user?.id) return "";
-    const host = window.location.host;
+    const host = new URL(clientOrigin()).host;
     return `${host}/p/${user.id}`;
   }, [user?.id]);
 
@@ -268,7 +268,7 @@ export default function YouPage() {
 
   const publicUrl = useCallback(() => {
     if (typeof window === "undefined" || !user?.id) return "";
-    return new URL(`/p/${user.id}`, window.location.origin).toString();
+    return new URL(`/p/${user.id}`, clientOrigin()).toString();
   }, [user?.id]);
 
   const handleShareCard = useCallback(async () => {
@@ -431,11 +431,12 @@ export default function YouPage() {
         throw new Error((await res.text()) || "Couldn't delete the account.");
       }
       try {
-        await getSupabase().auth.signOut();
-      } catch {
-        /* ignore */
+        const { error } = await getSupabase().auth.signOut();
+        if (error) console.error("Sign out failed:", error.message);
+      } catch (err) {
+        console.error("Sign out failed:", err);
       }
-      router.replace("/");
+      window.location.assign(`${clientOrigin()}/`);
     } catch (e) {
       setDeleteError(e instanceof Error ? e.message : "Something got tangled.");
       setDeleting(false);

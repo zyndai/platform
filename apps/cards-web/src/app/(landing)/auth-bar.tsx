@@ -1,27 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
-import { setAuthNext } from "@/lib/auth/next-cookie";
+import { startLinkedInOAuth, signOutAndLeave } from "@/lib/auth/session";
 import { useMyCard } from "@/hooks/useMyCard";
-
-const CALLBACK = () => `${window.location.origin}/auth/callback`;
 
 export function AgentCardAuthBar() {
   const { ready, authenticated, handle } = useMyCard();
 
   function signIn() {
-    setAuthNext("/", "card");
-    createClient().auth.signInWithOAuth({
-      provider: "linkedin_oidc",
-      options: { redirectTo: CALLBACK() },
-    });
+    void startLinkedInOAuth("/", "card");
   }
 
-  async function signOut() {
-    const { error } = await createClient().auth.signOut();
-    if (error) console.error("Sign out failed:", error);
-    window.location.href = "/";
+  function signOut() {
+    void signOutAndLeave("/");
   }
 
   return (

@@ -21,6 +21,7 @@ class _Job:
         self.error: str | None = None
         self.handle_github: str | None = None
         self.handle_x: str | None = None
+        self.linkedin_url: str | None = None
         self.scrape_raw: dict | None = None
         self.url_warnings: list[dict] = []
 

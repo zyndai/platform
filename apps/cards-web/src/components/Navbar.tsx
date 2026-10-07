@@ -12,16 +12,32 @@ import { useEffect, useState } from "react";
 import { Menu, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useMyCard } from "@/hooks/useMyCard";
+import { displayUserName, initialsOf, pickUserAvatar } from "@/lib/identity";
+import { imgProxyUrl } from "@/lib/avatar";
 
 export function Navbar(): React.ReactElement {
-  const { authenticated, logout } = useAuth();
-  const { ready: cardReady, handle: cardHandle } = useMyCard();
+  const { authenticated, user, logout } = useAuth();
+  const { ready: cardReady, handle: cardHandle, card: myCard } = useMyCard();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   // Signed in with a card -> their profile; signed in without one -> Create.
+  // A card left unpublished (e.g. pending_review from the old flow) links to
+  // its editor instead of a public URL that would 404.
   const hasCard = cardReady && Boolean(cardHandle);
+  const cardPublished = myCard?.status === "published";
   const profileLabel = hasCard ? "My card" : "Create your card";
-  const profileHref = hasCard ? `/p/${encodeURIComponent(cardHandle as string)}` : "/create";
+  const profileHref = hasCard
+    ? cardPublished
+      ? `/p/${encodeURIComponent(cardHandle as string)}`
+      : `/p/${encodeURIComponent(cardHandle as string)}/edit`
+    : "/create";
+
+  const md = (user?.user_metadata ?? {}) as Record<string, unknown>;
+  const authName = displayUserName(md, user?.email);
+  const cardName = (myCard?.identity?.name ?? "").trim();
+  const userName = cardName || authName || "My card";
+  const { primary, secondary } = pickUserAvatar(md);
+  const userAvatar = imgProxyUrl(primary, secondary);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -170,9 +186,26 @@ export function Navbar(): React.ReactElement {
                                 <Link
                                   href={profileHref}
                                   className="navbar-link w-nav-link"
-                                  style={{ padding: 0, fontSize: "16px", fontWeight: 600, color: "#a5b4fc", whiteSpace: "nowrap" }}
+                                  style={{ padding: 0, fontSize: "16px", fontWeight: 600, color: "#a5b4fc", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: "8px" }}
                                 >
-                                  {profileLabel}
+                                  {userAvatar ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={userAvatar}
+                                      alt=""
+                                      style={{ width: 26, height: 26, borderRadius: "50%", objectFit: "cover", border: "1px solid rgba(255,255,255,0.15)" }}
+                                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                                    />
+                                  ) : (
+                                    <span style={{
+                                      width: 26, height: 26, borderRadius: "50%", background: "#6366F1", color: "#fff",
+                                      display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                      fontSize: "11px", fontWeight: 700, flexShrink: 0,
+                                    }}>
+                                      {initialsOf(userName)}
+                                    </span>
+                                  )}
+                                  {userName}
                                 </Link>
                               )}
                               {authenticated ? (

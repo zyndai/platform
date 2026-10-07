@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { BadgeCheck, Calendar, Clock, Globe, Search, Sparkles, Video } from "lucide-react";
 
 import {
@@ -18,7 +18,7 @@ import { SkillMatrix } from "./skill-matrix";
 import { ShareQrGroup, CopyPermalinkIcon } from "./share-controls";
 import type { ResumeData } from "./resume-pdf";
 import { EditCardButton } from "./edit-card-button";
-import { ProfileSignIn, ClaimCardButton, ProfileSignOut } from "./profile-auth-actions";
+import { ProfileSignIn, ClaimCardButton, ProfileAccountChip } from "./profile-auth-actions";
 import { CountUp } from "./count-up";
 import { AutoScroll } from "./auto-scroll";
 import { ContributionHeatmap } from "./contribution-heatmap";
@@ -348,7 +348,34 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export default async function PersonPage({ params }: PageProps) {
   const { handle } = await params;
   const card = await fetchCardByHandle(handle);
-  if (!card) notFound();
+  if (!card) {
+    // Self-heal stale "my profile" links: a visitor who is signed in and
+    // owns a card lands on their current handle instead of a dead 404
+    // (handles can be renamed, and old links/cookies can point at a handle
+    // that no longer resolves). The lookup itself is best-effort — a failure
+    // falls through to the 404 below.
+    let mineHandle: string | null = null;
+    try {
+      const supabase = await createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        const mine = await getMyCard(session.access_token);
+        mineHandle = mine?.handle ?? null;
+      }
+    } catch {
+      // auth/mine lookup failed — fall through to the 404
+    }
+    // Outside the try so redirect()'s control-flow throw isn't swallowed.
+    if (mineHandle && mineHandle !== handle) {
+      redirect(`/p/${encodeURIComponent(mineHandle)}`);
+    }
+    notFound();
+  }
+  // Found through a previous (renamed) handle — point the URL at the
+  // canonical one so links, sharing and SEO settle on a single address.
+  if (card.handle && card.handle !== handle) {
+    redirect(`/p/${encodeURIComponent(card.handle)}`);
+  }
 
   const { identity } = card;
   const v = buildView(card);
@@ -683,7 +710,7 @@ export default async function PersonPage({ params }: PageProps) {
               {isOwner && <EditCardButton handle={card.handle ?? card.id} />}
               {!isSignedIn && <ProfileSignIn handle={card.handle ?? handle} />}
               {isSignedIn && !isOwner && <ClaimCardButton handle={card.handle ?? handle} card={card} />}
-              {isSignedIn && <ProfileSignOut />}
+              {isSignedIn && <ProfileAccountChip />}
             </div>
           </header>
 

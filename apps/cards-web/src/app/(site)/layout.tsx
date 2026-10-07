@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Script from "next/script";
 import { Providers } from "@/components/providers";
+import { MyCardServerSnapshot } from "@/components/MyCardServerSnapshot";
 import { getServerAuth } from "@/lib/auth/server";
 import "../globals.css";
 import "@/zynd-ui.css";
@@ -98,7 +99,9 @@ export default async function RootLayout({
           {" — "}
           <a href="/for-ai">Guide for AI: /for-ai</a>
         </p>
-        <Providers initialAuth={{ user }}>{children}</Providers>
+        <Providers initialAuth={{ user }}>
+          <MyCardServerSnapshot>{children}</MyCardServerSnapshot>
+        </Providers>
         {/* Loaded after hydration, same ordering rationale as the dashboard. */}
         <Script src="/assets/js/jquery.min.js" strategy="afterInteractive" />
         <Script src="/assets/js/zynd-ui.js" strategy="afterInteractive" />

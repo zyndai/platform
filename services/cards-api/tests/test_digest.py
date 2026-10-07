@@ -16,14 +16,134 @@ def test_render_digest_includes_summary_posts_and_people():
         "people": [{"handle": "bob", "name": "Bob", "headline": "Founder", "url": "https://zynd.ai/p/bob"}],
         "outside": [{"name": "Pat", "title": "Recruiter", "company": "Acme", "linkedin_url": "https://linkedin.com/in/pat"}],
     }
-    body = digest_service.render_digest("alice", posts, people)
+    body = digest_service.render_digest("alice", posts, people, name="Alice Chen")
     assert "AI is busy today" in body
     assert "https://x.com/a/1" in body
     assert "Bob" in body
     assert "https://zynd.ai/p/bob" in body
     assert "Pat" in body
     assert "https://linkedin.com/in/pat" in body
-    assert "@alice" in body
+    assert "working_on" not in body
+
+    html = digest_service.render_digest_html("alice", posts, people, name="Alice Chen")
+    assert "<table" in html
+    assert "AI is busy today" in html
+    assert "https://x.com/a/1" in html
+    assert "Bob" in html
+    assert "https://zynd.ai/p/bob" in html
+    assert "Pat" in html
+    assert "https://linkedin.com/in/pat" in html
+    assert "zynd.ai/p/alice" in html
+    assert "Good morning, Alice Chen!" in html
+    assert "Good morning, @alice" not in html
+    assert "Curated Posts" in html
+    assert "People on Zynd" in html
+    assert "Outside Network" in html
+    assert "View Zynd Profile" in html
+    assert "Connect on LinkedIn" in html
+    assert "Working On" not in html
+    assert "Can Help With" not in html
+    assert "Connect With" not in html
+    assert "Love Talking About" not in html
+    assert "Founder" in html
+    assert "Recruiter at Acme" in html
+    assert "#554ac0" in html
+    assert "#faf8ff" in html
+    assert "tailwind" not in html.lower()
+    assert "<script" not in html.lower()
+    assert "googleapis.com" not in html
+    assert "Unsubscribe" not in html
+    assert "Edition #" not in html
+
+
+def test_digest_summary_drops_topic_labels():
+    raw = (
+        "Doing research: There is a growing emphasis on research.\n\n"
+        "Technical interviews: Interviews are getting harder.\n\n"
+        "Product Managers: PMs are navigating PR and storytelling."
+    )
+    text = digest_service.digest_summary(raw)
+    assert "Doing research:" not in text
+    assert "Technical interviews:" not in text
+    assert "Product Managers:" not in text
+    assert "growing emphasis on research" in text
+    assert "Interviews are getting harder" in text
+    html = digest_service.render_digest_html("alice", {"summary": raw, "posts": []}, None)
+    assert "Doing research" not in html
+    assert "growing emphasis on research" in html
+
+
+def test_clip_summary_caps_at_100_words():
+    words = " ".join(f"w{i}" for i in range(1, 140))
+    clipped = digest_service.clip_summary(words)
+    assert len(clipped.split()) == 100
+    assert clipped.startswith("w1 ")
+    assert clipped.endswith("w100")
+    assert digest_service.clip_summary("short note") == "short note"
+    html = digest_service.render_digest_html("alice", {"summary": words, "posts": []}, None)
+    assert "w101" not in html
+    assert "w100" in html
+
+
+def test_post_excerpt_caps_at_30_words():
+    words = " ".join(f"p{i}" for i in range(1, 50))
+    posts = {"posts": [{"excerpt": words, "url": "https://x.com/a/1"}]}
+    body = digest_service.render_digest("alice", posts, None)
+    html = digest_service.render_digest_html("alice", posts, None)
+    assert "p31" not in body
+    assert "p30" in body
+    assert "p31" not in html
+    assert "p30" in html
+    assert len(digest_service.clip_summary(words, 30).split()) == 30
+
+
+def test_render_digest_html_escapes_content():
+    posts = {
+        "summary": "<script>alert(1)</script>",
+        "posts": [{"field": "working_on", "excerpt": "a < b", "url": "https://x.com/a/1"}],
+    }
+    html = digest_service.render_digest_html("alice", posts, None)
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
+    assert "a &lt; b" in html
+
+
+def test_send_smtp_attaches_html(monkeypatch):
+    sent = []
+
+    class FakeSMTP:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def starttls(self):
+            pass
+
+        def login(self, *a):
+            pass
+
+        def send_message(self, msg):
+            sent.append(msg)
+
+    monkeypatch.setattr(digest_service.config, "SMTP_HOST", "smtp.example")
+    monkeypatch.setattr(digest_service.config, "SMTP_USER", "from@zynd.ai")
+    monkeypatch.setattr(digest_service.config, "SMTP_PASSWORD", "x")
+    monkeypatch.setattr(digest_service.config, "SMTP_FROM", "from@zynd.ai")
+    monkeypatch.setattr(digest_service.config, "SMTP_PORT", 587)
+    monkeypatch.setattr(digest_service.smtplib, "SMTP", FakeSMTP)
+
+    digest_service.send_smtp(to="a@x.io", subject="s", body="plain", html="<table>hi</table>")
+    msg = sent[0]
+    assert msg.get_content_type() == "multipart/alternative"
+    parts = list(msg.iter_parts())
+    types = {p.get_content_type() for p in parts}
+    assert "text/plain" in types
+    assert "text/html" in types
 
 
 def test_run_digest_skips_no_email_and_already_sent(monkeypatch):
@@ -46,6 +166,26 @@ def test_run_digest_skips_no_email_and_already_sent(monkeypatch):
     assert stats["skipped_already"] == 1
     assert sent[0]["to"] == "alice@x.io"
     assert sent[0]["subject"].startswith("Your Zynd morning digest")
+    assert sent[0]["html"]
+    assert "<table" in sent[0]["html"]
+
+
+def test_run_digest_greets_with_identity_name(monkeypatch):
+    rows = [{
+        "handle": "alice",
+        "owner_email": "alice@x.io",
+        "suggested_posts": None,
+        "card": {"identity": {"name": "Alice Chen"}},
+    }]
+    monkeypatch.setattr(digest_service.cards_service, "list_published_rows", lambda **_k: rows)
+    monkeypatch.setattr(digest_service, "get_suggested_posts", lambda h: {"summary": "s", "posts": []})
+    monkeypatch.setattr(digest_service, "get_suggested_people", lambda h: {"people": [], "outside": []})
+    monkeypatch.setattr(digest_service, "send_smtp", lambda **kw: None)
+    monkeypatch.setattr(digest_service, "_mark_sent", lambda *a: None)
+
+    stats = digest_service.run_digest(today="2026-10-01", dry_run=True)
+    assert "Good morning, Alice Chen!" in stats["previews"][0]["html"]
+    assert "Good morning, @alice" not in stats["previews"][0]["html"]
 
 
 def test_dry_run_does_not_send(monkeypatch):
@@ -83,6 +223,8 @@ def test_run_digest_handle_only_processes_that_card(monkeypatch):
     assert stats["sent"] == 1
     assert stats["previews"][0]["handle"] == "bob"
     assert "Morning digest for @bob" in stats["previews"][0]["body"]
+    assert "<table" in stats["previews"][0]["html"]
+    assert "@bob" in stats["previews"][0]["html"]
 
 
 def test_run_digest_unknown_handle_is_empty(monkeypatch):

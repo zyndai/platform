@@ -1,4 +1,7 @@
 import type { Metadata } from "next";
+import { Providers } from "@/components/providers";
+import { MyCardServerSnapshot } from "@/components/MyCardServerSnapshot";
+import { getServerAuth } from "@/lib/auth/server";
 import "./agent-card.css";
 
 export const metadata: Metadata = {
@@ -14,12 +17,17 @@ export const metadata: Metadata = {
  * the `(site)` route group so it does not inherit globals.css / zynd-ui.css —
  * the page ships its own compiled Tailwind v3 stylesheet and would otherwise
  * fight the app's Tailwind 4 preflight.
+ *
+ * Auth + my-card state are resolved server-side and seeded into the client
+ * providers so the signed-in hero paints instantly instead of waiting for a
+ * post-hydration session + /cards/mine round-trip.
  */
-export default function AgentCardLayout({
+export default async function AgentCardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const { user } = await getServerAuth();
   return (
     <html lang="en" className="scroll-smooth bg-[#080909] text-[#bfbfb9]">
       <head>
@@ -35,7 +43,9 @@ export default function AgentCardLayout({
         />
       </head>
       <body className="bg-[#080909] text-[#d3d3cd] font-sans antialiased selection:bg-[#7b72e9] selection:text-black overflow-x-hidden tech-grid min-h-screen">
-        {children}
+        <Providers initialAuth={{ user }}>
+          <MyCardServerSnapshot>{children}</MyCardServerSnapshot>
+        </Providers>
       </body>
     </html>
   );

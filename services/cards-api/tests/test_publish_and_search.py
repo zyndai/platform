@@ -32,7 +32,7 @@ def _card_json(handle="alice") -> dict:
 @pytest.fixture
 def publish_client(monkeypatch):
     job = MagicMock(card=AgentProfileCard.model_validate(_card_json()), handle_github=None,
-                    handle_x=None, scrape_raw=None)
+                    handle_x=None, linkedin_url=None, scrape_raw=None)
     monkeypatch.setattr(onboard_api, "get_job", lambda job_id: job)
 
     captured = {}
@@ -44,7 +44,7 @@ def publish_client(monkeypatch):
     monkeypatch.setattr(onboard_api.cards_service, "insert_card", fake_insert)
     # No existing card for anyone in these tests — the dedup lookups always miss.
     monkeypatch.setattr(onboard_api.cards_service, "get_card_by_owner", lambda email: None)
-    monkeypatch.setattr(onboard_api.cards_service, "get_card_by_social_handle", lambda gh, x: None)
+    monkeypatch.setattr(onboard_api.cards_service, "get_card_by_social_handle", lambda gh, x, li=None: None)
 
     async def no_hooks(*_a, **_k):
         return None
@@ -88,6 +88,42 @@ def test_publish_stores_calendly_and_google_calendar_links(publish_client):
     assert captured["card"].calendly_url == "https://calendly.com/alice"   # scheme added
     assert captured["card"].google_calendar_url == "https://calendar.app.google/abc123"
     assert resp.json()["google_calendar_url"] == "https://calendar.app.google/abc123"
+
+
+def test_publish_user_location_overrides_extracted_location(publish_client):
+    """The location the user typed during onboarding is authoritative — the
+    LLM's guess from a resume/LinkedIn scrape must not win over it."""
+    client, captured = publish_client
+    body = {
+        "card": _card_json(),  # extracted location: Pune
+        "user_answers": {"location": " Bengaluru, IN "},
+    }
+
+    resp = client.post("/onboard/j1/publish", json=body)
+
+    assert resp.status_code == 200
+    assert captured["card"].identity.location == "Bengaluru, IN"
+    assert resp.json()["identity"]["location"] == "Bengaluru, IN"
+
+
+def test_publish_keeps_extracted_location_when_no_answer(publish_client):
+    client, captured = publish_client
+    body = {"card": _card_json(), "user_answers": {}}
+
+    resp = client.post("/onboard/j1/publish", json=body)
+
+    assert resp.status_code == 200
+    assert captured["card"].identity.location == "Pune"
+
+
+def test_publish_blank_location_answer_keeps_extracted_location(publish_client):
+    client, captured = publish_client
+    body = {"card": _card_json(), "user_answers": {"location": "   "}}
+
+    resp = client.post("/onboard/j1/publish", json=body)
+
+    assert resp.status_code == 200
+    assert captured["card"].identity.location == "Pune"
 
 
 def test_booking_links_drop_non_http_urls():
@@ -140,7 +176,7 @@ def test_anonymous_publish_refuses_to_recreate_a_matching_handle(publish_client,
     onboard_api.get_job("j1").handle_github = "octocat"
     monkeypatch.setattr(
         onboard_api.cards_service, "get_card_by_social_handle",
-        lambda gh, x: (AgentProfileCard.model_validate(_card_json()), "octo") if gh == "octocat" else None,
+        lambda gh, x, li=None: (AgentProfileCard.model_validate(_card_json()), "octo") if gh == "octocat" else None,
     )
     body = {"card": _card_json()}
 
@@ -148,6 +184,27 @@ def test_anonymous_publish_refuses_to_recreate_a_matching_handle(publish_client,
 
     assert resp.status_code == 200
     assert resp.json() == {"existing": True, "handle": "octo"}
+    assert captured == {}
+
+
+def test_anonymous_publish_refuses_to_fork_a_card_with_same_linkedin(publish_client, monkeypatch):
+    """The same person publishing again (different email, same LinkedIn) must
+    not fork a duplicate profile with a suffixed handle."""
+    client, captured = publish_client
+    onboard_api.get_job("j1").linkedin_url = "https://www.linkedin.com/in/alice-smith-12345?utm=x"
+    monkeypatch.setattr(
+        onboard_api.cards_service, "get_card_by_social_handle",
+        lambda gh, x, li=None: (
+            (AgentProfileCard.model_validate(_card_json(handle="alice-smith")), "alice-smith")
+            if li == "https://www.linkedin.com/in/alice-smith-12345" else None
+        ),
+    )
+    body = {"card": _card_json()}
+
+    resp = client.post("/onboard/j1/publish", json=body)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"existing": True, "handle": "alice-smith"}
     assert captured == {}
 
 

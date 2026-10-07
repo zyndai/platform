@@ -129,6 +129,8 @@ export interface AgentProfileCard {
   }> | null;
   /** Public findability facts from the ZYND memory layer, stored by the backend cron. */
   zynd_memory?: Array<Record<string, unknown>> | null;
+  /** Handles this card used to live at (renames) — old /p/<handle> links still resolve. */
+  previous_handles?: string[];
 }
 
 export interface AgentSearchResult {

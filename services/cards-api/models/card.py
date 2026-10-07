@@ -165,6 +165,10 @@ class AgentProfileCard(BaseModel):
     # Public findability facts pulled from the ZYND memory layer by our cron
     # (services/zynd_memory). None = not connected / nothing public yet.
     zynd_memory: list[dict] | None = None
+    # Handles this card used to live at (renames + collision-resuffixes).
+    # Kept so old /p/<handle> links still resolve — get_card_by_handle falls
+    # back to this list before 404ing.
+    previous_handles: list[str] = Field(default_factory=list)
 
     @field_validator("experience_years", mode="before")
     @classmethod

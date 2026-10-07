@@ -8,6 +8,9 @@ import { oauthCallbackUrl } from "@/lib/auth/origin";
 import { getMyCard, updateCard, type AgentProfileCard } from "@/lib/cards";
 import { hasClaimToken, markClaimIntent, subscribeClaimTokens, takeClaimIntent } from "@/lib/claim-tokens";
 import { useAuth } from "@/hooks/useAuth";
+import { useMyCard } from "@/hooks/useMyCard";
+import { displayUserName, initialsOf, pickUserAvatar } from "@/lib/identity";
+import { imgProxyUrl } from "@/lib/avatar";
 
 const PILL_CLASS =
   "inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full font-mono text-[12px]! font-semibold cursor-pointer hover:opacity-90 transition-opacity disabled:opacity-60";
@@ -94,18 +97,63 @@ export function ClaimCardButton({ handle, card }: { handle: string; card: AgentP
   );
 }
 
-/** Signed-in header action: lets anyone who is signed in sign back out. */
-export function ProfileSignOut() {
-  const { authenticated, logout } = useAuth();
+/** Signed-in header action: the visitor's own identity — photo, name, sign out.
+ *  Replaces the bare "Sign out" button so the header always answers "who am I
+ *  here as?" instead of only offering an exit. The photo prefers the LinkedIn
+ *  profile picture (Google default avatars would otherwise win), with a
+ *  second URL and initials as fallbacks. */
+export function ProfileAccountChip() {
+  const { authenticated, user, logout } = useAuth();
+  const { card: myCard } = useMyCard();
+  const md = (user?.user_metadata ?? {}) as Record<string, unknown>;
+  const { primary, secondary } = pickUserAvatar(md);
+  const avatarSrc = imgProxyUrl(primary, secondary);
+  const [failed, setFailed] = useState(false);
   if (!authenticated) return null;
+
+  const authName = displayUserName(md, user?.email);
+  const cardName = (myCard?.identity?.name ?? "").trim();
+  const name = cardName || authName;
+  const initials = initialsOf(name);
+
   return (
-    <button
-      type="button"
-      onClick={() => logout()}
-      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full font-mono text-[12px]! font-semibold cursor-pointer hover:opacity-90 transition-opacity"
-      style={{ background: "transparent", color: "#64748b", border: "1px solid #e2e8f0" }}
+    <span
+      className="inline-flex items-center gap-2 pl-1 pr-2 py-1 rounded-full font-mono text-[12px]! font-semibold"
+      style={{ background: "#fff", color: "#0f172a", border: "1px solid #e2e8f0" }}
     >
-      Sign out
-    </button>
+      {avatarSrc && !failed ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={avatarSrc}
+          alt=""
+          onError={() => setFailed(true)}
+          style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", display: "block", flexShrink: 0 }}
+        />
+      ) : (
+        <span style={{
+          width: 24, height: 24, borderRadius: "50%", background: "#7B72E9", color: "#fff",
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          fontSize: "10px", fontWeight: 700, flexShrink: 0,
+        }}>
+          {initials}
+        </span>
+      )}
+      <span style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {name}
+      </span>
+      <button
+        type="button"
+        onClick={() => logout()}
+        title="Sign out"
+        aria-label="Sign out"
+        className="inline-flex items-center gap-1 cursor-pointer"
+        style={{
+          background: "transparent", border: "none", padding: "4px 6px", borderRadius: 8,
+          color: "#64748b", fontSize: "11px", fontWeight: 600, fontFamily: "inherit",
+        }}
+      >
+        Sign out
+      </button>
+    </span>
   );
 }

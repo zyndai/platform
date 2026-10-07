@@ -332,6 +332,22 @@ def get_card_by_handle(handle: str) -> AgentProfileCard | None:
     )
     rows = resp.data or []
     if not rows:
+        # The handle may have been renamed — resolve through the previous
+        # handles recorded in the card JSON so old links keep working.
+        try:
+            resp = (
+                sb.table("agent_profile_cards")
+                .select("card,handle")
+                .contains("card", {"previous_handles": [handle]})
+                .eq("status", "published")
+                .limit(1)
+                .execute()
+            )
+            rows = resp.data or []
+        except Exception as exc:
+            logger.warning("previous-handle lookup failed handle=%s err=%s", handle, exc)
+            rows = []
+    if not rows:
         return None
     return _row_to_card(rows[0])
 
@@ -377,17 +393,35 @@ def insert_card(
 
 
 def get_card_by_owner(email: str) -> tuple[AgentProfileCard, str] | None:
-    """Return (card, handle) for the most recently created card owned by email."""
+    """Return (card, handle) for the owner's card.
+
+    Published cards first. When the owner has no *published* card, fall back
+    to their most recent row of any status — a card left `pending_review` by
+    the old dashboard flow (or by the xmfj -> aafo data copy) must never make
+    the signed-in owner look like they have no card at all. The status rides
+    along in the card JSON, so the frontend can offer a "publish" action
+    instead of pretending the profile doesn't exist."""
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
         .select("card,handle")
         .ilike("owner_email", _like_literal(email))
+        .eq("status", "published")
         .order("created_at", desc=True)
         .limit(1)
         .execute()
     )
     rows = resp.data or []
+    if not rows:
+        resp = (
+            sb.table("agent_profile_cards")
+            .select("card,handle")
+            .ilike("owner_email", _like_literal(email))
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
     if not rows:
         return None
     return _row_to_card(rows[0]), rows[0]["handle"]
@@ -405,13 +439,21 @@ def _postgrest_quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def get_card_by_social_handle(handle_github: str | None, handle_x: str | None) -> tuple[AgentProfileCard, str] | None:
-    """Return (card, handle) for the most recent published card matching either handle.
+def get_card_by_social_handle(
+    handle_github: str | None,
+    handle_x: str | None,
+    linkedin_url: str | None = None,
+) -> tuple[AgentProfileCard, str] | None:
+    """Return (card, handle) for the most recent published card matching any
+    of the given identities.
 
     Used by onboard.py's publish_card to detect an anonymous re-publish of the
     same identity so it never forks a second card (get_card_by_owner is the
-    equivalent check for a signed-in publish)."""
-    if not handle_github and not handle_x:
+    equivalent check for a signed-in publish). LinkedIn was added because the
+    same person republishing while signed in with a different email than their
+    old card used to fork a duplicate profile — a stale "twin" that their
+    "my profile" button never points at."""
+    if not handle_github and not handle_x and not linkedin_url:
         return None
     sb = config.get_supabase()
     filters = []
@@ -419,6 +461,8 @@ def get_card_by_social_handle(handle_github: str | None, handle_x: str | None) -
         filters.append(f"handle_github.eq.{_postgrest_quote(handle_github)}")
     if handle_x:
         filters.append(f"handle_x.eq.{_postgrest_quote(handle_x)}")
+    if linkedin_url:
+        filters.append(f"card->identity->links->>linkedin.eq.{_postgrest_quote(linkedin_url)}")
     resp = (
         sb.table("agent_profile_cards")
         .select("card,handle")
@@ -475,6 +519,14 @@ def update_card(
             conflict = sb.table("agent_profile_cards").select("id").eq("handle", slug).execute()
             if not conflict.data:
                 effective_handle = slug
+
+    if effective_handle != handle:
+        # Keep the old handle resolving: record it in the card JSON so
+        # get_card_by_handle can find renamed cards and the web layer can
+        # redirect old links to the canonical handle.
+        previous = card.previous_handles or []
+        if handle not in previous:
+            card.previous_handles = [handle, *previous][:8]
 
     card.updated_at = utcnow()
     try:

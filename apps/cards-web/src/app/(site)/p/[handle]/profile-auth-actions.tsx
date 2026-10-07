@@ -8,6 +8,9 @@ import { oauthCallbackUrl } from "@/lib/auth/origin";
 import { getMyCard, updateCard, type AgentProfileCard } from "@/lib/cards";
 import { hasClaimToken, markClaimIntent, subscribeClaimTokens, takeClaimIntent } from "@/lib/claim-tokens";
 import { useAuth } from "@/hooks/useAuth";
+import { useMyCard } from "@/hooks/useMyCard";
+import { displayUserName, initialsOf, pickUserAvatar } from "@/lib/identity";
+import { imgProxyUrl } from "@/lib/avatar";
 
 const PILL_CLASS =
   "inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full font-mono text-[12px]! font-semibold cursor-pointer hover:opacity-90 transition-opacity disabled:opacity-60";
@@ -96,29 +99,36 @@ export function ClaimCardButton({ handle, card }: { handle: string; card: AgentP
 
 /** Signed-in header action: the visitor's own identity — photo, name, sign out.
  *  Replaces the bare "Sign out" button so the header always answers "who am I
- *  here as?" instead of only offering an exit. */
+ *  here as?" instead of only offering an exit. The photo prefers the LinkedIn
+ *  profile picture (Google default avatars would otherwise win), with a
+ *  second URL and initials as fallbacks. */
 export function ProfileAccountChip() {
   const { authenticated, user, logout } = useAuth();
+  const { card: myCard } = useMyCard();
+  const md = (user?.user_metadata ?? {}) as Record<string, unknown>;
+  const { primary, secondary } = pickUserAvatar(md);
+  const avatarSrc = imgProxyUrl(primary, secondary);
+  const [failed, setFailed] = useState(false);
   if (!authenticated) return null;
 
-  const md = (user?.user_metadata ?? {}) as Record<string, unknown>;
-  const nameRaw =
-    (md.full_name as string) || (md.name as string) || (md.preferred_name as string) ||
-    user?.email?.split("@")[0] || "";
-  const name = String(nameRaw).trim();
-  const avatar = ((md.avatar_url as string) || (md.picture as string) || (md.avatar as string) || "").trim();
-  const initials = (name || "?")
-    .split(/\s+/).map((p) => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase() || "?";
+  const authName = displayUserName(md, user?.email);
+  const cardName = (myCard?.identity?.name ?? "").trim();
+  const name = cardName || authName;
+  const initials = initialsOf(name);
 
   return (
     <span
       className="inline-flex items-center gap-2 pl-1 pr-2 py-1 rounded-full font-mono text-[12px]! font-semibold"
       style={{ background: "#fff", color: "#0f172a", border: "1px solid #e2e8f0" }}
     >
-      {avatar ? (
+      {avatarSrc && !failed ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={avatar} alt="" referrerPolicy="no-referrer" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-          style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", display: "block", flexShrink: 0 }} />
+        <img
+          src={avatarSrc}
+          alt=""
+          onError={() => setFailed(true)}
+          style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", display: "block", flexShrink: 0 }}
+        />
       ) : (
         <span style={{
           width: 24, height: 24, borderRadius: "50%", background: "#7B72E9", color: "#fff",

@@ -396,3 +396,52 @@ def test_get_card_by_handle_returns_none_when_neither_matches(monkeypatch):
     monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
 
     assert cards_service.get_card_by_handle("ghost") is None
+
+
+# ── owners never look card-less ───────────────────────────────────────────────
+
+class _OwnerLookupQuery:
+    """First (published-filtered) pass misses; second (any-status) pass hits."""
+
+    def __init__(self, fallback_rows):
+        self.fallback_rows = fallback_rows
+        self.status_filters = []
+        self.executes = 0
+
+    def select(self, *_a):
+        return self
+
+    def ilike(self, *_a, **_k):
+        return self
+
+    def eq(self, col, val):
+        if col == "status":
+            self.status_filters.append(val)
+        return self
+
+    def order(self, *_a, **_k):
+        return self
+
+    def limit(self, *_a):
+        return self
+
+    def execute(self):
+        self.executes += 1
+        if self.executes == 1:
+            return MagicMock(data=[])
+        return MagicMock(data=self.fallback_rows)
+
+
+def test_get_card_by_owner_falls_back_to_unpublished_owned_card(monkeypatch):
+    pending = _card()
+    pending.status = "pending_review"
+    q = _OwnerLookupQuery([{"card": pending.model_dump(mode="json"), "handle": "chandan-kumar-c5r4"}])
+    sb = MagicMock()
+    sb.table.return_value = q
+    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+
+    card, handle = cards_service.get_card_by_owner("vivekans2016@gmail.com")
+
+    assert handle == "chandan-kumar-c5r4"
+    assert card.status == "pending_review"
+    assert q.status_filters == ["published"]  # published pass ran first

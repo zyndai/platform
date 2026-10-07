@@ -393,10 +393,14 @@ def insert_card(
 
 
 def get_card_by_owner(email: str) -> tuple[AgentProfileCard, str] | None:
-    """Return (card, handle) for the most recently created *published* card
-    owned by email. The status filter matters: a draft/superseded row must
-    never become the link the frontend shows as "my profile" — that link
-    would 404 on the public by-handle endpoint."""
+    """Return (card, handle) for the owner's card.
+
+    Published cards first. When the owner has no *published* card, fall back
+    to their most recent row of any status — a card left `pending_review` by
+    the old dashboard flow (or by the xmfj -> aafo data copy) must never make
+    the signed-in owner look like they have no card at all. The status rides
+    along in the card JSON, so the frontend can offer a "publish" action
+    instead of pretending the profile doesn't exist."""
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
@@ -408,6 +412,16 @@ def get_card_by_owner(email: str) -> tuple[AgentProfileCard, str] | None:
         .execute()
     )
     rows = resp.data or []
+    if not rows:
+        resp = (
+            sb.table("agent_profile_cards")
+            .select("card,handle")
+            .ilike("owner_email", _like_literal(email))
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
     if not rows:
         return None
     return _row_to_card(rows[0]), rows[0]["handle"]

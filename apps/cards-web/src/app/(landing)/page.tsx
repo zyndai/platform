@@ -22,8 +22,9 @@ import { useMyCard } from "@/hooks/useMyCard";
 export default function AgentCardPage() {
   const router = useRouter();
   const [link, setLink] = useState("");
-  const { ready: myCardReady, authenticated, handle: myHandle } = useMyCard();
+  const { ready: myCardReady, authenticated, handle: myHandle, card: myCard } = useMyCard();
   const showMyCardCtas = myCardReady && authenticated && Boolean(myHandle);
+  const myCardPublished = myCard?.status === "published";
 
   // Hand the pasted link off to /create rather than synthesizing here — the
   // create page owns auth, validation and the job polling.
@@ -124,10 +125,17 @@ export default function AgentCardPage() {
 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-2">
 {showMyCardCtas ? (
   <>
-  <Link className="bg-[#7b72e9] hover:bg-[#a78bfa] text-black font-mono font-bold text-sm py-3.5 px-6 rounded-xl transition-all shadow-[0_0_24px_rgba(123,114,233,0.3)] flex items-center justify-center gap-2 active:scale-95" href={`/p/${encodeURIComponent(myHandle as string)}`}>
-    <span className="">View my profile</span>
-    <span className="text-base leading-none">→</span>
-  </Link>
+  {myCardPublished ? (
+    <Link className="bg-[#7b72e9] hover:bg-[#a78bfa] text-black font-mono font-bold text-sm py-3.5 px-6 rounded-xl transition-all shadow-[0_0_24px_rgba(123,114,233,0.3)] flex items-center justify-center gap-2 active:scale-95" href={`/p/${encodeURIComponent(myHandle as string)}`}>
+      <span className="">View my profile</span>
+      <span className="text-base leading-none">→</span>
+    </Link>
+  ) : (
+    <Link className="bg-amber-400 hover:bg-amber-300 text-black font-mono font-bold text-sm py-3.5 px-6 rounded-xl transition-all flex items-center justify-center gap-2 active:scale-95" href={`/p/${encodeURIComponent(myHandle as string)}/edit`}>
+      <span className="">Finish publishing my card</span>
+      <span className="text-base leading-none">→</span>
+    </Link>
+  )}
   <Link className="bg-white/[0.05] hover:bg-white/[0.09] text-white border border-white/15 font-mono text-sm py-3.5 px-6 rounded-xl transition-all flex items-center justify-center gap-2" href={`/p/${encodeURIComponent(myHandle as string)}/edit`}>
     <span className="">Edit my card</span>
     <span className="text-xs text-[#a0a09a]">↗</span>

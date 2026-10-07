@@ -12,21 +12,32 @@ import { useEffect, useState } from "react";
 import { Menu, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useMyCard } from "@/hooks/useMyCard";
+import { displayUserName, initialsOf, pickUserAvatar } from "@/lib/identity";
+import { imgProxyUrl } from "@/lib/avatar";
 
 export function Navbar(): React.ReactElement {
   const { authenticated, user, logout } = useAuth();
-  const { ready: cardReady, handle: cardHandle } = useMyCard();
+  const { ready: cardReady, handle: cardHandle, card: myCard } = useMyCard();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   // Signed in with a card -> their profile; signed in without one -> Create.
+  // A card left unpublished (e.g. pending_review from the old flow) links to
+  // its editor instead of a public URL that would 404.
   const hasCard = cardReady && Boolean(cardHandle);
+  const cardPublished = myCard?.status === "published";
   const profileLabel = hasCard ? "My card" : "Create your card";
-  const profileHref = hasCard ? `/p/${encodeURIComponent(cardHandle as string)}` : "/create";
+  const profileHref = hasCard
+    ? cardPublished
+      ? `/p/${encodeURIComponent(cardHandle as string)}`
+      : `/p/${encodeURIComponent(cardHandle as string)}/edit`
+    : "/create";
 
   const md = (user?.user_metadata ?? {}) as Record<string, unknown>;
-  const userName =
-    String(md.full_name ?? md.name ?? md.preferred_name ?? user?.email?.split("@")[0] ?? "").trim() || "My card";
-  const userAvatar = String(md.avatar_url ?? md.picture ?? md.avatar ?? "").trim();
+  const authName = displayUserName(md, user?.email);
+  const cardName = (myCard?.identity?.name ?? "").trim();
+  const userName = cardName || authName || "My card";
+  const { primary, secondary } = pickUserAvatar(md);
+  const userAvatar = imgProxyUrl(primary, secondary);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -182,7 +193,6 @@ export function Navbar(): React.ReactElement {
                                     <img
                                       src={userAvatar}
                                       alt=""
-                                      referrerPolicy="no-referrer"
                                       style={{ width: 26, height: 26, borderRadius: "50%", objectFit: "cover", border: "1px solid rgba(255,255,255,0.15)" }}
                                       onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                                     />
@@ -192,7 +202,7 @@ export function Navbar(): React.ReactElement {
                                       display: "inline-flex", alignItems: "center", justifyContent: "center",
                                       fontSize: "11px", fontWeight: 700, flexShrink: 0,
                                     }}>
-                                      {(userName || "?").split(/\s+/).map((p) => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
+                                      {initialsOf(userName)}
                                     </span>
                                   )}
                                   {userName}

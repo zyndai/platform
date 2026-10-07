@@ -13,6 +13,7 @@ import { startLinkedInOAuth } from "@/lib/auth/session";
 import type { AgentProfileCard, OnboardStatus, Project, ScrapeWarning, WritingSample } from "@/lib/cards";
 import { MemoryProviderOnboard } from "@/components/memory/MemoryProviderOnboard";
 import { AutoGrowTextArea } from "@/components/AutoGrowTextArea";
+import { imgProxyUrl } from "@/lib/avatar";
 import { claimHeaders, forgetClaimToken, saveClaimToken } from "@/lib/claim-tokens";
 
 // Memory layer (api.zynd.ai) — same host the /connect and /findable pages use.
@@ -297,7 +298,10 @@ function applyAnswers(
 // ─── avatar with a fallback for dead / hotlink-blocked scraped URLs ──────────
 function Avatar({ url, name }: { url: string; name: string }) {
   const [broken, setBroken] = useState(false);
-  if (!url || broken) {
+  // Third-party CDN avatars (LinkedIn/X/GitHub) get blocked in some
+  // browsers — serve through the first-party /api/img proxy.
+  const src = url && !broken ? imgProxyUrl(url) : null;
+  if (!src) {
     return (
       <span className="zc-avatar" style={{ background: T.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", font: `600 22px/1 ${DISPLAY}` }}>
         {(name || "?").trim().charAt(0).toUpperCase()}
@@ -305,7 +309,7 @@ function Avatar({ url, name }: { url: string; name: string }) {
     );
   }
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={url} alt="" className="zc-avatar" onError={() => setBroken(true)} />;
+  return <img src={src} alt="" className="zc-avatar" onError={() => setBroken(true)} />;
 }
 
 // ─── skills editor for the review screen ─────────────────────────────────────
@@ -317,28 +321,24 @@ function SkillsEditor({ skills, onSkillsChange }: {
   skills: AgentProfileCard["skills"];
   onSkillsChange: (skills: AgentProfileCard["skills"]) => void;
 }) {
-  const value = skills.map(s => s.name).join("\n");
-  const update = (v: string) => {
-    onSkillsChange(v.split("\n").map(n => n.trim()).filter(Boolean).map(name => {
-      // Match by name, not index — keeps level/evidence_count when a skill
-      // is re-ordered or retyped mid-list.
-      const prev = skills.find(sk => sk.name.toLowerCase() === name.toLowerCase());
-      return prev ? { ...prev, name } : { name, level: "intermediate" as const, evidence_count: 0 };
-    }));
+  const [input, setInput] = useState("");
+
+  const add = (raw: string) => {
+    const parts = raw.split(",").map(p => p.trim()).filter(Boolean);
+    if (parts.length === 0) return;
+    const next = [...skills];
+    for (const name of parts) {
+      if (next.some(s => s.name.toLowerCase() === name.toLowerCase())) continue;
+      next.push({ name, level: "intermediate" as const, evidence_count: 0 });
+    }
+    if (next.length !== skills.length) onSkillsChange(next);
+    setInput("");
   };
+
   const remove = (name: string) => onSkillsChange(skills.filter(s => s.name !== name));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
-        <span style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".14em", textTransform: "uppercase", color: T.muted }}>
-          Skills
-        </span>
-        <span style={{ font: `400 12px/1 ${SANS}`, color: T.faint }}>
-          {skills.length} {skills.length === 1 ? "skill" : "skills"}
-        </span>
-      </div>
-
       {skills.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
           {skills.map(s => (
@@ -358,23 +358,27 @@ function SkillsEditor({ skills, onSkillsChange }: {
         </div>
       )}
 
-      <AutoGrowTextArea
-        value={value}
-        onChange={update}
-        minRows={2}
-        placeholder={skills.length === 0 ? "Add a skill, one per line" : "Add another skill…"}
+      <input
+        type="text"
+        value={input}
+        onChange={e => setInput(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === "Enter" || e.key === ",") {
+            e.preventDefault();
+            add(input);
+          }
+        }}
+        onBlur={() => { if (input.trim()) add(input); }}
+        placeholder={skills.length === 0 ? "Add a skill — Enter or comma to add" : "Add another — Enter or comma"}
         className="zc-field"
         style={{
           width: "100%", padding: "13px 15px", fontSize: "15px", lineHeight: 1.5,
           border: `1px solid ${T.border}`, borderRadius: "14px",
           background: T.surface, color: T.ink, outline: "none",
-          fontFamily: SANS, boxSizing: "border-box", resize: "none", overflowY: "hidden",
+          fontFamily: SANS, boxSizing: "border-box",
           transition: "border-color .14s",
         }}
       />
-      <span style={{ font: `400 12px/1.5 ${SANS}`, color: T.faint }}>
-        One per line — level and evidence are kept when the name matches an existing skill.
-      </span>
     </div>
   );
 }
@@ -459,6 +463,7 @@ function CreateProfilePageContent() {
 
   const [jobDone, setJobDone] = useState(false);
   const [existingHandle, setExistingHandle] = useState<string | null>(null);
+  const [existingPublished, setExistingPublished] = useState(true);
   // Set once publishing succeeds — flips the review column into the
   // post-publish "claim your card" screen.
   const [published, setPublished] = useState<string | null>(null);
@@ -517,7 +522,12 @@ function CreateProfilePageContent() {
       if (!token) return;
       fetch(`${CARDS_API}/cards/mine`, { headers: { Authorization: `Bearer ${token}` } })
         .then(r => (r.ok ? r.json() : null))
-        .then(data => { if (data?.handle) setExistingHandle(data.handle); })
+        .then(data => {
+          if (data?.handle) {
+            setExistingHandle(data.handle);
+            setExistingPublished(data.card?.status === "published");
+          }
+        })
         .catch(() => { /* non-fatal — user just sees create form */ });
     });
   }, [authenticated, editHandle]);
@@ -1323,21 +1333,27 @@ function CreateProfilePageContent() {
                     </div>
                   ) : (
                   <div className="zc-card zc-step-card" style={{ padding: "30px 32px", display: "flex", flexDirection: "column", justifyContent: "center", gap: "16px" }}>
-                    <div className="zc-question">Your card is live.</div>
+                    <div className="zc-question">
+                      {existingPublished ? "Your card is live." : "Your card is not published yet."}
+                    </div>
                     <p style={{ font: `400 15px/1.6 ${SANS}`, color: T.soft, margin: 0, maxWidth: "420px" }}>
-                      Edit it anytime, share the link, or start a new one.
+                      {existingPublished
+                        ? "Edit it anytime, share the link, or start a new one."
+                        : "It was left in review by an earlier version of the flow. Edit and save it to publish."}
                     </p>
                     <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxWidth: "400px", marginTop: "8px" }}>
                     <a href={`/p/${existingHandle}/edit`}
                       className="zc-cta"
                       style={{ background: T.accent, color: "#fff", borderRadius: "18px", padding: "18px 22px", font: `600 15px/1 ${DISPLAY}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", textDecoration: "none", letterSpacing: "-.01em" }}>
-                      Edit my card <span style={{ font: `400 16px/1 ${SANS}` }}>→</span>
+                      {existingPublished ? "Edit my card" : "Finish publishing"} <span style={{ font: `400 16px/1 ${SANS}` }}>→</span>
                     </a>
-                    <a href={`/p/${existingHandle}`}
-                      className="zc-ghost"
-                      style={{ background: T.surface, color: T.ink, border: `1px solid ${T.border}`, borderRadius: "18px", padding: "16px 22px", font: `500 15px/1 ${SANS}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", textDecoration: "none" }}>
-                      View profile <span>↗</span>
-                    </a>
+                    {existingPublished && (
+                      <a href={`/p/${existingHandle}`}
+                        className="zc-ghost"
+                        style={{ background: T.surface, color: T.ink, border: `1px solid ${T.border}`, borderRadius: "18px", padding: "16px 22px", font: `500 15px/1 ${SANS}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", textDecoration: "none" }}>
+                        View profile <span>↗</span>
+                      </a>
+                    )}
                     </div>
                   </div>
                   )}
@@ -1923,7 +1939,7 @@ function CreateProfilePageContent() {
                   </div>
 
                   <div className="zc-card" style={{ padding: "28px", display: "flex", flexDirection: "column", gap: "20px" }}>
-                    <SectionLabel label="Skills" />
+                    <SectionLabel label="Skills" total={card.skills.length} />
                     <SkillsEditor skills={card.skills} onSkillsChange={skills => updateCard({ skills })} />
                   </div>
 

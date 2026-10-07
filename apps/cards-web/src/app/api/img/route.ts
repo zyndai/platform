@@ -16,6 +16,7 @@ const ALLOWED_HOSTS = new Set([
   "abs.twimg.com",
   "avatars.githubusercontent.com",
   "github.com",
+  "lh3.googleusercontent.com",
 ]);
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api.zynd.ai";
@@ -30,8 +31,13 @@ const FETCH_HEADERS = {
 function validImageUrl(raw: string): string | null {
   try {
     const u = new URL(raw);
-    if (u.protocol !== "https:" || !ALLOWED_HOSTS.has(u.hostname)) return null;
-    return u.toString();
+    if (u.protocol !== "https:") return null;
+    const host = u.hostname.toLowerCase();
+    // Google serves account avatars from lhN.googleusercontent.com — allow
+    // the whole suffix so a host rotation can't break already-stored URLs.
+    if (ALLOWED_HOSTS.has(host)) return u.toString();
+    if (host.endsWith(".googleusercontent.com")) return u.toString();
+    return null;
   } catch {
     return null;
   }

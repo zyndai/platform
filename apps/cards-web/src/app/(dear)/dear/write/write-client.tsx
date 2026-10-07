@@ -15,6 +15,11 @@ import type { InkState, SourceId } from "@/lib/dear/types";
  *   ask it who you are.
  * No account is needed until the first connection or the signature.
  *
+ * A person can always use their own words: every suggested line has "Rewrite",
+ * every section has "add a line of your own", and skipping LinkedIn opens
+ * typed fields for role and place. Anything typed is ink at once, because
+ * they wrote it.
+ *
  * All imported lines below are examples; wire them to cards-api /onboard.
  */
 
@@ -51,21 +56,47 @@ export function WriteClient() {
   const [assistant, setAssistant] = useState<string | null>(null);
   const [noteInked, setNoteInked] = useState(false);
   const [answer, setAnswer] = useState<string | null>(null);
+  const [own, setOwn] = useState<Found[]>([]);
+  const [ownDraft, setOwnDraft] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [selfWrite, setSelfWrite] = useState(false);
+  const [self, setSelf] = useState({ role: "", place: "" });
 
   const pct = signed ? 100 : { 1: 10, 2: 30, 3: 55, 4: 75, 5: 90 }[step] ?? 10;
   const liDecided = linkedin?.every((f) => f.state !== "pencil") ?? false;
   const anyToday = Boolean(today.build.trim() || today.look.trim() || today.help.trim());
-  const inkCount = [...(linkedin ?? []), ...found].filter((f) => f.state === "ink").length + Object.values(today).filter((v) => v.trim()).length;
-  const struckCount = [...(linkedin ?? []), ...found].filter((f) => f.state === "struck").length;
+  const everyLine = [...(linkedin ?? []), ...found, ...own];
+  const inkCount = everyLine.filter((f) => f.state === "ink").length + Object.values(today).filter((v) => v.trim()).length;
+  const struckCount = everyLine.filter((f) => f.state === "struck").length;
   const handle = (name || "you").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
-  function mark(list: "li" | "found", id: string, state: InkState) {
-    if (list === "li") setLinkedin((cur) => cur?.map((f) => (f.id === id ? { ...f, state } : f)) ?? null);
-    else {
-      setFound((cur) => cur.map((f) => (f.id === id ? { ...f, state } : f)));
-      const s = Object.values(SUGGEST).find((x) => x.id === id);
-      if (s && state === "ink") setToday((t) => (t[s.field] ? t : { ...t, [s.field]: s.value }));
-    }
+  type Which = "li" | "found" | "own";
+
+  function update(list: Which, id: string, patch: Partial<Found>) {
+    const apply = (cur: Found[]) => cur.map((f) => (f.id === id ? { ...f, ...patch } : f));
+    if (list === "li") setLinkedin((cur) => (cur ? apply(cur) : cur));
+    else if (list === "found") setFound(apply);
+    else setOwn(apply);
+  }
+
+  function mark(list: Which, id: string, state: InkState) {
+    update(list, id, { state });
+    const s = Object.values(SUGGEST).find((x) => x.id === id);
+    if (list === "found" && s && state === "ink") setToday((t) => (t[s.field] ? t : { ...t, [s.field]: s.value }));
+  }
+
+  /** Saving your own wording approves it: you wrote it. */
+  function saveRewrite(list: Which, id: string) {
+    const text = draft.trim();
+    if (text) update(list, id, { text, state: "ink", from: "Written by you", stale: false });
+    setEditing(null);
+  }
+
+  function addOwn(text: string) {
+    const t = text.trim();
+    if (!t) return;
+    setOwn((cur) => [...cur, { id: `o${cur.length + 1}`, text: t, from: "Written by you", state: "ink" }]);
   }
 
   function read(key: "github" | "x") {
@@ -75,7 +106,7 @@ export function WriteClient() {
   }
 
   function ask() {
-    const inked = (linkedin ?? []).filter((f) => f.state === "ink").map((f) => lower(f.text));
+    const inked = [...(linkedin ?? []), ...own].filter((f) => f.state === "ink").map((f) => lower(f.text));
     let s = name || "This person";
     s += inked.length ? `: ${inked.join(", ")}.` : ".";
     if (today.build) s += ` Right now they are building ${lower(today.build)}.`;
@@ -86,25 +117,85 @@ export function WriteClient() {
     setAnswer(s);
   }
 
-  const rows = (list: Found[], which: "li" | "found") => (
+  const rows = (list: Found[], which: Which) => (
     <ul className="facts">
-      {list.map((f) => (
-        <li key={f.id} className={`fact ${f.state}`}>
-          <span className="t">{f.text}</span>
-          <span className={`src${f.stale && f.state === "pencil" ? " stale" : ""}`}>
-            {f.state === "ink" ? `${f.from.split(" · ")[0]} · approved today` : f.state === "struck" ? "struck · will never be said" : f.from}
-          </span>
-          <span className="acts">
-            <button type="button" className={`tap${f.state === "ink" ? " on" : ""}`} onClick={() => mark(which, f.id, "ink")}>
-              Ink it
-            </button>
-            <button type="button" className={`tap${f.state === "struck" ? " on" : ""}`} onClick={() => mark(which, f.id, "struck")}>
-              Strike
-            </button>
-          </span>
-        </li>
-      ))}
+      {list.map((f) =>
+        editing === f.id ? (
+          <li key={f.id} className="fact ink">
+            <span className="t">
+              <input
+                id={`rewrite-${f.id}`}
+                className="fill wide"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && saveRewrite(which, f.id)}
+                aria-label="Rewrite this line in your own words"
+                autoFocus
+              />
+            </span>
+            <span className="src">your words go straight to ink</span>
+            <span className="acts">
+              <button type="button" className="tap on" onClick={() => saveRewrite(which, f.id)}>
+                Save
+              </button>
+              <button type="button" className="tap" onClick={() => setEditing(null)}>
+                Cancel
+              </button>
+            </span>
+          </li>
+        ) : (
+          <li key={f.id} className={`fact ${f.state}`}>
+            <span className="t">{f.text}</span>
+            <span className={`src${f.stale && f.state === "pencil" ? " stale" : ""}`}>
+              {f.state === "ink" ? `${f.from.split(" · ")[0]} · approved today` : f.state === "struck" ? "struck · will never be said" : f.from}
+            </span>
+            <span className="acts">
+              <button type="button" className={`tap${f.state === "ink" ? " on" : ""}`} onClick={() => mark(which, f.id, "ink")}>
+                Ink it
+              </button>
+              <button
+                type="button"
+                className="tap"
+                onClick={() => {
+                  setEditing(f.id);
+                  setDraft(f.text);
+                }}
+              >
+                Rewrite
+              </button>
+              <button type="button" className={`tap${f.state === "struck" ? " on" : ""}`} onClick={() => mark(which, f.id, "struck")}>
+                Strike
+              </button>
+            </span>
+          </li>
+        ),
+      )}
     </ul>
+  );
+
+  const adder = (
+    <form
+      className="row"
+      onSubmit={(e) => {
+        e.preventDefault();
+        addOwn(ownDraft);
+        setOwnDraft("");
+      }}
+    >
+      <input
+        id="write-own"
+        className="fill"
+        style={{ flex: "1 1 260px", fontSize: 23 }}
+        value={ownDraft}
+        onChange={(e) => setOwnDraft(e.target.value)}
+        placeholder="Add a line of your own…"
+        aria-label="Add a line of your own"
+        autoComplete="off"
+      />
+      <button className="tap" type="submit" disabled={!ownDraft.trim()}>
+        Add
+      </button>
+    </form>
   );
 
   return (
@@ -137,7 +228,7 @@ export function WriteClient() {
             <section className="stack rise">
               <hr />
               <p style={{ fontSize: 25 }}>So please, don&apos;t guess. And don&apos;t just read them my LinkedIn.</p>
-              {!linkedin && step === 2 && (
+              {!linkedin && !selfWrite && step === 2 && (
                 <AgentNote>
                   <div>
                     I could guess from your LinkedIn. You just told me not to. Show it to me and <b>you</b> decide, line by line, what is still true.
@@ -152,16 +243,50 @@ export function WriteClient() {
                     >
                       Show my LinkedIn
                     </button>
-                    <button className="btn small quiet" onClick={() => setStep(3)}>
+                    <button className="btn small quiet" onClick={() => setSelfWrite(true)}>
                       I&apos;ll write it myself
                     </button>
                   </div>
                 </AgentNote>
               )}
+              {selfWrite && !linkedin && (
+                <>
+                  <label className="field">
+                    <span className="k">What I do</span>
+                    <input id="write-role" className="fill wide" value={self.role} onChange={(e) => setSelf({ ...self, role: e.target.value })} placeholder="Founder at…, designer, student of…" autoComplete="off" disabled={step > 2} />
+                  </label>
+                  <label className="field">
+                    <span className="k">Where I&apos;m based</span>
+                    <input id="write-place" className="fill wide" value={self.place} onChange={(e) => setSelf({ ...self, place: e.target.value })} placeholder="city, or “anywhere”" autoComplete="off" disabled={step > 2} />
+                  </label>
+                  {own.length > 0 && rows(own, "own")}
+                  {adder}
+                  {step === 2 && (
+                    <div className="row">
+                      <button
+                        className="btn"
+                        disabled={!self.role.trim()}
+                        onClick={() => {
+                          addOwn(self.role);
+                          if (self.place.trim()) addOwn(`Based in ${self.place.trim()}`);
+                          setStep(3);
+                        }}
+                      >
+                        Keep writing
+                      </button>
+                      <button className="btn small quiet" onClick={() => setSelfWrite(false)}>
+                        Show my LinkedIn instead
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
               {linkedin && (
                 <>
                   <Legend />
                   {rows(linkedin, "li")}
+                  {own.length > 0 && rows(own, "own")}
+                  {adder}
                   {step === 2 && (
                     <div className="row">
                       <button className="btn" disabled={!liDecided} onClick={() => setStep(3)}>

@@ -27,11 +27,25 @@ export function InboxClient({ pencilled, intros }: { pencilled: Fact[]; intros: 
   const [tab, setTab] = useState<"lines" | "hellos">("lines");
   const [state, setState] = useState<Record<string, InkState>>({});
   const [kind, setKind] = useState<Record<string, FactKind>>({});
+  const [text, setText] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [own, setOwn] = useState<string[]>([]);
+  const [ownDraft, setOwnDraft] = useState("");
   const [decided, setDecided] = useState<Partial<Record<string, "accepted" | "declined">>>({});
 
   const of = (f: Fact) => state[f.id] ?? "pencil";
   const left = pencilled.filter((f) => of(f) === "pencil").length;
   const waiting = intros.filter((i) => i.status === "waiting" && !decided[i.id]);
+
+  /** Your own wording is approved the moment you save it. */
+  function saveRewrite(id: string) {
+    if (draft.trim()) {
+      setText((t) => ({ ...t, [id]: draft.trim() }));
+      setState((st) => ({ ...st, [id]: "ink" }));
+    }
+    setEditing(null);
+  }
 
   function all(group: Triage, to: InkState) {
     setState((s) => ({ ...s, ...Object.fromEntries(pencilled.filter((f) => f.triage === group).map((f) => [f.id, to])) }));
@@ -85,9 +99,23 @@ export function InboxClient({ pencilled, intros }: { pencilled: Fact[]; intros: 
                     const k = kind[f.id] ?? f.kind;
                     return (
                       <li key={f.id} className={`fact ${st}`}>
-                        <span className="t">{f.text}</span>
+                        <span className="t">
+                          {editing === f.id ? (
+                            <input
+                              id={`inbox-rewrite-${f.id}`}
+                              className="fill wide"
+                              value={draft}
+                              onChange={(e) => setDraft(e.target.value)}
+                              onKeyDown={(e) => e.key === "Enter" && saveRewrite(f.id)}
+                              aria-label="Rewrite this line in your own words"
+                              autoFocus
+                            />
+                          ) : (
+                            text[f.id] ?? f.text
+                          )}
+                        </span>
                         <span className="stack" style={{ gap: 4, gridColumn: 1 }}>
-                          {st === "pencil" ? <Receipt fact={f} /> : <span className="src">{st === "ink" ? "approved just now · live on your letter" : "struck · will never be said"}</span>}
+                          {st === "pencil" ? <Receipt fact={f} /> : <span className="src">{st === "ink" ? `${text[f.id] ? "written by you · " : ""}approved just now · live on your letter` : "struck · will never be said"}</span>}
                           {st === "pencil" && f.note && <span className="mono" style={{ color: "var(--agent)" }}>↳ {f.note}</span>}
                           {st !== "struck" && (
                             <span className="row" style={{ gap: 6 }}>
@@ -104,6 +132,22 @@ export function InboxClient({ pencilled, intros }: { pencilled: Fact[]; intros: 
                           <button type="button" className={`tap${st === "ink" ? " on" : ""}`} onClick={() => setState({ ...state, [f.id]: "ink" })}>
                             Ink it
                           </button>
+                          {editing === f.id ? (
+                            <button type="button" className="tap on" onClick={() => saveRewrite(f.id)}>
+                              Save
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="tap"
+                              onClick={() => {
+                                setEditing(f.id);
+                                setDraft(text[f.id] ?? f.text);
+                              }}
+                            >
+                              Rewrite
+                            </button>
+                          )}
                           <button type="button" className={`tap${st === "struck" ? " on" : ""}`} onClick={() => setState({ ...state, [f.id]: "struck" })}>
                             Strike
                           </button>
@@ -115,6 +159,35 @@ export function InboxClient({ pencilled, intros }: { pencilled: Fact[]; intros: 
               </section>
             );
           })}
+
+          <section className="stack">
+            <hr />
+            <h2 className="h3">Something I missed?</h2>
+            {own.length > 0 && (
+              <ul className="facts">
+                {own.map((line, i) => (
+                  <li key={i} className="fact ink">
+                    <span className="t">{line}</span>
+                    <span className="src">written by you · live on your letter</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <form
+              className="row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (ownDraft.trim()) setOwn([...own, ownDraft.trim()]);
+                setOwnDraft("");
+              }}
+            >
+              <input id="inbox-own" className="fill" style={{ flex: "1 1 260px", fontSize: 23 }} value={ownDraft} onChange={(e) => setOwnDraft(e.target.value)} placeholder="Add a line of your own…" aria-label="Add a line of your own" autoComplete="off" />
+              <button className="tap" type="submit" disabled={!ownDraft.trim()}>
+                Add
+              </button>
+            </form>
+            <p className="m dim">What you type yourself goes straight to ink</p>
+          </section>
 
           {left === 0 && <span className="stamp ok" style={{ alignSelf: "flex-start" }}>inbox clear · your letter is up to date</span>}
         </div>

@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # Enable only in local/test envs (ENABLE_DEV_BEARER=true).
     enable_dev_bearer: bool = False
 
+    # S01 — inferred facts stay private until the owner approves them.
+    # On by default. Set FEATURE_S01_PRIVATE_DEFAULT=false to restore the old
+    # "findability predicates are public on insert" behaviour (rollback).
+    feature_s01_private_default: bool = True
+
     # M2 — JWT + OAuth (dev-grade; see docs/CHATGPT_PLUGIN.md security notes).
     jwt_secret: str = "dev-jwt-secret-change-me-in-production-0123456789"
     jwt_issuer: str = "zynd"

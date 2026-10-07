@@ -29,6 +29,44 @@ async def _seed_inferred(pool, uid, predicate, name, etype, is_public=False):
         uid, predicate, eid, is_public)
 
 
+async def test_ingest_inferred_findability_fact_stays_private(client):
+    """S01: an inferred findability fact is not public until the owner approves it."""
+    from app.db import get_pool
+    from app.models import ExtractedAssertion
+    from app.services.assertions import upsert_assertion
+    from app.services.entities import resolve_entity
+
+    pool = get_pool()
+    extracted = ExtractedAssertion(
+        predicate="is_building",
+        object_name="claude in chrome",
+        object_type="project_venture",
+        confidence=0.9,
+    )
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            entity_id = await resolve_entity(
+                conn, UID, extracted.object_name, extracted.object_type)
+            await upsert_assertion(
+                conn, UID, extracted, entity_id, "chatgpt", None, None)
+
+    row = await pool.fetchrow(
+        """SELECT a.is_public, a.approved_at, a.source
+             FROM assertions a JOIN entities e ON e.id = a.object_entity_id
+            WHERE a.user_id = $1 AND a.predicate = 'is_building'
+              AND lower(e.canonical_name) = 'claude in chrome'
+              AND a.valid_until IS NULL""",
+        UID,
+    )
+    assert row["is_public"] is False
+    assert row["approved_at"] is None
+    assert await get_card(pool, UID) == []
+    sugg = await get_suggestions(pool, UID)
+    assert ("is_building", "claude in chrome") in [
+        (s["predicate"], s["object"]) for s in sugg
+    ]
+
+
 async def test_inferred_findability_facts_are_private_and_suggested(client):
     from app.db import get_pool
     pool = get_pool()

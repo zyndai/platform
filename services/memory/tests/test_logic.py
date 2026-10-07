@@ -4,7 +4,7 @@ import math
 import pytest
 
 from app.models import ExtractedAssertion
-from app.services.assertions import CONFIDENCE_CAP, bayesian_update
+from app.services.assertions import CONFIDENCE_CAP, bayesian_update, initial_visibility
 from app.services.mock_llm import mock_embed, mock_extract
 from app.taxonomy import ALLOWED_PREDICATES, CLUSTER_PREDICATES, decay_fn_for
 
@@ -62,6 +62,24 @@ def test_full_context_covers_findability_predicates():
     from app.taxonomy import FINDABILITY_PREDICATES
     # v2: matching's full_context is the findability card, not every predicate.
     assert CLUSTER_PREDICATES["full_context"] == FINDABILITY_PREDICATES
+
+
+def test_inferred_findability_fact_starts_private(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "feature_s01_private_default", True)
+    is_public, approved_at = initial_visibility("is_building")
+    assert is_public is False
+    assert approved_at is None
+
+
+def test_flag_off_restores_auto_public_findability(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "feature_s01_private_default", False)
+    is_public, _ = initial_visibility("is_building")
+    assert is_public is True
+    is_public, approved_at = initial_visibility("believes")
+    assert is_public is False
+    assert approved_at is None
 
 
 # ---- LLM-output validation (brief §14.3) ----

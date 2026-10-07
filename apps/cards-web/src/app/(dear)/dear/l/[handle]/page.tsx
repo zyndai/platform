@@ -79,10 +79,11 @@ export default async function LetterPage({ params }: Props) {
             </p>
             <div className="row">
               <SayHello letter={letter} />
-              <Link href="/dear/share" className="btn quiet">
-                Share
-              </Link>
+              <span className="m dim">Ask for an introduction · {first} decides</span>
             </div>
+            <p className="mono" style={{ color: "var(--agent)" }}>
+              ↳ This is {first}&apos;s letter to the agents: what {first} says is true today. Every line is dated and approved by {first}, and AI can read it.
+            </p>
           </header>
 
           <section className="stack">
@@ -187,9 +188,10 @@ export default async function LetterPage({ params }: Props) {
           </div>
 
           <div className="panel stack">
-            <p className="dim">Everyone will need a letter like this.</p>
+            <h2 className="h3">Want one?</h2>
+            <p className="dim">One link that tells every AI, and every person, who you are today. Free, about two minutes.</p>
             <Link href="/dear/write" className="btn agent" style={{ alignSelf: "flex-start" }}>
-              Write yours
+              Write your letter
             </Link>
           </div>
         </aside>

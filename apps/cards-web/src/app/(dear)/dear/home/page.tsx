@@ -37,15 +37,18 @@ export default async function Home() {
       <div className="grid3">
         <div className="panel stack">
           <span className="num">{activity.agentAsks}</span>
-          <span className="m dim">times an agent asked about you</span>
+          <span className="m glow">Found by AI</span>
+          <span className="dim">times an AI asked about you this week</span>
         </div>
         <div className="panel stack">
           <span className="num">{activity.views}</span>
-          <span className="m dim">people read your letter</span>
+          <span className="m glow">Your one link</span>
+          <span className="dim">people opened your letter</span>
         </div>
         <div className="panel stack">
           <span className="num">{activity.introsAccepted}</span>
-          <span className="m dim">hello you accepted</span>
+          <span className="m glow">The right people</span>
+          <span className="dim">hello accepted, {waiting.length} waiting for you</span>
         </div>
       </div>
 

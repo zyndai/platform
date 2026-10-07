@@ -130,13 +130,13 @@ export function Legend() {
   return (
     <div className="legend">
       <span className="p">
-        <b>pencil</b> = your agent found it
+        <b>pencil</b> = suggested · only you see it
       </span>
       <span className="i">
-        <b>ink</b> = you approved it
+        <b>ink</b> = approved by you · public
       </span>
       <span className="s">
-        <b>struck</b> = never say this
+        <b>struck</b> = blocked · never said
       </span>
     </div>
   );

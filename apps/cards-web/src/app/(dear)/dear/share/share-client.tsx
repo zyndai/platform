@@ -46,9 +46,9 @@ export function ShareClient({ letter }: { letter: Letter }) {
     <div className="stack-lg">
       <header className="stack">
         <h1 className="display" style={{ fontSize: "clamp(40px, 6vw, 60px)" }}>
-          Send your letter.
+          Replace your link in bio.
         </h1>
-        <p className="lede">Every place you would paste a profile link, paste this instead.</p>
+        <p className="lede">One link for who you are today. Every place you would paste a profile link, paste this instead.</p>
       </header>
 
       <div className="row" role="tablist">

@@ -277,6 +277,21 @@ export function WriteClient() {
             {inkCount} lines in ink · {struckCount} struck · {sources.length} sources read
           </p>
 
+          <div className="grid3" style={{ width: "100%", textAlign: "left" }}>
+            <div className="panel stack">
+              <span className="stamp ok" style={{ alignSelf: "flex-start" }}>✓ AI can read this</span>
+              <p className="dim">When an AI is asked about you, your approved lines are there for it to find and quote.</p>
+            </div>
+            <div className="panel stack">
+              <span className="stamp ok" style={{ alignSelf: "flex-start" }}>✓ This is your link</span>
+              <p className="dim">Put it in your bio, your email signature and your GitHub profile.</p>
+            </div>
+            <div className="panel stack">
+              <span className="stamp ok" style={{ alignSelf: "flex-start" }}>✓ You approve every hello</span>
+              <p className="dim">People can ask for an introduction. Nothing is shared until you say yes.</p>
+            </div>
+          </div>
+
           <div className="panel stack" style={{ width: "100%", textAlign: "left" }}>
             <h2 className="h3">P.S. Keep me current.</h2>
             <AgentNote>

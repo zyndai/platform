@@ -94,18 +94,56 @@ export function ClaimCardButton({ handle, card }: { handle: string; card: AgentP
   );
 }
 
-/** Signed-in header action: lets anyone who is signed in sign back out. */
-export function ProfileSignOut() {
-  const { authenticated, logout } = useAuth();
+/** Signed-in header action: the visitor's own identity — photo, name, sign out.
+ *  Replaces the bare "Sign out" button so the header always answers "who am I
+ *  here as?" instead of only offering an exit. */
+export function ProfileAccountChip() {
+  const { authenticated, user, logout } = useAuth();
   if (!authenticated) return null;
+
+  const md = (user?.user_metadata ?? {}) as Record<string, unknown>;
+  const nameRaw =
+    (md.full_name as string) || (md.name as string) || (md.preferred_name as string) ||
+    user?.email?.split("@")[0] || "";
+  const name = String(nameRaw).trim();
+  const avatar = ((md.avatar_url as string) || (md.picture as string) || (md.avatar as string) || "").trim();
+  const initials = (name || "?")
+    .split(/\s+/).map((p) => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase() || "?";
+
   return (
-    <button
-      type="button"
-      onClick={() => logout()}
-      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full font-mono text-[12px]! font-semibold cursor-pointer hover:opacity-90 transition-opacity"
-      style={{ background: "transparent", color: "#64748b", border: "1px solid #e2e8f0" }}
+    <span
+      className="inline-flex items-center gap-2 pl-1 pr-2 py-1 rounded-full font-mono text-[12px]! font-semibold"
+      style={{ background: "#fff", color: "#0f172a", border: "1px solid #e2e8f0" }}
     >
-      Sign out
-    </button>
+      {avatar ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={avatar} alt="" referrerPolicy="no-referrer" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+          style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", display: "block", flexShrink: 0 }} />
+      ) : (
+        <span style={{
+          width: 24, height: 24, borderRadius: "50%", background: "#7B72E9", color: "#fff",
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          fontSize: "10px", fontWeight: 700, flexShrink: 0,
+        }}>
+          {initials}
+        </span>
+      )}
+      <span style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {name}
+      </span>
+      <button
+        type="button"
+        onClick={() => logout()}
+        title="Sign out"
+        aria-label="Sign out"
+        className="inline-flex items-center gap-1 cursor-pointer"
+        style={{
+          background: "transparent", border: "none", padding: "4px 6px", borderRadius: 8,
+          color: "#64748b", fontSize: "11px", fontWeight: 600, fontFamily: "inherit",
+        }}
+      >
+        Sign out
+      </button>
+    </span>
   );
 }

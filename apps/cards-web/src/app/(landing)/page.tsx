@@ -6,9 +6,10 @@ import { useState, useRef } from "react";
 
 const CARDS_API = process.env.NEXT_PUBLIC_API_URL ?? "https://api.zynd.ai";
 
-import { HeroCardStack } from "./hero-card-stack";
 import { Typewriter } from "./typewriter";
 import { AgentCardAuthBar } from "./auth-bar";
+import { YourCardPanel } from "./your-card-panel";
+import { useMyCard } from "@/hooks/useMyCard";
 
 /**
  * `/` — the standalone Zynd landing page.
@@ -21,6 +22,8 @@ import { AgentCardAuthBar } from "./auth-bar";
 export default function AgentCardPage() {
   const router = useRouter();
   const [link, setLink] = useState("");
+  const { ready: myCardReady, authenticated, handle: myHandle } = useMyCard();
+  const showMyCardCtas = myCardReady && authenticated && Boolean(myHandle);
 
   // Hand the pasted link off to /create rather than synthesizing here — the
   // create page owns auth, validation and the job polling.
@@ -119,14 +122,29 @@ export default function AgentCardPage() {
 </div>
 {/* Primary and Secondary Actions */}
 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-2">
-<Link className="bg-[#7b72e9] hover:bg-[#a78bfa] text-black font-mono font-bold text-sm py-3.5 px-6 rounded-xl transition-all shadow-[0_0_24px_rgba(123,114,233,0.3)] flex items-center justify-center gap-2 active:scale-95" href="/create">
-<span className="">Create your Living Profile</span>
-<span className="text-base leading-none">→</span>
-</Link>
-<Link className="bg-white/[0.05] hover:bg-white/[0.09] text-white border border-white/15 font-mono text-sm py-3.5 px-6 rounded-xl transition-all flex items-center justify-center gap-2" href="/directory">
-<span className="">Explore the Network</span>
-<span className="text-xs text-[#a0a09a]">→</span>
-</Link>
+{showMyCardCtas ? (
+  <>
+  <Link className="bg-[#7b72e9] hover:bg-[#a78bfa] text-black font-mono font-bold text-sm py-3.5 px-6 rounded-xl transition-all shadow-[0_0_24px_rgba(123,114,233,0.3)] flex items-center justify-center gap-2 active:scale-95" href={`/p/${encodeURIComponent(myHandle as string)}`}>
+    <span className="">View my profile</span>
+    <span className="text-base leading-none">→</span>
+  </Link>
+  <Link className="bg-white/[0.05] hover:bg-white/[0.09] text-white border border-white/15 font-mono text-sm py-3.5 px-6 rounded-xl transition-all flex items-center justify-center gap-2" href={`/p/${encodeURIComponent(myHandle as string)}/edit`}>
+    <span className="">Edit my card</span>
+    <span className="text-xs text-[#a0a09a]">↗</span>
+  </Link>
+  </>
+) : (
+  <>
+  <Link className="bg-[#7b72e9] hover:bg-[#a78bfa] text-black font-mono font-bold text-sm py-3.5 px-6 rounded-xl transition-all shadow-[0_0_24px_rgba(123,114,233,0.3)] flex items-center justify-center gap-2 active:scale-95" href="/create">
+    <span className="">Create your Living Profile</span>
+    <span className="text-base leading-none">→</span>
+  </Link>
+  <Link className="bg-white/[0.05] hover:bg-white/[0.09] text-white border border-white/15 font-mono text-sm py-3.5 px-6 rounded-xl transition-all flex items-center justify-center gap-2" href="/directory">
+    <span className="">Explore the Network</span>
+    <span className="text-xs text-[#a0a09a]">→</span>
+  </Link>
+  </>
+)}
 </div>
 <div className="flex flex-wrap items-center gap-5 text-xs font-mono text-[#7d7d77] pt-2">
 <span className="flex items-center gap-1.5"><span className="text-[#7b72e9]">✓</span> Free to create</span>
@@ -134,10 +152,10 @@ export default function AgentCardPage() {
 <span className="flex items-center gap-1.5"><span className="text-[#7b72e9]">✓</span> No password or resume needed</span>
 </div>
 </div>
-{/* Right 5 cols: ANIMATED LIVING-PROFILE CARD STACK */}
+{/* Right 5 cols: ANIMATED LIVING-PROFILE CARD STACK (or the visitor's own card) */}
 <div className="lg:col-span-5 relative" data-purpose="hero-profile-card">
 <div className="absolute -inset-1 bg-gradient-to-tr from-[#7b72e9]/20 via-transparent to-[#7b72e9]/5 rounded-3xl blur-2xl -z-10 opacity-70"></div>
-<HeroCardStack />
+<YourCardPanel />
 </div>
 </div>
 </section>

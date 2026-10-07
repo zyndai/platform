@@ -17,6 +17,7 @@ import { factLabel } from "@/lib/memory-facts";
 import { MemoryProviderOnboard } from "@/components/memory/MemoryProviderOnboard";
 import { McpConnectPanel } from "@/components/mcp/McpConnectPanel";
 import { SuggestedFactsReview } from "@/components/mcp/SuggestedFactsReview";
+import { AutoGrowTextArea } from "@/components/AutoGrowTextArea";
 import { ContributionHeatmap } from "../contribution-heatmap";
 import { CountUp } from "../count-up";
 
@@ -636,8 +637,14 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
               <div className="pe-kicker">About</div>
               <div className="pe-title">Summary</div>
               <p className="pe-help">A few sentences on what you do and who you want to meet.</p>
-              <textarea value={sText} onChange={(e) => setSText(e.target.value)} rows={5} className="ei" style={{ resize: "vertical", minHeight: 120 }}
-                placeholder="Write a short professional summary" />
+              <AutoGrowTextArea
+                value={sText}
+                onChange={(v) => setSText(v)}
+                minRows={5}
+                className="ei"
+                style={{ resize: "none", minHeight: 120 }}
+                placeholder="Write a short professional summary"
+              />
               <div className="pe-fields" style={{ marginTop: 16 }}>
                 <div>
                   <label className="pe-lab">Availability</label>

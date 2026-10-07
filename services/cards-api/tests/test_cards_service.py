@@ -270,3 +270,129 @@ def test_update_card_sends_owner_user_id_only_on_cards_schema(mock_sb, monkeypat
 def test_like_literal_and_postgrest_quote_escape_special_characters():
     assert cards_service._like_literal("a_b%c@x.io") == "a\\_b\\%c@x.io"
     assert cards_service._postgrest_quote('evil,handle.eq.x"') == '"evil,handle.eq.x\\""'
+
+
+# ── rename keeps old handles resolving (stale-link prevention) ────────────────
+
+class _RenameQuery:
+    """Owner checks succeed, handle-conflict checks come back empty."""
+
+    def __init__(self):
+        self.payload = None
+        self._conflict = False
+
+    def select(self, *_a):
+        return self
+
+    def eq(self, col, val):
+        if col == "handle" and val == "alice-new":
+            self._conflict = True
+        return self
+
+    def update(self, payload):
+        self.payload = payload
+        return self
+
+    def execute(self):
+        if self._conflict:
+            return MagicMock(data=[])
+        return MagicMock(data=[{"owner_email": "alice@example.com", "claim_token_hash": None}])
+
+
+def test_update_card_rename_records_previous_handle(monkeypatch):
+    q = _RenameQuery()
+    sb = MagicMock()
+    sb.table.return_value = q
+    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(cards_service.embed, "card_search_text", lambda card: "t")
+    monkeypatch.setattr(cards_service.embed, "embed_text", lambda text: [0.1])
+
+    card = _card()
+    ok, h = cards_service.update_card("alice", card, "alice@example.com", new_handle="alice-new")
+
+    assert ok is True
+    assert h == "alice-new"
+    assert card.previous_handles == ["alice"]
+    assert q.payload["handle"] == "alice-new"
+
+
+def test_update_card_rename_appends_to_existing_history(monkeypatch):
+    q = _RenameQuery()
+    sb = MagicMock()
+    sb.table.return_value = q
+    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(cards_service.embed, "card_search_text", lambda card: "t")
+    monkeypatch.setattr(cards_service.embed, "embed_text", lambda text: [0.1])
+
+    card = _card()
+    card.previous_handles = ["first-slug"]
+    ok, h = cards_service.update_card("alice", card, "alice@example.com", new_handle="alice-new")
+
+    assert ok is True
+    assert card.previous_handles == ["alice", "first-slug"]
+
+
+def test_update_card_rename_does_not_duplicate_history(monkeypatch):
+    q = _RenameQuery()
+    sb = MagicMock()
+    sb.table.return_value = q
+    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(cards_service.embed, "card_search_text", lambda card: "t")
+    monkeypatch.setattr(cards_service.embed, "embed_text", lambda text: [0.1])
+
+    card = _card()
+    card.previous_handles = ["alice"]
+    ok, _ = cards_service.update_card("alice", card, "alice@example.com", new_handle="alice-new")
+
+    assert ok is True
+    assert card.previous_handles == ["alice"]
+
+
+class _HandleLookupQuery:
+    """by-handle miss on the first pass, hit on the previous-handles fallback."""
+
+    def __init__(self, fallback_rows=None):
+        self.contains_call = None
+        self.fallback_rows = fallback_rows
+
+    def select(self, *_a):
+        return self
+
+    def eq(self, *_a, **_k):
+        return self
+
+    def contains(self, col, val):
+        self.contains_call = (col, val)
+        return self
+
+    def limit(self, *_a):
+        return self
+
+    def execute(self):
+        if self.contains_call:
+            return MagicMock(data=self.fallback_rows or [])
+        return MagicMock(data=[])
+
+
+def test_get_card_by_handle_falls_back_to_previous_handles(monkeypatch):
+    q = _HandleLookupQuery(
+        fallback_rows=[{"card": _card().model_dump(mode="json"), "handle": "alice-new"}]
+    )
+    sb = MagicMock()
+    sb.table.return_value = q
+    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+
+    card = cards_service.get_card_by_handle("alice")
+
+    assert card is not None
+    assert card.handle == "alice-new"
+    assert q.contains_call == ("card", {"previous_handles": ["alice"]})
+
+
+def test_get_card_by_handle_returns_none_when_neither_matches(monkeypatch):
+    q = _HandleLookupQuery(fallback_rows=[])
+    sb = MagicMock()
+    sb.table.return_value = q
+    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+
+    assert cards_service.get_card_by_handle("ghost") is None

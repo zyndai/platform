@@ -14,7 +14,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useMyCard } from "@/hooks/useMyCard";
 
 export function Navbar(): React.ReactElement {
-  const { authenticated, logout } = useAuth();
+  const { authenticated, user, logout } = useAuth();
   const { ready: cardReady, handle: cardHandle } = useMyCard();
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -22,6 +22,11 @@ export function Navbar(): React.ReactElement {
   const hasCard = cardReady && Boolean(cardHandle);
   const profileLabel = hasCard ? "My card" : "Create your card";
   const profileHref = hasCard ? `/p/${encodeURIComponent(cardHandle as string)}` : "/create";
+
+  const md = (user?.user_metadata ?? {}) as Record<string, unknown>;
+  const userName =
+    String(md.full_name ?? md.name ?? md.preferred_name ?? user?.email?.split("@")[0] ?? "").trim() || "My card";
+  const userAvatar = String(md.avatar_url ?? md.picture ?? md.avatar ?? "").trim();
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -170,9 +175,27 @@ export function Navbar(): React.ReactElement {
                                 <Link
                                   href={profileHref}
                                   className="navbar-link w-nav-link"
-                                  style={{ padding: 0, fontSize: "16px", fontWeight: 600, color: "#a5b4fc", whiteSpace: "nowrap" }}
+                                  style={{ padding: 0, fontSize: "16px", fontWeight: 600, color: "#a5b4fc", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: "8px" }}
                                 >
-                                  {profileLabel}
+                                  {userAvatar ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={userAvatar}
+                                      alt=""
+                                      referrerPolicy="no-referrer"
+                                      style={{ width: 26, height: 26, borderRadius: "50%", objectFit: "cover", border: "1px solid rgba(255,255,255,0.15)" }}
+                                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                                    />
+                                  ) : (
+                                    <span style={{
+                                      width: 26, height: 26, borderRadius: "50%", background: "#6366F1", color: "#fff",
+                                      display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                      fontSize: "11px", fontWeight: 700, flexShrink: 0,
+                                    }}>
+                                      {(userName || "?").split(/\s+/).map((p) => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
+                                    </span>
+                                  )}
+                                  {userName}
                                 </Link>
                               )}
                               {authenticated ? (

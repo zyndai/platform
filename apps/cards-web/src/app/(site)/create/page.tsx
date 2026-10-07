@@ -12,6 +12,7 @@ import { setClaimHandle } from "@/lib/auth/next-cookie";
 import { startLinkedInOAuth } from "@/lib/auth/session";
 import type { AgentProfileCard, OnboardStatus, Project, ScrapeWarning, WritingSample } from "@/lib/cards";
 import { MemoryProviderOnboard } from "@/components/memory/MemoryProviderOnboard";
+import { AutoGrowTextArea } from "@/components/AutoGrowTextArea";
 import { claimHeaders, forgetClaimToken, saveClaimToken } from "@/lib/claim-tokens";
 
 // Memory layer (api.zynd.ai) — same host the /connect and /findable pages use.
@@ -153,11 +154,8 @@ function mergeChipDrafts(
   return out;
 }
 
-function prevQuestionIndex(current: number, skipLocation: boolean): number {
-  let prev = current - 1;
-  const locIdx = QUESTIONS.findIndex(q => q.id === "location");
-  if (skipLocation && prev === locIdx) prev -= 1;
-  return Math.max(0, prev);
+function prevQuestionIndex(current: number): number {
+  return Math.max(0, current - 1);
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -209,9 +207,9 @@ function KindSquare({ kind, size = 13 }: { kind: UrlKind; size?: number }) {
 }
 
 // ─── field ────────────────────────────────────────────────────────────────────
-function TextField({ label, value, onChange, rows, placeholder }: {
+function TextField({ label, value, onChange, rows, placeholder, autoGrow }: {
   label: string; value: string; onChange: (v: string) => void;
-  rows?: number; placeholder?: string;
+  rows?: number; placeholder?: string; autoGrow?: boolean;
 }) {
   const style: React.CSSProperties = {
     width: "100%", padding: "13px 15px", fontSize: "15px", lineHeight: 1.5,
@@ -226,9 +224,20 @@ function TextField({ label, value, onChange, rows, placeholder }: {
         {label}
       </div>
       {rows ? (
-        <textarea rows={rows} value={value} placeholder={placeholder} className="zc-field"
-          onChange={e => onChange(e.target.value)}
-          style={{ ...style, resize: "none" }} />
+        autoGrow ? (
+          <AutoGrowTextArea
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            minRows={rows}
+            className="zc-field"
+            style={{ ...style, resize: "none", overflowY: "hidden" }}
+          />
+        ) : (
+          <textarea rows={rows} value={value} placeholder={placeholder} className="zc-field"
+            onChange={e => onChange(e.target.value)}
+            style={{ ...style, resize: "none" }} />
+        )
       ) : (
         <input type="text" value={value} placeholder={placeholder} className="zc-field"
           onChange={e => onChange(e.target.value)}
@@ -274,8 +283,11 @@ function applyAnswers(
     c.searchable_facts = [...c.searchable_facts, `${name} — loves talking about ${loveTalking.join(", ")} — Zynd`];
   }
 
-  // Only use user-typed location if extraction didn't find one
-  if (!c.identity.location && locationInput.trim()) {
+  // The location the user typed is authoritative: extraction may have
+  // guessed one from the resume/LinkedIn while the questions were being
+  // answered (the job is still scraping then) — an explicit answer always
+  // wins over the guess.
+  if (locationInput.trim()) {
     c.identity.location = locationInput.trim();
   }
 
@@ -294,6 +306,77 @@ function Avatar({ url, name }: { url: string; name: string }) {
   }
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={url} alt="" className="zc-avatar" onError={() => setBroken(true)} />;
+}
+
+// ─── skills editor for the review screen ─────────────────────────────────────
+const SKILL_LEVEL_LABEL: Record<string, string> = {
+  expert: "Expert", advanced: "Advanced", intermediate: "Intermediate", beginner: "Beginner",
+};
+
+function SkillsEditor({ skills, onSkillsChange }: {
+  skills: AgentProfileCard["skills"];
+  onSkillsChange: (skills: AgentProfileCard["skills"]) => void;
+}) {
+  const value = skills.map(s => s.name).join("\n");
+  const update = (v: string) => {
+    onSkillsChange(v.split("\n").map(n => n.trim()).filter(Boolean).map(name => {
+      // Match by name, not index — keeps level/evidence_count when a skill
+      // is re-ordered or retyped mid-list.
+      const prev = skills.find(sk => sk.name.toLowerCase() === name.toLowerCase());
+      return prev ? { ...prev, name } : { name, level: "intermediate" as const, evidence_count: 0 };
+    }));
+  };
+  const remove = (name: string) => onSkillsChange(skills.filter(s => s.name !== name));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+        <span style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".14em", textTransform: "uppercase", color: T.muted }}>
+          Skills
+        </span>
+        <span style={{ font: `400 12px/1 ${SANS}`, color: T.faint }}>
+          {skills.length} {skills.length === 1 ? "skill" : "skills"}
+        </span>
+      </div>
+
+      {skills.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+          {skills.map(s => (
+            <span key={s.name} className="zc-chip-enter"
+              style={{ display: "inline-flex", alignItems: "center", gap: "8px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: "999px", padding: "7px 8px 7px 13px" }}>
+              <span style={{ font: `500 13px/1 ${SANS}`, color: T.ink }}>{s.name}</span>
+              <span style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".06em", textTransform: "uppercase", color: T.accentHi, background: T.ctaOffBg, borderRadius: "999px", padding: "3px 7px" }}>
+                {SKILL_LEVEL_LABEL[s.level] ?? "Intermediate"}
+              </span>
+              <button type="button" className="zc-x" aria-label={`Remove ${s.name}`}
+                onClick={() => remove(s.name)}
+                style={{ font: `400 14px/1 ${SANS}`, color: T.muted, background: "none", border: "none", padding: "0 3px", cursor: "pointer" }}>
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <AutoGrowTextArea
+        value={value}
+        onChange={update}
+        minRows={2}
+        placeholder={skills.length === 0 ? "Add a skill, one per line" : "Add another skill…"}
+        className="zc-field"
+        style={{
+          width: "100%", padding: "13px 15px", fontSize: "15px", lineHeight: 1.5,
+          border: `1px solid ${T.border}`, borderRadius: "14px",
+          background: T.surface, color: T.ink, outline: "none",
+          fontFamily: SANS, boxSizing: "border-box", resize: "none", overflowY: "hidden",
+          transition: "border-color .14s",
+        }}
+      />
+      <span style={{ font: `400 12px/1.5 ${SANS}`, color: T.faint }}>
+        One per line — level and evidence are kept when the name matches an existing skill.
+      </span>
+    </div>
+  );
 }
 
 // ─── review section header (label · total, plus a hint once rows are removed) ─
@@ -546,8 +629,7 @@ function CreateProfilePageContent() {
   }
 
   function retreatQuestion() {
-    const skipLoc = Boolean(pendingCardRef.current?.identity.location);
-    const prev = prevQuestionIndex(questionIndexRef.current, skipLoc);
+    const prev = prevQuestionIndex(questionIndexRef.current);
     questionIndexRef.current = prev;
     setQuestionIndex(prev);
   }
@@ -600,6 +682,12 @@ function CreateProfilePageContent() {
         jobDoneRef.current = true;
         setJobDone(true);
         if (status.url_warnings?.length) setUrlWarnings(status.url_warnings);
+        // The location question is always asked now — prefill the field with
+        // the extraction's best guess so the user can accept or correct it
+        // (their answer is authoritative, see applyAnswers / publish).
+        if (!locationRef.current.trim() && status.card?.identity.location) {
+          setLocationInput(status.card.identity.location);
+        }
         // If user already answered all questions, go to review immediately
         if (questionIndexRef.current >= QUESTIONS.length) {
           goToReview(status.card);
@@ -614,12 +702,7 @@ function CreateProfilePageContent() {
   }
 
   function advanceQuestion() {
-    let next = questionIndexRef.current + 1;
-    // Skip location question when extraction already found one
-    const locIdx = QUESTIONS.findIndex(q => q.id === "location");
-    if (next === locIdx && pendingCardRef.current?.identity.location) {
-      next += 1;
-    }
+    const next = questionIndexRef.current + 1;
     questionIndexRef.current = next;
     setQuestionIndex(next);
     if (next >= QUESTIONS.length && jobDoneRef.current && pendingCardRef.current) {
@@ -1502,7 +1585,9 @@ function CreateProfilePageContent() {
                           type="text"
                           value={locationInput}
                           onChange={e => setLocationInput(e.target.value)}
-                          placeholder="e.g. San Francisco, CA"
+                          placeholder={pendingCardRef.current?.identity.location
+                            ? `AI guessed: ${pendingCardRef.current.identity.location} — confirm or correct`
+                            : "e.g. San Francisco, CA"}
                           autoFocus
                           className="zc-field zc-bigfield"
                           style={{
@@ -1513,7 +1598,11 @@ function CreateProfilePageContent() {
                           }}
                           onKeyDown={e => { if (e.key === "Enter") advanceQuestion(); }}
                         />
-                        <span style={{ font: `400 12px/1 ${SANS}`, color: T.faint }}>optional — skip if you prefer</span>
+                        <span style={{ font: `400 12px/1 ${SANS}`, color: T.faint }}>
+                          {pendingCardRef.current?.identity.location
+                            ? "Pre-filled from your profiles — edit it if it's wrong."
+                            : "optional — skip if you prefer"}
+                        </span>
                       </div>
                     )}
 
@@ -1809,24 +1898,33 @@ function CreateProfilePageContent() {
                   <div className="zc-card" style={{ padding: "28px", display: "flex", flexDirection: "column", gap: "20px" }}>
                     <SectionLabel label="About" />
                     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                      <TextField label="Summary" value={card.summary} rows={4} onChange={v => updateCard({ summary: v })} />
-                      <TextField label="Citation snippet" value={card.citation_snippet} rows={2} onChange={v => updateCard({ citation_snippet: v })} />
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+                          <span style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".14em", textTransform: "uppercase", color: T.muted }}>Summary</span>
+                          <span style={{ font: `400 12px/1 ${SANS}`, color: T.faint }}>{card.summary.length} characters</span>
+                        </div>
+                        <div style={{ height: "9px" }} />
+                        <AutoGrowTextArea
+                          value={card.summary}
+                          onChange={v => updateCard({ summary: v })}
+                          minRows={4}
+                          className="zc-field"
+                          style={{
+                            width: "100%", padding: "13px 15px", fontSize: "15px", lineHeight: 1.5,
+                            border: `1px solid ${T.border}`, borderRadius: "14px",
+                            background: T.surface, color: T.ink, outline: "none",
+                            fontFamily: SANS, boxSizing: "border-box", resize: "none", overflowY: "hidden",
+                            transition: "border-color .14s",
+                          }}
+                        />
+                      </div>
+                      <TextField label="Citation snippet" value={card.citation_snippet} rows={2} autoGrow onChange={v => updateCard({ citation_snippet: v })} />
                     </div>
                   </div>
 
                   <div className="zc-card" style={{ padding: "28px", display: "flex", flexDirection: "column", gap: "20px" }}>
                     <SectionLabel label="Skills" />
-                    <TextField label="One per line" value={card.skills.map(s => s.name).join("\n")} rows={5}
-                      onChange={v => updateCard({
-                        // Match by name, not index — matching by index made a
-                        // deletion mid-list shift every later skill onto the
-                        // wrong level/evidence_count and drop the last one.
-                        skills: v.split("\n").map(n => n.trim()).filter(Boolean).map(name => {
-                          const prev = card.skills.find(sk => sk.name.toLowerCase() === name.toLowerCase());
-                          return prev ? { ...prev, name } : { name, level: "intermediate", evidence_count: 0 };
-                        }),
-                      })}
-                    />
+                    <SkillsEditor skills={card.skills} onSkillsChange={skills => updateCard({ skills })} />
                   </div>
 
                   {card.projects.length > 0 && (() => {

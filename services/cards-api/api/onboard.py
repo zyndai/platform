@@ -207,6 +207,7 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
         if job:
             job.handle_github = github_handle
             job.handle_x = x_handle
+            job.linkedin_url = linkedin_url_used
         set_ready(job_id, card, scrape_raw=scrape_raw)
     except Exception as exc:
         set_error(job_id, str(exc))
@@ -275,7 +276,12 @@ async def publish_card(
         existing = await asyncio.to_thread(cards_service.get_card_by_owner, principal.email)
     else:
         existing = await asyncio.to_thread(
-            cards_service.get_card_by_social_handle, job.handle_github, job.handle_x
+            cards_service.get_card_by_social_handle,
+            job.handle_github,
+            job.handle_x,
+            # Match the form stored on cards: share-sheet query strings and
+            # fragments dropped, same as _profile_link above.
+            _profile_link(job.linkedin_url) if job.linkedin_url else None,
         )
     if existing:
         _, existing_handle = existing
@@ -298,8 +304,13 @@ async def publish_card(
         card.connect_with = [x.strip() for x in answers["connect_with"].split(",") if x.strip()]
     if answers.get("love_talking"):
         card.love_talking_about = [x.strip() for x in answers["love_talking"].split(",") if x.strip()]
-    if answers.get("location") and not card.identity.location:
-        card.identity.location = answers["location"]
+    # The user's own answer is authoritative. Extraction may have guessed a
+    # location from the resume or LinkedIn while the questions were being
+    # answered — an explicitly typed location always wins over the guess.
+    # Whitespace-only answers are ignored so a stray entry can't wipe a
+    # scraped location.
+    if (answers.get("location") or "").strip():
+        card.identity.location = answers["location"].strip()
     # Attribute assignment skips the model's validators, so normalize here.
     for key in ("calendly_url", "google_calendar_url"):
         if answers.get(key):

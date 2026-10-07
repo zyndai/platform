@@ -145,7 +145,17 @@ export function WriteClient() {
           </li>
         ) : (
           <li key={f.id} className={`fact ${f.state}`}>
-            <span className="t">{f.text}</span>
+            <span
+              className="t"
+              title="Double-click to rewrite"
+              style={{ cursor: "text" }}
+              onDoubleClick={() => {
+                setEditing(f.id);
+                setDraft(f.text);
+              }}
+            >
+              {f.text}
+            </span>
             <span className={`src${f.stale && f.state === "pencil" ? " stale" : ""}`}>
               {f.state === "ink" ? `${f.from.split(" · ")[0]} · approved today` : f.state === "struck" ? "struck · will never be said" : f.from}
             </span>

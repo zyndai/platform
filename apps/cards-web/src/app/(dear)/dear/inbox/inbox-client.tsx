@@ -66,7 +66,7 @@ export function InboxClient({ pencilled, intros }: { pencilled: Fact[]; intros: 
         <div className="paper stack-lg">
           <div className="stack">
             <h1 className="h2">Your agent pencilled these in.</h1>
-            <p className="dim">Nothing here is public. Ink a line to add it to your letter. Strike it and it is never suggested or said again.</p>
+            <p className="dim">Nothing here is public. Ink a line to add it to your letter, double-click it to put it in your own words, or strike it and it is never suggested or said again.</p>
             <Legend />
           </div>
 
@@ -99,7 +99,17 @@ export function InboxClient({ pencilled, intros }: { pencilled: Fact[]; intros: 
                     const k = kind[f.id] ?? f.kind;
                     return (
                       <li key={f.id} className={`fact ${st}`}>
-                        <span className="t">
+                        <span
+                          className="t"
+                          title="Double-click to rewrite"
+                          style={{ cursor: "text" }}
+                          onDoubleClick={() => {
+                            if (editing !== f.id) {
+                              setEditing(f.id);
+                              setDraft(text[f.id] ?? f.text);
+                            }
+                          }}
+                        >
                           {editing === f.id ? (
                             <input
                               id={`inbox-rewrite-${f.id}`}

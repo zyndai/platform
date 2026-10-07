@@ -30,6 +30,7 @@ const PUBLIC_NAV = [
 
 const OWNER_NAV = [
   { href: "/dear/home", label: "Home" },
+  { href: "/dear/letter", label: "My letter" },
   { href: "/dear/inbox", label: "Inbox", count: true },
   { href: "/dear/sources", label: "Sources" },
   { href: "/dear/share", label: "Share" },
@@ -51,7 +52,7 @@ export function TopBar({ owner, current, inbox }: { owner?: boolean; current?: s
           </Link>
         ))}
         {owner ? (
-          <Link href="/dear/l/meera-iyer">My letter</Link>
+          <Link href="/dear/l/meera-iyer">View as visitor</Link>
         ) : (
           <Link href="/dear/write" className="btn small agent" style={{ color: "#14121f" }}>
             Write your letter

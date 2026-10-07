@@ -113,7 +113,7 @@ export default async function Home() {
                 Want to add a line?
               </div>
               <div className="row">
-                <Link href="/dear/l/meera-iyer" className="btn small agent">
+                <Link href="/dear/letter" className="btn small agent">
                   Add a line
                 </Link>
               </div>

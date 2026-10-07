@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { AgentNote } from "@/components/dear/ui";
 import { KIND_LABEL } from "@/lib/dear/repo";
@@ -153,20 +154,17 @@ export function AskLetter({ letter }: { letter: Letter }) {
   );
 }
 
-/** Unclaimed letters get two actions only: claim it, or have it removed. */
-export function ClaimActions({ name }: { name: string }) {
-  const [state, setState] = useState<"idle" | "claim" | "remove">("idle");
+/** Unclaimed letters get two actions only: claim it, or have it removed. Both live on the claim page. */
+export function ClaimActions({ name, handle }: { name: string; handle: string }) {
   const first = name.split(" ")[0];
-  if (state === "claim") return <p className="mono glow">Sign in with the LinkedIn account this page was built from, and it is yours to write.</p>;
-  if (state === "remove") return <p className="mono glow">Removal requested. This page is hidden while we check.</p>;
   return (
     <div className="row">
-      <button className="btn" onClick={() => setState("claim")}>
-        I am {first}: write my letter
-      </button>
-      <button className="btn quiet" onClick={() => setState("remove")}>
-        This is me: remove it
-      </button>
+      <Link href={`/dear/claim/${handle}`} className="btn">
+        I am {first}: this is mine
+      </Link>
+      <Link href={`/dear/claim/${handle}`} className="btn quiet">
+        Remove this page
+      </Link>
     </div>
   );
 }

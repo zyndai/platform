@@ -36,6 +36,13 @@ export default function SignIn() {
         <p className="m dim">No password. We never post anything, anywhere, in your name.</p>
         <hr style={{ width: "100%" }} />
         <p style={{ fontSize: 22 }}>
+          Found a page about you that you did not write? Signing in with the LinkedIn it was built from makes it yours.{" "}
+          <Link href="/dear/claim/tomas-vidal" style={{ color: "var(--agent)" }}>
+            See how claiming works
+          </Link>
+          .
+        </p>
+        <p style={{ fontSize: 22 }}>
           No letter yet?{" "}
           <Link href="/dear/write" style={{ color: "var(--agent)" }}>
             Write yours

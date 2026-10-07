@@ -47,7 +47,7 @@ export default async function LetterPage({ params }: Props) {
             {first} has not written a letter. This page is not shown to AI agents or search engines, has no assistant, and takes no introductions. If you
             know {first}, you can invite them to write one.
           </p>
-          <ClaimActions name={letter.name} />
+          <ClaimActions name={letter.name} handle={letter.handle} />
           <div className="row">
             <button className="btn small quiet">Invite {first} to write theirs</button>
           </div>

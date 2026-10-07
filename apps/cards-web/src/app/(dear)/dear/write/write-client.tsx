@@ -61,6 +61,8 @@ export function WriteClient() {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [selfWrite, setSelfWrite] = useState(false);
+  /** null = not asked yet · "mine" = adopted the existing page · "not-me" = start fresh */
+  const [existing, setExisting] = useState<null | "mine" | "not-me">(null);
   const [self, setSelf] = useState({ role: "", place: "" });
 
   const pct = signed ? 100 : { 1: 10, 2: 30, 3: 55, 4: 75, 5: 90 }[step] ?? 10;
@@ -291,7 +293,24 @@ export function WriteClient() {
                   )}
                 </>
               )}
-              {linkedin && (
+              {linkedin && existing === null && (
+                <AgentNote>
+                  <div>
+                    Before I start a new one: there is already a page built from public data for <b>{name || "someone with this LinkedIn"}, Bengaluru</b>. Is that
+                    you? Signing in with this LinkedIn is the proof, so it is one tap.
+                  </div>
+                  <div className="row">
+                    <button className="btn small agent" onClick={() => setExisting("mine")}>
+                      Yes, that&apos;s me: make it mine
+                    </button>
+                    <button className="btn small quiet" onClick={() => setExisting("not-me")}>
+                      Not me
+                    </button>
+                  </div>
+                </AgentNote>
+              )}
+              {linkedin && existing === "mine" && <span className="stamp ok" style={{ alignSelf: "flex-start" }}>claimed · one page for you, not two</span>}
+              {linkedin && existing !== null && (
                 <>
                   <Legend />
                   {rows(linkedin, "li")}

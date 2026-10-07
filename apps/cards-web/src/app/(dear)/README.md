@@ -35,6 +35,7 @@ A person's page is a **letter to the agents**. Everything the agent learns about
 | `/dear/write` | Write your letter | The 2,100-line create flow and its five-question quiz. Sources arrive as lines of the letter; no account until the first connection or the signature; the AI connector comes after signing | S08, S09 |
 | `/dear/l/[handle]` | The public letter | The profile page. One primary action (Say hello), "true today" first, a receipt on every line, a labelled assistant, a trimmed page for unclaimed people | S03, S06, S12, S14 |
 | `/dear/l/[handle]/data.json` | Agent view | `data.json`. Inked lines only, each with source and dates; 404 for unclaimed | S03, S06 |
+| `/dear/claim/[handle]` | Is this you? | The claim-token plumbing. Claiming = signing in with the LinkedIn the page was built from; a checked fallback for people without LinkedIn; removal with no account. The letter-writing flow also asks before creating a second page for the same person | S03, S13 |
 | `/dear/home` | Your desk | The long edit form as a landing place. Who asked, what they asked, what the agent could not answer, what to do today | S04, S10 |
 | `/dear/letter` | Edit my letter | Nothing equivalent today. The owner rewrites any line (double-click), adds lines to any section, strikes or restores, at any time | S02, S10 |
 | `/dear/inbox` | Inbox | The review queue. Three groups with bulk actions, visible "shows as", permanent strike, and hellos in the same place | S01, S02, S05, S12 |

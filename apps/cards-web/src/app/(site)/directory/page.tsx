@@ -111,8 +111,15 @@ export default async function DirectoryPage() {
                       </div>
                     )}
                     <div className="min-w-0">
-                      <div className="text-base font-semibold text-white group-hover:text-[#a5b4fc] truncate">
-                        {card.identity.name}
+                      <div className="flex items-center gap-2">
+                        <div className="text-base font-semibold text-white group-hover:text-[#a5b4fc] truncate">
+                          {card.identity.name}
+                        </div>
+                        {card.claimed === false && (
+                          <span className="shrink-0 rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+                            Unclaimed
+                          </span>
+                        )}
                       </div>
                       {card.identity.location && (
                         <div className="text-xs text-zinc-500 truncate">{card.identity.location}</div>

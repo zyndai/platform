@@ -79,7 +79,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const skill = decodeSkill(rawSkill);
   return pageMetadata({
     title: `${skill} — People on Zynd`,
-    description: `Browse people on Zynd with ${skill} skills and expertise. AI-verified profiles with evidence.`,
+    description: `Browse people on Zynd with ${skill} skills and expertise, backed by their public profiles.`,
     path: `/tag/${rawSkill}`,
   });
 }
@@ -181,7 +181,7 @@ export default async function TagPage({ params }: PageProps) {
               marginBottom: "8px",
             }}>{skill}</div>
             <div style={{ fontSize: "15px", color: "#64748b" }}>
-              {cards.length} {cards.length === 1 ? "person" : "people"} on Zynd with verified {skill} expertise
+              {cards.length} {cards.length === 1 ? "person" : "people"} on Zynd with {skill} expertise
             </div>
           </div>
 

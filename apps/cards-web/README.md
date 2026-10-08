@@ -6,25 +6,19 @@ repo's `app/(site)/{p,create,profile,directory,find,search,tag,for-ai}` and
 existing `services/cards-api` (still `api.zynd.ai`, unchanged) for card data,
 and to a Supabase project for login.
 
-## Status: code complete, not yet live
+## Status: live at cards.zynd.ai
 
-This app builds and typechecks, but nothing is deployed or wired to
-production auth yet:
+The site is live and serves card reads, search, login/claim/create/edit and
+the profile chat. Note the deploy caveat below.
 
-- **Reads work today** — card data, search, and the memory-chat widget all
-  go through the cards API exactly as they did in the dashboard, no changes
-  needed there.
-- **Auth does not work yet.** Login/claim/create/edit need the aafo (persona)
-  Supabase project to have: the `vector` extension enabled, an `avatars`
-  storage bucket, and the LinkedIn auth provider turned on (D12: LinkedIn
-  only) — see `ZYND_DB_UNIFY_PLAN.md` §5.5 (those need your access to the
-  Supabase dashboard, not something this app can do for you).
-- **cards-api itself** doesn't yet trust the aafo project's tokens — that's
-  phase P0 (`services/cards-api/api/auth.py`, `TRUSTED_SUPABASE_URLS`), a
-  separate backend change not part of this app.
-- **Card data migration** (xmfj → aafo) is phase P3, and the cutover that
-  points `services/cards-api` at aafo is P4. Until then this app can read
-  cards fine but a real "claim"/"create" flow has nowhere durable to land.
+- **Reads** — card data, search, and the memory-chat widget all go through
+  `services/cards-api` (unchanged API).
+- **Auth** — LinkedIn-only login (D12), backed by the aafo Supabase project
+  with the `avatars` storage bucket and the LinkedIn OAuth provider enabled.
+- **Deploy caveat:** as of the monorepo cutover (root `AGENTS.md` §7),
+  production still serves from the old standalone `zynd-cards` checkout —
+  pushing this repo does not reach the live site until the cutover lands.
+  Deploy target for the cutover: Vercel, **Root Directory = `apps/cards-web`**.
 
 ## What changed from the dashboard version
 

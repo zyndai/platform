@@ -107,10 +107,10 @@ function TagInput({ tags, onChange, placeholder }: {
   );
 }
 
-function Toast({ msg, type }: { msg: string; type: "ok" | "err" }) {
+function Toast({ msg, type }: { msg: string; type: "ok" | "err" | "info" }) {
   return (
-    <div className={`pe-toast ${type === "ok" ? "ok" : "err"}`}>
-      {type === "ok" ? <Check size={14} /> : <X size={14} />}
+    <div className={`pe-toast ${type}`}>
+      {type === "ok" ? <Check size={14} /> : type === "err" ? <X size={14} /> : <Zap size={14} />}
       <span>{msg}</span>
     </div>
   );
@@ -122,15 +122,16 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
   const [draft, setDraft] = useState<AgentProfileCard>({ ...initialCard, status: "published" });
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [toast, setToast] = useState<{ msg: string; type: "ok" | "err" } | null>(null);
+  const [toast, setToast] = useState<{ msg: string; type: "ok" | "err" | "info" } | null>(null);
   const [memoryStatus, setMemoryStatus] = useState<"idle" | "loading" | "connected" | "disconnected">("idle");
+  const [memoryConnected, setMemoryConnected] = useState<boolean | null>(null);
   const [memoryFacts, setMemoryFacts] = useState<Array<Record<string, unknown>>>(
     (initialCard.zynd_memory ?? []) as Array<Record<string, unknown>>
   );
   const [memorySkipped, setMemorySkipped] = useState(false);
   const [showProviderImport, setShowProviderImport] = useState(false);
 
-  function showToast(msg: string, type: "ok" | "err") {
+  function showToast(msg: string, type: "ok" | "err" | "info" = "info") {
     setToast({ msg, type });
   }
 
@@ -160,18 +161,26 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
         { method: "POST", headers: { Authorization: `Bearer ${token}` } },
       );
       const data = await res.json();
-      if (data.zynd_memory && data.zynd_memory.length > 0) {
-        setMemoryFacts(data.zynd_memory);
-        setDraft((prev) => ({ ...prev, zynd_memory: data.zynd_memory }));
+      const connected = Boolean(data.connected);
+      const facts: Array<Record<string, unknown>> = Array.isArray(data.zynd_memory) ? data.zynd_memory : [];
+      setMemoryConnected(connected);
+      if (connected && facts.length > 0) {
+        setMemoryFacts(facts);
+        setDraft((prev) => ({ ...prev, zynd_memory: facts }));
         setMemoryStatus("connected");
-        showToast(`${data.zynd_memory.length} memory facts synced`, "ok");
+        showToast(`Live · synced — ${facts.length} facts on your card`, "ok");
+      } else if (connected) {
+        setMemoryFacts([]);
+        setDraft((prev) => ({ ...prev, zynd_memory: [] }));
+        setMemoryStatus("connected");
+        showToast("Synced — nothing public yet", "ok");
       } else {
         setMemoryStatus("disconnected");
-        showToast("No ZYND memory found for this account", "err");
+        showToast("ZYND memory isn't connected to this account yet");
       }
     } catch {
       setMemoryStatus("disconnected");
-      showToast("Memory sync failed", "err");
+      showToast("Memory sync failed — try again", "err");
     }
   }
 
@@ -179,6 +188,35 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
   const [handleAvail, setHandleAvail] = useState<boolean | null>(null);
   const [handleChecking, setHandleChecking] = useState(false);
   const handleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [aliasInput, setAliasInput] = useState(initialCard.alias ?? "");
+  const [aliasSaving, setAliasSaving] = useState(false);
+  const [aliasMsg, setAliasMsg] = useState<string | null>(null);
+
+  async function saveAlias() {
+    const slug = aliasInput.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 30);
+    if (slug === (initialCard.alias ?? "")) return;
+    setAliasSaving(true);
+    setAliasMsg(null);
+    try {
+      const res = await fetch(`${CARDS_API}/cards/by-handle/${encodeURIComponent(handle)}/alias`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ alias: slug || null }),
+      });
+      const data = await res.json().catch(() => ({})) as { detail?: unknown; alias?: string };
+      if (!res.ok) {
+        setAliasMsg(typeof data.detail === "string" ? data.detail : "Could not save alias");
+        return;
+      }
+      setAliasInput(data.alias ?? "");
+      setAliasMsg(data.alias ? "Alias saved" : "Alias removed");
+    } catch {
+      setAliasMsg("Could not save alias");
+    } finally {
+      setAliasSaving(false);
+    }
+  }
 
   function onHandleChange(val: string) {
     const slug = val.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 30);
@@ -368,12 +406,24 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
   const githubUrl = safeUrl(hLinks.find(([p]) => p.toLowerCase() === "github")?.[1] || draft.identity.links?.github);
   const githubHandle = usernameFromUrl(githubUrl) || handle;
   const contributions = draft.contribution_stats ?? null;
+  const seenFactKeys = new Set<string>();
   const visibleFacts = memoryFacts.map((fact) => {
     const predicate = typeof fact.predicate === "string" ? fact.predicate : "";
     const object = typeof fact.object === "string" ? fact.object.trim() : "";
-    if (predicate && object) return factLabel({ predicate, object });
+    if (predicate && object) {
+      const key = `${predicate}|${object.toLowerCase()}`;
+      if (seenFactKeys.has(key)) return null;
+      seenFactKeys.add(key);
+      return factLabel({ predicate, object });
+    }
     for (const key of ["content", "value", "text", "description", "fact", "summary"]) {
-      if (typeof fact[key] === "string" && (fact[key] as string).trim()) return fact[key] as string;
+      if (typeof fact[key] === "string" && (fact[key] as string).trim()) {
+        const text = (fact[key] as string).trim();
+        const dedupeKey = text.toLowerCase();
+        if (seenFactKeys.has(dedupeKey)) return null;
+        seenFactKeys.add(dedupeKey);
+        return text;
+      }
     }
     return null;
   }).filter((t): t is string => !!t);
@@ -522,6 +572,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
         }
         .pe-toast.ok { background: ${T.ink}; color: #fff; }
         .pe-toast.err { background: #b91c1c; color: #fff; }
+        .pe-toast.info { background: #334155; color: #fff; }
         .pe-mem { background: #fff; border: 1px solid ${T.border}; border-radius: 12px; padding: 10px 12px; font-size: 14px; color: ${T.soft}; }
         @media (max-width: 720px) {
           .pe-shell { padding: 20px 16px 28px; }
@@ -685,6 +736,11 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                 <p className="pe-help">Facts AI agents read when they work with you.</p>
                 {visibleFacts.length > 0 ? (
                   <>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#15803d", flexShrink: 0 }} />
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#15803d" }}>Live · synced</span>
+                      <span style={{ fontSize: 12, color: T.muted }}>{visibleFacts.length} fact{visibleFacts.length === 1 ? "" : "s"} on your public card</span>
+                    </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {visibleFacts.slice(0, 6).map((text, i) => <div key={i} className="pe-mem">{text}</div>)}
                     </div>
@@ -697,6 +753,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                             setMemoryFacts(snapshot);
                             setDraft((prev) => ({ ...prev, zynd_memory: snapshot }));
                             setMemoryStatus("connected");
+                            setMemoryConnected(true);
                             setShowProviderImport(false);
                           }} />
                       </div>
@@ -706,6 +763,38 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                       </button>
                     )}
                   </>
+                ) : memoryConnected === true ? (
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#15803d", flexShrink: 0 }} />
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#15803d" }}>Live · synced</span>
+                    </div>
+                    <p className="pe-help" style={{ marginBottom: 12 }}>
+                      Nothing public yet. Facts appear here once agents report them and you approve them.
+                    </p>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <button type="button" className="pe-primary" style={{ padding: "11px 16px", fontSize: 14 }} onClick={syncMemory} disabled={memoryStatus === "loading"}>
+                        {memoryStatus === "loading" ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+                        Sync from ZYND
+                      </button>
+                      <button type="button" className="pe-secondary" style={{ padding: "11px 16px", fontSize: 14 }} onClick={() => setShowProviderImport((v) => !v)}>
+                        Import from a memory key
+                      </button>
+                    </div>
+                    {showProviderImport && (
+                      <div style={{ marginTop: 16 }}>
+                        <MemoryProviderOnboard firstName={(hName || "You").split(" ")[0]} handle={handle} tone="light" compact
+                          onSkip={() => setShowProviderImport(false)}
+                          onImported={(facts) => {
+                            const snapshot = facts as Array<Record<string, unknown>>;
+                            setMemoryFacts(snapshot);
+                            setDraft((prev) => ({ ...prev, zynd_memory: snapshot }));
+                            setMemoryStatus("connected");
+                            setShowProviderImport(false);
+                          }} />
+                      </div>
+                    )}
+                  </div>
                 ) : !memorySkipped ? (
                   <MemoryProviderOnboard firstName={(hName || "You").split(" ")[0]} handle={handle} tone="light" compact
                     onSkip={() => setMemorySkipped(true)}
@@ -714,10 +803,13 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                       setMemoryFacts(snapshot);
                       setDraft((prev) => ({ ...prev, zynd_memory: snapshot }));
                       setMemoryStatus("connected");
+                      setMemoryConnected(true);
                     }} />
                 ) : (
                   <div>
-                    {memoryStatus === "disconnected" && <p className="pe-help">No memory found for this account yet.</p>}
+                    {memoryConnected === false && (
+                      <p className="pe-help">ZYND memory isn&apos;t connected to this account yet.</p>
+                    )}
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                       <button type="button" className="pe-primary" style={{ padding: "11px 16px", fontSize: 14 }} onClick={syncMemory} disabled={memoryStatus === "loading"}>
                         {memoryStatus === "loading" ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
@@ -800,10 +892,10 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                 <div className="pe-title">Synced stats</div>
                 <p className="pe-help">Pulled from public profiles. Re-create the card to refresh.</p>
                 {draft.linkedin_stats?.connections != null && (
-                  <div className="pe-metric"><span>LinkedIn connections</span><b><CountUp value={Number(draft.linkedin_stats.connections)} /></b></div>
+                  <div className="pe-metric"><span>LinkedIn connections</span><b><CountUp value={draft.linkedin_stats.connections} /></b></div>
                 )}
                 {draft.x_stats?.followers != null && (
-                  <div className="pe-metric"><span>X followers</span><b><CountUp value={Number(draft.x_stats.followers)} /></b></div>
+                  <div className="pe-metric"><span>X followers</span><b><CountUp value={draft.x_stats.followers} /></b></div>
                 )}
                 {draft.github_stats?.total_repos != null && (
                   <div className="pe-metric">
@@ -871,6 +963,19 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                       {handleAvail === false ? "That handle is taken" : "Save new handle"}
                     </button>
                   )}
+                </div>
+                <div className="full">
+                  <label className="pe-lab">Short alias</label>
+                  <div style={{ display: "flex", alignItems: "center", background: "#fff", border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden" }}>
+                    <span style={{ padding: "0 0 0 16px", fontSize: 14, color: T.muted, flexShrink: 0 }}>cards.zynd.ai/</span>
+                    <input value={aliasInput} onChange={(e) => setAliasInput(e.target.value)}
+                      style={{ flex: 1, minWidth: 0, border: 0, outline: "none", padding: "13px 12px 13px 0", fontSize: 15 }} placeholder="yourname" />
+                    <button type="button" className="pe-ghost" style={{ margin: 6, padding: "7px 14px" }} onClick={saveAlias} disabled={aliasSaving}>
+                      {aliasSaving ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                  {aliasMsg && <p style={{ fontSize: 12, marginTop: 6, color: aliasMsg.startsWith("Saved") || aliasMsg.startsWith("Alias") ? "#15803d" : "#b91c1c" }}>{aliasMsg}</p>}
+                  <p className="pe-help" style={{ marginBottom: 0 }}>A shorter link that redirects to your profile. Leave empty to remove it.</p>
                 </div>
               </div>
             </section>

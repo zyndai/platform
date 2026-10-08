@@ -26,35 +26,35 @@ type Profile = {
 
 const PROFILES: Profile[] = [
   {
-    initials: "CK", name: "Chandan Kumar", handle: "zynd.me/@chandan",
+    initials: "AM", name: "Aarav Mehta", handle: "zynd.me/@aarav",
     working: "Agent-native professional discovery protocol & schema parser in Rust",
     help: "AI agent architectures · Distributed systems · High-throughput vector search",
     looking: "Engineers building local LLM harnesses & early design partners",
     expires: "Expires in 5d", updated: "Updated 8m ago via GitHub traces",
   },
   {
-    initials: "MO", name: "Maya Okafor", handle: "zynd.me/@maya",
+    initials: "LV", name: "Lena Vogel", handle: "zynd.me/@lena",
     working: "Conflict-free replication engine for multiplayer design tools",
     help: "Rust · WASM · CRDTs · Realtime sync",
     looking: "Teams shipping collaborative editors this quarter",
     expires: "Expires in 9d", updated: "Updated 12m ago via commit traces",
   },
   {
-    initials: "DM", name: "Diego Marín", handle: "zynd.me/@diego",
+    initials: "OH", name: "Omar Haddad", handle: "zynd.me/@omar",
     working: "Open evaluation harness for retrieval pipelines",
     help: "Eval design · Retrieval · Python · Benchmarking",
     looking: "Teams with messy internal search to benchmark against",
     expires: "Expires in 4d", updated: "Updated 3m ago via paper traces",
   },
   {
-    initials: "AR", name: "Aisha Rahman", handle: "zynd.me/@aisha",
+    initials: "SK", name: "Sana Kaur", handle: "zynd.me/@sana",
     working: "Latency budgets for on-device speech models",
     help: "Edge inference · CoreML · Audio DSP",
     looking: "Hardware partners for a wearable listening prototype",
     expires: "Expires in 12d", updated: "Updated 21m ago via LinkedIn traces",
   },
   {
-    initials: "TF", name: "Tomás Feliu", handle: "zynd.me/@tomas",
+    initials: "MB", name: "Milo Brandt", handle: "zynd.me/@milo",
     working: "A type system for agent tool schemas",
     help: "TypeScript · Compilers · Developer tooling",
     looking: "Maintainers who want typed, verifiable tool specs",
@@ -155,7 +155,7 @@ export function HeroCardStack() {
 
       <div className="flex items-center justify-between gap-4 px-1">
         <span className="font-mono text-[11px] tracking-widest uppercase text-[#6e6e78]">
-          {String(front).padStart(2, "0")} / {String(N).padStart(2, "0")} living profiles
+          {String(front).padStart(2, "0")} / {String(N).padStart(2, "0")} example profiles
         </span>
         <div className="flex gap-1.5">
           {PROFILES.map((p, i) => (
@@ -193,7 +193,7 @@ function ProfileCard({ profile }: { profile: Profile }) {
           </div>
         </div>
         <span className="shrink-0 text-[10px] font-mono px-2.5 py-1 rounded-full bg-white/[0.06] text-[#b6b6b0] border border-white/10">
-          LIVING PROFILE
+          EXAMPLE
         </span>
       </div>
 

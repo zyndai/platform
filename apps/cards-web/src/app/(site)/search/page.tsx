@@ -39,7 +39,7 @@ export default async function SearchPage({ searchParams }: PageProps) {
     q || role || location || skills || industry || availability || experience_min,
   );
   const data = hasQuery
-    ? await searchAgents({ q, role, location, skills, industry, availability, experience_min })
+    ? await searchAgents({ q, role, location, skills, industry, availability, experience_min, include_unclaimed: "true" })
     : null;
 
   return (
@@ -159,8 +159,15 @@ export default async function SearchPage({ searchParams }: PageProps) {
                     >
                       <div className="mb-3 flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="text-base font-semibold text-white group-hover:text-[#a5b4fc]">
-                            {r.name}
+                          <div className="flex items-center gap-2">
+                            <div className="text-base font-semibold text-white group-hover:text-[#a5b4fc]">
+                              {r.name}
+                            </div>
+                            {r.claimed === false && (
+                              <span className="shrink-0 rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+                                Unclaimed
+                              </span>
+                            )}
                           </div>
                           {r.headline && (
                             <div className="mt-0.5 text-sm text-zinc-400 line-clamp-2">

@@ -45,6 +45,12 @@ WRITES_OWNER_USER_ID: bool = SUPABASE_DB_SCHEMA == "cards"
 # them (the old behaviour — lets any signed-in user take over such a card).
 LEGACY_UNOWNED_CLAIM: bool = os.getenv("LEGACY_UNOWNED_CLAIM", "false").lower() in ("1", "true", "yes")
 
+# S03: unclaimed cards are public to people but quiet to agents. When on,
+# agent endpoints (/ask, /v1/agents/search) exclude unclaimed cards unless the
+# caller passes include_unclaimed=true (the website's own UI does). Rollback:
+# set to "false" and the old include-everyone behaviour returns.
+FEATURE_S03_UNCLAIMED_TIERING: bool = os.getenv("FEATURE_S03_UNCLAIMED_TIERING", "true").lower() in ("1", "true", "yes")
+
 # ── LLM (OpenRouter) ──
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")

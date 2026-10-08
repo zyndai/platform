@@ -40,7 +40,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def _candidates(q: str, query_vec: list[float]) -> list[dict]:
+def _candidates(q: str, query_vec: list[float], include_unclaimed: bool) -> list[dict]:
     """Rows to score: {"card", "handle", "similarity"?, "embedding"?}.
 
     With a query, the SQL functions in db/patch_search_rpc.sql return the top
@@ -53,16 +53,25 @@ def _candidates(q: str, query_vec: list[float]) -> list[dict]:
         try:
             by_id: dict[str, dict] = {}
             if query_vec:
-                resp = sb.rpc("match_cards", {"query_embedding": query_vec, "match_count": CANDIDATES_PER_SOURCE}).execute()
+                resp = sb.rpc(
+                    "match_cards",
+                    {"query_embedding": query_vec, "match_count": CANDIDATES_PER_SOURCE, "include_unclaimed": include_unclaimed},
+                ).execute()
                 for r in resp.data or []:
                     by_id[r["id"]] = {"card": r["card"], "handle": r["handle"], "similarity": r.get("similarity")}
-            resp = sb.rpc("search_cards_fts", {"q": q, "match_count": CANDIDATES_PER_SOURCE}).execute()
+            resp = sb.rpc(
+                "search_cards_fts",
+                {"q": q, "match_count": CANDIDATES_PER_SOURCE, "include_unclaimed": include_unclaimed},
+            ).execute()
             for r in resp.data or []:
                 by_id.setdefault(r["id"], {"card": r["card"], "handle": r["handle"]})
             return list(by_id.values())
         except Exception as exc:  # noqa: BLE001 — functions not deployed yet: degrade, don't fail search
             logger.warning("search RPCs unavailable (%s); falling back to a full scan", exc)
-    return cards_service.list_published_rows(columns="card,handle,embedding")
+    rows = cards_service.list_published_rows(columns="card,handle,embedding,owner_email")
+    if not include_unclaimed:
+        rows = [r for r in rows if bool((r.get("owner_email") or "").strip())]
+    return rows
 
 
 def search_agents(
@@ -74,9 +83,10 @@ def search_agents(
     availability: str = "",
     experience_min: int | None = None,
     limit: int = 10,
+    include_unclaimed: bool = False,
 ) -> list[dict]:
     query_vec = embed_text(q) if q else []
-    rows = _candidates(q, query_vec)
+    rows = _candidates(q, query_vec, include_unclaimed)
     q_tokens = _norm(q).split() if q else []
     skill_list = [s.strip().lower() for s in skills.split(",") if s.strip()] if skills else []
     industry_norm = _norm(industry)

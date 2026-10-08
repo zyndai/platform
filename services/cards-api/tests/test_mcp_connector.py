@@ -176,6 +176,10 @@ def test_approve_proxies_predicate_and_value(client, monkeypatch):
         return {"status": "approved", "predicate": predicate, "value": value}
 
     monkeypatch.setattr(zynd_mcp, "approve_fact", fake_approve)
+    monkeypatch.setattr(
+        "services.zynd_memory.refresh_owner_snapshot",
+        lambda email: [{"predicate": "is_building", "object": "micro-SaaS"}],
+    )
 
     r = client.post("/cards/mcp/approve", json={"predicate": "is_building", "value": "micro-SaaS"},
                     headers=_auth(monkeypatch=monkeypatch))
@@ -184,6 +188,7 @@ def test_approve_proxies_predicate_and_value(client, monkeypatch):
     assert seen == {"email": "alice@example.com", "predicate": "is_building",
                     "value": "micro-SaaS"}
     assert r.json()["status"] == "approved"
+    assert r.json()["zynd_memory"][0]["object"] == "micro-SaaS"
 
 
 def test_revoke_proxies_predicate_and_value(client, monkeypatch):
@@ -195,6 +200,7 @@ def test_revoke_proxies_predicate_and_value(client, monkeypatch):
         return {"status": "revoked", "predicate": predicate, "value": value}
 
     monkeypatch.setattr(zynd_mcp, "revoke_fact", fake_revoke)
+    monkeypatch.setattr("services.zynd_memory.refresh_owner_snapshot", lambda email: [])
 
     r = client.post("/cards/mcp/revoke", json={"predicate": "is_building", "value": "micro-SaaS"},
                     headers=_auth(monkeypatch=monkeypatch))

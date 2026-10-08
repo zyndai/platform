@@ -43,7 +43,7 @@ export async function generateMetadata({ searchParams }: PageProps): Promise<Met
 
 async function searchPeople(q: string, limit: number): Promise<AskResponse | null> {
   try {
-    const url = `${CARDS_API}/ask?q=${encodeURIComponent(q)}&limit=${limit}`;
+    const url = `${CARDS_API}/ask?q=${encodeURIComponent(q)}&limit=${limit}&include_unclaimed=true`;
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) return null;
     return res.json();

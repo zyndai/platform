@@ -29,6 +29,13 @@
       "when": 1790800000000,
       "tag": "0003_keyword_posts",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791470000000,
+      "tag": "0004_claimed_search",
+      "breakpoints": true
     }
   ]
 }

@@ -25,8 +25,16 @@ def card_search_text(card) -> str:
     parts += list(card.industries)
     parts += [ws.excerpt[:200] for ws in card.writing_samples if ws.excerpt]
     parts += list(card.searchable_facts)
+    parts += list(card.working_on)
+    parts += list(card.can_help_with)
     if card.availability:
         parts.append(f"available {card.availability}")
     if card.experience_years:
         parts.append(f"{card.experience_years} years experience")
+    if getattr(card, "zynd_memory", None):
+        from services.card_view import fact_object, fact_predicate, live_facts
+
+        for fact in live_facts(card.zynd_memory):
+            parts.append(fact_object(fact))
+            parts.append(fact_predicate(fact).replace("_", " "))
     return " ".join(p for p in parts if p)

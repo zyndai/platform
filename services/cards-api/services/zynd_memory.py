@@ -6,6 +6,8 @@ cron loop — ever fetches; anonymous card views read the stored snapshot on the
 card row, so nothing is fetched per view and no private data ever leaves the
 memory layer.
 """
+from __future__ import annotations
+
 import asyncio
 import logging
 from urllib.parse import quote
@@ -42,6 +44,56 @@ def fetch_findability(email: str) -> dict | None:
         return None
 
 
+def snapshot_from_payload(payload: dict | None) -> list[dict] | None:
+    """None = not connected. [] = connected, nothing public. None in also means caller should not write."""
+    if not payload:
+        return None
+    if not payload.get("connected"):
+        return None
+    facts = payload.get("facts")
+    return list(facts) if isinstance(facts, list) else []
+
+
+def ping_revalidate(handle: str) -> None:
+    url = (config.WEB_REVALIDATE_URL or "").strip()
+    secret = (config.WEB_REVALIDATE_SECRET or "").strip()
+    if not url or not secret or not handle:
+        return
+    try:
+        resp = httpx.post(
+            url,
+            json={"handle": handle},
+            headers={"Authorization": f"Bearer {secret}"},
+            timeout=5,
+        )
+        if resp.status_code >= 400:
+            logger.warning("revalidate failed handle=%s status=%d", handle, resp.status_code)
+    except Exception as exc:  # noqa: BLE001 — snapshot already written
+        logger.warning("revalidate failed handle=%s err=%s", handle, exc)
+
+
+def refresh_owner_snapshot(email: str) -> list[dict] | None:
+    """Fetch findability for email, write it onto that owner's published card.
+
+    Returns the snapshot written ([] = connected empty). If the fetch fails,
+    the previous snapshot is left in place and that previous value is returned.
+    If the owner has no card, returns None.
+    """
+    from services import cards as cards_service
+
+    found = cards_service.get_card_by_owner(email)
+    if not found:
+        return None
+    card, handle = found
+    payload = fetch_findability(email)
+    if payload is None:
+        return card.zynd_memory
+    snapshot = snapshot_from_payload(payload)
+    cards_service.update_card_memory(handle, snapshot)
+    ping_revalidate(handle)
+    return snapshot
+
+
 async def refresh_all_cards_memory() -> dict:
     """One refresh cycle: for every published card with an owner_email, fetch
     the public findability card from the memory layer and store the snapshot.
@@ -65,23 +117,26 @@ async def refresh_all_cards_memory() -> dict:
             logger.warning("memory fetch raised email=%s err=%s", email, exc)
             stats["errors"] += 1
             continue
-        if payload is None:  # fetch failed — keep the previous snapshot
+        if payload is None:
             stats["errors"] += 1
             continue
-        facts = payload.get("facts") or None
-        if facts is None:
+        if not payload.get("connected"):
             stats["not_connected"] += 1
             continue
+        facts = payload.get("facts")
+        if not isinstance(facts, list):
+            facts = []
         try:
             card = cards_service._row_to_card(row)
         except Exception as exc:  # noqa: BLE001
             logger.warning("card parse failed handle=%s err=%s", row.get("handle"), exc)
             stats["errors"] += 1
             continue
-        if (card.zynd_memory or []) == facts:
+        if card.zynd_memory == facts:
             stats["unchanged"] += 1
             continue
         if cards_service.update_card_memory(row.get("handle"), facts):
+            ping_revalidate(row.get("handle") or "")
             stats["updated"] += 1
         else:
             stats["errors"] += 1

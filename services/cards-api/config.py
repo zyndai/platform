@@ -107,6 +107,12 @@ SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM: str = os.getenv("SMTP_FROM", "")
 CRON_SECRET: str = os.getenv("CRON_SECRET", "")
 
+FEATURE_S03_UNCLAIMED_TIERING: bool = os.getenv("FEATURE_S03_UNCLAIMED_TIERING", "true").lower() in ("1", "true", "yes")
+FEATURE_S06_CARDVIEW: bool = os.getenv("FEATURE_S06_CARDVIEW", "true").lower() in ("1", "true", "yes")
+FEATURE_S14_ASSISTANT_V2: bool = os.getenv("FEATURE_S14_ASSISTANT_V2", "true").lower() in ("1", "true", "yes")
+WEB_REVALIDATE_URL: str = os.getenv("WEB_REVALIDATE_URL", "")
+WEB_REVALIDATE_SECRET: str = os.getenv("WEB_REVALIDATE_SECRET", "")
+
 
 def _get_supabase():
     global _sb_service

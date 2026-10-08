@@ -74,9 +74,14 @@ def search_agents(
     availability: str = "",
     experience_min: int | None = None,
     limit: int = 10,
+    include_unclaimed: bool = False,
 ) -> list[dict]:
     query_vec = embed_text(q) if q else []
     rows = _candidates(q, query_vec)
+    claimed, claimed_known = cards_service.claimed_index()
+    require_claimed = (
+        config.FEATURE_S03_UNCLAIMED_TIERING and not include_unclaimed and claimed_known
+    )
     q_tokens = _norm(q).split() if q else []
     skill_list = [s.strip().lower() for s in skills.split(",") if s.strip()] if skills else []
     industry_norm = _norm(industry)
@@ -93,6 +98,10 @@ def search_agents(
             continue
         if row.get("handle"):
             card.handle = row["handle"]
+        if getattr(card, "hidden_from_agents", False):
+            continue
+        if require_claimed and card.handle not in claimed:
+            continue
         search_text = card_search_text(card).lower()
 
         score = 0.0
@@ -111,6 +120,13 @@ def search_agents(
             if hits:
                 score += 0.25 * (len(hits) / len(q_tokens))
                 reasons.append("Matches your search terms")
+            memory_blob = " ".join(
+                str(f.get("object") or "") for f in (card.zynd_memory or []) if isinstance(f, dict)
+            ).lower()
+            memory_hits = [t for t in q_tokens if t and t in memory_blob]
+            if memory_hits:
+                score += 0.2
+                reasons.append("Approved fact")
 
         if role_norm and (role_norm in _norm(card.identity.headline) or role_norm in search_text):
             score += 0.25
@@ -153,6 +169,7 @@ def search_agents(
                 "experience_years": card.experience_years,
                 "match_score": round(min(score, 1.0), 3),
                 "match_reasons": reasons[:6],
+                "claimed": card.handle in claimed,
                 "url": f"{config.SITE_BASE_URL}/p/{card.handle}" if card.handle else f"{config.SITE_BASE_URL}/profile/{card.id}",
             }
         )

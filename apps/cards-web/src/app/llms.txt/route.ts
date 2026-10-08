@@ -5,7 +5,7 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://cards.zynd.ai";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const cards = await listCards();
+  const cards = (await listCards()).filter((c) => c.claimed);
 
   const allSkills = cards.flatMap((c) => c.skills.slice(0, 3).map((s) => s.name));
   const uniqueSkills = [...new Set(allSkills)].slice(0, 4);

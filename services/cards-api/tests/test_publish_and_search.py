@@ -341,6 +341,7 @@ def test_search_uses_sql_candidates(monkeypatch):
     monkeypatch.setattr(search_service, "embed_text", lambda q: [0.1, 0.2])
     monkeypatch.setattr(search_service.cards_service, "list_published_rows",
                         lambda **kw: pytest.fail("should not full-scan when the RPCs work"))
+    monkeypatch.setattr(search_service.cards_service, "claimed_index", lambda: ({"alice"}, True))
 
     results = search_service.search_agents(q="engineer")
 
@@ -356,6 +357,7 @@ def test_search_falls_back_to_scan_when_rpcs_missing(monkeypatch):
     monkeypatch.setattr(search_service, "embed_text", lambda q: [])
     monkeypatch.setattr(search_service.cards_service, "list_published_rows",
                         lambda **kw: [{"card": _card_json(), "handle": "alice"}])
+    monkeypatch.setattr(search_service.cards_service, "claimed_index", lambda: ({"alice"}, True))
 
     results = search_service.search_agents(q="engineer")
 
@@ -416,4 +418,36 @@ def test_maintenance_503_carries_cors_headers():
         assert resp.headers.get("access-control-allow-origin") == origin
     finally:
         main_module.config.MAINTENANCE_READONLY = old
+
+
+def test_search_excludes_unclaimed_by_default(monkeypatch):
+    claimed = AgentProfileCard.model_validate(_card_json("alice")).model_dump(mode="json")
+    ghost = AgentProfileCard.model_validate(_card_json("ghost")).model_dump(mode="json")
+    monkeypatch.setattr(search_service, "embed_text", lambda q: [])
+    monkeypatch.setattr(
+        search_service.cards_service,
+        "list_published_rows",
+        lambda **kw: [
+            {"card": claimed, "handle": "alice", "owner_email": "a@x.io"},
+            {"card": ghost, "handle": "ghost", "owner_email": None},
+        ],
+    )
+    monkeypatch.setattr(search_service.config, "FEATURE_S03_UNCLAIMED_TIERING", True)
+    sb = MagicMock()
+    sb.rpc.side_effect = RuntimeError("no rpc")
+    monkeypatch.setattr(search_service.config, "get_supabase", lambda: sb)
+
+    hidden = search_service.search_agents(q="engineer")
+    assert [r["handle"] for r in hidden] == ["alice"]
+    shown = search_service.search_agents(q="engineer", include_unclaimed=True)
+    assert {r["handle"] for r in shown} == {"alice", "ghost"}
+
+
+def test_public_card_dict_has_no_owner_email():
+    from services.card_view import public_card_dict
+
+    payload = public_card_dict(AgentProfileCard.model_validate(_card_json()), claimed=True)
+    dumped = str(payload)
+    assert "owner_email" not in dumped
+    assert "@" not in dumped or "alice" in payload["handle"]
 

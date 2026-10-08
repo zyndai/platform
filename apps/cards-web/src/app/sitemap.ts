@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 const BASE_URL = "https://cards.zynd.ai";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const cards = await listCards();
+  const cards = (await listCards()).filter((c) => c.claimed);
 
   const staticEntries: MetadataRoute.Sitemap = [
     { url: BASE_URL, lastModified: new Date(), changeFrequency: "weekly", priority: 1.0 },

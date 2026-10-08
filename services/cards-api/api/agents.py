@@ -28,6 +28,7 @@ async def search_agents(
     availability: str = Query("", max_length=20),
     experience_min: int | None = Query(None, ge=0),
     limit: int = Query(10, ge=1, le=50),
+    include_unclaimed: bool = Query(False),
 ):
     results = await asyncio.to_thread(
         search_service.search_agents,
@@ -39,6 +40,7 @@ async def search_agents(
         availability,
         experience_min,
         limit,
+        include_unclaimed,
     )
     return {
         "query": {

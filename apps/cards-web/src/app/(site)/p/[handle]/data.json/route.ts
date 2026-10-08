@@ -10,7 +10,7 @@ export async function GET(_req: Request, { params }: Params) {
   const { handle } = await params;
   const card = await fetchCardByHandle(handle);
 
-  if (!card) {
+  if (!card || card.claimed === false) {
     return new Response(JSON.stringify({ error: "not found" }), {
       status: 404,
       headers: { "Content-Type": "application/json" },
@@ -63,7 +63,16 @@ export async function GET(_req: Request, { params }: Params) {
     "zynd:handle": handle,
     "zynd:card_id": card.id,
     "zynd:citation": card.citation_snippet,
-    "zynd:facts": card.searchable_facts,
+    "zynd:facts": (card.zynd_memory || [])
+      .filter((f) => f && typeof f === "object" && (f.object || f.value))
+      .map((f) => ({
+        text: f.object || f.value,
+        type: f.predicate || f.type || "",
+        source: f.source || "",
+        approved_at: f.approved_at || null,
+      })),
+    "zynd:claimed": true,
+    "zynd:cite_as": canonical,
     "zynd:verified_at": card.updated_at,
   };
 

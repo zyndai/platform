@@ -321,23 +321,26 @@ def _row_to_card(row: dict) -> AgentProfileCard:
     return AgentProfileCard.model_validate(data)
 
 
-def get_card_by_handle(handle: str) -> AgentProfileCard | None:
+def _is_claimed_row(row: dict) -> bool:
+    return bool((row.get("owner_email") or "").strip())
+
+
+def get_published_card(handle: str) -> tuple[AgentProfileCard, bool] | None:
+    """(card, claimed). claimed is owner_email present; never expose the email."""
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card,handle")
+        .select("card,handle,owner_email")
         .eq("handle", handle)
         .eq("status", "published")
         .execute()
     )
     rows = resp.data or []
     if not rows:
-        # The handle may have been renamed — resolve through the previous
-        # handles recorded in the card JSON so old links keep working.
         try:
             resp = (
                 sb.table("agent_profile_cards")
-                .select("card,handle")
+                .select("card,handle,owner_email")
                 .contains("card", {"previous_handles": [handle]})
                 .eq("status", "published")
                 .limit(1)
@@ -349,7 +352,43 @@ def get_card_by_handle(handle: str) -> AgentProfileCard | None:
             rows = []
     if not rows:
         return None
-    return _row_to_card(rows[0])
+    return _row_to_card(rows[0]), _is_claimed_row(rows[0])
+
+
+def get_card_by_handle(handle: str) -> AgentProfileCard | None:
+    found = get_published_card(handle)
+    return found[0] if found else None
+
+
+def linkedin_key(url: str) -> str:
+    from urllib.parse import urlparse
+
+    raw = (url or "").strip().lower().rstrip("/")
+    if not raw:
+        return ""
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    host = (parsed.hostname or "").removeprefix("www.")
+    path = parsed.path.rstrip("/")
+    return f"{host}{path}" if host else ""
+
+
+def claimed_handle_set() -> set[str]:
+    claimed, _known = claimed_index()
+    return claimed
+
+
+def claimed_index() -> tuple[set[str], bool]:
+    """(claimed handles, True if owner_email was present on rows)."""
+    rows = list_published_rows(columns="handle,owner_email")
+    claimed: set[str] = set()
+    known = False
+    for row in rows:
+        if "owner_email" in row:
+            known = True
+        handle = row.get("handle")
+        if handle and (row.get("owner_email") or "").strip():
+            claimed.add(handle)
+    return claimed, known
 
 
 def insert_card(
@@ -606,12 +645,70 @@ def list_published(limit: int = 1000) -> list[AgentProfileCard]:
 
 
 def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:
-    """Backend-only refresh of the stored ZYND memory snapshot on a card row.
+    """Write the public memory snapshot and rebuild search text from it.
 
-    Called by the periodic memory refresh cron, not by end users — no ownership
-    check. Only the card JSON changes; the search embedding is left untouched
-    (the memory section is not searchable content).
+    None = not connected. [] = connected, nothing public. Embedding is
+    recomputed so /ask and FTS-adjacent scoring see approved facts; OpenAI
+    failures leave the previous embedding in place rather than blocking the
+    snapshot write.
     """
+    sb = config.get_supabase()
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("card,embedding")
+        .eq("handle", handle)
+        .execute()
+    )
+    if not resp.data:
+        return False
+    card = _row_to_card(resp.data[0])
+    card.zynd_memory = zynd_memory
+    card.updated_at = utcnow()
+    payload: dict = {"card": card.model_dump(mode="json"), "updated_at": card.updated_at}
+    try:
+        payload["embedding"] = embed.embed_text(embed.card_search_text(card))
+    except Exception as exc:
+        logger.warning("re-embed after memory update failed handle=%s err=%s", handle, exc)
+    sb.table("agent_profile_cards").update(payload).eq("handle", handle).execute()
+    return True
+
+
+def claim_card(handle: str, owner_email: str, *, linkedin_url: str | None = None, claim_token: str | None = None) -> str:
+    """Attach owner_email if LinkedIn URLs match or the claim token is valid.
+
+    Returns 'ok', 'not_found', 'already_owned', 'mismatch', or 'need_linkedin'.
+    """
+    sb = config.get_supabase()
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("card,handle,owner_email,claim_token_hash")
+        .eq("handle", handle)
+        .execute()
+    )
+    if not resp.data:
+        return "not_found"
+    row = resp.data[0]
+    stored_owner = (row.get("owner_email") or "").strip()
+    if stored_owner:
+        if stored_owner.lower() == owner_email.lower():
+            return "ok"
+        return "already_owned"
+    card = _row_to_card(row)
+    card_key = linkedin_key((card.identity.links or {}).get("linkedin") or "")
+    offered_key = linkedin_key(linkedin_url or "")
+    token_ok = can_claim(row.get("claim_token_hash"), claim_token)
+    linkedin_ok = bool(card_key and offered_key and card_key == offered_key)
+    if not linkedin_ok and not token_ok:
+        if not card_key:
+            return "need_linkedin"
+        return "mismatch"
+    sb.table("agent_profile_cards").update(
+        {"owner_email": owner_email, "claim_token_hash": None, "updated_at": utcnow()}
+    ).eq("handle", handle).execute()
+    return "ok"
+
+
+def hide_from_agents(handle: str) -> bool:
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
@@ -622,11 +719,17 @@ def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:
     if not resp.data:
         return False
     card = _row_to_card(resp.data[0])
-    card.zynd_memory = zynd_memory
+    card.hidden_from_agents = True
     card.updated_at = utcnow()
     sb.table("agent_profile_cards").update(
         {"card": card.model_dump(mode="json"), "updated_at": card.updated_at}
     ).eq("handle", handle).execute()
+    try:
+        sb.table("takedown_requests").insert(
+            {"handle": handle, "status": "pending", "created_at": utcnow()}
+        ).execute()
+    except Exception as exc:
+        logger.warning("takedown_requests insert skipped handle=%s err=%s", handle, exc)
     return True
 
 

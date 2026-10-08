@@ -129,6 +129,8 @@ export interface AgentProfileCard {
   }> | null;
   /** Public findability facts from the ZYND memory layer, stored by the backend cron. */
   zynd_memory?: Array<Record<string, unknown>> | null;
+  /** True when the card has an owner. Agent surfaces omit unclaimed cards. */
+  claimed?: boolean;
   /** Handles this card used to live at (renames) — old /p/<handle> links still resolve. */
   previous_handles?: string[];
 }
@@ -220,6 +222,7 @@ export async function searchAgents(
     if (v) qs.set(k, v);
   }
   try {
+    qs.set("include_unclaimed", "true");
     const res = await fetch(`${API_BASE}/v1/agents/search?${qs}`, {
       next: { revalidate: 60 },
     });

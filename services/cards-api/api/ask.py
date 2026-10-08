@@ -20,16 +20,24 @@ class AskRequest(BaseModel):
 
 
 @router.get("")
-async def ask_get(q: str = Query("", max_length=200), limit: int = Query(10, ge=1, le=50)):
+async def ask_get(
+    q: str = Query("", max_length=200),
+    limit: int = Query(10, ge=1, le=50),
+    include_unclaimed: bool = Query(False),
+):
     results = await asyncio.to_thread(
-        search_service.search_agents, q, "", "", "", "", "", None, limit
+        search_service.search_agents, q, "", "", "", "", "", None, limit, include_unclaimed
     )
     return {"query": q, "results": results, "numberOfItems": len(results)}
 
 
 @router.post("")
-async def ask_post(body: AskRequest, limit: int = Query(10, ge=1, le=50)):
+async def ask_post(
+    body: AskRequest,
+    limit: int = Query(10, ge=1, le=50),
+    include_unclaimed: bool = Query(False),
+):
     results = await asyncio.to_thread(
-        search_service.search_agents, body.q, "", "", "", "", "", None, limit
+        search_service.search_agents, body.q, "", "", "", "", "", None, limit, include_unclaimed
     )
     return {"query": body.q, "results": results, "numberOfItems": len(results)}

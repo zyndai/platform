@@ -18,6 +18,7 @@ def _env(monkeypatch):
     monkeypatch.setattr(config, "MEMORY_SERVICE_TOKEN", "svc-token")
     monkeypatch.setattr(config, "MEMORY_LAYER_URL", "https://api.zynd.ai")
     monkeypatch.setattr(config, "MEMORY_REFRESH_INTERVAL_HOURS", 6)
+    monkeypatch.setattr(zynd_memory, "ping_revalidate", lambda handle: None)
 
 
 class _Resp:
@@ -123,6 +124,8 @@ def _mock_sb(monkeypatch, rows):
 
 def test_update_card_memory_sets_snapshot(monkeypatch):
     query = _mock_sb(monkeypatch, [{"card": _card_json()}])
+    monkeypatch.setattr(cards_service.embed, "embed_text", lambda text: [0.1])
+    monkeypatch.setattr(cards_service.embed, "card_search_text", lambda card: "alice")
     facts = [{"predicate": "is_building", "object": "micro-SaaS"}]
 
     assert cards_service.update_card_memory("alice", facts) is True
@@ -132,6 +135,8 @@ def test_update_card_memory_sets_snapshot(monkeypatch):
 
 def test_update_card_memory_clears_snapshot(monkeypatch):
     query = _mock_sb(monkeypatch, [{"card": _card_json([{"predicate": "is_building", "object": "old"}])}])
+    monkeypatch.setattr(cards_service.embed, "embed_text", lambda text: [0.1])
+    monkeypatch.setattr(cards_service.embed, "card_search_text", lambda card: "alice")
 
     assert cards_service.update_card_memory("alice", None) is True
     assert query.payload["card"]["zynd_memory"] is None
@@ -181,6 +186,42 @@ def test_refresh_cycle_skips_cards_without_email(monkeypatch):
 
     assert stats["no_email"] == 1
     assert stats["updated"] == 0
+
+
+def test_refresh_cycle_writes_empty_list_when_connected(monkeypatch):
+    monkeypatch.setattr(
+        cards_service, "list_published_rows",
+        lambda **kw: [_row("alice", "alice@example.com", [{"predicate": "is_building", "object": "old"}])],
+    )
+    monkeypatch.setattr(cards_service, "_row_to_card", lambda row: AgentProfileCard.model_validate(row["card"]))
+    calls = []
+    monkeypatch.setattr(cards_service, "update_card_memory", lambda handle, f: calls.append((handle, f)) or True)
+    monkeypatch.setattr(zynd_memory, "fetch_findability", lambda email: {"connected": True, "facts": []})
+    monkeypatch.setattr(zynd_memory, "ping_revalidate", lambda handle: None)
+
+    stats = asyncio.run(zynd_memory.refresh_all_cards_memory())
+
+    assert stats["updated"] == 1
+    assert stats["not_connected"] == 0
+    assert calls == [("alice", [])]
+
+
+def test_refresh_cycle_skips_disconnected(monkeypatch):
+    monkeypatch.setattr(cards_service, "list_published_rows", lambda **kw: [_row("alice", "alice@example.com")])
+    monkeypatch.setattr(zynd_memory, "fetch_findability", lambda email: {"connected": False, "facts": []})
+    calls = []
+    monkeypatch.setattr(cards_service, "update_card_memory", lambda handle, f: calls.append(f) or True)
+
+    stats = asyncio.run(zynd_memory.refresh_all_cards_memory())
+
+    assert stats["not_connected"] == 1
+    assert calls == []
+
+
+def test_snapshot_from_payload_distinguishes_empty_from_disconnected():
+    assert zynd_memory.snapshot_from_payload({"connected": True, "facts": []}) == []
+    assert zynd_memory.snapshot_from_payload({"connected": False, "facts": []}) is None
+    assert zynd_memory.snapshot_from_payload(None) is None
 
 
 def test_refresh_cycle_keeps_snapshot_on_fetch_failure(monkeypatch):

@@ -162,9 +162,11 @@ class AgentProfileCard(BaseModel):
     # Each entry: {title, company, company_logo, employment_type, start_date,
     #              end_date, duration, location, description}
     work_experience: list[dict] | None = None
-    # Public findability facts pulled from the ZYND memory layer by our cron
-    # (services/zynd_memory). None = not connected / nothing public yet.
+    # Public findability facts from the ZYND memory layer.
+    # None = not connected. [] = connected, nothing public.
     zynd_memory: list[dict] | None = None
+    # Owner asked this unclaimed card to be taken down (S03). Agent surfaces skip it.
+    hidden_from_agents: bool = False
     # Handles this card used to live at (renames + collision-resuffixes).
     # Kept so old /p/<handle> links still resolve — get_card_by_handle falls
     # back to this list before 404ing.

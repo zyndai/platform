@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Header, HTTPException, Query
+from pydantic import BaseModel
 
 import config
 from api.auth import verify_supabase_jwt
@@ -40,12 +41,32 @@ router = APIRouter()
 
 
 @router.get("")
-async def search_cards(q: str = Query("", max_length=200)):
-    if q:
-        cards = cards_service.search_cards(q)
-    else:
-        cards = cards_service.list_published()
-    return [c.model_dump(mode="json") for c in cards]
+async def search_cards(
+    q: str = Query("", max_length=200),
+    include_unclaimed: bool = Query(True),
+):
+    from services.card_view import public_card_dict
+
+    rows = await asyncio.to_thread(
+        cards_service.list_published_rows, None, "card,handle,owner_email"
+    )
+    out = []
+    for row in rows:
+        try:
+            card = cards_service._row_to_card(row)
+        except Exception:
+            continue
+        if row.get("handle"):
+            card.handle = row["handle"]
+        claimed = bool((row.get("owner_email") or "").strip())
+        if not include_unclaimed and not claimed:
+            continue
+        if q:
+            blob = f"{card.identity.name} {card.identity.headline} {card.summary}".lower()
+            if q.lower() not in blob:
+                continue
+        out.append(public_card_dict(card, claimed=claimed))
+    return out
 
 
 # /mine must come before /{card_id} so FastAPI doesn't match "mine" as a card_id
@@ -75,10 +96,24 @@ async def check_handle_available(handle: str):
 
 @router.get("/by-handle/{handle}")
 async def get_card_by_handle(handle: str):
-    card = await asyncio.to_thread(cards_service.get_card_by_handle, handle)
-    if not card:
+    from services.card_view import public_card_dict
+
+    found = await asyncio.to_thread(cards_service.get_published_card, handle)
+    if not found:
         raise HTTPException(status_code=404, detail="card not found")
-    return card.model_dump(mode="json")
+    card, claimed = found
+    return public_card_dict(card, claimed=claimed)
+
+
+@router.get("/by-handle/{handle}/view")
+async def get_card_view(handle: str):
+    from services.card_view import build_card_view
+
+    found = await asyncio.to_thread(cards_service.get_published_card, handle)
+    if not found:
+        raise HTTPException(status_code=404, detail="card not found")
+    card, claimed = found
+    return build_card_view(card, claimed=claimed)
 
 
 @router.patch("/by-handle/{handle}")
@@ -272,15 +307,63 @@ async def refresh_memory(
     if stored_owner.lower() != principal.email.lower():
         raise HTTPException(status_code=403, detail="not the card owner")
 
-    from services.zynd_memory import fetch_findability
+    from services.zynd_memory import fetch_findability, ping_revalidate, snapshot_from_payload
     payload = fetch_findability(principal.email)
-    zynd_memory: list[dict] | None = None
-    if payload and payload.get("connected"):
-        zynd_memory = payload.get("facts") or []
+    if payload is None:
+        return {"zynd_memory": card.zynd_memory}
+    zynd_memory = snapshot_from_payload(payload)
     ok = await asyncio.to_thread(cards_service.update_card_memory, handle, zynd_memory)
     if not ok:
         raise HTTPException(status_code=404, detail="card not found")
+    ping_revalidate(handle)
     return {"zynd_memory": zynd_memory}
+
+
+class ClaimRequest(BaseModel):
+    linkedin_url: str | None = None
+    claim_token: str | None = None
+
+
+@router.post("/by-handle/{handle}/claim")
+async def claim_handle(
+    handle: str,
+    body: ClaimRequest | None = None,
+    authorization: str | None = Header(default=None),
+    x_claim_token: str | None = Header(default=None),
+):
+    principal = verify_supabase_jwt(authorization)
+    if not principal:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    payload = body or ClaimRequest()
+    status = await asyncio.to_thread(
+        cards_service.claim_card,
+        handle,
+        principal.email,
+        linkedin_url=payload.linkedin_url,
+        claim_token=x_claim_token or payload.claim_token,
+    )
+    if status == "not_found":
+        raise HTTPException(status_code=404, detail="card not found")
+    if status == "already_owned":
+        raise HTTPException(status_code=403, detail="this card is already claimed")
+    if status == "need_linkedin":
+        raise HTTPException(status_code=422, detail="card has no LinkedIn URL; use the claim token")
+    if status == "mismatch":
+        raise HTTPException(status_code=403, detail="LinkedIn account does not match this card")
+    found = await asyncio.to_thread(cards_service.get_published_card, handle)
+    if not found:
+        return {"status": "ok", "claimed": True}
+    from services.card_view import public_card_dict
+    card, claimed = found
+    return {"status": "ok", "claimed": claimed, "card": public_card_dict(card, claimed=claimed)}
+
+
+@router.post("/by-handle/{handle}/report-not-me")
+async def report_not_me(handle: str):
+    ok = await asyncio.to_thread(cards_service.hide_from_agents, handle)
+    if not ok:
+        raise HTTPException(status_code=404, detail="card not found")
+    return {"status": "ok"}
 
 
 @router.get("/by-handle/{handle}/suggested-posts")

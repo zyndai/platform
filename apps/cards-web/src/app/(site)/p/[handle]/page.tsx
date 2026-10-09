@@ -23,9 +23,12 @@ import { CountUp } from "./count-up";
 import { AutoScroll } from "./auto-scroll";
 import { ContributionHeatmap } from "./contribution-heatmap";
 import { ProfileChatWidget } from "@/components/ProfileChatWidget";
+import { FallbackAvatar } from "@/components/FallbackAvatar";
 import { WorkExperienceCard } from "./work-experience-card";
 import { HeroAskPanel } from "./hero-agent-bar";
 import { ProjectsCard } from "./projects-card";
+import { MemoryCard } from "./memory-card";
+import { ClaimBanner } from "./claim-banner";
 
 interface PageProps {
   params: Promise<{ handle: string }>;
@@ -326,19 +329,28 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const name = card.identity.name || "Profile";
   const headline = card.identity.headline;
   const canonical = cardCanonicalUrl(card);
+  const claimed = card.claimed !== false;
   return {
     ...pageMetadata({
       title: headline ? `${name} — ${headline} — Zynd` : `${name} — Zynd`,
       description: card.citation_snippet || card.summary,
       path: `/p/${handle}`,
     }),
+    ...(claimed ? {} : { robots: { index: false, follow: true } }),
     alternates: { canonical },
     openGraph: {
       type: "profile",
       url: canonical,
       title: headline ? `${name} — ${headline}` : name,
       description: card.citation_snippet || card.summary,
+      // Per-card OG image comes from ./opengraph-image.tsx (file convention) —
+      // no generic image here.
       ...(card.identity.links.github ? { username: handle } : {}),
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: headline ? `${name} — ${headline} — Zynd` : `${name} — Zynd`,
+      description: card.citation_snippet || card.summary,
     },
   };
 }
@@ -378,6 +390,7 @@ export default async function PersonPage({ params }: PageProps) {
   }
 
   const { identity } = card;
+  const claimed = card.claimed !== false;
   const v = buildView(card);
   const canonical = cardCanonicalUrl(card);
   // Shown and copied without the scheme; this is where the card actually lives
@@ -396,28 +409,32 @@ export default async function PersonPage({ params }: PageProps) {
   const ghAvatar = githubAvatar(identity.links?.github);
   const avatarUrl = rawAvatar ?? ghAvatar;
   const heroAvatarSrc = imgProxy(rawAvatar, ghAvatar, card.handle || handle);
-  const verified = card.review?.status === "human_approved";
+  const linkedinLinked = !!identity.links?.linkedin;
   const skills = card.skills.slice().sort((a, b) => b.evidence_count - a.evidence_count);
 
-  /* Résumé-relevant slice of the card, handed to the Export / Share menu. */
-  const resumeData: ResumeData = {
-    name: identity.name || card.handle || card.id,
-    headline: isBlank(identity.headline) ? null : identity.headline,
-    location: isBlank(identity.location) ? null : identity.location,
-    summary: isBlank(card.summary) ? null : card.summary,
-    experienceYears: card.experience_years,
-    profileUrl: canonical,
-    links: v.links.map(([platform, url]) => ({ platform, url })),
-    skills: skills.map((s) => ({ name: s.name, level: s.level })),
-    work: (card.work_experience ?? []).filter((j) => !!(j.title || j.company)),
-    projects: v.projects.map((p) => ({
-      name: p.name,
-      description: p.description,
-      url: p.url,
-      tech: p.tech,
-      stars: p.stars,
-    })),
-  };
+  /* Résumé-relevant slice of the card, handed to the Export / Share menu.
+     Unclaimed cards get no résumé export: nothing but the owner should be
+     able to turn a scraped profile into a document. */
+  const resumeData: ResumeData | null = claimed
+    ? {
+        name: identity.name || card.handle || card.id,
+        headline: isBlank(identity.headline) ? null : identity.headline,
+        location: isBlank(identity.location) ? null : identity.location,
+        summary: isBlank(card.summary) ? null : card.summary,
+        experienceYears: card.experience_years,
+        profileUrl: canonical,
+        links: v.links.map(([platform, url]) => ({ platform, url })),
+        skills: skills.map((s) => ({ name: s.name, level: s.level })),
+        work: (card.work_experience ?? []).filter((j) => !!(j.title || j.company)),
+        projects: v.projects.map((p) => ({
+          name: p.name,
+          description: p.description,
+          url: p.url,
+          tech: p.tech,
+          stars: p.stars,
+        })),
+      }
+    : null;
 
   const syncedAt = (() => {
     const d = new Date(card.updated_at);
@@ -542,8 +559,9 @@ export default async function PersonPage({ params }: PageProps) {
   const linkedinAvatarSrc = imgProxy(safeUrl(card.linkedin_stats?.avatar) ?? rawAvatar, ghAvatar, card.handle || handle);
   const xAvatarSrc = imgProxy(safeUrl(card.x_stats?.avatar) ?? rawAvatar, ghAvatar, card.handle || handle);
   const xImpressions = v.x.impressions != null && String(v.x.impressions).trim() !== "—" ? v.x.impressions : null;
-  const showMemory = memoryTotal > 0;
-  const socialSlots = [showLinkedin, showX, showMemory, bookingLinks.length > 0].filter(Boolean).length;
+  const showMemory = claimed && memoryTotal > 0;
+  const showBooking = claimed && bookingLinks.length > 0;
+  const socialSlots = [showLinkedin, showX, showMemory, showBooking].filter(Boolean).length;
   const weekLabels = ["S", "M", "T", "W", "T", "F", "S"];
   const todayIdx = new Date().getDay();
 
@@ -692,6 +710,11 @@ export default async function PersonPage({ params }: PageProps) {
       <div className="pf-page" style={{ backgroundColor: "#f5f6f8", minHeight: "100vh" }}>
         <div className="pf-inner" style={{ maxWidth: 1300, margin: "0 auto", padding: "24px 24px 56px" }}>
 
+          {/* ── UNCLAIMED BANNER ── */}
+          {!claimed && (
+            <ClaimBanner handle={card.handle ?? handle} name={identity.name} />
+          )}
+
           {/* ── HEADER ── */}
           <header className="pf-header flex justify-between items-center pb-5">
             <div className="pf-mono text-[0.75rem] text-slate-500">
@@ -702,10 +725,17 @@ export default async function PersonPage({ params }: PageProps) {
               <strong className="text-slate-800">@{card.handle || card.id}</strong>
             </div>
             <div className="pf-header-actions flex gap-2.5 items-center flex-wrap justify-end">
-              <span className="pf-synthesis-badge inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-[0.7rem] pf-mono font-bold text-emerald-700">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                SYNTHESIS_ACTIVE
-              </span>
+              {claimed ? (
+                <span className="pf-synthesis-badge inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-[0.7rem] pf-mono font-bold text-emerald-700">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  LIVE{syncedAt ? ` · UPDATED ${syncedAt}` : " PROFILE"}
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-200 text-[0.7rem] pf-mono font-bold text-amber-700">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                  UNCLAIMED
+                </span>
+              )}
               <ShareQrGroup url={canonical} name={identity.name || "Profile"} handle={card.handle ?? card.id} avatarUrl={heroAvatarSrc ?? avatarUrl} resume={resumeData} />
               {isOwner && <EditCardButton handle={card.handle ?? card.id} />}
               {!isSignedIn && <ProfileSignIn handle={card.handle ?? handle} />}
@@ -746,8 +776,8 @@ export default async function PersonPage({ params }: PageProps) {
                   <div style={{ fontSize: "0.72rem", fontWeight: 600, opacity: 0.8 }}>I&apos;m</div>
                   <div className="pf-hero-name" style={{ fontSize: "1.45rem", fontWeight: 800, lineHeight: 1.05, margin: "2px 0 0", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span>{nameLines.map((line, i) => <span key={i}>{line}{i < nameLines.length - 1 ? " " : ""}</span>)}</span>
-                    {verified && (
-                      <BadgeCheck size={22} color="#FBBF24" fill="#FBBF24" stroke="#6d64f6" strokeWidth={1.5} aria-label="Verified" />
+                    {linkedinLinked && (
+                      <BadgeCheck size={22} color="#FBBF24" fill="#FBBF24" stroke="#6d64f6" strokeWidth={1.5} aria-label="LinkedIn linked" />
                     )}
                   </div>
                 </div>
@@ -805,7 +835,7 @@ export default async function PersonPage({ params }: PageProps) {
                 <div className={`${card_} tc`}>
                   <div>
                     <div className={label_}>
-                      <span>┌ DOSSIER SUMMARY</span>
+                      <span>┌ ABOUT</span>
                       <span>┐</span>
                     </div>
                     <p style={{ fontSize: "0.85rem", color: "#0f172a", fontWeight: 600, lineHeight: 1.65, marginBottom: 16 }}>
@@ -861,11 +891,11 @@ export default async function PersonPage({ params }: PageProps) {
               return (
             <div className="pf-ai-fact" style={{ background: "#0f172a", borderRadius: 20, color: "#fff", display: "flex", flexDirection: "column" }}>
               <div className="pf-mono flex justify-between items-center" style={{ fontSize: "0.65rem", color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                <span>AI DISCOVERABILITY FACT</span>
-                <span style={{ background: "rgba(255,255,255,0.1)", color: "#e2e8f0", padding: "3px 10px", borderRadius: 99 }}>Zynd Index</span>
+                <span>FOR AI AGENTS</span>
+                <span style={{ background: "rgba(255,255,255,0.1)", color: "#e2e8f0", padding: "3px 10px", borderRadius: 99 }}>ZYND</span>
               </div>
               <div className="pf-mono pf-code" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: "16px 18px", fontSize: "0.72rem", lineHeight: 1.45, margin: "14px 0 0", flex: 1, minHeight: 0, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-                <div style={{ color: "#64748b" }}>{"// structured discovery profile"}</div>
+                <div style={{ color: "#64748b" }}>{"// machine-readable profile"}</div>
                 <div><span style={{ color: "#38bdf8" }}>entity</span><span style={{ color: "#94a3b8" }}>:</span> <span style={{ color: "#fde047" }}>{q(identity.name)}</span></div>
                 {!isBlank(identity.headline) && (
                   <div><span style={{ color: "#38bdf8" }}>role</span><span style={{ color: "#94a3b8" }}>:</span> <span style={{ color: "#fde047" }}>{q(identity.headline)}</span></div>
@@ -893,7 +923,7 @@ export default async function PersonPage({ params }: PageProps) {
                 )}
               </div>
               <div className="pf-mono" style={{ fontSize: "0.65rem", color: "#64748b", paddingTop: 12, lineHeight: 1.5, flexShrink: 0 }}>
-                Indexed for AI agents (ChatGPT, Claude, Perplexity) to discover and recommend {firstName}.
+                AI assistants (ChatGPT, Claude, Perplexity) can read this profile and recommend {firstName}.
               </div>
             </div>
               );
@@ -1028,40 +1058,11 @@ export default async function PersonPage({ params }: PageProps) {
 
             {/* ── SOCIAL: ZYND MEMORY ── */}
             {showMemory && (
-              <div
-                className="pf-social-card"
-                style={{ background: "#0f172a", borderRadius: 20, padding: 16, color: "#fff", overflow: "hidden" }}
-              >
-                <div className="pf-mono flex justify-between items-start mb-3" style={{ fontSize: "0.65rem", fontWeight: 700 }}>
-                  <span>● ZYND MEMORY</span>
-                  <span style={{ color: "#64748b" }}>LIVE</span>
-                </div>
-                <div style={{ fontSize: "1.1rem", fontWeight: 800, marginBottom: 2 }}>What {firstName}&apos;s working on</div>
-                <div style={{ fontSize: "0.75rem", fontWeight: 400, color: "#94a3b8", marginBottom: 12 }}>Synced from coding agents</div>
-                <div className="pf-mono flex-1" style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: "0.7rem", overflow: "hidden" }}>
-                  {memoryGroups.slice(0, 3).map((g) => (
-                    <div key={g.key}>
-                      <span style={{ color: "#fbbf24" }}>▼</span>{" "}
-                      <span style={{ textTransform: "uppercase", letterSpacing: "0.05em" }}>{g.label}</span><br />
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
-                        {g.items.slice(0, 3).map((item) => (
-                          <span key={item.text} style={{ background: "rgba(255,255,255,0.1)", borderRadius: 6, padding: "2px 6px", fontSize: "0.6rem" }}>
-                            {item.text}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="pf-mono flex justify-between mt-auto pt-3" style={{ borderTop: "1px solid rgba(255,255,255,0.08)", fontSize: "0.6rem", color: "#64748b" }}>
-                  <span>{memoryTotal} KEY POINTS</span>
-                  <span>ZYND</span>
-                </div>
-              </div>
+              <MemoryCard firstName={firstName} groups={memoryGroups} total={memoryTotal} />
             )}
 
             {/* ── BOOK A CALL (only when a Calendly or Google Calendar link exists) ── */}
-            {bookingLinks.length > 0 && (
+            {showBooking && (
               <div
                 className="pf-book-card pf-social-card"
                 style={{ background: "linear-gradient(160deg, #2563eb 0%, #1d4ed8 48%, #1e3a8a 100%)", borderRadius: 20, padding: 16, color: "#fff" }}
@@ -1151,10 +1152,11 @@ export default async function PersonPage({ params }: PageProps) {
                       )}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                      <img
-                        src={imgProxy(githubAvatar(githubUrl, 80) ?? `https://github.com/${encodeURIComponent(ghLogin || githubHandle)}.png?size=80`, undefined, card.handle || handle)}
+                      <FallbackAvatar
+                        src={imgProxy(githubAvatar(githubUrl, 80) ?? `https://github.com/${encodeURIComponent(ghLogin || githubHandle)}.png?size=80`, undefined, card.handle || handle) ?? ""}
                         alt=""
-                        style={{ width: 44, height: 44, borderRadius: 12, objectFit: "cover", border: "1px solid #e2e8f0", flexShrink: 0, background: "#f8fafc" }}
+                        initials={initials}
+                        size={44}
                       />
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontSize: "0.95rem", fontWeight: 800, color: "#0f172a" }}>{identity.name}</div>
@@ -1336,7 +1338,7 @@ export default async function PersonPage({ params }: PageProps) {
             <div className="flex items-center gap-2">
               <span style={{ fontWeight: 700, color: "#0f172a" }}>ZYND.AI</span>
               <span>•</span>
-              <span>Algorithmic Dossier &amp; Synthesis Protocol</span>
+              <span>One living profile · synced from LinkedIn, GitHub &amp; AI tools</span>
             </div>
             <div className="pf-footer-links flex flex-wrap items-center gap-3">
               <div className="pf-permalink-badge flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gray-50 border border-gray-200">
@@ -1344,7 +1346,7 @@ export default async function PersonPage({ params }: PageProps) {
                 <CopyPermalinkIcon url={`https://${permalink}`} />
               </div>
               <Link href="/directory" className="hover:text-slate-800">DIRECTORY</Link>
-              <a href={`/p/${card.handle ?? card.id}/data.json`} className="hover:text-slate-800">AGENT_API</a>
+              <a href={`/p/${card.handle ?? card.id}/data.json`} className="hover:text-slate-800">FOR AI</a>
               <Link href="/create" className="hover:text-slate-800">CREATE</Link>
             </div>
           </footer>
@@ -1352,7 +1354,7 @@ export default async function PersonPage({ params }: PageProps) {
         </div>
       </div>
 
-      <ProfileChatWidget handle={card.handle ?? card.id} personName={identity.name} />
+      {claimed && <ProfileChatWidget handle={card.handle ?? card.id} personName={identity.name} />}
     </>
   );
 }

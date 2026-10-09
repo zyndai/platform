@@ -72,6 +72,7 @@ async def refresh_all_cards_memory() -> dict:
         if facts is None:
             stats["not_connected"] += 1
             continue
+        facts = cards_service.dedupe_memory_facts(facts) if isinstance(facts, list) else facts
         try:
             card = cards_service._row_to_card(row)
         except Exception as exc:  # noqa: BLE001

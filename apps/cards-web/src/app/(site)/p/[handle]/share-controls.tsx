@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { Check, ChevronDown, Copy, Download, FileText, Link2, QrCode, Share2 } from "lucide-react";
+import { Check, ChevronDown, Copy, Download, FileText, Link2, Maximize2, QrCode, Share2, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 
 import { ResumePicker } from "./resume-picker";
@@ -421,9 +421,11 @@ export function ShareQrGroup({
   const [copied, setCopied] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
+  const [qrFull, setQrFull] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
+  const fullSvgRef = useRef<SVGSVGElement>(null);
 
   const onCopyLink = useCallback(async () => {
     await writeClipboard(url);
@@ -535,26 +537,85 @@ export function ShareQrGroup({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setQrOpen(false)} aria-hidden />
           <div className="absolute right-0 top-full mt-2 z-50 bg-white border border-[#E5E5DE] rounded-2xl shadow-xl p-4 flex flex-col items-center gap-2.5">
-            <div className="rounded-xl overflow-hidden border border-[#F0F0EA] p-2.5 bg-white leading-none">
-              <QRCodeSVG ref={svgRef} value={url} size={136} fgColor="#0B0B0B" bgColor="#ffffff" level="M" marginSize={0} />
+            <div className="rounded-xl overflow-hidden border border-[#F0F0EA] p-3 bg-white leading-none">
+              <QRCodeSVG
+                ref={svgRef}
+                value={url}
+                size={272}
+                fgColor="#0B0B0B"
+                bgColor="#ffffff"
+                level="M"
+                marginSize={4}
+                style={{ width: "min(272px, 66vw)", height: "min(272px, 66vw)" }}
+              />
             </div>
-            <span className="font-mono text-[10px] text-[#8E8E88] break-all max-w-[170px] text-center leading-snug">
+            <span className="font-mono text-[10px] text-[#8E8E88] break-all max-w-[280px] text-center leading-snug">
               {url.replace(/^https?:\/\//, "")}
             </span>
             <span className="font-mono text-[9px] uppercase tracking-widest text-[#7B72E9] font-bold">
               Scan to view profile
             </span>
-            <button
-              type="button"
-              onClick={onDownload}
-              disabled={downloading}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black text-white hover:bg-[#333] transition-colors font-mono text-[10px]! font-semibold mt-0.5 disabled:opacity-60"
-            >
-              <Download size={12} />
-              {downloading ? "Building…" : "Download Identity Card"}
-            </button>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <button
+                type="button"
+                onClick={() => setQrFull(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#E5E5DE] text-[#0B0B0B] hover:bg-[#F5F5F0] transition-colors font-mono text-[10px]! font-semibold"
+              >
+                <Maximize2 size={12} />
+                Fullscreen
+              </button>
+              <button
+                type="button"
+                onClick={onDownload}
+                disabled={downloading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black text-white hover:bg-[#333] transition-colors font-mono text-[10px]! font-semibold disabled:opacity-60"
+              >
+                <Download size={12} />
+                {downloading ? "Building…" : "Download Identity Card"}
+              </button>
+            </div>
           </div>
         </>
+      )}
+
+      {/* QR fullscreen */}
+      {qrFull && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="QR code"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4"
+          onClick={() => setQrFull(false)}
+        >
+          <div
+            className="flex flex-col items-center gap-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="rounded-2xl bg-white p-5 leading-none" style={{ maxWidth: "90vw" }}>
+              <QRCodeSVG
+                ref={fullSvgRef}
+                value={url}
+                size={320}
+                fgColor="#0B0B0B"
+                bgColor="#ffffff"
+                level="Q"
+                marginSize={4}
+                style={{ width: "min(320px, 76vw)", height: "min(320px, 76vw)" }}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => downloadQrSvg(fullSvgRef.current)} className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white text-black hover:bg-[#eee] transition-colors font-mono text-[11px]! font-semibold">
+                <Download size={13} /> SVG
+              </button>
+              <button type="button" onClick={() => downloadQrPng(fullSvgRef.current, handle)} className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white text-black hover:bg-[#eee] transition-colors font-mono text-[11px]! font-semibold">
+                <Download size={13} /> PNG
+              </button>
+              <button type="button" onClick={() => setQrFull(false)} className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white/10 text-white border border-white/25 hover:bg-white/20 transition-colors font-mono text-[11px]! font-semibold">
+                <X size={13} /> Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {pickerOpen && resume && (
@@ -577,6 +638,53 @@ async function writeClipboard(text: string): Promise<void> {
     ta.select();
     document.execCommand("copy");
     document.body.removeChild(ta);
+  }
+}
+
+function downloadQrSvg(svg: SVGSVGElement | null) {
+  if (!svg) return;
+  const clone = svg.cloneNode(true) as SVGSVGElement;
+  clone.setAttribute("width", "640");
+  clone.setAttribute("height", "640");
+  const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "zynd-qr.svg";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function downloadQrPng(svg: SVGSVGElement | null, handle: string) {
+  if (!svg) return;
+  const svgText = new XMLSerializer().serializeToString(svg);
+  const blob = new Blob([svgText], { type: "image/svg+xml" });
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("svg load failed"));
+      img.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = 1280;
+    canvas.height = 1280;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const png = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!png) return;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(png);
+    a.download = `zynd-${handle}-qr.png`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch {
+    // best-effort export
+  } finally {
+    URL.revokeObjectURL(url);
   }
 }
 
@@ -649,10 +757,18 @@ export function QrButton({ url }: { url: string }) {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden />
           <div className="absolute right-0 top-full mt-2 z-50 bg-white border border-[#E5E5DE] rounded-2xl shadow-xl p-4 flex flex-col items-center gap-2.5">
-            <div className="rounded-xl overflow-hidden border border-[#F0F0EA] p-2.5 bg-white leading-none">
-              <QRCodeSVG value={url} size={136} fgColor="#0B0B0B" bgColor="#ffffff" level="M" marginSize={0} />
+            <div className="rounded-xl overflow-hidden border border-[#F0F0EA] p-3 bg-white leading-none">
+              <QRCodeSVG
+                value={url}
+                size={272}
+                fgColor="#0B0B0B"
+                bgColor="#ffffff"
+                level="M"
+                marginSize={4}
+                style={{ width: "min(272px, 66vw)", height: "min(272px, 66vw)" }}
+              />
             </div>
-            <span className="font-mono text-[10px] text-[#8E8E88] break-all max-w-[170px] text-center leading-snug">
+            <span className="font-mono text-[10px] text-[#8E8E88] break-all max-w-[280px] text-center leading-snug">
               {url.replace(/^https?:\/\//, "")}
             </span>
             <span className="font-mono text-[9px] uppercase tracking-widest text-[#7B72E9] font-bold">

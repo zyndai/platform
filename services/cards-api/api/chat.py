@@ -1,17 +1,39 @@
 """Profile chatbot — streams Cloudflare Workers AI response for a given card handle."""
 import json
 import logging
+import time
+from collections import defaultdict, deque
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import config
-from services.cards import get_card_by_handle
+from services.cards import card_is_claimed, get_card_by_handle
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Per-handle (+ per-IP when one is visible) sliding-window rate limit.
+# Kept in-process: chat is a public, unauthenticated endpoint and the goal is
+# abuse control, not perfect accounting.
+_WINDOW_SECONDS = 60
+_MAX_PER_WINDOW = 12
+_hits: dict[str, deque[float]] = defaultdict(deque)
+
+
+def _rate_limited(key: str) -> bool:
+    now = time.monotonic()
+    q = _hits[key]
+    while q and now - q[0] > _WINDOW_SECONDS:
+        q.popleft()
+    if len(q) >= _MAX_PER_WINDOW:
+        return True
+    q.append(now)
+    if len(_hits) > 10_000:  # bound memory: drop the oldest-touched keys
+        _hits.clear()
+    return False
 
 
 class ChatRequest(BaseModel):
@@ -43,10 +65,10 @@ def _build_system_prompt(card: dict) -> str:
     website = links.get("website")
 
     lines = [
-        f"You are {name}. A visitor is messaging you on your profile page — reply as {first} would, first person.",
-        "Talk like a real person in a quick message: plain, direct, a little warm. No theatrics, no cheerleading.",
+        f"You are the AI assistant for {name}'s Zynd Card — not {name}. You help visitors understand this public profile.",
+        "You are an AI model and must say so plainly if asked. Never claim to be a human, never speak in the first person as if you were the card's owner.",
         "",
-        f"Facts about {name}:",
+        f"Public facts on {name}'s card (only these are fair game):",
         f"- What {first} does: {headline}" if headline else "",
         f"- Location: {location}" if location else "",
         f"- Summary: {summary}" if summary else "",
@@ -68,9 +90,10 @@ def _build_system_prompt(card: dict) -> str:
         "- Write like a text message. Plain words, natural rhythm.",
         "- No 'Hey there!', no exclamation marks, no em-dashes, no '—'.",
         "- No markdown: no asterisks, no bold, no bullet points, no backticks.",
-        "- Never say you are an AI, a model, or an assistant. Never say 'as an AI'.",
-        "- Don't know something? Say you're not sure and suggest reaching out directly.",
-        "- If they ask for contact details, to book a call, or for links (Calendly, GitHub, LinkedIn, X, website), share the full URL plainly on its own so it renders as a clickable link.",
+        "- Only answer from the facts above. If the card doesn't cover something, say so — never invent or guess.",
+        "- Refuse questions about private details, opinions, health, finances, or anything not on the card. Say the card doesn't include that.",
+        "- If asked whether you are AI or a human, say you are the AI assistant for this card.",
+        "- If they ask how to contact the owner, to book a call, or for links (Calendly, GitHub, LinkedIn, X, website), share the full URL plainly on its own so it renders as a clickable link.",
         "- Match the visitor's language. If they write in Hindi, reply in Hindi.",
         "- A short follow-up question only if it feels natural. Don't force one every time.",
     ]
@@ -131,13 +154,20 @@ async def _stream_cf(system_prompt: str, messages: list[dict]):
 
 
 @router.post("/{handle}")
-async def chat(handle: str, body: ChatRequest):
+async def chat(handle: str, body: ChatRequest, request: Request):
     if not config.CLOUDFLARE_ACCOUNT_ID or not config.CLOUDFLARE_AI_KEY:
         raise HTTPException(status_code=503, detail="Chatbot not configured")
 
     card_obj = get_card_by_handle(handle)
     if not card_obj:
         raise HTTPException(status_code=404, detail="Card not found")
+
+    if card_is_claimed(handle) is False:
+        raise HTTPException(status_code=403, detail="This card is unclaimed and has no assistant")
+
+    client_ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or "anon"
+    if _rate_limited(f"{handle}|{client_ip}"):
+        raise HTTPException(status_code=429, detail="Too many questions — please slow down")
 
     system_prompt = _build_system_prompt(card_obj.model_dump())
 

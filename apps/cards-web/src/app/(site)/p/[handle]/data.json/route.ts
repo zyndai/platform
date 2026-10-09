@@ -17,6 +17,21 @@ export async function GET(_req: Request, { params }: Params) {
     });
   }
 
+  // S03: unclaimed cards stay quiet to agents — a minimal marker, no facts.
+  if (card.claimed === false) {
+    return new Response(
+      JSON.stringify({ claimed: false, error: "unclaimed — this card's owner has not published it for agents" }, null, 2),
+      {
+        status: 410,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600",
+          "Access-Control-Allow-Origin": "*",
+        },
+      },
+    );
+  }
+
   const { identity } = card;
   const canonical = cardCanonicalUrl(card);
 
@@ -25,6 +40,23 @@ export async function GET(_req: Request, { params }: Params) {
     .filter((v) => /^https?:\/\//.test(v));
 
   const image = /^https?:\/\//.test(identity.avatar_url || "") ? identity.avatar_url : undefined;
+
+  const knowsAbout = card.skills.map((s) => s.name).filter(Boolean);
+  const credentials = card.skills
+    .filter((s) => s.name && s.level)
+    .map((s) => ({
+      "@type": "EducationalOccupationalCredential",
+      name: s.name,
+      competencyRequired: s.level,
+    }));
+
+  const currentJobs = (card.work_experience ?? [])
+    .filter((j) => /^(present|current|now)$/i.test((j.end_date || "").trim()) && (j.title || j.company))
+    .map((j) => ({
+      "@type": "Organization",
+      name: j.company || j.title,
+      ...(j.title && j.company ? { department: { "@type": "Organization", name: j.title } } : {}),
+    }));
 
   const entity = {
     "@context": "https://schema.org",
@@ -36,35 +68,16 @@ export async function GET(_req: Request, { params }: Params) {
     ...(image ? { image } : {}),
     ...(identity.headline ? { jobTitle: identity.headline } : {}),
     ...(identity.location ? { address: { "@type": "PostalAddress", addressLocality: identity.location } } : {}),
-    sameAs,
-    knowsAbout: card.skills.map((s) => s.name),
-    ...(card.skills.length
-      ? {
-          hasCredential: card.skills.map((s) => ({
-            "@type": "EducationalOccupationalCredential",
-            name: s.name,
-            competencyRequired: s.level,
-          })),
-        }
-      : {}),
-    ...(card.projects.length
-      ? {
-          worksFor: card.projects
-            .filter((p) => /^https?:\/\//.test(p.url || ""))
-            .map((p) => ({
-              "@type": "Project",
-              name: p.name,
-              description: p.description,
-              url: p.url,
-            })),
-        }
-      : {}),
+    ...(sameAs.length ? { sameAs } : {}),
+    ...(knowsAbout.length ? { knowsAbout } : {}),
+    ...(credentials.length ? { hasCredential: credentials } : {}),
+    ...(currentJobs.length ? { worksFor: currentJobs } : {}),
     // Zynd-specific extensions
     "zynd:handle": handle,
     "zynd:card_id": card.id,
-    "zynd:citation": card.citation_snippet,
-    "zynd:facts": card.searchable_facts,
-    "zynd:verified_at": card.updated_at,
+    ...(card.citation_snippet ? { "zynd:citation": card.citation_snippet } : {}),
+    ...(card.searchable_facts?.length ? { "zynd:facts": card.searchable_facts } : {}),
+    ...(card.updated_at ? { "zynd:verified_at": card.updated_at } : {}),
   };
 
   return new Response(JSON.stringify(entity, null, 2), {

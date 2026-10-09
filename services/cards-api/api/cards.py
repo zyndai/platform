@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Header, HTTPException, Query
+from pydantic import BaseModel
 
 import config
 from api.auth import verify_supabase_jwt
@@ -43,9 +44,12 @@ router = APIRouter()
 async def search_cards(q: str = Query("", max_length=200)):
     if q:
         cards = cards_service.search_cards(q)
-    else:
-        cards = cards_service.list_published()
-    return [c.model_dump(mode="json") for c in cards]
+        claimed = cards_service.claimed_by_handles([c.handle for c in cards if c.handle])
+        return [
+            {**c.model_dump(mode="json"), "claimed": claimed.get(c.handle, False)}
+            for c in cards
+        ]
+    return cards_service.list_published_public()
 
 
 # /mine must come before /{card_id} so FastAPI doesn't match "mine" as a card_id
@@ -58,7 +62,7 @@ async def get_my_card(authorization: str | None = Header(default=None)):
     if not result:
         return None
     card, handle = result
-    return {"card": card.model_dump(mode="json"), "handle": handle}
+    return {"card": {**card.model_dump(mode="json"), "claimed": True}, "handle": handle}
 
 
 @router.get("/handle-available/{handle}")
@@ -75,10 +79,78 @@ async def check_handle_available(handle: str):
 
 @router.get("/by-handle/{handle}")
 async def get_card_by_handle(handle: str):
-    card = await asyncio.to_thread(cards_service.get_card_by_handle, handle)
+    card = await asyncio.to_thread(cards_service.get_card_by_handle_public, handle)
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
-    return card.model_dump(mode="json")
+    return card
+
+
+class NotMeRequest(BaseModel):
+    note: str | None = None
+
+
+class AliasRequest(BaseModel):
+    alias: str | None = None
+
+
+@router.patch("/by-handle/{handle}/alias")
+async def set_alias(
+    handle: str,
+    body: AliasRequest,
+    authorization: str | None = Header(default=None),
+):
+    """S07: set or clear the card's short share alias (cards.zynd.ai/<alias>).
+    Owner-only; reserved words and collisions are rejected."""
+    principal = verify_supabase_jwt(authorization)
+    if not principal:
+        raise HTTPException(status_code=401, detail="Sign in to edit this card")
+    ok, message, alias = await asyncio.to_thread(
+        cards_service.set_card_alias, handle, body.alias, principal.email
+    )
+    if not ok:
+        status = 404 if message == "card not found" else 403 if message == "not the card owner" else 400
+        raise HTTPException(status_code=status, detail=message)
+    return {"alias": alias}
+
+
+@router.get("/by-alias/{alias}")
+async def get_card_by_alias(alias: str):
+    card = await asyncio.to_thread(cards_service.get_card_by_alias, alias)
+    if not card:
+        raise HTTPException(status_code=404, detail="card not found")
+    return card
+
+
+@router.post("/by-handle/{handle}/claim")
+async def claim_card(handle: str, authorization: str | None = Header(default=None)):
+    """Claim an unowned card by matching the signed-in LinkedIn identity to the
+    card's LinkedIn URL. The legacy claim-token path stays as a fallback."""
+    principal = verify_supabase_jwt(authorization)
+    if not principal:
+        raise HTTPException(status_code=401, detail="Sign in to claim this card")
+    claimed, message = await asyncio.to_thread(cards_service.claim_card_by_owner, handle, principal)
+    if not claimed:
+        status = 404 if message == "card not found" else 403
+        raise HTTPException(status_code=status, detail=message)
+    return {"claimed": True, "handle": handle}
+
+
+@router.post("/by-handle/{handle}/report-not-me")
+async def report_not_me(
+    handle: str,
+    body: NotMeRequest | None = None,
+    authorization: str | None = Header(default=None),
+):
+    """'Not me' report: hides the card from every public surface immediately and
+    queues it for takedown review."""
+    principal = verify_supabase_jwt(authorization)
+    requester_user_id = principal.sub if principal and principal.iss == config.AAFO_ISSUER else None
+    ok = await asyncio.to_thread(
+        cards_service.request_takedown, handle, requester_user_id, body.note if body else None
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="card not found")
+    return {"removed": True}
 
 
 @router.patch("/by-handle/{handle}")
@@ -274,13 +346,14 @@ async def refresh_memory(
 
     from services.zynd_memory import fetch_findability
     payload = fetch_findability(principal.email)
+    connected = bool(payload and payload.get("connected"))
     zynd_memory: list[dict] | None = None
-    if payload and payload.get("connected"):
+    if connected:
         zynd_memory = payload.get("facts") or []
     ok = await asyncio.to_thread(cards_service.update_card_memory, handle, zynd_memory)
     if not ok:
         raise HTTPException(status_code=404, detail="card not found")
-    return {"zynd_memory": zynd_memory}
+    return {"zynd_memory": zynd_memory, "connected": connected}
 
 
 @router.get("/by-handle/{handle}/suggested-posts")
@@ -370,4 +443,5 @@ async def get_card(card_id: str):
     card = await asyncio.to_thread(cards_service.get_card, card_id)
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
-    return card.model_dump(mode="json")
+    claimed = cards_service.card_is_claimed(card.handle) if card.handle else True
+    return {**card.model_dump(mode="json"), "claimed": bool(claimed)}

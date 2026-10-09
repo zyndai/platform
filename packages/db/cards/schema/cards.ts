@@ -30,6 +30,9 @@ export const agentProfileCards = cards.table(
     scrapeRaw: jsonb('scrape_raw'),
     userIntent: jsonb('user_intent'),
     ownerEmail: text('owner_email'),
+    // S07: optional short share alias. cards.zynd.ai/<alias> redirects to the
+    // canonical /p/<handle>; reserved words are rejected in cards-api.
+    alias: text('alias').unique('agent_profile_cards_alias_key'),
     suggestedPosts: jsonb('suggested_posts'),
     claimTokenHash: text('claim_token_hash'),
     // NEW (not in xmfj): the owner's aafo user — the same id persona uses.

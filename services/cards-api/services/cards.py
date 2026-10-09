@@ -4,6 +4,7 @@ import html
 import logging
 import re
 import secrets
+from urllib.parse import urlparse
 
 import config
 from models.card import AgentProfileCard, CardSynthesis, Source, WritingSample
@@ -18,6 +19,48 @@ def new_claim_token() -> tuple[str, str]:
     publisher once; only its hash is stored."""
     token = secrets.token_urlsafe(24)
     return token, hash_claim_token(token)
+
+
+def linkedin_handle_from_url(url: str | None) -> str | None:
+    """Normalised LinkedIn public handle from a profile URL, or None.
+
+    "https://www.linkedin.com/in/Chandan-Kumar/" → "chandan-kumar". Trailing
+    slugs like /details/experience are ignored.
+    """
+    if not url or not url.strip():
+        return None
+    try:
+        parsed = urlparse(url.strip())
+    except ValueError:
+        return None
+    host = (parsed.hostname or "").lower()
+    if host not in ("linkedin.com", "www.linkedin.com", "in.linkedin.com") and not host.endswith(".linkedin.com"):
+        return None
+    parts = [p for p in parsed.path.split("/") if p]
+    if not parts:
+        return None
+    first = parts[0].lower()
+    if first in ("in", "pub", "company", "school", "posts", "feed"):
+        if len(parts) < 2:
+            return None
+        first = parts[1].lower()
+    return first
+
+
+def owner_user_metadata_linkedin(principal) -> str | None:
+    """Best-effort LinkedIn handle for a signed-in Supabase user.
+
+    Supabase's linkedin_oidc provider puts the public handle in
+    user_metadata.preferred_username (and a numeric id in linkedin_id); the
+    older generic OAuth flow sometimes has full_name only. Return None when
+    nothing usable is present so the claim check can refuse cleanly.
+    """
+    md = getattr(principal, "user_metadata", None) or {}
+    for key in ("preferred_username", "user_name", "linkedin_handle", "linkedin"):
+        value = (md.get(key) or "").strip()
+        if value:
+            return value.lower()
+    return None
 
 
 def hash_claim_token(token: str) -> str:
@@ -297,10 +340,41 @@ def merge_scraped_posts(
     return result
 
 
+def dedupe_memory_facts(facts: list[dict] | None) -> list[dict] | None:
+    """Drop duplicate memory facts keyed on canonical predicate + lowercased object.
+
+    The memory layer can return the same fact from several sources ("Stocks"
+    and "stocks" as separate rows); dedupe so the public card and the edit page
+    agree on one entry per fact.
+    """
+    if not facts:
+        return facts
+    seen: set[tuple[str, str]] = set()
+    out: list[dict] = []
+    for fact in facts:
+        if not isinstance(fact, dict):
+            out.append(fact)
+            continue
+        predicate = str(fact.get("predicate", "") or "")
+        object_ = str(fact.get("object", "") or "").strip()
+        if not predicate and not object_:
+            # Free-form fact without a canonical key — keep as-is.
+            out.append(fact)
+            continue
+        key = (predicate, object_.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(fact)
+    return out
+
+
 def _row_to_card(row: dict) -> AgentProfileCard:
     data = dict(row["card"])
     if row.get("handle"):
         data["handle"] = row["handle"]
+    if "zynd_memory" in data and isinstance(data.get("zynd_memory"), list):
+        data["zynd_memory"] = dedupe_memory_facts(data["zynd_memory"])
     samples = data.get("writing_samples")
     if isinstance(samples, list):
         cleaned: list = []
@@ -437,6 +511,36 @@ def _postgrest_quote(value: str) -> str:
     """Quote a value inside a PostgREST or() filter so commas, dots or
     parentheses in it can't change the filter's meaning."""
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def claim_candidates_by_linkedin(linkedin_url: str) -> list[dict]:
+    """S08 claim-first: published cards whose LinkedIn URL matches, so onboarding
+    can offer "claim it" instead of building a duplicate. Unowned cards only —
+    a claimed card is the caller's own (or someone else's, never claimable).
+
+    Returns [{"handle", "name", "headline", "claimed"}...], never owner_email."""
+    handle = linkedin_handle_from_url(linkedin_url)
+    if not handle:
+        return []
+    sb = config.get_supabase()
+    # Normalise the stored URL's path the same way the matcher does: compare the
+    # LinkedIn handle, not the raw URL (trailing slashes / locale prefixes vary).
+    rows = list_published_rows(columns="card,handle,owner_email")
+    out: list[dict] = []
+    for row in rows:
+        card_url = ((row.get("card") or {}).get("identity") or {}).get("links", {}).get("linkedin")
+        if linkedin_handle_from_url(card_url) != handle:
+            continue
+        if _claimed_from_row(row):
+            continue
+        identity = (row.get("card") or {}).get("identity") or {}
+        out.append({
+            "handle": row.get("handle"),
+            "name": identity.get("name") or "",
+            "headline": identity.get("headline") or "",
+            "claimed": False,
+        })
+    return out
 
 
 def get_card_by_social_handle(
@@ -605,6 +709,244 @@ def list_published(limit: int = 1000) -> list[AgentProfileCard]:
     return [_row_to_card(r) for r in (resp.data or [])]
 
 
+def _claimed_from_row(row: dict) -> bool:
+    """A card is "claimed" when an owner has taken it over (owner_email set).
+    The email itself is never exposed — only this boolean."""
+    return bool((row.get("owner_email") or "").strip())
+
+
+def card_is_claimed(handle: str) -> bool | None:
+    """Claimed flag for one published card; None when the card doesn't exist."""
+    sb = config.get_supabase()
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("owner_email")
+        .eq("handle", handle)
+        .eq("status", "published")
+        .execute()
+    )
+    if not resp.data:
+        return None
+    return _claimed_from_row(resp.data[0])
+
+
+def claimed_by_handles(handles: list[str]) -> dict[str, bool]:
+    """Bulk claimed lookup for search/directory responses. The email itself is
+    never returned — only the boolean."""
+    if not handles:
+        return {}
+    sb = config.get_supabase()
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("handle,owner_email")
+        .in_("handle", handles)
+        .execute()
+    )
+    return {r["handle"]: _claimed_from_row(r) for r in (resp.data or [])}
+
+
+def get_card_by_handle_public(handle: str) -> dict | None:
+    """Card dict with the `claimed` flag, for public (unauthenticated) reads."""
+    sb = config.get_supabase()
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("card,handle,owner_email,alias")
+        .eq("handle", handle)
+        .eq("status", "published")
+        .execute()
+    )
+    rows = resp.data or []
+    if not rows:
+        # The handle may have been renamed — resolve through the previous
+        # handles recorded in the card JSON so old links keep working.
+        try:
+            resp = (
+                sb.table("agent_profile_cards")
+                .select("card,handle,owner_email,alias")
+                .contains("card", {"previous_handles": [handle]})
+                .eq("status", "published")
+                .limit(1)
+                .execute()
+            )
+            rows = resp.data or []
+        except Exception as exc:
+            logger.warning("previous-handle lookup failed handle=%s err=%s", handle, exc)
+            rows = []
+    if not rows:
+        return None
+    card = _row_to_card(rows[0])
+    return {
+        **card.model_dump(mode="json"),
+        "claimed": _claimed_from_row(rows[0]),
+        "alias": rows[0].get("alias"),
+    }
+
+
+def list_published_public(limit: int = 1000) -> list[dict]:
+    """All published cards as dicts with `claimed`, for the website's own
+    directory/llms/sitemap surfaces (never includes owner_email)."""
+    sb = config.get_supabase()
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("card,handle,owner_email,alias")
+        .eq("status", "published")
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    out: list[dict] = []
+    for r in resp.data or []:
+        card = _row_to_card(r)
+        out.append({
+            **card.model_dump(mode="json"),
+            "claimed": _claimed_from_row(r),
+            "alias": r.get("alias"),
+        })
+    return out
+
+
+def claim_card_by_owner(handle: str, principal: dict) -> tuple[bool, str]:
+    """Claim an unowned card when the signed-in LinkedIn identity matches the
+    card's LinkedIn URL. Returns (claimed, message).
+
+    Kept separate from the legacy claim-token path (update_card): this one is
+    driven by the S03 "Claim with LinkedIn" CTA and requires the OAuth identity
+    to match, not a one-time token.
+    """
+    sb = config.get_supabase()
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("owner_email,claim_token_hash,card,status")
+        .eq("handle", handle)
+        .execute()
+    )
+    if not resp.data:
+        return False, "card not found"
+    row = resp.data[0]
+    if _claimed_from_row(row):
+        return False, "this card is already claimed"
+    owner_email = (getattr(principal, "email", "") or "").strip()
+    if not owner_email:
+        return False, "signed-in account has no email"
+
+    card = _row_to_card(row)
+    card_linkedin = linkedin_handle_from_url(card.identity.links.get("linkedin"))
+    user_linkedin = owner_user_metadata_linkedin(principal)
+    if not card_linkedin:
+        return False, "this card has no LinkedIn profile to match against"
+    if not user_linkedin:
+        return False, "your LinkedIn identity could not be read — sign in with LinkedIn and try again"
+    if card_linkedin != user_linkedin:
+        return False, "your LinkedIn account does not match this card's LinkedIn profile"
+
+    sb.table("agent_profile_cards").update(
+        {"owner_email": owner_email, "claim_token_hash": None}
+    ).eq("handle", handle).execute()
+    return True, "claimed"
+
+
+# S07: short share alias. Paths the top-level /[alias] redirect route must
+# never swallow; static routes win in Next, but rejecting these keeps the
+# redirect surface unambiguous.
+RESERVED_ALIASES = {
+    "p", "find", "directory", "search", "api", "create", "for-ai", "auth",
+    "profile", "tag", "edit", "onboard", "mcp", "dashboard", "settings",
+    "home", "about", "contact", "help", "login", "logout", "account", "cards",
+    "zynd", "www", "assets", "images", "icons", "icon", "apple-icon",
+    "favicon.ico", "llms.txt", "llms-full.txt", "agents.txt", "sitemap.xml",
+    "robots.txt", "data.json", "opengraph-image", "_next", "web",
+}
+
+_ALIAS_RE = re.compile(r"[^a-z0-9-]")
+
+
+def normalize_alias(raw: str) -> str:
+    """Slug-ify a proposed alias the same way handles are slug-ified."""
+    return _ALIAS_RE.sub("", (raw or "").lower())[:30].strip("-")
+
+
+def set_card_alias(handle: str, raw_alias: str | None, owner_email: str) -> tuple[bool, str, str | None]:
+    """Set (or clear) a card's short alias. Owner-only; validates reserved
+    words and uniqueness. Returns (ok, message, final_alias)."""
+    slug = normalize_alias(raw_alias or "")
+    sb = config.get_supabase()
+    if raw_alias and (len(slug) < 2 or len(slug) > 30):
+        return False, "alias must be 2–30 letters, numbers, or hyphens", None
+    if slug and slug in RESERVED_ALIASES:
+        return False, f'"{slug}" is reserved — pick another alias', None
+    if slug:
+        clash = (
+            sb.table("agent_profile_cards")
+            .select("id")
+            .or_(f"alias.eq.{slug},handle.eq.{slug}")
+            .execute()
+        )
+        if clash.data:
+            return False, f'"{slug}" is taken — pick another alias', None
+    stored = (
+        sb.table("agent_profile_cards")
+        .select("owner_email")
+        .eq("handle", handle)
+        .execute()
+    )
+    if not stored.data:
+        return False, "card not found", None
+    if (stored.data[0].get("owner_email") or "").strip().lower() != (owner_email or "").strip().lower():
+        return False, "not the card owner", None
+    sb.table("agent_profile_cards").update({"alias": slug or None}).eq("handle", handle).execute()
+    return True, "saved", slug or None
+
+
+def get_card_by_alias(alias: str) -> dict | None:
+    """Public card dict (with `claimed`) for a short alias, or None."""
+    slug = normalize_alias(alias)
+    if not slug:
+        return None
+    sb = config.get_supabase()
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("card,handle,owner_email,alias")
+        .eq("alias", slug)
+        .eq("status", "published")
+        .limit(1)
+        .execute()
+    )
+    if not resp.data:
+        return None
+    row = resp.data[0]
+    card = _row_to_card(row)
+    return {**card.model_dump(mode="json"), "claimed": _claimed_from_row(row), "alias": row.get("alias")}
+
+
+def request_takedown(handle: str, requester_user_id: str | None, note: str | None) -> bool:
+    """Record a "not me" report and hide the card from every public surface
+    immediately by moving it out of `published` status (takedown review queue
+    decides restore vs delete)."""
+    sb = config.get_supabase()
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("id")
+        .eq("handle", handle)
+        .eq("status", "published")
+        .execute()
+    )
+    if not resp.data:
+        return False
+    try:
+        sb.table("takedown_requests").insert(
+            {
+                "handle": handle,
+                "requester_user_id": requester_user_id,
+                "note": (note or "").strip()[:1000] or None,
+                "status": "pending",
+            }
+        ).execute()
+    except Exception as exc:
+        logger.warning("takedown insert failed handle=%s err=%s", handle, exc)
+    sb.table("agent_profile_cards").update({"status": "takedown_requested"}).eq("handle", handle).execute()
+    return True
+
+
 def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:
     """Backend-only refresh of the stored ZYND memory snapshot on a card row.
 
@@ -622,7 +964,7 @@ def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:
     if not resp.data:
         return False
     card = _row_to_card(resp.data[0])
-    card.zynd_memory = zynd_memory
+    card.zynd_memory = dedupe_memory_facts(zynd_memory)
     card.updated_at = utcnow()
     sb.table("agent_profile_cards").update(
         {"card": card.model_dump(mode="json"), "updated_at": card.updated_at}

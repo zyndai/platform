@@ -29,6 +29,20 @@
       "when": 1790800000000,
       "tag": "0003_keyword_posts",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791486577241,
+      "tag": "0004_takedown_requests_and_alias",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791486713122,
+      "tag": "0005_unclaimed_search_functions",
+      "breakpoints": true
     }
   ]
 }

@@ -1,9 +1,10 @@
 "use client";
-import { useAuth } from "@/hooks/useAuth";
 
+/** Anchor to the owner-only edit page. The parent only renders this when the
+ *  viewer owns the card, so no client auth gate is needed here — rendering an
+ *  unconditional <a href> avoids the hydration race where the first click
+ *  lands while the button is still being swapped in. */
 export function EditCardButton({ handle }: { handle: string }) {
-  const { authenticated } = useAuth();
-  if (!authenticated) return null;
   return (
     <a
       href={`/p/${encodeURIComponent(handle)}/edit`}

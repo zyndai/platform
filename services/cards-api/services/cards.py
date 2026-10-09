@@ -347,8 +347,10 @@ def dedupe_memory_facts(facts: list[dict] | None) -> list[dict] | None:
     and "stocks" as separate rows); dedupe so the public card and the edit page
     agree on one entry per fact.
     """
+    if facts is None:
+        return None
     if not facts:
-        return facts
+        return []
     seen: set[tuple[str, str]] = set()
     out: list[dict] = []
     for fact in facts:
@@ -951,13 +953,14 @@ def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:
     """Backend-only refresh of the stored ZYND memory snapshot on a card row.
 
     Called by the periodic memory refresh cron, not by end users — no ownership
-    check. Only the card JSON changes; the search embedding is left untouched
-    (the memory section is not searchable content).
+    check. None = not connected (clears the snapshot). [] = connected, nothing
+    public. The search embedding is recomputed so /ask sees approved facts;
+    an embed failure leaves the previous embedding in place.
     """
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card")
+        .select("card,embedding")
         .eq("handle", handle)
         .execute()
     )
@@ -966,9 +969,16 @@ def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:
     card = _row_to_card(resp.data[0])
     card.zynd_memory = dedupe_memory_facts(zynd_memory)
     card.updated_at = utcnow()
-    sb.table("agent_profile_cards").update(
-        {"card": card.model_dump(mode="json"), "updated_at": card.updated_at}
-    ).eq("handle", handle).execute()
+    payload: dict = {"card": card.model_dump(mode="json"), "updated_at": card.updated_at}
+    try:
+        from services import embed
+
+        vec = embed.embed_text(embed.card_search_text(card))
+        if vec:
+            payload["embedding"] = vec
+    except Exception as exc:
+        logger.warning("re-embed after memory update failed handle=%s err=%s", handle, exc)
+    sb.table("agent_profile_cards").update(payload).eq("handle", handle).execute()
     return True
 
 

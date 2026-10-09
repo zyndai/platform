@@ -121,6 +121,14 @@ def search_agents(
             if hits:
                 score += 0.25 * (len(hits) / len(q_tokens))
                 reasons.append("Matches your search terms")
+            memory_blob = " ".join(
+                str(f.get("object") or f.get("value") or "")
+                for f in (card.zynd_memory or [])
+                if isinstance(f, dict)
+            ).lower()
+            if any(t and t in memory_blob for t in q_tokens):
+                score += 0.2
+                reasons.append("Approved fact")
 
         if role_norm and (role_norm in _norm(card.identity.headline) or role_norm in search_text):
             score += 0.25

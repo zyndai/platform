@@ -76,7 +76,22 @@ export async function GET(_req: Request, { params }: Params) {
     "zynd:handle": handle,
     "zynd:card_id": card.id,
     ...(card.citation_snippet ? { "zynd:citation": card.citation_snippet } : {}),
-    ...(card.searchable_facts?.length ? { "zynd:facts": card.searchable_facts } : {}),
+    ...((card.zynd_memory || []).some((f) => f && (f.object || f.value))
+      ? {
+          "zynd:facts": (card.zynd_memory || [])
+            .filter((f) => f && (f.object || f.value))
+            .map((f) => ({
+              text: f.object || f.value,
+              type: f.predicate || f.type || "",
+              source: f.source || "",
+              approved_at: f.approved_at || null,
+            })),
+        }
+      : card.searchable_facts?.length
+        ? { "zynd:facts": card.searchable_facts }
+        : {}),
+    "zynd:claimed": true,
+    "zynd:cite_as": canonical,
     ...(card.updated_at ? { "zynd:verified_at": card.updated_at } : {}),
   };
 

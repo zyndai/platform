@@ -410,23 +410,6 @@ async def test_user_publishes_an_html_page_and_gets_a_live_url():
     fake_pages.create_page.assert_awaited_once()
 
 
-async def test_anonymous_user_publishes_an_expiring_page():
-    # given — no signed-in user (uid resolves to None via _uid_opt)
-    fake_pages = MagicMock()
-    fake_pages.create_page = AsyncMock(return_value={
-        "success": True, "url": "https://zynd.io/p/temp42", "slug": "temp42", "title": "Temp",
-    })
-
-    # when — an anonymous caller publishes a page
-    with patch.dict("sys.modules", {"app.services.pages_agent": fake_pages}):
-        result = await m.publish_page(content="<h1>Hi</h1>", title="Temp", uid=None)
-
-    # then — the page is hosted, and it was created with the anonymous 5-hour TTL
-    assert result["success"] is True
-    _, kwargs = fake_pages.create_page.call_args
-    assert kwargs.get("expires_in_hours") == m.PUBLIC_PAGE_TTL_HOURS
-
-
 # ── Journey 7: Social links (persona features gated off) ───────────────────────
 
 

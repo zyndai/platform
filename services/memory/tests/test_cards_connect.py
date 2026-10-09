@@ -40,7 +40,7 @@ async def test_mints_token_and_upserts_user(client, monkeypatch):
     r = await _post(client, {"email": email, "display_name": "Alice"}, "svc-token")
     assert r.status_code == 200
     data = r.json()
-    assert data["mcp_url"].endswith("/cards-mcp")
+    assert data["mcp_url"].endswith("/mcp")
 
     # The token is a standard ZYND access JWT whose sub is the memory-layer uid.
     claims = pyjwt.decode(data["token"], settings.jwt_secret, algorithms=["HS256"],
@@ -85,7 +85,7 @@ async def test_minted_token_revocable(client, monkeypatch):
 async def test_persona_token_also_accepted_by_mcp_verifier(client, monkeypatch):
     """A personal token minted elsewhere (/token/exchange) verifies on the cards
     MCP verifier too — same JWT format, same revocation check."""
-    from app.cards_mcp import CardsTokenVerifier
+    from app.mcp_http import ZyndTokenVerifier as CardsTokenVerifier
     from app.db import get_pool
 
     monkeypatch.setattr(settings, "memory_service_token", "svc-token")

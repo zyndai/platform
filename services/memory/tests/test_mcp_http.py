@@ -24,7 +24,7 @@ async def test_rejects_bad_token():
 def test_tools_registered():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
     assert {"get_my_context", "export_my_context", "find_similar_users", "find_people",
-            "confirm_fact_tool", "forget_fact_tool"} <= names
+            "confirm_fact_tool", "forget_fact_tool", "report_user_info", "get_my_card"} <= names
 
 
 async def test_oauth_protected_resource():

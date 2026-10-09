@@ -249,9 +249,8 @@ async def cards_connect(body: dict, authorization: str = Header(default="")) -> 
     this works for xmfj and aafo cards users alike during the migration.
     Auth: Bearer MEMORY_SERVICE_TOKEN (shared secret, same value both services).
 
-    Returns {"token", "mcp_url"} — the token authenticates the cards MCP server
-    (app.cards_mcp) and, because it is the standard ZYND access JWT, every other
-    ZYND surface that accepts the user token. It is long-lived
+    Returns {"token", "mcp_url"} — the token authenticates the shared MCP server
+    (app.mcp_http, same JWT the persona dashboard mints). It is long-lived
     (mcp_token_ttl_seconds); regenerating replaces nothing, so "disconnect"
     is the user revoking from the dashboard (revoke_user_tokens).
     """
@@ -273,8 +272,8 @@ async def cards_connect(body: dict, authorization: str = Header(default="")) -> 
            RETURNING id""",
         email, display_name or email.split("@", 1)[0], supabase_user_id,
     )
-    base = settings.cards_mcp_public_base_url.rstrip("/")
-    return {"token": issue_personal_token(str(row["id"])), "mcp_url": f"{base}/cards-mcp"}
+    base = settings.mcp_public_base_url.rstrip("/")
+    return {"token": issue_personal_token(str(row["id"])), "mcp_url": f"{base}/mcp"}
 
 
 async def _service_caller(authorization: str, email: str) -> str:

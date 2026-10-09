@@ -85,6 +85,19 @@ async def get_card_by_handle(handle: str):
     return card
 
 
+@router.get("/by-handle/{handle}/view")
+async def get_card_view(handle: str):
+    from services.card_view import build_card_view
+
+    found = await asyncio.to_thread(cards_service.get_card_by_handle, handle)
+    if not found:
+        raise HTTPException(status_code=404, detail="card not found")
+    claimed = cards_service.card_is_claimed(handle)
+    if claimed is False:
+        raise HTTPException(status_code=404, detail="card not found")
+    return build_card_view(found, claimed=True)
+
+
 class NotMeRequest(BaseModel):
     note: str | None = None
 
@@ -344,16 +357,19 @@ async def refresh_memory(
     if stored_owner.lower() != principal.email.lower():
         raise HTTPException(status_code=403, detail="not the card owner")
 
-    from services.zynd_memory import fetch_findability
+    from services.zynd_memory import fetch_findability, ping_revalidate, snapshot_from_payload
+
     payload = fetch_findability(principal.email)
-    connected = bool(payload and payload.get("connected"))
-    zynd_memory: list[dict] | None = None
-    if connected:
-        zynd_memory = payload.get("facts") or []
-    ok = await asyncio.to_thread(cards_service.update_card_memory, handle, zynd_memory)
+    if payload is None:
+        return {"zynd_memory": card.zynd_memory, "connected": card.zynd_memory is not None}
+    snapshot = snapshot_from_payload(payload)
+    if snapshot is None:
+        return {"zynd_memory": card.zynd_memory, "connected": False}
+    ok = await asyncio.to_thread(cards_service.update_card_memory, handle, snapshot)
     if not ok:
         raise HTTPException(status_code=404, detail="card not found")
-    return {"zynd_memory": zynd_memory, "connected": connected}
+    ping_revalidate(handle)
+    return {"zynd_memory": snapshot, "connected": True}
 
 
 @router.get("/by-handle/{handle}/suggested-posts")

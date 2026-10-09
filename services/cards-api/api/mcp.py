@@ -125,10 +125,14 @@ async def mcp_approve(body: ApproveBody, authorization: str | None = Header(defa
     if not config.MEMORY_SERVICE_TOKEN:
         raise HTTPException(status_code=503, detail="MCP connector not configured")
     try:
-        return await zynd_mcp.approve_fact(email, body.predicate, body.value)
+        result = await zynd_mcp.approve_fact(email, body.predicate, body.value)
     except zynd_mcp.MemoryUnavailable as exc:
         raise HTTPException(status_code=404 if "no matching" in str(exc) else 502,
                             detail=str(exc)) from exc
+    from services.zynd_memory import refresh_owner_snapshot
+
+    result["zynd_memory"] = await asyncio.to_thread(refresh_owner_snapshot, email)
+    return result
 
 
 @router.post("/mcp/revoke")
@@ -139,7 +143,11 @@ async def mcp_revoke(body: ApproveBody, authorization: str | None = Header(defau
     if not config.MEMORY_SERVICE_TOKEN:
         raise HTTPException(status_code=503, detail="MCP connector not configured")
     try:
-        return await zynd_mcp.revoke_fact(email, body.predicate, body.value)
+        result = await zynd_mcp.revoke_fact(email, body.predicate, body.value)
     except zynd_mcp.MemoryUnavailable as exc:
         raise HTTPException(status_code=404 if "no matching" in str(exc) else 502,
                             detail=str(exc)) from exc
+    from services.zynd_memory import refresh_owner_snapshot
+
+    result["zynd_memory"] = await asyncio.to_thread(refresh_owner_snapshot, email)
+    return result

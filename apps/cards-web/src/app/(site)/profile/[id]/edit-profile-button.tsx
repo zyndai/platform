@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 
 const EDIT_ICON = (
@@ -19,9 +20,9 @@ export function EditProfileButton() {
   if (!ready) return null;
 
   return (
-    <a href="/create" className="pf-edit-btn">
+    <Link href="/create" className="pf-edit-btn">
       {EDIT_ICON}
       {authenticated ? "Edit profile" : "Update profile"}
-    </a>
+    </Link>
   );
 }

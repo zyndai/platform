@@ -478,7 +478,12 @@ function CreateProfilePageContent() {
   const [fixUrlInput, setFixUrlInput] = useState("");
 
   // Custom URL handle (review screen)
-  const [customHandle, setCustomHandle] = useState("");
+  const [customHandle, setCustomHandle] = useState(() => {
+    const seeded = searchParams.get("handle");
+    if (!seeded) return "";
+    const slug = seeded.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 30);
+    return slug.length >= 2 ? slug : "";
+  });
   const [handleAvailable, setHandleAvailable] = useState<boolean | null>(null);
   const [handleChecking, setHandleChecking] = useState(false);
   const handleCheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -566,18 +571,6 @@ function CreateProfilePageContent() {
     seededUrl.split(/\s+/).filter(Boolean).forEach(addUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seededUrl]);
-
-  // Pre-fill the custom handle field when the user arrives from the landing page
-  // with ?handle=<slug> — they typed it there so honour it exactly.
-  const seededHandle = searchParams.get("handle");
-  const seededHandleRef = useRef(false);
-  useEffect(() => {
-    if (seededHandleRef.current || !seededHandle) return;
-    seededHandleRef.current = true;
-    const slug = seededHandle.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 30);
-    if (slug.length >= 2) setCustomHandle(slug);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seededHandle]);
 
   // S08 claim-first: as soon as a LinkedIn URL lands in the box, check for a
   // published, unclaimed card that matches it — claiming beats building a

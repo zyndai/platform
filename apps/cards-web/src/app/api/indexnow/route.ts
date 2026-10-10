@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const INDEXNOW_KEY = "719dc68a3a793fd032b8c23bffba620c";
+const INDEXNOW_KEY = "807f7368f7b82b10264257b5e51c63c7";
 const SITE_URL = "https://cards.zynd.ai";
 
 // Called fire-and-forget from the create flow after a new profile is published.

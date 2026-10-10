@@ -585,12 +585,8 @@ async def _resolve_user_and_mint_code(
         raise HTTPException(status_code=401, detail="Google sign-in could not be verified")
     email, display_name, sub = identity
 
-    user_id = await get_pool().fetchval(
-        """INSERT INTO users (email, display_name, supabase_user_id) VALUES ($1, $2, $3)
-           ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name,
-                 supabase_user_id = EXCLUDED.supabase_user_id RETURNING id""",
-        email, display_name, sub,
-    )
+    from app.services.users import resolve_user
+    user_id = await resolve_user(get_pool(), email, display_name, sub)
 
     from app.services.persona import link_user
     agent_id = await link_user(get_pool(), user_id, sub, display_name, email)
@@ -751,7 +747,7 @@ async def token(
     # code exchange; refresh_token grants keep the standard short-lived path.
     if grant_type == "authorization_code" and _is_deployer_client(client_id):
         return JSONResponse({
-            "access_token": issue_personal_token(user_id),
+            "access_token": await issue_personal_token(get_pool(), user_id),
             "token_type": "bearer",
             "expires_in": settings.mcp_token_ttl_seconds,
             "scope": "ingest",

@@ -28,6 +28,7 @@ from app.models import Turn
 from app.services import persona
 from app.services.control import confirm_fact, forget_fact
 from app.services.export import active_context, build_jsonld_export, context_slice
+from app.services.findability import get_card
 from app.services.ingest import clean_text, ingest_turns
 from app.services.linkedin_search import find_linkedin_people, search_linkedin_profile_urls, enrich_profile_urls
 from app.services.matching import match_users, search_by_query
@@ -58,6 +59,8 @@ _arq_lock = asyncio.Lock()
 # Minimum length for an intentional `remember` write. Lower than the §7.2 chat-noise
 # floor (40) because these are deliberate single facts, but still guards empty/junk.
 _REMEMBER_MIN_CHARS = 8
+_MAX_REPORT_CHARS = 4000
+_CARDS_SOURCE = "cards_mcp"
 
 _ZYND_INSTRUCTIONS = """\
 You have access to ZYND — my cross-AI memory, context, people-discovery, and networking layer.
@@ -159,26 +162,11 @@ async def _get_arq():
 # old ContextVar pattern. FastMCP injects the AccessToken automatically when auth
 # is configured on the server.
 
-ANONYMOUS_USER_ID = "00000000-0000-0000-0000-000000000000"
-PUBLIC_PAGE_TTL_HOURS = 5
-
-
 def _uid(token: AccessToken = CurrentAccessToken()) -> str:
-    # Fail CLOSED for anonymous callers. The verifier synthesizes an "anonymous"
-    # token for unauthenticated requests so the intended anonymous surface
-    # (publish_page / list_my_pages, which use _uid_opt) works — but every other
-    # tool is scoped to a real user and MUST require sign-in. Without this,
-    # unauthenticated callers could invoke costly tools like the LinkedIn/Exa
-    # search (global API keys → financial DoS) or side-effecting social actions.
-    if token.client_id == "anonymous":
+    # Every tool requires a dashboard-minted personal token. Empty bearers are
+    # rejected in ZyndTokenVerifier (no anonymous AccessToken).
+    if not token.client_id or token.client_id == "anonymous":
         raise PermissionError("This tool requires signing in to ZYND.")
-    return token.client_id
-
-
-def _uid_opt(token: AccessToken = CurrentAccessToken()) -> str | None:
-    """Returns None for anonymous clients, uid for authenticated users."""
-    if token.client_id == "anonymous":
-        return None
     return token.client_id
 
 
@@ -209,24 +197,20 @@ class ZyndTokenVerifier(TokenVerifier):
         super().__init__(required_scopes=required_scopes)
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        # 0) Anonymous access — no token provided (public publish_page reads)
+        # No anonymous surface. Empty or whitespace bearers are a hard reject.
+        # Unauthenticated publish_page is gone.
         if not token or not token.strip():
-            return AccessToken(
-                token="anonymous",
-                client_id="anonymous",
-                scopes=["anonymous"],
-                claims={"sub": "anonymous"},
-            )
+            return None
 
-        # 1) ZYND JWT — existing clients (Cursor, VS Code, SDKs)
+        # 1) ZYND JWT — the persona dashboard mints this personal token
         try:
-            user_id, issued_at = verify_access_claims(token)
+            user_id, issued_at, ver = verify_access_claims(token)
         except ValueError:
             pass
         else:
             pool = await _get_pool()
-            from app.services.sessions import tokens_revoked
-            if await tokens_revoked(pool, user_id, issued_at):
+            from app.services.sessions import token_rejected
+            if await token_rejected(pool, user_id, issued_at, ver):
                 return None
             return AccessToken(
                 token=token,
@@ -240,12 +224,18 @@ class ZyndTokenVerifier(TokenVerifier):
         try:
             pool = await _get_pool()
             row = await pool.fetchrow(
-                "SELECT user_id, scopes FROM oauth_access_tokens WHERE token = $1 AND expires_at > NOW()",
+                """SELECT t.user_id, t.scopes, t.created_at, u.tokens_revoked_at
+                     FROM oauth_access_tokens t
+                     JOIN users u ON u.id = t.user_id
+                    WHERE t.token = $1 AND t.expires_at > NOW()""",
                 token,
             )
         except Exception:
             return None
         if row:
+            revoked_at = row["tokens_revoked_at"]
+            if revoked_at is not None and row["created_at"] <= revoked_at:
+                return None
             return AccessToken(
                 token=token,
                 client_id=str(row["user_id"]),
@@ -297,6 +287,75 @@ async def remember(text: str, uid: str = Depends(_uid)) -> dict:
         return {"saved": False, "reason": "already remembered (duplicate)"}
     return {"saved": True, "note": "Saved. Facts are extracted in the background; "
             "recall with get_my_context in a few seconds."}
+
+
+def _clip(text: str, limit: int = _MAX_REPORT_CHARS) -> str:
+    text = (text or "").strip()
+    return text if len(text) <= limit else text[:limit]
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+async def report_user_info(
+    role: str = "",
+    skills: list[str] | None = None,
+    languages: list[str] | None = None,
+    frameworks: list[str] | None = None,
+    tools: list[str] | None = None,
+    projects: list[str] | None = None,
+    goals: str = "",
+    notes: str = "",
+    uid: str = Depends(_uid),
+) -> dict:
+    """Report durable professional facts about the user. Facts stay private
+    until the user reviews them. Pass only what you actually learned. Never
+    pass secrets, API keys, passwords, tokens, .env contents, or file contents."""
+    lines: list[str] = []
+    if role_text := _clip(role, 200):
+        lines.append(f"The user's role: {role_text}")
+    for label, values in (("skill", skills), ("programming language", languages),
+                          ("framework", frameworks), ("tool", tools)):
+        for value in values or []:
+            value = _clip(value, 120)
+            if value:
+                lines.append(f"The user has a {label}: {value}")
+    for project in projects or []:
+        project = _clip(project, 240)
+        if project:
+            lines.append(f"The user works on the project: {project}")
+    if goals_text := _clip(goals, 600):
+        lines.append(f"The user's goal: {goals_text}")
+    for line in (notes or "").splitlines():
+        line = _clip(line)
+        if line:
+            lines.append(line)
+    if not lines:
+        return {"saved": False, "reason": "nothing to report — pass at least one fact"}
+    stamp = datetime.now(timezone.utc)
+    turns = [
+        Turn(role="user", content=clean_text(line).strip(), timestamp=stamp)
+        for line in lines
+        if len(clean_text(line).strip()) >= _REMEMBER_MIN_CHARS
+    ]
+    if not turns:
+        return {"saved": False, "reason": "nothing new (too short or duplicates)"}
+    inserted, skipped = await ingest_turns(
+        await _get_pool(), await _get_arq(), uid, _CARDS_SOURCE, turns,
+        min_chars=_REMEMBER_MIN_CHARS,
+    )
+    if inserted == 0:
+        return {"saved": False, "reason": "nothing new (too short or duplicates)"}
+    return {
+        "saved": True,
+        "note": "Saved privately. The user reviews facts before anything becomes public.",
+        "items_saved": inserted,
+        "items_skipped": skipped,
+    }
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+async def get_my_card(uid: str = Depends(_uid)) -> list[dict]:
+    """The user's PUBLIC card facts — what they approved for discovery."""
+    return await get_card(await _get_pool(), uid)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
@@ -418,7 +477,7 @@ async def forget_fact_tool(predicate: str, object: str, uid: str = Depends(_uid)
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
 async def publish_page(content: str, title: str = "", format: str = "html",
-                       visibility: str = "unlisted", uid: str | None = Depends(_uid_opt)) -> dict:
+                       visibility: str = "unlisted", uid: str = Depends(_uid)) -> dict:
     """Host an HTML or Markdown page and return a live public URL. Use this
     whenever the user asks to host, deploy, share, or publish any HTML or
     content — e.g. "host this", "make it live", "give me a link", "deploy
@@ -427,15 +486,8 @@ async def publish_page(content: str, title: str = "", format: str = "html",
     set `format` to "html" or "markdown". Returns {success, url, slug, title}.
     Always show the `url` to the user after calling this.
 
-    Works without authentication (anonymous): pages expire after 5 hours.
-    Authenticated users get permanent pages."""
+    Requires a signed-in ZYND token. Pages are permanent for that user."""
     from app.services import pages_agent
-
-    if uid is None:
-        return await pages_agent.create_page(
-            ANONYMOUS_USER_ID, content, title, format, visibility,
-            expires_in_hours=PUBLIC_PAGE_TTL_HOURS,
-        )
 
     row = await (await _get_pool()).fetchrow("SELECT supabase_user_id FROM users WHERE id = $1", uid)
     suid = row["supabase_user_id"] if (row and row["supabase_user_id"]) else uid
@@ -443,11 +495,9 @@ async def publish_page(content: str, title: str = "", format: str = "html",
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_my_pages(uid: str | None = Depends(_uid_opt)) -> list[dict]:
+async def list_my_pages(uid: str = Depends(_uid)) -> list[dict]:
     """List hosted shareable pages, newest first. Use when the user asks to
-    see pages they have published. Returns empty list for anonymous users."""
-    if uid is None:
-        return []
+    see pages they have published. Requires a signed-in ZYND token."""
     from app.services import pages_agent
     row = await (await _get_pool()).fetchrow("SELECT supabase_user_id FROM users WHERE id = $1", uid)
     suid = row["supabase_user_id"] if (row and row["supabase_user_id"]) else uid

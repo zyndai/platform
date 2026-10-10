@@ -26,7 +26,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import app.mcp_http as m
-from app.auth import issue_access_token, issue_personal_token
+from app.auth import issue_access_token
 from app.models import Turn
 from app.services.export import active_context
 from app.services.ingest import ingest_turns
@@ -435,19 +435,19 @@ async def test_new_token_after_revocation_is_valid():
     assert new_revoked is False
 
 
-async def test_same_second_relogin_is_not_falsely_revoked():
+async def test_same_second_token_is_revoked():
     # given — a token minted in the SAME second as the sign-out watermark.
-    #         tokens_revoked floors the watermark to whole seconds, giving a 1s
-    #         grace so a fast re-login isn't wrongly killed.
+    #         tokens_revoked now rejects any token issued at or before the
+    #         revocation instant (<=), closing the same-second sign-out hole.
     revoked_at = datetime.now(timezone.utc)
-    same_second_iat = int(revoked_at.timestamp())  # equal, not strictly less
+    same_second_iat = int(revoked_at.timestamp())  # equal to the watermark
     pool = _revocation_pool({"user_a": revoked_at})
 
     # when
     revoked = await tokens_revoked(pool, "user_a", same_second_iat)
 
-    # then — NOT revoked (iat >= floored watermark)
-    assert revoked is False
+    # then — revoked (iat <= watermark)
+    assert revoked is True
 
 
 # ── Test group 8: 100 concurrent remember() calls from the same user ─────────
@@ -496,7 +496,7 @@ async def test_100_concurrent_remembers_same_user_dedup_to_one_insert():
 async def test_verifier_concurrent_valid_jwts_all_resolve_correctly():
     # given — 100 distinct users each with a valid JWT
     user_ids = [f"00000000-0000-0000-0000-{i:012d}" for i in range(100)]
-    tokens = {uid: issue_personal_token(uid) for uid in user_ids}
+    tokens = {uid: issue_access_token(uid)[0] for uid in user_ids}
     verifier = m.ZyndTokenVerifier()
 
     mock_pool = AsyncMock()
@@ -523,7 +523,7 @@ async def test_verifier_concurrent_mixed_valid_and_garbage_tokens():
     #         falls to the opaque-token DB path; with the DB unreachable that
     #         path returns None (never raises).
     valid_ids = [f"00000000-0000-0000-0000-{i:012d}" for i in range(20)]
-    valid_tokens = [issue_personal_token(uid) for uid in valid_ids]
+    valid_tokens = [issue_access_token(uid)[0] for uid in valid_ids]
     garbage = [f"not-a-jwt-{i}" for i in range(20)]
     verifier = m.ZyndTokenVerifier()
 

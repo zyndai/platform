@@ -78,6 +78,15 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS persona_agent_id text;   -- zns:<hash
 -- sign-out / disconnect: tokens issued before this watermark are rejected (see services/sessions).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tokens_revoked_at timestamptz;
 
+-- Long-lived personal tokens embed `ver` = token_version. Minting bumps the counter,
+-- which instantly invalidates every older personal token (one active credential/user).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version int NOT NULL DEFAULT 0;
+
+-- `supabase_user_id` is the authoritative identity key once present; a single
+-- Supabase user must map to exactly one memory user (no email-keyed takeover).
+CREATE UNIQUE INDEX IF NOT EXISTS users_supabase_user_id_key
+  ON users (supabase_user_id) WHERE supabase_user_id IS NOT NULL;
+
 -- public social links, synced from the persona profile (shown with matches). {} = none.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS socials jsonb NOT NULL DEFAULT '{}'::jsonb;
 

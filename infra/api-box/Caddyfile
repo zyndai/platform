@@ -6,17 +6,7 @@ api.zynd.ai {
 	handle /mcp* {
 		reverse_proxy mcp:8090
 	}
-	# Cards MCP endpoint (coding-agent connector, app.cards_mcp).
-	# MUST stay above /cards* — that prefix otherwise swallows /cards-mcp*.
-	handle /cards-mcp* {
-		reverse_proxy cards-mcp:8091
-	}
 	# OAuth protected-resource metadata (RFC 9728) — served by FastMCP.
-	# Path-scoped cards metadata goes to cards-mcp; the catch-all covers the
-	# main ZYND MCP.
-	handle /.well-known/oauth-protected-resource/cards-mcp* {
-		reverse_proxy cards-mcp:8091
-	}
 	handle /.well-known/oauth-protected-resource* {
 		reverse_proxy mcp:8090
 	}

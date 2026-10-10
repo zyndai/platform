@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from app.auth import issue_access_token
+from app.auth import issue_access_token, issue_personal_token
 from app.db import get_pool
 
 pytestmark = pytest.mark.integration
@@ -46,3 +46,19 @@ async def test_revocation_is_per_user(client):
                              headers={"Authorization": f"Bearer {ta}"})).status_code == 401  # A out
     assert (await client.get("/me/graph",
                              headers={"Authorization": f"Bearer {tb}"})).status_code == 200  # B fine
+
+
+async def test_minting_new_personal_token_revokes_prior(client):
+    """One active long-lived credential per user: a second personal token kills
+    the first via the token_version counter (Issue 3)."""
+    uid = await _user("version@example.com")
+    token1 = await issue_personal_token(get_pool(), str(uid))
+    assert (await client.get("/me/graph",
+                             headers={"Authorization": f"Bearer {token1}"})).status_code == 200
+
+    token2 = await issue_personal_token(get_pool(), str(uid))
+
+    assert (await client.get("/me/graph",
+                             headers={"Authorization": f"Bearer {token1}"})).status_code == 401  # superseded
+    assert (await client.get("/me/graph",
+                             headers={"Authorization": f"Bearer {token2}"})).status_code == 200  # latest wins

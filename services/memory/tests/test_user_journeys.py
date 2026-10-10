@@ -16,7 +16,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import app.mcp_http as m
-from app.auth import issue_personal_token, verify_access_claims
+from app.auth import issue_access_token, verify_access_claims
 from app.config import settings
 from app.connect import connect as connect_route
 
@@ -29,7 +29,7 @@ async def test_new_user_signs_up_and_receives_a_working_token():
     new_user_id = "11111111-1111-1111-1111-111111111111"
     pool = MagicMock()
     pool.fetchrow = AsyncMock(return_value=None)          # no existing user row
-    pool.fetchval = AsyncMock(return_value=new_user_id)   # INSERT ... RETURNING id
+    pool.fetchval = AsyncMock(side_effect=[new_user_id, 1])  # INSERT id, then token_version
 
     # when — she submits the /connect signup form with a fresh email + password
     with patch("app.connect.get_pool", return_value=pool):
@@ -48,16 +48,16 @@ async def test_returning_user_signs_in_with_correct_password():
     from app.passwords import hash_password
     pool = MagicMock()
     pool.fetchrow = AsyncMock(return_value={"id": existing_id, "password_hash": hash_password("strongpass1")})
-    pool.fetchval = AsyncMock()
+    pool.fetchval = AsyncMock(return_value=1)  # token_version bump during personal-token mint
 
     # when — she signs back in with the same password
     with patch("app.connect.get_pool", return_value=pool):
         response = await connect_route(email="alice@example.com", password="strongpass1")
 
-    # then — she is let in and NO new account is created
+    # then — she is let in and NO new account is created (one fetchval: the version bump)
     assert response.status_code == 200
     assert "Authorization: Bearer" in response.body.decode()
-    pool.fetchval.assert_not_awaited()
+    assert pool.fetchval.await_count == 1
 
 
 async def test_signup_rejects_a_too_short_password():
@@ -367,8 +367,8 @@ async def test_user_disconnects_and_is_signed_out_everywhere():
 async def test_old_token_is_rejected_after_the_user_disconnects():
     # given — a valid token she was using before signing out
     uid = "33333333-3333-3333-3333-333333333333"
-    token = issue_personal_token(uid)
-    _, issued_at = verify_access_claims(token)  # token itself is structurally valid
+    token = issue_access_token(uid)[0]
+    _, issued_at, _ = verify_access_claims(token)  # token itself is structurally valid
 
     verifier = m.ZyndTokenVerifier()
     pool = MagicMock()
@@ -408,23 +408,6 @@ async def test_user_publishes_an_html_page_and_gets_a_live_url():
     assert result["success"] is True
     assert result["url"] == "https://zynd.io/p/abc123"
     fake_pages.create_page.assert_awaited_once()
-
-
-async def test_anonymous_user_publishes_an_expiring_page():
-    # given — no signed-in user (uid resolves to None via _uid_opt)
-    fake_pages = MagicMock()
-    fake_pages.create_page = AsyncMock(return_value={
-        "success": True, "url": "https://zynd.io/p/temp42", "slug": "temp42", "title": "Temp",
-    })
-
-    # when — an anonymous caller publishes a page
-    with patch.dict("sys.modules", {"app.services.pages_agent": fake_pages}):
-        result = await m.publish_page(content="<h1>Hi</h1>", title="Temp", uid=None)
-
-    # then — the page is hosted, and it was created with the anonymous 5-hour TTL
-    assert result["success"] is True
-    _, kwargs = fake_pages.create_page.call_args
-    assert kwargs.get("expires_in_hours") == m.PUBLIC_PAGE_TTL_HOURS
 
 
 # ── Journey 7: Social links (persona features gated off) ───────────────────────

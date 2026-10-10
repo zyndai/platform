@@ -295,6 +295,23 @@ async def service_revoke(body: dict, authorization: str = Header(default="")) ->
     return {"status": "revoked", "predicate": predicate, "value": value}
 
 
+@app.post("/v1/service/forget")
+async def service_forget(body: dict, authorization: str = Header(default="")) -> dict:
+    """Delete one fact from the user's memory (soft-delete via valid_until).
+
+    Called by the cards backend when an owner rejects a suggestion — the fact
+    leaves the review queue and private memory entirely."""
+    user_id = await _service_caller(authorization, body.get("email", ""))
+    predicate = (body.get("predicate") or "").strip()
+    value = (body.get("value") or "").strip()
+    if not predicate or not value:
+        raise HTTPException(status_code=422, detail="predicate and value are required")
+    from app.services.control import forget_fact
+    if not await forget_fact(get_pool(), user_id, predicate, value):
+        raise HTTPException(status_code=404, detail="no active fact matches that predicate/object")
+    return {"status": "forgotten", "predicate": predicate, "value": value}
+
+
 @app.post("/v1/service/disconnect")
 async def service_disconnect(body: dict, authorization: str = Header(default="")) -> dict:
     """Revoke every ZYND token for a user (service-to-service).

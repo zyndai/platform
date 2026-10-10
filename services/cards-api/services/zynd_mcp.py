@@ -75,3 +75,10 @@ async def revoke_fact(email: str, predicate: str, value: str) -> dict:
     return await _request("POST", "/v1/service/revoke", {
         "email": email.strip().lower(), "predicate": predicate, "value": value,
     })
+
+
+async def forget_fact(email: str, predicate: str, value: str) -> dict:
+    """Delete a fact from the owner's memory entirely (soft-delete)."""
+    return await _request("POST", "/v1/service/forget", {
+        "email": email.strip().lower(), "predicate": predicate, "value": value,
+    })

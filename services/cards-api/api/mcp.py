@@ -7,8 +7,9 @@ layer with MEMORY_SERVICE_TOKEN:
 
 1. GET  /cards/mcp/suggestions — facts reported by their coding agents that
    are still private, awaiting review.
-2. POST /cards/mcp/approve, /cards/mcp/revoke — review decisions, proxied to
-   the memory layer.
+2. POST /cards/mcp/approve, /cards/mcp/revoke, /cards/mcp/forget — review
+   decisions, proxied to the memory layer (approve publishes, revoke unpublishes,
+   forget deletes the fact from memory).
 """
 import asyncio
 import logging
@@ -87,6 +88,24 @@ async def mcp_revoke(body: ApproveBody, authorization: str | None = Header(defau
         raise HTTPException(status_code=503, detail="MCP connector not configured")
     try:
         result = await zynd_mcp.revoke_fact(email, body.predicate, body.value)
+    except zynd_mcp.MemoryUnavailable as exc:
+        raise HTTPException(status_code=404 if "no matching" in str(exc) else 502,
+                            detail=str(exc)) from exc
+    from services.zynd_memory import refresh_owner_snapshot
+
+    result["zynd_memory"] = await asyncio.to_thread(refresh_owner_snapshot, email)
+    return result
+
+
+@router.post("/mcp/forget")
+async def mcp_forget(body: ApproveBody, authorization: str | None = Header(default=None)) -> dict:
+    """Delete one reported fact from the owner's memory (rejects the suggestion)."""
+    principal = _principal(authorization)
+    email = _owner_email(principal)
+    if not config.MEMORY_SERVICE_TOKEN:
+        raise HTTPException(status_code=503, detail="MCP connector not configured")
+    try:
+        result = await zynd_mcp.forget_fact(email, body.predicate, body.value)
     except zynd_mcp.MemoryUnavailable as exc:
         raise HTTPException(status_code=404 if "no matching" in str(exc) else 502,
                             detail=str(exc)) from exc

@@ -85,13 +85,13 @@ export async function approveSuggestedFact(
   if (!res.ok) throw new Error(await errDetail(res));
 }
 
-/** Take one fact off the public card (kept in private memory). */
-export async function revokeSuggestedFact(
+/** Delete one suggested fact from memory entirely (rejects it). */
+export async function deleteSuggestedFact(
   supabaseToken: string,
   predicate: string,
   value: string,
 ): Promise<void> {
-  const res = await fetch(`${CARDS_API}/cards/mcp/revoke`, {
+  const res = await fetch(`${CARDS_API}/cards/mcp/forget`, {
     method: "POST",
     headers: { Authorization: `Bearer ${supabaseToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ predicate, value }),

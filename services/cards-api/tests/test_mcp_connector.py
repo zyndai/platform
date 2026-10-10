@@ -141,3 +141,28 @@ def test_revoke_proxies_predicate_and_value(client, monkeypatch):
     assert r.status_code == 200
     assert seen["value"] == "micro-SaaS"
     assert r.json()["status"] == "revoked"
+
+
+def test_forget_requires_auth(client, monkeypatch):
+    r = client.post("/cards/mcp/forget", json={"predicate": "is_building", "value": "micro-SaaS"})
+    assert r.status_code == 401
+
+
+def test_forget_proxies_predicate_and_value(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(mcp_module, "verify_supabase_jwt", lambda auth: PRINCIPAL)
+
+    async def fake_forget(email, predicate, value):
+        seen.update(email=email, predicate=predicate, value=value)
+        return {"status": "forgotten", "predicate": predicate, "value": value}
+
+    monkeypatch.setattr(zynd_mcp, "forget_fact", fake_forget)
+    monkeypatch.setattr("services.zynd_memory.refresh_owner_snapshot", lambda email: [])
+
+    r = client.post("/cards/mcp/forget", json={"predicate": "is_building", "value": "micro-SaaS"},
+                    headers=_auth(monkeypatch=monkeypatch))
+
+    assert r.status_code == 200
+    assert seen == {"email": "alice@example.com", "predicate": "is_building",
+                    "value": "micro-SaaS"}
+    assert r.json()["status"] == "forgotten"

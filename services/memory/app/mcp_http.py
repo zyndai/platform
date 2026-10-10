@@ -197,20 +197,20 @@ class ZyndTokenVerifier(TokenVerifier):
         super().__init__(required_scopes=required_scopes)
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        # No anonymous surface. Empty or whitespace bearers are a hard reject
-        # (cards MCP contract). Unauthenticated publish_page is gone.
+        # No anonymous surface. Empty or whitespace bearers are a hard reject.
+        # Unauthenticated publish_page is gone.
         if not token or not token.strip():
             return None
 
-        # 1) ZYND JWT — persona and cards dashboards both mint this personal token
+        # 1) ZYND JWT — the persona dashboard mints this personal token
         try:
-            user_id, issued_at = verify_access_claims(token)
+            user_id, issued_at, ver = verify_access_claims(token)
         except ValueError:
             pass
         else:
             pool = await _get_pool()
-            from app.services.sessions import tokens_revoked
-            if await tokens_revoked(pool, user_id, issued_at):
+            from app.services.sessions import token_rejected
+            if await token_rejected(pool, user_id, issued_at, ver):
                 return None
             return AccessToken(
                 token=token,
@@ -224,12 +224,18 @@ class ZyndTokenVerifier(TokenVerifier):
         try:
             pool = await _get_pool()
             row = await pool.fetchrow(
-                "SELECT user_id, scopes FROM oauth_access_tokens WHERE token = $1 AND expires_at > NOW()",
+                """SELECT t.user_id, t.scopes, t.created_at, u.tokens_revoked_at
+                     FROM oauth_access_tokens t
+                     JOIN users u ON u.id = t.user_id
+                    WHERE t.token = $1 AND t.expires_at > NOW()""",
                 token,
             )
         except Exception:
             return None
         if row:
+            revoked_at = row["tokens_revoked_at"]
+            if revoked_at is not None and row["created_at"] <= revoked_at:
+                return None
             return AccessToken(
                 token=token,
                 client_id=str(row["user_id"]),

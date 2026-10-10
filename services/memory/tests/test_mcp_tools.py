@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from app.auth import issue_personal_token
+from app.auth import issue_access_token
 from app.mcp_http import ZyndTokenVerifier, app as mcp_asgi, mcp
 
 
@@ -149,7 +149,7 @@ async def test_verifier_rejects_jwt_with_wrong_secret():
 async def test_verifier_accepts_valid_jwt():
     # given — valid JWT signed with the real secret
     user_id = "00000000-0000-0000-0000-000000000001"
-    token = issue_personal_token(user_id)
+    token = issue_access_token(user_id)[0]
     verifier = ZyndTokenVerifier()
 
     # mock pool so revocation check succeeds without real DB
@@ -170,7 +170,7 @@ async def test_verifier_accepts_valid_jwt():
 async def test_verifier_rejects_revoked_jwt():
     # given — valid JWT but revocation watermark is after iat
     user_id = "00000000-0000-0000-0000-000000000002"
-    token = issue_personal_token(user_id)
+    token = issue_access_token(user_id)[0]
     verifier = ZyndTokenVerifier()
 
     with patch("app.mcp_http._pool", AsyncMock()):

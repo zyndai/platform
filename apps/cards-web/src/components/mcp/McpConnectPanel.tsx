@@ -56,8 +56,8 @@ export function McpConnectPanel({
     setError("");
     setBusy("disconnect");
     try {
-      const t = await token();
-      await disconnectMcp(t);
+      if (!result) return;
+      await disconnectMcp(result.token);
       setResult(null);
       onConnected?.(false);
     } catch (err) {

@@ -1,16 +1,16 @@
-"""MCP connector routes — dashboard-side of the coding-agent connection.
+"""Fact-review routes for the cards MCP connector.
 
-1. POST /cards/mcp/connect — the signed-in user generates their cards MCP
-   token + paste-ready config (verified via Supabase JWT, minted by the
-   memory layer after cards vouches for them).
-2. GET  /cards/mcp/suggestions — facts reported by their coding agents that
+The cards MCP server — and its paste-credential "Connect MCP" flow — has been
+removed. What remains is fact review, a service-to-service path where cards-api
+vouches for the caller's Supabase session and proxies the decision to the memory
+layer with MEMORY_SERVICE_TOKEN:
+
+1. GET  /cards/mcp/suggestions — facts reported by their coding agents that
    are still private, awaiting review.
-3. POST /cards/mcp/approve, /cards/mcp/revoke — review decisions, proxied to
-   the memory layer with MEMORY_SERVICE_TOKEN (the user's MCP token never
-   enters the browser).
+2. POST /cards/mcp/approve, /cards/mcp/revoke — review decisions, proxied to
+   the memory layer.
 """
 import asyncio
-import json
 import logging
 
 from fastapi import APIRouter, Header, HTTPException
@@ -42,63 +42,6 @@ def _owner_email(principal) -> str:
 class ApproveBody(BaseModel):
     predicate: str
     value: str
-
-
-@router.post("/mcp/connect")
-async def mcp_connect(authorization: str | None = Header(default=None)) -> dict:
-    """Generate (or regenerate) the caller's cards MCP connection.
-
-    Returns the paste-ready client config. The token is long-lived; generating
-    a new one does not invalidate old ones — use /mcp/disconnect to revoke all."""
-    principal = _principal(authorization)
-    email = _owner_email(principal)
-
-    if not config.MEMORY_SERVICE_TOKEN:
-        raise HTTPException(status_code=503, detail="MCP connector not configured")
-
-    result = await asyncio.to_thread(
-        zynd_mcp.connect_mcp_sync,
-        email, "", principal.sub if principal.iss == config.AAFO_ISSUER else "",
-    )
-    if not result:
-        raise HTTPException(status_code=502, detail="memory layer unavailable — try again shortly")
-
-    token, mcp_url = result["token"], result["mcp_url"]
-    server_block = {
-        "url": mcp_url,
-        "headers": {"Authorization": f"Bearer {token}"},
-    }
-    return {
-        "token": token,
-        "mcp_url": mcp_url,
-        # Ready-to-paste configs for the common coding-agent clients.
-        "config_json": json.dumps({"mcpServers": {"zynd-cards": server_block}}, indent=2),
-        "config_http": {
-            "mcpServers": {
-                "zynd-cards": server_block,
-            }
-        },
-        "instructions": [
-            "Claude Code: claude mcp add --transport http zynd-cards " + mcp_url
-            + " --header 'Authorization: Bearer <token>'",
-            "Cursor: Settings → MCP → Add HTTP server, paste the URL and header",
-            "VS Code / Windsurf / Cline: add the JSON block to your mcp.json",
-        ],
-    }
-
-
-@router.post("/mcp/disconnect")
-async def mcp_disconnect(authorization: str | None = Header(default=None)) -> dict:
-    """Revoke every ZYND token for the caller (signs the MCP connection out)."""
-    principal = _principal(authorization)
-    email = _owner_email(principal)
-    if not config.MEMORY_SERVICE_TOKEN:
-        raise HTTPException(status_code=503, detail="MCP connector not configured")
-    try:
-        result = await zynd_mcp._request("POST", "/v1/service/disconnect", {"email": email})
-    except zynd_mcp.MemoryUnavailable as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return result
 
 
 @router.get("/mcp/suggestions")

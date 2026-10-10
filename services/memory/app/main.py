@@ -20,6 +20,11 @@ from app.oauth import router as oauth_router
 from app.oauth import _well_known_router as oauth_well_known_router
 
 
+def _valid_service_token(token: str) -> bool:
+    return bool(settings.memory_service_token) and hmac.compare_digest(
+        token, settings.memory_service_token)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_pool()
@@ -111,13 +116,13 @@ async def current_user(authorization: str = Header(default="")) -> str:
     if not token:
         raise HTTPException(status_code=401, detail="missing bearer token")
     try:
-        user_id, issued_at = verify_access_claims(token)
+        user_id, issued_at, ver = verify_access_claims(token)
     except ValueError:
         if settings.enable_dev_bearer and hmac.compare_digest(token, settings.dev_bearer_token):
             return app.state.dev_user_id   # dev backdoor: not a JWT, no revocation check
         raise HTTPException(status_code=401, detail="invalid bearer token")
-    from app.services.sessions import tokens_revoked
-    if await tokens_revoked(get_pool(), user_id, issued_at):
+    from app.services.sessions import token_rejected
+    if await token_rejected(get_pool(), user_id, issued_at, ver):
         raise HTTPException(status_code=401, detail="session was signed out — please sign in again")
     # Persona chat JWTs carry the Supabase UUID; GPT/MCP JWTs carry the internal uid.
     # Resolve Supabase UUID → internal uid so all surfaces share one assertion namespace.
@@ -191,12 +196,8 @@ async def token_exchange(authorization: str = Header(default="")) -> dict:
         raise HTTPException(status_code=401, detail="invalid or expired Google session")
     email, display_name, sub = identity
 
-    user_id = await get_pool().fetchval(
-        """INSERT INTO users (email, display_name, supabase_user_id) VALUES ($1, $2, $3)
-           ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name,
-                 supabase_user_id = EXCLUDED.supabase_user_id RETURNING id""",
-        email, display_name, sub,
-    )
+    from app.services.users import resolve_user
+    user_id = await resolve_user(get_pool(), email, display_name, sub)
     from app.services.persona import link_user
     agent_id = await link_user(get_pool(), user_id, sub, display_name, email)  # gated; no-op unless persona_enabled
     if agent_id:  # persona resolved → seed their ZYND memory from the persona profile
@@ -204,7 +205,7 @@ async def token_exchange(authorization: str = Header(default="")) -> dict:
         await seed_persona_profile(get_pool(), app.state.arq, user_id, sub)
     base = settings.public_base_url.rstrip("/")
     return {
-        "token": issue_personal_token(str(user_id)),
+        "token": await issue_personal_token(get_pool(), str(user_id)),
         "mcp_url": f"{base}/mcp",
         "email": email,
     }
@@ -220,7 +221,7 @@ async def service_findability(identifier: str, authorization: str = Header(defau
     user's email. Returns {"connected": bool, "facts": [...]} — only ever the
     user-approved public subset; private memory never leaves the layer."""
     token = authorization.removeprefix("Bearer ").strip()
-    if not settings.memory_service_token or token != settings.memory_service_token:
+    if not _valid_service_token(token):
         raise HTTPException(status_code=401, detail="invalid service token")
     identifier = identifier.strip()
     if not identifier:
@@ -238,51 +239,13 @@ async def service_findability(identifier: str, authorization: str = Header(defau
     return {"connected": True, "facts": facts}
 
 
-@app.post("/v1/service/cards-connect")
-async def cards_connect(body: dict, authorization: str = Header(default="")) -> dict:
-    """Mint a long-lived MCP token for a cards user (service-to-service).
-
-    Called by the cards backend when a signed-in cards user clicks "Connect MCP".
-    Cards vouches for the caller's identity — {"email", "display_name"?,
-    "supabase_user_id"?} in the body — after verifying their Supabase session
-    itself. The email is the ownership key (same upsert as /token/exchange), so
-    this works for xmfj and aafo cards users alike during the migration.
-    Auth: Bearer MEMORY_SERVICE_TOKEN (shared secret, same value both services).
-
-    Returns {"token", "mcp_url"} — the token authenticates the shared MCP server
-    (app.mcp_http, same JWT the persona dashboard mints). It is long-lived
-    (mcp_token_ttl_seconds); regenerating replaces nothing, so "disconnect"
-    is the user revoking from the dashboard (revoke_user_tokens).
-    """
-    token = authorization.removeprefix("Bearer ").strip()
-    if not settings.memory_service_token or not hmac.compare_digest(
-        token, settings.memory_service_token
-    ):
-        raise HTTPException(status_code=401, detail="invalid service token")
-    email = (body.get("email") or "").strip().lower()
-    if not email:
-        raise HTTPException(status_code=422, detail="email is required")
-    display_name = (body.get("display_name") or "").strip()
-    supabase_user_id = (body.get("supabase_user_id") or "").strip() or None
-
-    row = await get_pool().fetchrow(
-        """INSERT INTO users (email, display_name, supabase_user_id) VALUES ($1, $2, $3)
-           ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name,
-                 supabase_user_id = COALESCE(EXCLUDED.supabase_user_id, users.supabase_user_id)
-           RETURNING id""",
-        email, display_name or email.split("@", 1)[0], supabase_user_id,
-    )
-    base = settings.mcp_public_base_url.rstrip("/")
-    return {"token": issue_personal_token(str(row["id"])), "mcp_url": f"{base}/mcp"}
-
-
 async def _service_caller(authorization: str, email: str) -> str:
     """Validate MEMORY_SERVICE_TOKEN and resolve the caller's memory uid by email.
 
     Shared by the /v1/service cards endpoints: cards-api vouches for the user,
     we resolve them here. Raises HTTPException on any failure."""
     token = authorization.removeprefix("Bearer ").strip()
-    if not settings.memory_service_token or token != settings.memory_service_token:
+    if not _valid_service_token(token):
         raise HTTPException(status_code=401, detail="invalid service token")
     email = (email or "").strip().lower()
     if not email:

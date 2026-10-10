@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   approveSuggestedFact,
+  deleteSuggestedFact,
   fetchSuggestedFacts,
-  revokeSuggestedFact,
   type SuggestedFact,
 } from "@/lib/mcp-connector";
 import { factLabel } from "@/lib/memory-facts";
@@ -34,7 +34,6 @@ export function SuggestedFactsReview({
   const [facts, setFacts] = useState<SuggestedFact[] | null>(null);
   const [pending, setPending] = useState<Pending>(null);
   const [error, setError] = useState("");
-  const [reloadKey, setReloadKey] = useState(0);
 
   const ink = light ? "#0B0B0B" : "#f8fafc";
   const muted = light ? "#6E6E68" : "#94a3b8";
@@ -42,8 +41,8 @@ export function SuggestedFactsReview({
   const fieldBg = light ? "#F7F7F4" : "rgba(15,23,42,0.8)";
   const accent = "#7B72E9";
 
-  // Initial + manual-reload fetch. setState only runs after awaits (async
-  // callbacks), which keeps the set-state-in-effect lint rule happy.
+  // Initial fetch. setState only runs after awaits (async callbacks), which
+  // keeps the set-state-in-effect lint rule happy.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -61,11 +60,6 @@ export function SuggestedFactsReview({
     return () => {
       cancelled = true;
     };
-  }, [reloadKey]);
-
-  const reload = useCallback(() => {
-    setError("");
-    setReloadKey((k) => k + 1);
   }, []);
 
   const approve = useCallback(async (fact: SuggestedFact) => {
@@ -87,20 +81,24 @@ export function SuggestedFactsReview({
     }
   }, [onChanged]);
 
-  const revoke = useCallback(async (fact: SuggestedFact) => {
+  const remove = useCallback(async (fact: SuggestedFact) => {
     setPending({ predicate: fact.predicate, object: fact.object });
     setError("");
     try {
       const t = await sessionToken();
-      await revokeSuggestedFact(t, fact.predicate, fact.object);
+      await deleteSuggestedFact(t, fact.predicate, fact.object);
+      setFacts((prev) =>
+        (prev ?? []).filter(
+          (f) => !(f.predicate === fact.predicate && f.object === fact.object),
+        ),
+      );
       onChanged?.(false);
-    } catch {
-      // "no matching public fact" just means it was never public — refresh.
-      reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete that fact");
     } finally {
       setPending(null);
     }
-  }, [onChanged, reload]);
+  }, [onChanged]);
 
   const isPending = (fact: SuggestedFact) =>
     pending?.predicate === fact.predicate && pending?.object === fact.object;
@@ -179,21 +177,21 @@ export function SuggestedFactsReview({
                 </button>
                 <button
                   type="button"
-                  onClick={() => void revoke(fact)}
+                  onClick={() => void remove(fact)}
                   disabled={pending !== null}
                   style={{
                     background: "transparent",
-                    color: muted,
-                    border: `1px solid ${border}`,
+                    color: light ? "#C2401F" : "#fbbf24",
+                    border: `1px solid ${light ? "#E8B4A3" : "rgba(251,191,36,0.35)"}`,
                     borderRadius: 10,
                     padding: "8px 14px",
                     font: `500 13px/1 ${SANS}`,
                     cursor: pending ? "default" : "pointer",
                     opacity: isPending(fact) ? 0.6 : 1,
                   }}
-                  title="Keep it private and hide it from suggestions later"
+                  title="Delete this fact from memory"
                 >
-                  Keep private
+                  {isPending(fact) ? "Deleting…" : "Delete"}
                 </button>
               </div>
             </li>

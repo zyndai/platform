@@ -2,6 +2,7 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException, Query
 
+import config
 from services import cards as cards_service
 from services import search as search_service
 
@@ -15,6 +16,7 @@ SEARCHABLE_ATTRIBUTES = [
     {"name": "industry", "type": "string", "description": "Industry (e.g. 'AI', 'fintech')"},
     {"name": "availability", "type": "string", "description": "fulltime | contract | freelance | open"},
     {"name": "experience_min", "type": "integer", "description": "Minimum years of experience"},
+    {"name": "include_unclaimed", "type": "boolean", "description": "Include unclaimed (scraped) cards; default false for agent callers"},
 ]
 
 
@@ -28,6 +30,7 @@ async def search_agents(
     availability: str = Query("", max_length=20),
     experience_min: int | None = Query(None, ge=0),
     limit: int = Query(10, ge=1, le=50),
+    include_unclaimed: bool = Query(False),
 ):
     results = await asyncio.to_thread(
         search_service.search_agents,
@@ -39,7 +42,12 @@ async def search_agents(
         availability,
         experience_min,
         limit,
+        include_unclaimed or not config.FEATURE_S03_UNCLAIMED_TIERING,
     )
+    claimed = cards_service.claimed_by_handles([r["handle"] for r in results if r.get("handle")])
+    for r in results:
+        if r.get("handle"):
+            r["claimed"] = claimed.get(r["handle"], False)
     return {
         "query": {
             "q": q,
@@ -49,6 +57,7 @@ async def search_agents(
             "industry": industry,
             "availability": availability,
             "experience_min": experience_min,
+            "include_unclaimed": include_unclaimed,
         },
         "searchable_attributes": SEARCHABLE_ATTRIBUTES,
         "results": results,

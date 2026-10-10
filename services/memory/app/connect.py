@@ -158,4 +158,4 @@ async def connect(email: str = Form(...), password: str = Form(...)) -> HTMLResp
         # (account-takeover vector).
         return HTMLResponse(_form("Incorrect password.", email), status_code=401)
 
-    return HTMLResponse(_success(issue_personal_token(str(user_id))))
+    return HTMLResponse(_success(await issue_personal_token(pool, str(user_id))))

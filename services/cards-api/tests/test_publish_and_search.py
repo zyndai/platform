@@ -357,9 +357,27 @@ def test_search_falls_back_to_scan_when_rpcs_missing(monkeypatch):
     monkeypatch.setattr(search_service.cards_service, "list_published_rows",
                         lambda **kw: [{"card": _card_json(), "handle": "alice"}])
 
-    results = search_service.search_agents(q="engineer")
+    # The full-scan fallback defaults to claimed-only (S03): ask for the
+    # directory view explicitly, like the website's own /find UI does.
+    results = search_service.search_agents(q="engineer", include_unclaimed=True)
 
     assert [r["handle"] for r in results] == ["alice"]
+
+
+def test_scan_fallback_excludes_unclaimed_by_default(monkeypatch):
+    sb = MagicMock()
+    sb.rpc.side_effect = RuntimeError("function match_cards does not exist")
+    monkeypatch.setattr(search_service.config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(search_service, "embed_text", lambda q: [])
+    monkeypatch.setattr(search_service.cards_service, "list_published_rows",
+                        lambda **kw: [
+                            {"card": _card_json(), "handle": "alice"},
+                            {"card": _card_json(), "handle": "claimed", "owner_email": "owner@example.com"},
+                        ])
+
+    results = search_service.search_agents(q="engineer")
+
+    assert [r["handle"] for r in results] == ["claimed"]
 
 
 # ── Maintenance read-only switch ────────────────────────────────────

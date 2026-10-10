@@ -9,19 +9,22 @@ ZYND account, so we MUST NOT trust a raw `email` field alone. Supabase will happ
 return an *unconfirmed* email for a self-serve email/password (or other) signup, which
 would let an attacker register `victim@example.com` without proving ownership and then
 take over the victim's account via the email upsert. We therefore require the email to
-be provider-verified AND to come from a trusted OAuth provider that itself verifies
-email ownership.
+be *verified* — either confirmed by Supabase (`email_confirmed_at`, the link-clicked
+path for email/password signups) or asserted by the identity provider
+(`user_metadata.email_verified` for OAuth) — AND to come from a trusted provider. With
+the sub-first identity resolution in `services/users.py`, a verified email/password
+user owns their account the same way an OAuth user does.
 """
 import httpx
 
 from app.config import settings
 
-# OAuth providers that verify the user owns the email before issuing identity.
-# Persona auth offers Google and LinkedIn (linkedin_oidc); GitHub remains trusted
-# for the legacy connect flow. All three verify email ownership at the IdP, and we
-# still require the verified-email check below — so a provider here is necessary but
-# not sufficient.
-TRUSTED_PROVIDERS = frozenset({"google", "github", "linkedin_oidc"})
+# Providers whose identity we trust to mint a personal token. OAuth providers
+# (google/github/linkedin_oidc) verify the email at the IdP; "email" (Supabase
+# email/password) is trusted when the user confirmed the email via Supabase's
+# confirmation link (`email_confirmed_at`). Every path still requires the
+# verified-email check below, so a provider here is necessary but not sufficient.
+TRUSTED_PROVIDERS = frozenset({"google", "github", "linkedin_oidc", "email"})
 
 
 def _verified_identity(user: dict) -> tuple[str, str, str] | None:

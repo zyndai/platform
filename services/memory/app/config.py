@@ -1,4 +1,9 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The old hardcoded default. Never valid in production: any process that boots
+# with this value (or no value at all) in a production environment is refused.
+_DEV_JWT_SECRET = "dev-jwt-secret-change-me-in-production-0123456789"
 
 
 class Settings(BaseSettings):
@@ -6,6 +11,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    environment: str = "development"
     database_url: str = "postgresql://zynd:zynd@localhost:5433/zynd"
     redis_url: str = "redis://localhost:6380"
 
@@ -29,8 +35,15 @@ class Settings(BaseSettings):
     # Enable only in local/test envs (ENABLE_DEV_BEARER=true).
     enable_dev_bearer: bool = False
 
+    # S01 — inferred facts stay private until the owner approves them.
+    # On by default. Set FEATURE_S01_PRIVATE_DEFAULT=false to restore the old
+    # "findability predicates are public on insert" behaviour (rollback).
+    feature_s01_private_default: bool = True
+
     # M2 — JWT + OAuth (dev-grade; see docs/CHATGPT_PLUGIN.md security notes).
-    jwt_secret: str = "dev-jwt-secret-change-me-in-production-0123456789"
+    # Empty by default: production must set a strong random value (openssl rand -hex 32)
+    # or the boot guard below refuses to start.
+    jwt_secret: str = ""
     jwt_issuer: str = "zynd"
     # Shared secret for service-to-service endpoints (e.g. /v1/service/*) called
     # by zynd-cards. Empty = endpoint disabled.
@@ -42,9 +55,6 @@ class Settings(BaseSettings):
     # MCP RemoteAuthProvider to advertise OAuth discovery endpoints. If the MCP
     # server runs on a different host/port than the API, set this explicitly.
     mcp_public_base_url: str = "http://localhost:8090"
-    # Public base URL of the cards MCP server (coding-agent connector served by
-    # app.cards_mcp). Same reasoning as mcp_public_base_url.
-    cards_mcp_public_base_url: str = "http://localhost:8091"
     oauth_client_id: str = "zynd-chatgpt"
     oauth_client_secret: str = "zynd-oauth-secret"
     # Second confidential client: the Hermes Deployer. It runs the same
@@ -144,6 +154,26 @@ class Settings(BaseSettings):
     def allowed_redirect_prefixes(self) -> list[str]:
         raw = f"{self.oauth_allowed_redirect_prefixes},{self.deployer_allowed_redirect_prefixes}"
         return [p.strip() for p in raw.split(",") if p.strip()]
+
+    @model_validator(mode="after")
+    def _refuse_default_secrets_in_production(self) -> "Settings":
+        """Fail closed in production: never boot with an empty/known/short JWT
+        secret, and never boot with a hardcoded confidential-client secret."""
+        if self.environment != "production":
+            return self
+        problems: list[str] = []
+        if not self.jwt_secret or self.jwt_secret == _DEV_JWT_SECRET or len(self.jwt_secret) < 32:
+            problems.append("JWT_SECRET must be a strong random value (>=32 chars)")
+        if not self.oauth_client_secret or self.oauth_client_secret == "zynd-oauth-secret":
+            problems.append("OAUTH_CLIENT_SECRET must be overridden")
+        if (
+            not self.deployer_oauth_client_secret
+            or self.deployer_oauth_client_secret == "change-me-deployer-oauth-secret"
+        ):
+            problems.append("DEPLOYER_OAUTH_CLIENT_SECRET must be overridden")
+        if problems:
+            raise ValueError("refusing to boot in production: " + "; ".join(problems))
+        return self
 
 
 settings = Settings()

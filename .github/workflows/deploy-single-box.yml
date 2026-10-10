@@ -10,9 +10,10 @@
 # roll to, `force_all` to rebuild everything, or `plan_only` to see what a
 # deploy would do.
 #
-# Needs three repository secrets (see README, "CI/CD"): DEPLOY_HOST,
-# DEPLOY_SSH_KEY, DEPLOY_HOST_KEY. Only `push` to main/dev and manual dispatch
-# trigger this, never pull requests, so forks can't reach the secrets.
+# Needs repository secrets (see README, "CI/CD"): DEPLOY_HOST, DEPLOY_SSH_KEY,
+# DEPLOY_HOST_KEY, and MATTERMOST_WEBHOOK_URL for the failure alert. Only `push`
+# to main/dev and manual dispatch trigger this, never pull requests, so forks
+# can't reach the secrets.
 name: deploy-single-box
 
 on:
@@ -137,3 +138,78 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
               -o StrictHostKeyChecking=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 \
               "ubuntu@${DEPLOY_HOST}" "$ARGS"
+
+  # Failure alert. Runs even when `checks` fails and `deploy` is skipped — that
+  # skip is a failed deploy (CI blocked it) and the box never sees it. A green
+  # run or a cancelled one posts nothing: only failures.
+  notify:
+    needs: [checks, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Notify Mattermost on failure
+        if: ${{ needs.checks.result == 'failure' || needs.deploy.result == 'failure' }}
+        uses: actions/github-script@v7
+        env:
+          MATTERMOST_WEBHOOK_URL: ${{ secrets.MATTERMOST_WEBHOOK_URL }}
+        with:
+          script: |
+            const webhook = process.env.MATTERMOST_WEBHOOK_URL;
+            if (!webhook) throw new Error("MATTERMOST_WEBHOOK_URL secret is empty");
+
+            const { owner, repo } = context.repo;
+            const envName = (context.payload.inputs && context.payload.inputs.environment)
+              || (context.refName === "dev" ? "dev" : "prod");
+            const sha = ((context.payload.inputs && context.payload.inputs.ref) || context.sha).slice(0, 12);
+            const branch = context.refName;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            const checksFailed = "${{ needs.checks.result }}" === "failure";
+            const deployFailed = "${{ needs.deploy.result }}" === "failure";
+
+            let why;
+            if (checksFailed) {
+              why = "the automated checks failed, so the servers were never updated";
+            } else if (deployFailed) {
+              why = "the deploy to the server failed partway through";
+            } else {
+              why = "the pipeline did not finish cleanly";
+            }
+
+            const failedSteps = [];
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner,
+              repo,
+              run_id: context.runId,
+              filter: "latest",
+            });
+            for (const job of jobs) {
+              if (job.conclusion !== "failure") continue;
+              for (const step of job.steps || []) {
+                if (step.conclusion === "failure") {
+                  failedSteps.push(`- ${job.name}: ${step.name}`);
+                }
+              }
+            }
+
+            const lines = [
+              `Heads up, the ${envName} deploy just failed.`,
+              "",
+              `A push to the \`${branch}\` branch (\`${sha}\`) didn't make it to the servers — ${why}.`,
+              "",
+              "Where it broke:",
+              failedSteps.length ? failedSteps.join("\n") : "- (couldn't read the failing step)",
+              "",
+              `Details: ${runUrl}`,
+            ];
+
+            const resp = await fetch(webhook, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: lines.join("\n") }),
+            });
+            if (!resp.ok) throw new Error(`Mattermost webhook returned ${resp.status}`);

@@ -132,7 +132,8 @@ which routes to either environment, so it must be a version that knows `--env`.
    |---|---|
    | `DEPLOY_HOST` | the box's IP or hostname |
    | `DEPLOY_SSH_KEY` | the private key (`ci_deploy`), whole file |
-   | `DEPLOY_HOST_KEY` | the box's public host key: `cut -d' ' -f1-2 /etc/ssh/ssh_host_ed25519_key.pub` (pinned, not trust-on-first-use) |
+    | `DEPLOY_HOST_KEY` | the box's public host key: `cut -d' ' -f1-2 /etc/ssh/ssh_host_ed25519_key.pub` (pinned, not trust-on-first-use) |
+    | `MATTERMOST_WEBHOOK_URL` | Mattermost incoming-webhook URL. A `dev` or `main` deploy posts **only on failure** — including when CI fails and the deploy job never starts. Successes, cancellations and merged PRs stay silent |
 
 3. Optional: branch protection on `main` requiring the `ci` checks; an
    Actions *environment* with required reviewers if deploys should need approval.

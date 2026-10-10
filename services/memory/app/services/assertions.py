@@ -1,5 +1,6 @@
 import asyncpg
 
+from app.config import settings
 from app.models import ExtractedAssertion
 from app.taxonomy import (
     DEFAULT_SOURCE_RELIABILITY,
@@ -9,6 +10,20 @@ from app.taxonomy import (
 )
 
 CONFIDENCE_CAP = 0.97  # brief §14.4 — never reach certainty
+
+
+def initial_visibility(predicate: str) -> tuple[bool, None]:
+    """Visibility for a brand-new inferred assertion.
+
+    Private by default: is_public=false, approved_at=NULL. Publishing is a user
+    action (findability.approve / declare), not a side effect of extraction.
+    Flag off restores auto-public for findability predicates (rollback only).
+    """
+    is_public = (
+        not settings.feature_s01_private_default
+        and predicate in FINDABILITY_PREDICATES
+    )
+    return is_public, None
 
 
 def bayesian_update(prior: float, evidence: float, source_reliability: float) -> float:
@@ -36,6 +51,10 @@ async def upsert_assertion(
 
     Identity of an assertion at MVP = (user_id, predicate, object_entity_id);
     subject is always the user themselves (§3.4).
+
+    New inferred facts are private (is_public=false, approved_at=NULL) until the
+    owner approves them via findability.approve() or publishes via declare().
+    Matching only reads is_public=true, so an unapproved fact never enters the pool.
     """
     reliability = SOURCE_RELIABILITY.get(source_system, DEFAULT_SOURCE_RELIABILITY)
 
@@ -48,11 +67,7 @@ async def upsert_assertion(
 
     if existing is None:
         confidence = bayesian_update(0.0, extracted.confidence, reliability)
-        # Findability-eligible facts are public by default so the matching pool is
-        # always populated (matching reads only is_public=true). Every other predicate
-        # — beliefs, frustrations, health/life-stage, etc. — stays PRIVATE. Users can
-        # still revoke a public fact via /me/revoke.
-        is_public = extracted.predicate in FINDABILITY_PREDICATES
+        is_public, _approved_at = initial_visibility(extracted.predicate)
         row = await conn.fetchrow(
             """INSERT INTO assertions
                  (user_id, predicate, object_entity_id, confidence,

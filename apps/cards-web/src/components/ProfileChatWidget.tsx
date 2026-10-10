@@ -156,7 +156,7 @@ export function ProfileChatWidget({ handle, personName }: ProfileChatWidgetProps
       <button
         className="pf-chat-fab"
         type="button"
-        aria-label={`Ask about ${personName}`}
+        aria-label={`Ask ${personName}'s AI assistant`}
         onClick={() => setOpen(true)}
         style={{
           position: "fixed", bottom: "24px", right: "24px", zIndex: 50,
@@ -194,8 +194,8 @@ export function ProfileChatWidget({ handle, personName }: ProfileChatWidgetProps
         flexShrink: 0,
       }}>
         <div>
-          <div style={{ fontSize: "14px", fontWeight: 600, letterSpacing: "-0.01em" }}>{personName}</div>
-          <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "1px" }}>Ask me anything</div>
+          <div style={{ fontSize: "14px", fontWeight: 600, letterSpacing: "-0.01em" }}>{personName.split(" ")[0]}&apos;s AI assistant</div>
+          <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.5)", marginTop: "1px" }}>Answers from this card — not {personName.split(" ")[0]}</div>
         </div>
         <button
           type="button"
@@ -220,7 +220,10 @@ export function ProfileChatWidget({ handle, personName }: ProfileChatWidgetProps
         {messages.length === 0 && (
           <div style={{ margin: "auto", textAlign: "center", color: "#999", fontSize: "13px" }}>
             <div style={{ fontSize: "22px", marginBottom: "8px" }}>💬</div>
-            Ask anything about {personName.split(" ")[0]}
+            Ask anything about {personName.split(" ")[0]} — I&apos;m an AI assistant
+            <div style={{ marginTop: 6, fontSize: "11px" }}>
+              answering from this card&apos;s public profile
+            </div>
           </div>
         )}
         {messages.map((m, i) => (

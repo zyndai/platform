@@ -96,6 +96,11 @@ export interface AgentProfileCard {
   can_help_with: string[];
   connect_with: string[];
   love_talking_about: string[];
+  /** Short share alias (S07): cards.zynd.ai/<alias> redirects to this card. */
+  alias?: string | null;
+  /** S03: the card's owner has taken it over (owner_email set). The email is
+   *  never exposed — only this boolean. */
+  claimed?: boolean;
   github_stats: {
     total_repos: number;
     active_repos: number;
@@ -146,6 +151,8 @@ export interface AgentSearchResult {
   match_score: number;
   match_reasons: string[];
   url: string;
+  /** S03: false when the card has no owner yet (shown with an "Unclaimed" chip). */
+  claimed?: boolean;
 }
 
 export interface AgentSearchResponse {

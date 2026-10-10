@@ -59,21 +59,6 @@ services:
       postgres: { condition: service_healthy }
     restart: unless-stopped
 
-  # Cards MCP server (coding-agent connector) — FastMCP app from the same
-  # memory image, second process, port 8091. localhost-only host port: the
-  # system Caddy on the box proxies api.zynd.ai/cards-mcp* here; when the
-  # compose-internal Caddy (infra/api-box/Caddyfile) is used instead, it
-  # reaches cards-mcp:8091 over the docker network.
-  cards-mcp:
-    build: ../../services/memory
-    env_file: ../../services/memory/.env.prod
-    command: uvicorn app.cards_mcp:app --host 0.0.0.0 --port 8091
-    depends_on:
-      postgres: { condition: service_healthy }
-    ports:
-      - "127.0.0.1:8091:8091"
-    restart: unless-stopped
-
   # Zynd agent profile cards API — a sibling service in this monorepo, merged
   # into this compose so Caddy can reach it over the shared network.
   cards:

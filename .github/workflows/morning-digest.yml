@@ -19,12 +19,20 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger morning digest
+      - name: Trigger morning digest (prod)
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           CARDS_API: ${{ secrets.CARDS_API_URL }}
         run: |
           test -n "$CRON_SECRET" || { echo "CRON_SECRET secret is empty"; exit 1; }
           test -n "$CARDS_API" || { echo "CARDS_API_URL secret is empty"; exit 1; }
+          curl -fsS -X POST "${CARDS_API%/}/internal/morning-digest" \
+            -H "Authorization: Bearer ${CRON_SECRET}"
+      - name: Trigger morning digest (dev)
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CARDS_API: ${{ secrets.CARDS_API_DEV_URL }}
+        run: |
+          test -n "$CARDS_API" || { echo "CARDS_API_DEV_URL secret not set; skipping dev"; exit 0; }
           curl -fsS -X POST "${CARDS_API%/}/internal/morning-digest" \
             -H "Authorization: Bearer ${CRON_SECRET}"

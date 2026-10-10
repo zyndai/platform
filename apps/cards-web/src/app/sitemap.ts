@@ -6,7 +6,8 @@ export const dynamic = "force-dynamic";
 const BASE_URL = "https://cards.zynd.ai";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const cards = await listCards();
+  // S03: unclaimed cards carry noindex and stay out of the sitemap.
+  const cards = (await listCards()).filter((c) => c.claimed !== false);
 
   const staticEntries: MetadataRoute.Sitemap = [
     { url: BASE_URL, lastModified: new Date(), changeFrequency: "weekly", priority: 1.0 },

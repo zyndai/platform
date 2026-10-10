@@ -4,7 +4,7 @@ import logging
 import os
 import tempfile
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -211,6 +211,16 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
         set_ready(job_id, card, scrape_raw=scrape_raw)
     except Exception as exc:
         set_error(job_id, str(exc))
+
+
+@router.get("/claim-candidates")
+async def claim_candidates(linkedin: str = Query("", max_length=500)):
+    """S08 claim-first: published, unclaimed cards whose LinkedIn URL matches,
+    so the UI can offer "claim it" instead of building a duplicate."""
+    from services import cards as cards_service
+
+    candidates = await asyncio.to_thread(cards_service.claim_candidates_by_linkedin, linkedin)
+    return {"candidates": candidates}
 
 
 @router.post("/start")

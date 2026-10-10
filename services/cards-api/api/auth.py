@@ -25,6 +25,10 @@ class Principal(NamedTuple):
     email: str
     sub: str   # only trustworthy against auth.users when iss == config.AAFO_ISSUER
     iss: str
+    # Raw Supabase claims the JWT carries (linkedin_oidc puts the public
+    # LinkedIn handle in user_metadata.preferred_username — used by the
+    # S03 "Claim with LinkedIn" flow).
+    user_metadata: dict = {}
 
 
 # One JWKS client per trusted issuer URL, fetched and cached lazily.
@@ -80,7 +84,8 @@ def verify_supabase_jwt(authorization: str | None) -> Principal | None:
             if not email:
                 logger.warning("JWT valid (ES256) but missing email claim")
                 return None
-            return Principal(email=email, sub=payload.get("sub", ""), iss=token_iss)
+            return Principal(email=email, sub=payload.get("sub", ""), iss=token_iss,
+                             user_metadata=payload.get("user_metadata") or {})
         except jwt.ExpiredSignatureError:
             logger.debug("JWT expired")
             return None
@@ -106,7 +111,8 @@ def verify_supabase_jwt(authorization: str | None) -> Principal | None:
         if not email:
             logger.warning("JWT valid (HS256) but missing email claim")
             return None
-        return Principal(email=email, sub=payload.get("sub", ""), iss=payload.get("iss", ""))
+        return Principal(email=email, sub=payload.get("sub", ""), iss=payload.get("iss", ""),
+                         user_metadata=payload.get("user_metadata") or {})
     except jwt.ExpiredSignatureError:
         logger.debug("JWT expired (HS256)")
         return None

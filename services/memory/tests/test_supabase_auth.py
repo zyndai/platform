@@ -32,9 +32,21 @@ def test_unconfirmed_email_is_rejected():
     assert _verified_identity({"email": "victim@gmail.com", "app_metadata": {"provider": "google"}}) is None
 
 
+def test_email_password_confirmed_is_accepted():
+    # Email/password signup is trusted once the email is confirmed (email_confirmed_at).
+    user = {"id": "sub-email", "email": "User@Example.com", "email_confirmed_at": "2026-01-01T00:00:00Z",
+            "app_metadata": {"provider": "email"}}
+    assert _verified_identity(user) == ("user@example.com", "user", "sub-email")
+
+
+def test_email_password_unconfirmed_is_rejected():
+    user = {"email": "victim@gmail.com", "app_metadata": {"provider": "email"}}
+    assert _verified_identity(user) is None
+
+
 def test_untrusted_provider_is_rejected_even_if_confirmed():
     user = {"email": "victim@gmail.com", "email_confirmed_at": "2026-01-01T00:00:00Z",
-            "app_metadata": {"provider": "email"}}
+            "app_metadata": {"provider": "phone"}}
     assert _verified_identity(user) is None
 
 

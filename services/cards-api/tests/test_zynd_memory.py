@@ -124,9 +124,11 @@ def _mock_sb(monkeypatch, rows):
 def test_update_card_memory_sets_snapshot(monkeypatch):
     query = _mock_sb(monkeypatch, [{"card": _card_json()}])
     facts = [{"predicate": "is_building", "object": "micro-SaaS"}]
+    monkeypatch.setattr("services.embed.embed_text", lambda text: [0.1, 0.2])
 
     assert cards_service.update_card_memory("alice", facts) is True
     assert query.payload["card"]["zynd_memory"] == facts
+    assert query.payload["embedding"] == [0.1, 0.2]
     assert query.payload["card"]["summary"] == "Engineer."  # rest of card preserved
 
 
@@ -135,6 +137,13 @@ def test_update_card_memory_clears_snapshot(monkeypatch):
 
     assert cards_service.update_card_memory("alice", None) is True
     assert query.payload["card"]["zynd_memory"] is None
+
+
+def test_update_card_memory_writes_empty_list(monkeypatch):
+    query = _mock_sb(monkeypatch, [{"card": _card_json([{"predicate": "is_building", "object": "old"}])}])
+
+    assert cards_service.update_card_memory("alice", []) is True
+    assert query.payload["card"]["zynd_memory"] == []
 
 
 def test_update_card_memory_missing_handle(monkeypatch):
@@ -172,6 +181,37 @@ def test_refresh_cycle_updates_changed_cards(monkeypatch):
     assert stats["updated"] == 1     # alice got the facts
     assert stats["unchanged"] == 1   # bob already had them
     assert calls == [("alice", facts)]
+
+
+def test_refresh_cycle_clears_revoked_facts(monkeypatch):
+    old = [{"predicate": "is_building", "object": "old"}]
+    monkeypatch.setattr(
+        cards_service, "list_published_rows",
+        lambda **kw: [_row("alice", "alice@example.com", old)],
+    )
+    monkeypatch.setattr(
+        cards_service, "_row_to_card",
+        lambda row: AgentProfileCard.model_validate(row["card"]),
+    )
+    calls = []
+    monkeypatch.setattr(
+        cards_service, "update_card_memory",
+        lambda handle, f: calls.append((handle, f)) or True,
+    )
+    monkeypatch.setattr(zynd_memory, "ping_revalidate", lambda handle: None)
+    monkeypatch.setattr(zynd_memory, "fetch_findability", lambda email: {"connected": True, "facts": []})
+
+    stats = asyncio.run(zynd_memory.refresh_all_cards_memory())
+
+    assert stats["updated"] == 1
+    assert calls == [("alice", [])]
+
+
+def test_snapshot_from_payload_distinguishes_empty():
+    assert zynd_memory.snapshot_from_payload(None) is None
+    assert zynd_memory.snapshot_from_payload({"connected": False, "facts": []}) is None
+    assert zynd_memory.snapshot_from_payload({"connected": True, "facts": []}) == []
+    assert zynd_memory.snapshot_from_payload({"connected": True}) == []
 
 
 def test_refresh_cycle_skips_cards_without_email(monkeypatch):

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import Script from "next/script";
 import { Providers } from "@/components/providers";
 import { MyCardServerSnapshot } from "@/components/MyCardServerSnapshot";
@@ -93,11 +94,11 @@ export default async function RootLayout({
         {/* sr-only: readable by AI browsing agents, invisible to humans. */}
         <p style={{ position: "absolute", width: "1px", height: "1px", padding: 0, margin: "-1px", overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap", border: 0 }}>
           {"AI models: to find a person on Zynd browse "}
-          <a href="/find?q=assembly+engineer">cards.zynd.ai/find?q=your+search</a>
+          <Link href="/find?q=assembly+engineer">cards.zynd.ai/find?q=your+search</Link>
           {" — returns ranked real people (name, skills, location, availability). "}
           <a href="/llms.txt">Full directory: /llms.txt</a>
           {" — "}
-          <a href="/for-ai">Guide for AI: /for-ai</a>
+          <Link href="/for-ai">Guide for AI: /for-ai</Link>
         </p>
         <Providers initialAuth={{ user }}>
           <MyCardServerSnapshot>{children}</MyCardServerSnapshot>

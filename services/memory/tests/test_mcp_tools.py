@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from app.auth import issue_personal_token
+from app.auth import issue_access_token
 from app.mcp_http import ZyndTokenVerifier, app as mcp_asgi, mcp
 
 
@@ -77,9 +77,9 @@ def test_all_74_tools_registered():
     assert not missing, f"Missing tools: {sorted(missing)}"
 
 
-def test_tool_count_is_74():
+def test_tool_count_is_76():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert len(names) == 74
+    assert len(names) == 76
 
 
 # ── Auth: HTTP-level rejection ─────────────────────────────────────────────────
@@ -116,25 +116,14 @@ async def test_rejects_random_garbage_token():
 
 # ── ZyndTokenVerifier unit tests ───────────────────────────────────────────────
 
-async def test_verifier_returns_anonymous_for_empty_token():
-    # given
+async def test_verifier_rejects_empty_token():
     verifier = ZyndTokenVerifier()
-    # when
-    token = await verifier.verify_token("")
-    # then
-    assert token is not None
-    assert token.client_id == "anonymous"
-    assert "anonymous" in token.scopes
+    assert await verifier.verify_token("") is None
 
 
-async def test_verifier_returns_anonymous_for_whitespace_token():
-    # given
+async def test_verifier_rejects_whitespace_token():
     verifier = ZyndTokenVerifier()
-    # when
-    token = await verifier.verify_token("   ")
-    # then
-    assert token is not None
-    assert token.client_id == "anonymous"
+    assert await verifier.verify_token("   ") is None
 
 
 async def test_verifier_returns_none_when_db_unavailable_for_non_jwt():
@@ -160,7 +149,7 @@ async def test_verifier_rejects_jwt_with_wrong_secret():
 async def test_verifier_accepts_valid_jwt():
     # given — valid JWT signed with the real secret
     user_id = "00000000-0000-0000-0000-000000000001"
-    token = issue_personal_token(user_id)
+    token = issue_access_token(user_id)[0]
     verifier = ZyndTokenVerifier()
 
     # mock pool so revocation check succeeds without real DB
@@ -181,7 +170,7 @@ async def test_verifier_accepts_valid_jwt():
 async def test_verifier_rejects_revoked_jwt():
     # given — valid JWT but revocation watermark is after iat
     user_id = "00000000-0000-0000-0000-000000000002"
-    token = issue_personal_token(user_id)
+    token = issue_access_token(user_id)[0]
     verifier = ZyndTokenVerifier()
 
     with patch("app.mcp_http._pool", AsyncMock()):

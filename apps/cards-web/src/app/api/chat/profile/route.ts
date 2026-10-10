@@ -14,14 +14,22 @@ export async function POST(req: NextRequest) {
 
     const res = await fetch(`${API_BASE}/v1/chat/${handle}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-forwarded-for": req.headers.get("x-forwarded-for") ?? "",
+      },
       body: JSON.stringify({ messages }),
     });
 
     if (!res.ok || !res.body) {
       // Map backend status codes without leaking internal error details
-      const status = res.status === 404 ? 404 : res.status === 503 ? 503 : 502;
-      const msg = status === 404 ? "Card not found" : status === 503 ? "Chatbot unavailable" : "Upstream error";
+      const status = res.status === 404 ? 404 : res.status === 403 ? 403 : res.status === 429 ? 429 : res.status === 503 ? 503 : 502;
+      const msg =
+        status === 404 ? "Card not found"
+        : status === 403 ? "This card has no assistant"
+        : status === 429 ? "Too many questions — please slow down"
+        : status === 503 ? "Chatbot unavailable"
+        : "Upstream error";
       return NextResponse.json({ error: msg }, { status });
     }
 

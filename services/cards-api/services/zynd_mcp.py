@@ -1,11 +1,10 @@
-"""Cards ↔ memory-layer bridge for the MCP connector and fact review.
+"""Cards ↔ memory-layer bridge for fact review.
 
 Service-to-service, MEMORY_SERVICE_TOKEN shared secret (same contract as
 services/zynd_memory.py). cards-api vouches for the caller's identity after
-verifying their Supabase session; memory mints the long-lived MCP token and
-owns the suggestion/approve/revoke data. The personal MCP token never enters
-the browser — review flows through this module so the dashboard only ever
-holds the user's short-lived Supabase session.
+verifying their Supabase session and proxies suggestion/approve/revoke calls;
+memory owns the data. The cards MCP server and its token-mint path
+(`connect_mcp_sync`) have been removed — no cards MCP token is minted anymore.
 """
 import logging
 from urllib.parse import quote
@@ -28,10 +27,6 @@ def _base() -> str:
 def _headers() -> dict:
     return {"Authorization": f"Bearer {config.MEMORY_SERVICE_TOKEN}",
             "Content-Type": "application/json"}
-
-
-def _memory_enabled() -> bool:
-    return bool(config.MEMORY_SERVICE_TOKEN)
 
 
 async def _request(method: str, path: str, json_body: dict | None = None,
@@ -61,37 +56,6 @@ async def _request(method: str, path: str, json_body: dict | None = None,
         raise MemoryUnavailable("memory layer returned invalid JSON") from exc
 
 
-# ── MCP connector ─────────────────────────────────────────────────────────────
-
-def connect_mcp_sync(email: str, display_name: str = "", supabase_user_id: str = "") -> dict | None:
-    """Mint a cards MCP token for a verified cards user (sync, for to_thread).
-
-    Returns {"token", "mcp_url"} or None when the connector is disabled or the
-    memory layer is unreachable — the dashboard treats that as "try again later".
-    """
-    if not _memory_enabled() or not (email or "").strip():
-        return None
-    try:
-        resp = httpx.post(
-            f"{_base()}/v1/service/cards-connect",
-            json={"email": email.strip().lower(),
-                  "display_name": display_name or "",
-                  "supabase_user_id": supabase_user_id or ""},
-            headers=_headers(),
-            timeout=10,
-        )
-    except httpx.HTTPError as exc:
-        logger.warning("cards-connect failed email=%s err=%s", email, exc)
-        return None
-    if resp.status_code != 200:
-        logger.warning("cards-connect non-200 email=%s status=%d", email, resp.status_code)
-        return None
-    try:
-        return resp.json()
-    except ValueError:
-        return None
-
-
 # ── Fact review (suggested → approved → public on the card) ──────────────────
 
 async def suggested_facts(email: str) -> list[dict]:
@@ -109,5 +73,12 @@ async def approve_fact(email: str, predicate: str, value: str) -> dict:
 
 async def revoke_fact(email: str, predicate: str, value: str) -> dict:
     return await _request("POST", "/v1/service/revoke", {
+        "email": email.strip().lower(), "predicate": predicate, "value": value,
+    })
+
+
+async def forget_fact(email: str, predicate: str, value: str) -> dict:
+    """Delete a fact from the owner's memory entirely (soft-delete)."""
+    return await _request("POST", "/v1/service/forget", {
         "email": email.strip().lower(), "predicate": predicate, "value": value,
     })

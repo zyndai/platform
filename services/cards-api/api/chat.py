@@ -169,6 +169,15 @@ async def chat(handle: str, body: ChatRequest, request: Request):
     if _rate_limited(f"{handle}|{client_ip}"):
         raise HTTPException(status_code=429, detail="Too many questions — please slow down")
 
+    from services import events as events_service
+
+    events_service.emit(
+        "chat_message",
+        handle=handle,
+        request=request,
+        meta={"handle": handle},
+    )
+
     system_prompt = _build_system_prompt(card_obj.model_dump())
 
     return StreamingResponse(

@@ -1,6 +1,6 @@
 import hmac
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query, Response
 
 import config
 from services.digest import clear_suggested_posts, run_digest
@@ -34,3 +34,15 @@ def clear_suggested_posts_route(
 ):
     _require_cron(authorization)
     return clear_suggested_posts(handle=handle)
+
+
+@router.post("/purge-card-events")
+def purge_card_events(authorization: str | None = Header(default=None)):
+    """S04: drop card_events older than 180 days. Flag off → 204."""
+    _require_cron(authorization)
+    from services import events as events_service
+
+    if not events_service.events_enabled():
+        return Response(status_code=204)
+    deleted = events_service.purge_older_than_days(180)
+    return {"deleted": deleted}

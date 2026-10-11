@@ -1,10 +1,12 @@
 import { listCards, cardCanonicalUrl, CARDS_API } from "@/lib/cards";
+import { logAgentFetch } from "@/lib/track";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://cards.zynd.ai";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
+  logAgentFetch("llms.txt", req.headers.get("user-agent"));
   // S03: unclaimed (scraped) cards are excluded from agent-facing surfaces.
   const cards = (await listCards()).filter((c) => c.claimed !== false);
 

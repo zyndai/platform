@@ -4,7 +4,7 @@ import logging
 import os
 import tempfile
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,11 @@ class PublishRequest(BaseModel):
     # clients that still send it don't fail validation.
     owner_email: str | None = None
     custom_handle: str | None = None
+    # S04 attribution (from zynd_attr cookie). Invalid values are dropped.
+    source: str | None = None
+    ref: str | None = None
+    utm: dict | None = None
+    created_via: str | None = None
 
 
 def _classify_url(url: str) -> str:
@@ -225,8 +230,12 @@ async def claim_candidates(linkedin: str = Query("", max_length=500)):
 
 @router.post("/start")
 async def start_onboard(
+    request: Request,
     url: list[str] = Form(default=[]),
     resume: UploadFile | None = File(None),
+    source: str | None = Form(default=None),
+    ref: str | None = Form(default=None),
+    utm: str | None = Form(default=None),
 ):
     resume_text = None
     if resume is not None:
@@ -244,6 +253,19 @@ async def start_onboard(
 
     job_id = create_job()
     asyncio.create_task(_run_pipeline(job_id, list(url), resume_text))
+    from services import events as events_service
+
+    start_meta: dict = {}
+    if clean_source := events_service.sanitize_source(source):
+        start_meta["source"] = clean_source
+    if clean_utm := events_service.sanitize_utm(utm):
+        start_meta["utm"] = clean_utm
+    events_service.emit(
+        "create_start",
+        request=request,
+        ref=ref,
+        meta=start_meta or None,
+    )
     return {"job_id": job_id}
 
 
@@ -264,6 +286,7 @@ async def get_onboard_status(job_id: str):
 async def publish_card(
     job_id: str,
     body: PublishRequest,
+    request: Request,
     authorization: str | None = Header(default=None),
 ):
     # Ownership comes only from a verified session. An anonymous publish creates
@@ -340,9 +363,22 @@ async def publish_card(
         body.custom_handle,
         claim_token_hash,
         owner_user_id,
+        body.source,
+        body.ref,
+        body.utm,
+        body.created_via or "web",
     )
     card.handle = handle  # frontend reads published.handle for redirect
     await hooks.run_publish_hooks(card.id, handle)
+    from services import events as events_service
+
+    events_service.emit(
+        "create_publish",
+        handle=handle,
+        request=request,
+        ref=body.ref,
+        meta={"created_via": body.created_via or "web"},
+    )
     result = card.model_dump(mode="json")
     if claim_token:
         result["claim_token"] = claim_token  # shown once; send as X-Claim-Token to claim

@@ -1,4 +1,5 @@
 import { fetchCardByHandle, cardCanonicalUrl } from "@/lib/cards";
+import { logAgentFetch } from "@/lib/track";
 
 export const revalidate = 60;
 
@@ -6,8 +7,9 @@ interface Params {
   params: Promise<{ handle: string }>;
 }
 
-export async function GET(_req: Request, { params }: Params) {
+export async function GET(req: Request, { params }: Params) {
   const { handle } = await params;
+  logAgentFetch("data.json", req.headers.get("user-agent"), handle);
   const card = await fetchCardByHandle(handle);
 
   if (!card) {

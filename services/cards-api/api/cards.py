@@ -6,13 +6,14 @@ import socket
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
 import config
 from api.auth import verify_supabase_jwt
 from models.card import AgentProfileCard
 from services import cards as cards_service
+from services import events as events_service
 from services.jobs import utcnow
 
 logger = logging.getLogger(__name__)
@@ -78,10 +79,16 @@ async def check_handle_available(handle: str):
 
 
 @router.get("/by-handle/{handle}")
-async def get_card_by_handle(handle: str):
+async def get_card_by_handle(handle: str, request: Request):
     card = await asyncio.to_thread(cards_service.get_card_by_handle_public, handle)
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
+    events_service.emit(
+        "view",
+        handle=handle,
+        request=request,
+        meta={"endpoint": "by-handle"},
+    )
     return card
 
 
@@ -135,7 +142,11 @@ async def get_card_by_alias(alias: str):
 
 
 @router.post("/by-handle/{handle}/claim")
-async def claim_card(handle: str, authorization: str | None = Header(default=None)):
+async def claim_card(
+    handle: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
     """Claim an unowned card by matching the signed-in LinkedIn identity to the
     card's LinkedIn URL. The legacy claim-token path stays as a fallback."""
     principal = verify_supabase_jwt(authorization)
@@ -145,6 +156,7 @@ async def claim_card(handle: str, authorization: str | None = Header(default=Non
     if not claimed:
         status = 404 if message == "card not found" else 403
         raise HTTPException(status_code=status, detail=message)
+    events_service.emit("claim_done", handle=handle, request=request)
     return {"claimed": True, "handle": handle}
 
 

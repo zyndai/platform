@@ -15,6 +15,7 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { pageMetadata } from "@/lib/seo";
 import { SkillMatrix } from "./skill-matrix";
+import { withShareRef } from "@/lib/attr";
 import { ShareQrGroup, CopyPermalinkIcon } from "./share-controls";
 import type { ResumeData } from "./resume-pdf";
 import { EditCardButton } from "./edit-card-button";
@@ -621,6 +622,7 @@ export default async function PersonPage({ params }: PageProps) {
         .pf-hero { grid-column: span 4; padding: 18px; height: 100%; }
         .pf-right-stack { grid-column: span 8; display: flex; flex-direction: column; gap: 16px; height: 100%; }
         .pf-ai-work { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; align-items: stretch; }
+        .pf-ai-work > *:only-child { grid-column: 1 / -1; }
         .pf-ai-fact { grid-column: span 5; padding: 20px 24px; height: 100%; min-height: 0; }
         .pf-work { grid-column: span 7; height: 100%; min-height: 0; }
         .pf-span-12 { grid-column: span 12; }
@@ -801,7 +803,7 @@ export default async function PersonPage({ params }: PageProps) {
                 </div>
               )}
 
-              <HeroAskPanel firstName={firstName} handle={card.handle || handle} permalink={permalink} />
+              {claimed && <HeroAskPanel firstName={firstName} handle={card.handle || handle} permalink={permalink} />}
 
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", gap: 8 }}>
@@ -878,7 +880,7 @@ export default async function PersonPage({ params }: PageProps) {
 
             {/* ── AI FACT + WORK EXP: equal height, fact card fills ── */}
             <div className="pf-span-12 pf-ai-work">
-            {(() => {
+            {claimed && (() => {
               const q = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
               const arr = (items: string[]) => `[${items.map(q).join(", ")}]`;
               const currentRoles = (card.work_experience ?? [])
@@ -1343,10 +1345,13 @@ export default async function PersonPage({ params }: PageProps) {
             <div className="pf-footer-links flex flex-wrap items-center gap-3">
               <div className="pf-permalink-badge flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gray-50 border border-gray-200">
                 <span className="pf-permalink-text" style={{ color: "#0f172a", fontWeight: 600 }}>{permalink}</span>
-                <CopyPermalinkIcon url={`https://${permalink}`} />
+                <CopyPermalinkIcon
+                  url={withShareRef(`https://${permalink}`, card.handle ?? card.id)}
+                  handle={card.handle ?? card.id}
+                />
               </div>
               <Link href="/directory" className="hover:text-slate-800">DIRECTORY</Link>
-              <a href={`/p/${card.handle ?? card.id}/data.json`} className="hover:text-slate-800">FOR AI</a>
+              {claimed && <a href={`/p/${card.handle ?? card.id}/data.json`} className="hover:text-slate-800">FOR AI</a>}
               <Link href="/create" className="hover:text-slate-800">CREATE</Link>
             </div>
           </footer>

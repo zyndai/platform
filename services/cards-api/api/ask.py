@@ -11,11 +11,12 @@ full directory (the website's own /find UI does).
 """
 import asyncio
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
 import config
 from services import cards as cards_service
+from services import events as events_service
 from services import search as search_service
 
 router = APIRouter()
@@ -41,6 +42,7 @@ def _annotate_claimed(results: list[dict]) -> list[dict]:
 
 @router.get("")
 async def ask_get(
+    request: Request,
     q: str = Query("", max_length=200),
     limit: int = Query(10, ge=1, le=50),
     include_unclaimed: bool = Query(False),
@@ -49,12 +51,14 @@ async def ask_get(
         search_service.search_agents, q, "", "", "", "", "", None, limit,
         _effective_include(include_unclaimed),
     )
+    events_service.emit("agent_fetch", request=request, meta={"endpoint": "ask"})
     return {"query": q, "results": _annotate_claimed(results), "numberOfItems": len(results)}
 
 
 @router.post("")
 async def ask_post(
     body: AskRequest,
+    request: Request,
     limit: int = Query(10, ge=1, le=50),
     include_unclaimed: bool = Query(False),
 ):
@@ -62,4 +66,5 @@ async def ask_post(
         search_service.search_agents, body.q, "", "", "", "", "", None, limit,
         _effective_include(include_unclaimed),
     )
+    events_service.emit("agent_fetch", request=request, meta={"endpoint": "ask"})
     return {"query": body.q, "results": _annotate_claimed(results), "numberOfItems": len(results)}

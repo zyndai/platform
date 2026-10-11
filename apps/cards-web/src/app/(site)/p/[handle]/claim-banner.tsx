@@ -7,6 +7,7 @@ import { setAuthNext } from "@/lib/auth/next-cookie";
 import { oauthCallbackUrl } from "@/lib/auth/origin";
 import { useAuth } from "@/hooks/useAuth";
 import { CARDS_API } from "@/lib/cards";
+import { track } from "@/lib/track";
 
 interface ClaimBannerProps {
   handle: string;
@@ -26,6 +27,7 @@ export function ClaimBanner({ handle, name }: ClaimBannerProps) {
   const claim = useCallback(async () => {
     setBusy(true);
     setError(null);
+    track("claim_start", { handle }, handle);
     try {
       const { data: { session } } = await createClient().auth.getSession();
       const token = session?.access_token;
@@ -60,6 +62,7 @@ export function ClaimBanner({ handle, name }: ClaimBannerProps) {
   }, [authenticated, claim]);
 
   function signInToClaim() {
+    track("claim_start", { handle }, handle);
     setAuthNext(`/p/${encodeURIComponent(handle)}`, "card");
     void createClient().auth.signInWithOAuth({
       provider: "linkedin_oidc",

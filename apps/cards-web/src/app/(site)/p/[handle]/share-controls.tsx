@@ -4,6 +4,8 @@ import { useCallback, useRef, useState } from "react";
 import { Check, ChevronDown, Copy, Download, FileText, Link2, Maximize2, QrCode, Share2, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 
+import { withShareRef } from "@/lib/attr";
+import { track } from "@/lib/track";
 import { ResumePicker } from "./resume-picker";
 import type { ResumeData } from "./resume-pdf";
 
@@ -426,13 +428,15 @@ export function ShareQrGroup({
   const [pickerOpen, setPickerOpen] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
   const fullSvgRef = useRef<SVGSVGElement>(null);
+  const shareUrl = withShareRef(url, handle);
 
   const onCopyLink = useCallback(async () => {
-    await writeClipboard(url);
+    await writeClipboard(shareUrl);
+    track("share_click", { handle }, handle);
     setCopied(true);
     setMenuOpen(false);
     setTimeout(() => setCopied(false), 2000);
-  }, [url]);
+  }, [shareUrl, handle]);
 
   const onDownloadResume = useCallback(() => {
     if (!resume) return;
@@ -498,9 +502,16 @@ export function ShareQrGroup({
         {/* QR half */}
         <button
           type="button"
-          onClick={() => { setQrOpen((v) => !v); setMenuOpen(false); setCopied(false); }}
-          aria-expanded={qrOpen}
+          onClick={() => {
+            setQrOpen((v) => {
+              if (!v) track("share_click", { handle }, handle);
+              return !v;
+            });
+            setMenuOpen(false);
+            setCopied(false);
+          }}
           aria-label="Show QR code"
+
           style={{ color: qrOpen ? "#fff" : "#0B0B0B" }}
           className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[12px]! font-mono font-medium transition-all group
             ${qrOpen ? "bg-black hover:!text-white" : "hover:bg-black hover:!text-white"}`}
@@ -540,7 +551,7 @@ export function ShareQrGroup({
             <div className="rounded-xl overflow-hidden border border-[#F0F0EA] p-3 bg-white leading-none">
               <QRCodeSVG
                 ref={svgRef}
-                value={url}
+                value={shareUrl}
                 size={272}
                 fgColor="#0B0B0B"
                 bgColor="#ffffff"
@@ -550,7 +561,7 @@ export function ShareQrGroup({
               />
             </div>
             <span className="font-mono text-[10px] text-[#8E8E88] break-all max-w-[280px] text-center leading-snug">
-              {url.replace(/^https?:\/\//, "")}
+              {shareUrl.replace(/^https?:\/\//, "")}
             </span>
             <span className="font-mono text-[9px] uppercase tracking-widest text-[#7B72E9] font-bold">
               Scan to view profile
@@ -594,7 +605,7 @@ export function ShareQrGroup({
             <div className="rounded-2xl bg-white p-5 leading-none" style={{ maxWidth: "90vw" }}>
               <QRCodeSVG
                 ref={fullSvgRef}
-                value={url}
+                value={shareUrl}
                 size={320}
                 fgColor="#0B0B0B"
                 bgColor="#ffffff"
@@ -688,14 +699,15 @@ async function downloadQrPng(svg: SVGSVGElement | null, handle: string) {
   }
 }
 
-export function ShareButton({ url }: { url: string }) {
+export function ShareButton({ url, handle }: { url: string; handle?: string }) {
   const [copied, setCopied] = useState(false);
 
   const onClick = useCallback(async () => {
     await writeClipboard(url);
+    if (handle) track("share_click", { handle }, handle);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [url]);
+  }, [url, handle]);
 
   return (
     <>
@@ -715,14 +727,15 @@ export function ShareButton({ url }: { url: string }) {
   );
 }
 
-export function CopyPermalinkIcon({ url }: { url: string }) {
+export function CopyPermalinkIcon({ url, handle }: { url: string; handle?: string }) {
   const [copied, setCopied] = useState(false);
 
   const onClick = useCallback(async () => {
     await writeClipboard(url);
+    if (handle) track("share_click", { handle }, handle);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [url]);
+  }, [url, handle]);
 
   return (
     <button
@@ -737,14 +750,17 @@ export function CopyPermalinkIcon({ url }: { url: string }) {
   );
 }
 
-export function QrButton({ url }: { url: string }) {
+export function QrButton({ url, handle }: { url: string; handle?: string }) {
   const [open, setOpen] = useState(false);
 
   return (
     <div className="relative">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (!open && handle) track("share_click", { handle }, handle);
+          setOpen((v) => !v);
+        }}
         aria-expanded={open}
         aria-label="Show QR code"
         style={{ color: "#0B0B0B" }}

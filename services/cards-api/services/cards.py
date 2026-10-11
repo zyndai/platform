@@ -438,6 +438,10 @@ def insert_card(
     custom_handle: str | None = None,
     claim_token_hash: str | None = None,
     owner_user_id: str | None = None,
+    source: str | None = None,
+    ref: str | None = None,
+    utm: dict | None = None,
+    created_via: str | None = None,
 ) -> str:
     handle = (
         _try_custom_handle(custom_handle, card.id)
@@ -464,6 +468,22 @@ def insert_card(
     }
     if owner_user_id and config.WRITES_OWNER_USER_ID:
         row["owner_user_id"] = owner_user_id
+    # S04 attribution columns exist only on the cards schema (aafo).
+    if config.WRITES_OWNER_USER_ID:
+        from services import events as events_service
+
+        clean_source = events_service.sanitize_source(source)
+        clean_ref = events_service.sanitize_ref(ref)
+        clean_utm = events_service.sanitize_utm(utm)
+        clean_via = events_service.sanitize_created_via(created_via)
+        if clean_source:
+            row["source"] = clean_source
+        if clean_ref:
+            row["ref"] = clean_ref
+        if clean_utm:
+            row["utm"] = clean_utm
+        if clean_via:
+            row["created_via"] = clean_via
     sb.table("agent_profile_cards").upsert(row, on_conflict="id").execute()
     return handle
 

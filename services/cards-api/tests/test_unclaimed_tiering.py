@@ -211,6 +211,8 @@ def test_get_agent_hides_unclaimed_and_uses_card_view(monkeypatch):
     client = TestClient(app)
 
     card = AgentProfileCard.model_validate(_card_json())
+    monkeypatch.setattr(agents_api.config, "FEATURE_S03_UNCLAIMED_TIERING", True)
+    monkeypatch.setattr(agents_api.config, "FEATURE_S06_CARDVIEW", True)
 
     monkeypatch.setattr(agents_api.cards_service, "get_card", lambda agent_id: card)
     monkeypatch.setattr(agents_api.cards_service, "card_is_claimed", lambda handle: False)
@@ -222,6 +224,25 @@ def test_get_agent_hides_unclaimed_and_uses_card_view(monkeypatch):
     body = resp.json()
     assert body["claimed"] is True
     assert "owner_email" not in body
+
+
+def test_get_agent_legacy_dump_when_cardview_off(monkeypatch):
+    app = FastAPI()
+    app.include_router(agents_api.router, prefix="/v1/agents")
+    client = TestClient(app)
+
+    card = AgentProfileCard.model_validate(_card_json())
+    monkeypatch.setattr(agents_api.config, "FEATURE_S03_UNCLAIMED_TIERING", True)
+    monkeypatch.setattr(agents_api.config, "FEATURE_S06_CARDVIEW", False)
+    monkeypatch.setattr(agents_api.cards_service, "get_card", lambda agent_id: card)
+    monkeypatch.setattr(agents_api.cards_service, "card_is_claimed", lambda handle: True)
+
+    resp = client.get("/v1/agents/cid1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["claimed"] is True
+    assert body.get("schema_version") or body.get("id")
+    assert "facts" not in body
 
 
 def test_request_takedown_notifies_review_channel(monkeypatch):
@@ -286,11 +307,14 @@ def test_chat_refuses_unclaimed_cards(monkeypatch):
 
 def test_set_card_alias_owner_only_and_reserved(monkeypatch):
     sb = MagicMock()
-    sb.table("agent_profile_cards").select("id").or_("alias.eq.hello,handle.eq.hello").execute.return_value = MagicMock(data=[])
-    sb.table("agent_profile_cards").select("owner_email").eq("handle", "alice").execute.return_value = MagicMock(
-        data=[{"owner_email": "alice@example.com"}]
+    chain = sb.table("agent_profile_cards")
+    chain.select("id").or_("alias.eq.hello,handle.eq.hello").neq("handle", "alice").execute.return_value = MagicMock(data=[])
+    chain.select("owner_email,alias").eq("handle", "alice").execute.return_value = MagicMock(
+        data=[{"owner_email": "alice@example.com", "alias": None}]
     )
     monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(cards_service.config, "SUPABASE_DB_SCHEMA", "cards")
+    monkeypatch.setattr("services.zynd_memory.ping_revalidate", lambda *a, **k: None)
 
     ok, msg, slug = cards_service.set_card_alias("alice", "Hello", "alice@example.com")
     assert ok is True and slug == "hello"
@@ -301,6 +325,28 @@ def test_set_card_alias_owner_only_and_reserved(monkeypatch):
 
     ok3, msg3, _ = cards_service.set_card_alias("alice", "find", "alice@example.com")
     assert ok3 is False and "reserved" in msg3
+
+
+def test_set_card_alias_allows_own_handle(monkeypatch):
+    sb = MagicMock()
+    chain = sb.table("agent_profile_cards")
+    chain.select("id").or_("alias.eq.alice,handle.eq.alice").neq("handle", "alice").execute.return_value = MagicMock(data=[])
+    chain.select("owner_email,alias").eq("handle", "alice").execute.return_value = MagicMock(
+        data=[{"owner_email": "alice@example.com", "alias": None}]
+    )
+    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(cards_service.config, "SUPABASE_DB_SCHEMA", "cards")
+    monkeypatch.setattr("services.zynd_memory.ping_revalidate", lambda *a, **k: None)
+
+    ok, msg, slug = cards_service.set_card_alias("alice", "alice", "alice@example.com")
+    assert ok is True and slug == "alice"
+    sb.table("agent_profile_cards").update.assert_called_once_with({"alias": "alice"})
+
+
+def test_set_card_alias_schema_gate_before_clash(monkeypatch):
+    monkeypatch.setattr(cards_service.config, "SUPABASE_DB_SCHEMA", "public")
+    ok, msg, _ = cards_service.set_card_alias("alice", "hello", "alice@example.com")
+    assert ok is False and "not available" in msg
 
 
 def test_claim_candidates_matches_normalised_linkedin(monkeypatch):

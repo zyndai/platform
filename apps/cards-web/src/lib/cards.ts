@@ -270,8 +270,12 @@ export async function listCards(): Promise<AgentProfileCard[]> {
   }
 }
 
+export function cardsSiteOrigin(): string {
+  return (process.env.NEXT_PUBLIC_SITE_URL || "https://cards.zynd.ai").replace(/\/$/, "");
+}
+
 export function cardCanonicalUrl(card: AgentProfileCard): string {
-  const base = process.env.NEXT_PUBLIC_SITE_URL || "https://cards.zynd.ai";
+  const base = cardsSiteOrigin();
   return card.handle ? `${base}/p/${card.handle}` : `${base}/profile/${card.id}`;
 }
 

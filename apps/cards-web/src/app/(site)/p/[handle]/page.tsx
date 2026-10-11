@@ -792,7 +792,15 @@ export default async function PersonPage({ params }: PageProps) {
                   UNCLAIMED
                 </span>
               )}
-              <ShareQrGroup url={canonical} name={identity.name || "Profile"} handle={card.handle ?? card.id} avatarUrl={heroAvatarSrc ?? avatarUrl} resume={resumeData} />
+              <ShareQrGroup
+                url={canonical}
+                name={identity.name || "Profile"}
+                handle={card.handle ?? card.id}
+                avatarUrl={heroAvatarSrc ?? avatarUrl}
+                resume={resumeData}
+                headline={identity.headline}
+                alias={card.alias}
+              />
               {isOwner && <EditCardButton handle={card.handle ?? card.id} />}
               {!isSignedIn && <ProfileSignIn handle={card.handle ?? handle} />}
               {isSignedIn && !isOwner && <ClaimCardButton handle={card.handle ?? handle} card={card} />}

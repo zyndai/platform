@@ -35,7 +35,7 @@ const RETYPE_OPTIONS = [
   "open_to",
 ] as const;
 
-type Pending = { predicate: string; object: string } | null;
+type Pending = { predicate: string; object: string; action: "publish" | "dismiss" } | null;
 
 async function sessionToken(): Promise<string> {
   const { data } = await createClient().auth.getSession();
@@ -117,7 +117,7 @@ export function SuggestedFactsReview({
 
   const approve = useCallback(
     async (fact: SuggestedFact) => {
-      setPending({ predicate: fact.predicate, object: fact.object });
+      setPending({ predicate: fact.predicate, object: fact.object, action: "publish" });
       setError("");
       try {
         const t = await sessionToken();
@@ -141,7 +141,7 @@ export function SuggestedFactsReview({
 
   const dismissOne = useCallback(
     async (fact: SuggestedFact) => {
-      setPending({ predicate: fact.predicate, object: fact.object });
+      setPending({ predicate: fact.predicate, object: fact.object, action: "dismiss" });
       setError("");
       try {
         const t = await sessionToken();
@@ -166,8 +166,10 @@ export function SuggestedFactsReview({
     return buckets;
   }, [facts]);
 
-  const isPending = (fact: SuggestedFact) =>
-    pending?.predicate === fact.predicate && pending?.object === fact.object;
+  const isPending = (fact: SuggestedFact, action?: "publish" | "dismiss") =>
+    pending?.predicate === fact.predicate &&
+    pending?.object === fact.object &&
+    (action ? pending.action === action : true);
 
   if (facts === null) {
     return <p style={{ margin: 0, font: `400 13px/1.5 ${SANS}`, color: muted }}>Loading…</p>;
@@ -238,10 +240,10 @@ export function SuggestedFactsReview({
               padding: "8px 14px",
               font: `600 13px/1 ${SANS}`,
               cursor: pending ? "default" : "pointer",
-              opacity: isPending(fact) ? 0.6 : 1,
+              opacity: isPending(fact, "publish") ? 0.6 : 1,
             }}
           >
-            {isPending(fact) ? "Publishing…" : "Publish"}
+            {isPending(fact, "publish") ? "Publishing…" : "Publish"}
           </button>
           <button
             type="button"
@@ -255,11 +257,11 @@ export function SuggestedFactsReview({
               padding: "8px 14px",
               font: `500 13px/1 ${SANS}`,
               cursor: pending ? "default" : "pointer",
-              opacity: isPending(fact) ? 0.6 : 1,
+              opacity: isPending(fact, "dismiss") ? 0.6 : 1,
             }}
             title="Keep private and hide from this inbox permanently"
           >
-            {isPending(fact) ? "Dismissing…" : "Dismiss"}
+            {isPending(fact, "dismiss") ? "Dismissing…" : "Dismiss"}
           </button>
         </div>
       </li>

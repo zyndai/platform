@@ -1,4 +1,4 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import { CARDS_API } from "@/lib/cards";
 
 export const revalidate = 300;
@@ -23,16 +23,21 @@ export default async function AliasRedirectPage({ params }: PageProps) {
   const slug = alias.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 30);
   if (RESERVED.has(slug) || slug.length < 2) notFound();
 
+  let handle: string | null = null;
   try {
     const res = await fetch(`${CARDS_API}/cards/by-alias/${encodeURIComponent(slug)}`, {
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) notFound();
-    const card = (await res.json()) as { handle?: string };
-    if (card.handle) redirect(`/p/${encodeURIComponent(card.handle)}`);
+    if (res.ok) {
+      const card = (await res.json()) as { handle?: string };
+      handle = card.handle ?? null;
+    }
   } catch {
     // fetch threw (timeout/network) — fall through to 404 rather than a 500
   }
+
+  // Outside the try so redirect()'s control-flow throw isn't swallowed.
+  if (handle) permanentRedirect(`/p/${encodeURIComponent(handle)}`);
   notFound();
 }

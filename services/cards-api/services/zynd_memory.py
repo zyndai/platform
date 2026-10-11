@@ -55,15 +55,26 @@ def snapshot_from_payload(payload: dict | None) -> list[dict] | None:
     return list(facts) if isinstance(facts, list) else []
 
 
-def ping_revalidate(handle: str) -> None:
+def ping_revalidate(
+    handle: str,
+    *,
+    alias: str | None = None,
+    previous_alias: str | None = None,
+) -> None:
     url = (config.WEB_REVALIDATE_URL or "").strip()
     secret = (config.WEB_REVALIDATE_SECRET or "").strip()
     if not url or not secret or not handle:
         return
+    body: dict = {"handle": handle}
+    # Bust both the new and previous short-alias ISR entries when either changes.
+    if alias:
+        body["alias"] = alias
+    if previous_alias and previous_alias != alias:
+        body["previous_alias"] = previous_alias
     try:
         resp = httpx.post(
             url,
-            json={"handle": handle},
+            json=body,
             headers={"Authorization": f"Bearer {secret}"},
             timeout=5,
         )

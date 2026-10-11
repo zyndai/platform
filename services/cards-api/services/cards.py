@@ -120,8 +120,7 @@ def _assign_handle(github_handle: str | None, x_handle: str | None, name: str, c
     handle = base
     for suffix in ("", f"-{card_id[:4]}"):
         handle = base + suffix
-        resp = sb.table("agent_profile_cards").select("id").eq("handle", handle).execute()
-        if not (resp.data):
+        if not _slug_taken(sb, handle):
             return handle
     return f"{base}-{card_id}"
 
@@ -134,8 +133,7 @@ def _try_custom_handle(slug: str, card_id: str) -> str:
         return f"user-{card_id[:6]}"
     sb = config.get_supabase()
     for candidate in (slug, f"{slug}-{card_id[:4]}", f"{slug}-{card_id}"):
-        resp = sb.table("agent_profile_cards").select("id").eq("handle", candidate).execute()
-        if not resp.data:
+        if not _slug_taken(sb, candidate):
             return candidate
     return f"{slug}-{card_id}"
 
@@ -643,10 +641,8 @@ def update_card(
     effective_handle = handle
     if new_handle:
         slug = re.sub(r"[^a-z0-9-]", "", new_handle.lower())[:30].strip("-")
-        if len(slug) >= 2 and slug != handle:
-            conflict = sb.table("agent_profile_cards").select("id").eq("handle", slug).execute()
-            if not conflict.data:
-                effective_handle = slug
+        if len(slug) >= 2 and slug != handle and not _slug_taken(sb, slug, exclude_handle=handle):
+            effective_handle = slug
 
     if effective_handle != handle:
         # Keep the old handle resolving: record it in the card JSON so
@@ -745,6 +741,35 @@ def _claimed_from_row(row: dict) -> bool:
     return bool((row.get("owner_email") or "").strip())
 
 
+def _public_card_columns() -> str:
+    """Select list for public card reads. `claimed`/`alias` exist only on the
+    aafo `cards` schema (migrations 0004 + 0006). On xmfj/`public` PostgREST
+    rejects unknown columns, so keep the legacy select there."""
+    if config.SUPABASE_DB_SCHEMA == "cards":
+        return "card,handle,owner_email,claimed,alias"
+    return "card,handle,owner_email"
+
+
+def _slug_taken(sb, slug: str, *, exclude_handle: str | None = None) -> bool:
+    """True when slug is already a handle or (on cards schema) an alias.
+
+    Short URLs and /p/{handle} share one namespace on cards.zynd.ai — a handle
+    must not collide with someone else's alias and vice versa."""
+    if not slug:
+        return False
+    if config.SUPABASE_DB_SCHEMA == "cards":
+        q = (
+            sb.table("agent_profile_cards")
+            .select("id")
+            .or_(f"alias.eq.{slug},handle.eq.{slug}")
+        )
+    else:
+        q = sb.table("agent_profile_cards").select("id").eq("handle", slug)
+    if exclude_handle:
+        q = q.neq("handle", exclude_handle)
+    return bool((q.execute().data) or [])
+
+
 def card_is_claimed(handle: str) -> bool | None:
     """Claimed flag for one published card; None when the card doesn't exist."""
     sb = config.get_supabase()
@@ -778,9 +803,10 @@ def claimed_by_handles(handles: list[str]) -> dict[str, bool]:
 def get_card_by_handle_public(handle: str) -> dict | None:
     """Card dict with the `claimed` flag, for public (unauthenticated) reads."""
     sb = config.get_supabase()
+    cols = _public_card_columns()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card,handle,owner_email,claimed,alias")
+        .select(cols)
         .eq("handle", handle)
         .eq("status", "published")
         .execute()
@@ -792,7 +818,7 @@ def get_card_by_handle_public(handle: str) -> dict | None:
         try:
             resp = (
                 sb.table("agent_profile_cards")
-                .select("card,handle,owner_email,claimed,alias")
+                .select(cols)
                 .contains("card", {"previous_handles": [handle]})
                 .eq("status", "published")
                 .limit(1)
@@ -818,7 +844,7 @@ def list_published_public(limit: int = 1000) -> list[dict]:
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card,handle,owner_email,claimed,alias")
+        .select(_public_card_columns())
         .eq("status", "published")
         .order("created_at", desc=True)
         .limit(limit)
@@ -898,24 +924,19 @@ def normalize_alias(raw: str) -> str:
 def set_card_alias(handle: str, raw_alias: str | None, owner_email: str) -> tuple[bool, str, str | None]:
     """Set (or clear) a card's short alias. Owner-only; validates reserved
     words and uniqueness. Returns (ok, message, final_alias)."""
+    if config.SUPABASE_DB_SCHEMA != "cards":
+        return False, "alias not available on this database", None
     slug = normalize_alias(raw_alias or "")
     sb = config.get_supabase()
     if raw_alias and (len(slug) < 2 or len(slug) > 30):
         return False, "alias must be 2–30 letters, numbers, or hyphens", None
     if slug and slug in RESERVED_ALIASES:
         return False, f'"{slug}" is reserved — pick another alias', None
-    if slug:
-        clash = (
-            sb.table("agent_profile_cards")
-            .select("id")
-            .or_(f"alias.eq.{slug},handle.eq.{slug}")
-            .execute()
-        )
-        if clash.data:
-            return False, f'"{slug}" is taken — pick another alias', None
+    if slug and _slug_taken(sb, slug, exclude_handle=handle):
+        return False, f'"{slug}" is taken — pick another alias', None
     stored = (
         sb.table("agent_profile_cards")
-        .select("owner_email")
+        .select("owner_email,alias")
         .eq("handle", handle)
         .execute()
     )
@@ -923,19 +944,26 @@ def set_card_alias(handle: str, raw_alias: str | None, owner_email: str) -> tupl
         return False, "card not found", None
     if (stored.data[0].get("owner_email") or "").strip().lower() != (owner_email or "").strip().lower():
         return False, "not the card owner", None
+    previous = (stored.data[0].get("alias") or "").strip() or None
     sb.table("agent_profile_cards").update({"alias": slug or None}).eq("handle", handle).execute()
+    try:
+        from services.zynd_memory import ping_revalidate
+
+        ping_revalidate(handle, alias=slug or None, previous_alias=previous)
+    except Exception as exc:  # noqa: BLE001 — alias already saved
+        logger.warning("alias revalidate failed handle=%s err=%s", handle, exc)
     return True, "saved", slug or None
 
 
 def get_card_by_alias(alias: str) -> dict | None:
     """Public card dict (with `claimed`) for a short alias, or None."""
     slug = normalize_alias(alias)
-    if not slug:
+    if not slug or config.SUPABASE_DB_SCHEMA != "cards":
         return None
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card,handle,owner_email,claimed,alias")
+        .select(_public_card_columns())
         .eq("alias", slug)
         .eq("status", "published")
         .limit(1)

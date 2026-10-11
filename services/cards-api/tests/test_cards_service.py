@@ -289,6 +289,9 @@ class _RenameQuery:
             self._conflict = True
         return self
 
+    def neq(self, *_a, **_k):
+        return self
+
     def update(self, payload):
         self.payload = payload
         return self

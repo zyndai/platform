@@ -18,6 +18,29 @@ test("claimed profile keeps the assistant", async ({ page }) => {
   await expect(page.locator(".pf-chat-fab")).toHaveCount(1);
 });
 
+/** S07: share sheet opens with tabs; copy + QR download affordances present. */
+test("share sheet opens with tabs and QR actions", async ({ page }) => {
+  await page.goto("/p/claimed");
+
+  await page.getByRole("button", { name: "Share", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: /Alice Chen|Share/i });
+  await expect(dialog).toBeVisible();
+
+  await expect(page.getByRole("tab", { name: "Link" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "QR" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Card image" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Embed & email" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Copy", exact: true }).first().click();
+  await expect(page.getByRole("button", { name: "Copied", exact: true }).first()).toBeVisible();
+
+  await page.getByRole("tab", { name: "QR" }).click();
+  await expect(page.getByText("Scan to view profile")).toBeVisible();
+  await expect(page.getByRole("button", { name: "SVG" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "PNG" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Fullscreen" })).toBeVisible();
+});
+
 /** S13: /find renders with its own light canvas (no invisible dark-on-dark text). */
 test("find page loads with a light canvas", async ({ page }) => {
   await page.goto("/find");

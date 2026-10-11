@@ -1,13 +1,22 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
-import { Check, ChevronDown, Copy, Download, FileText, Link2, Maximize2, QrCode, Share2, X } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Check, Copy, Download, FileText, Link2, Mail, Maximize2, QrCode, Share2, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 
 import { withShareRef } from "@/lib/attr";
 import { track } from "@/lib/track";
 import { ResumePicker } from "./resume-picker";
 import type { ResumeData } from "./resume-pdf";
+
+type ShareTab = "link" | "qr" | "card" | "embed";
+
+const TABS: { id: ShareTab; label: string }[] = [
+  { id: "link", label: "Link" },
+  { id: "qr", label: "QR" },
+  { id: "card", label: "Card image" },
+  { id: "embed", label: "Embed & email" },
+];
 
 // ── Canvas primitives ────────────────────────────────────────────────────────
 
@@ -413,39 +422,62 @@ export function ShareQrGroup({
   handle,
   avatarUrl,
   resume,
+  headline,
+  alias,
 }: {
   url: string;
   name: string;
   handle: string;
   avatarUrl?: string | null;
   resume?: ResumeData | null;
+  headline?: string | null;
+  alias?: string | null;
 }) {
-  const [copied, setCopied] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [qrOpen, setQrOpen] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<ShareTab>("link");
+  const [copied, setCopied] = useState<string | null>(null);
   const [qrFull, setQrFull] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
+  const cardSvgRef = useRef<SVGSVGElement>(null);
   const fullSvgRef = useRef<SVGSVGElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
   const shareUrl = withShareRef(url, handle);
+  const shortUrl = alias
+    ? withShareRef(`https://cards.zynd.ai/${alias}`, handle)
+    : null;
+  const displayHeadline = (headline || "").trim() || "Zynd Card";
+  const ogPreview = `/p/${encodeURIComponent(handle)}/opengraph-image`;
+  const badgeMd = `[![Zynd Card](https://cards.zynd.ai/p/${encodeURIComponent(handle)}/badge.svg)](${shareUrl})`;
+  const emailSigPlain = `${name}\n${displayHeadline}\n${shareUrl}`;
+  const emailSigHtml = `<div style="font-family:sans-serif;font-size:13px;line-height:1.45;color:#0B0B0B"><strong>${escapeHtml(name)}</strong><br/>${escapeHtml(displayHeadline)}<br/><a href="${escapeHtml(shareUrl)}" style="color:#6157DE">${escapeHtml(shareUrl.replace(/^https?:\/\//, ""))}</a></div>`;
+  const linkedinFeatured = `Add this to LinkedIn Featured:\n${shareUrl}`;
 
-  const onCopyLink = useCallback(async () => {
-    await writeClipboard(shareUrl);
-    track("share_click", { handle }, handle);
-    setCopied(true);
-    setMenuOpen(false);
-    setTimeout(() => setCopied(false), 2000);
-  }, [shareUrl, handle]);
+  const flashCopied = useCallback((key: string) => {
+    setCopied(key);
+    window.setTimeout(() => setCopied((cur) => (cur === key ? null : cur)), 2000);
+  }, []);
 
-  const onDownloadResume = useCallback(() => {
-    if (!resume) return;
-    setMenuOpen(false);
-    setPickerOpen(true);
-  }, [resume]);
+  const trackShare = useCallback(
+    (target?: string) => {
+      track("share_click", { handle, ...(target ? { target } : {}) }, handle);
+    },
+    [handle],
+  );
 
-  const onDownload = useCallback(async () => {
-    const svg = svgRef.current;
+  const onCopy = useCallback(
+    async (text: string, key: string, target?: string) => {
+      await writeClipboard(text);
+      trackShare(target);
+      flashCopied(key);
+    },
+    [flashCopied, trackShare],
+  );
+
+  const onDownloadCard = useCallback(async () => {
+    const svg = cardSvgRef.current ?? svgRef.current;
     if (!svg || downloading) return;
     setDownloading(true);
     try {
@@ -457,151 +489,351 @@ export function ShareQrGroup({
       a.download = `zynd-${handle}-identity.png`;
       a.click();
       URL.revokeObjectURL(pngUrl);
+      trackShare("identity_card");
     } finally {
       setDownloading(false);
     }
-  }, [name, handle, avatarUrl, downloading]);
+  }, [name, handle, avatarUrl, downloading, trackShare]);
 
-  // Inline color, not a utility class: globals.css is unlayered and outranks
-  // `@layer utilities`, which is why every button on this page sets it this way.
-  const menuItem =
-    "flex w-full items-center gap-2.5 px-3 py-2 text-left font-mono text-[11px]! font-medium hover:bg-[#F5F5F0] transition-colors disabled:opacity-50 disabled:hover:bg-transparent";
-  const menuItemStyle = { color: "#0B0B0B" } as const;
+  const close = useCallback(() => {
+    setOpen(false);
+    setQrFull(false);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (qrFull) setQrFull(false);
+        else close();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [open, qrFull, close]);
+
+  const openShare = () => {
+    setOpen(true);
+    setTab("link");
+    trackShare("sheet");
+  };
+
+  const pill =
+    "inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-[#DCDCD7] bg-white text-[12px]! font-mono font-medium transition-all shadow-sm group hover:bg-black hover:!text-white";
 
   return (
     <div className="relative flex items-stretch">
-      <div className="inline-flex items-stretch rounded-full border border-[#DCDCD7] bg-white shadow-sm overflow-hidden">
-        {/* Export / Share half */}
-        <button
-          type="button"
-          onClick={() => { setMenuOpen((v) => !v); setQrOpen(false); }}
-          aria-expanded={menuOpen}
-          aria-haspopup="menu"
-          style={{ color: copied || menuOpen ? "#fff" : "#0B0B0B" }}
-          className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[12px]! font-mono font-medium transition-all group
-            ${copied ? "bg-emerald-500 hover:!text-white" : menuOpen ? "bg-black hover:!text-white" : "hover:bg-black hover:!text-white"}`}
-          onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "#fff"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = copied || menuOpen ? "#fff" : "#0B0B0B"; }}
+      <button
+        type="button"
+        onClick={openShare}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        style={{ color: "#0B0B0B" }}
+        className={pill}
+        onMouseEnter={(e) => { e.currentTarget.style.color = "#fff"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = "#0B0B0B"; }}
+      >
+        <Share2 size={14} className="text-[#8E8E88] group-hover:!text-white transition-colors" />
+        <span>Share</span>
+      </button>
+
+      {open && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
         >
-          {copied ? (
-            <Check size={14} />
-          ) : (
-            <Share2 size={14} className={`transition-colors ${menuOpen ? "text-white" : "text-[#8E8E88] group-hover:!text-white"}`} />
-          )}
-          <span>{copied ? "Copied!" : "Export / Share"}</span>
-          {!copied && (
-            <ChevronDown
-              size={12}
-              className={`transition-transform ${menuOpen ? "text-white rotate-180" : "text-[#8E8E88] group-hover:!text-white"}`}
-            />
-          )}
-        </button>
-
-        <span className="w-px bg-[#DCDCD7] self-stretch" />
-
-        {/* QR half */}
-        <button
-          type="button"
-          onClick={() => {
-            setQrOpen((v) => {
-              if (!v) track("share_click", { handle }, handle);
-              return !v;
-            });
-            setMenuOpen(false);
-            setCopied(false);
-          }}
-          aria-label="Show QR code"
-
-          style={{ color: qrOpen ? "#fff" : "#0B0B0B" }}
-          className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[12px]! font-mono font-medium transition-all group
-            ${qrOpen ? "bg-black hover:!text-white" : "hover:bg-black hover:!text-white"}`}
-          onMouseEnter={(e) => { e.currentTarget.style.color = "#fff"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = qrOpen ? "#fff" : "#0B0B0B"; }}
-        >
-          <QrCode size={14} className={`transition-colors ${qrOpen ? "text-white" : "text-[#8E8E88] group-hover:!text-white"}`} />
-          <span>QR</span>
-        </button>
-      </div>
-
-      {/* Export / Share menu */}
-      {menuOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} aria-hidden />
+          <div style={{ position: "absolute", inset: 0, background: "rgba(11,11,11,.34)" }} onClick={close} aria-hidden />
           <div
-            role="menu"
-            className="absolute left-0 top-full mt-2 z-50 min-w-[196px] bg-white border border-[#E5E5DE] rounded-2xl shadow-xl py-1.5 overflow-hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            style={{
+              position: "relative",
+              width: "min(440px, 100%)",
+              maxHeight: "min(720px, 100%)",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              background: "#F7F7F4",
+              borderRadius: 28,
+              boxShadow: "0 30px 80px rgba(11,11,11,.32)",
+            }}
           >
-            <button type="button" role="menuitem" onClick={onDownloadResume} disabled={!resume} className={menuItem} style={menuItemStyle}>
-              <FileText size={14} style={{ color: "#8E8E88" }} />
-              <span>Download Resume</span>
-            </button>
-            <button type="button" role="menuitem" onClick={onCopyLink} className={menuItem} style={menuItemStyle}>
-              <Link2 size={14} style={{ color: "#8E8E88" }} />
-              <span>Copy Link</span>
-            </button>
-          </div>
-        </>
-      )}
-
-      {/* QR popover */}
-      {qrOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setQrOpen(false)} aria-hidden />
-          <div className="absolute right-0 top-full mt-2 z-50 bg-white border border-[#E5E5DE] rounded-2xl shadow-xl p-4 flex flex-col items-center gap-2.5">
-            <div className="rounded-xl overflow-hidden border border-[#F0F0EA] p-3 bg-white leading-none">
-              <QRCodeSVG
-                ref={svgRef}
-                value={shareUrl}
-                size={272}
-                fgColor="#0B0B0B"
-                bgColor="#ffffff"
-                level="M"
-                marginSize={4}
-                style={{ width: "min(272px, 66vw)", height: "min(272px, 66vw)" }}
-              />
-            </div>
-            <span className="font-mono text-[10px] text-[#8E8E88] break-all max-w-[280px] text-center leading-snug">
-              {shareUrl.replace(/^https?:\/\//, "")}
-            </span>
-            <span className="font-mono text-[9px] uppercase tracking-widest text-[#7B72E9] font-bold">
-              Scan to view profile
-            </span>
-            <div className="flex items-center gap-1.5 mt-0.5">
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, padding: "20px 22px 14px", borderBottom: "1px solid #E4E4DE" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+                <div style={{ font: "700 10px/1 'Space Mono', ui-monospace, monospace", letterSpacing: ".14em", textTransform: "uppercase", color: "#8E8E88" }}>
+                  Share profile
+                </div>
+                <div id={titleId} role="heading" aria-level={2} style={{ font: "700 22px/1.15 'Space Grotesk', sans-serif", color: "#0B0B0B", letterSpacing: "-.02em" }}>
+                  {name}
+                </div>
+              </div>
               <button
+                ref={closeRef}
                 type="button"
-                onClick={() => setQrFull(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#E5E5DE] text-[#0B0B0B] hover:bg-[#F5F5F0] transition-colors font-mono text-[10px]! font-semibold"
+                onClick={close}
+                aria-label="Close"
+                style={{ cursor: "pointer", width: 34, height: 34, borderRadius: 12, border: "1px solid #E4E4DE", background: "#fff", color: "#0B0B0B", display: "flex", alignItems: "center", justifyContent: "center" }}
               >
-                <Maximize2 size={12} />
-                Fullscreen
-              </button>
-              <button
-                type="button"
-                onClick={onDownload}
-                disabled={downloading}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black text-white hover:bg-[#333] transition-colors font-mono text-[10px]! font-semibold disabled:opacity-60"
-              >
-                <Download size={12} />
-                {downloading ? "Building…" : "Download Identity Card"}
+                <X size={16} />
               </button>
             </div>
+
+            <div role="tablist" aria-label="Share options" style={{ display: "flex", gap: 4, padding: "10px 14px 0", overflowX: "auto" }}>
+              {TABS.map((t) => {
+                const active = tab === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    id={`share-tab-${t.id}`}
+                    onClick={() => setTab(t.id)}
+                    style={{
+                      flex: "none",
+                      cursor: "pointer",
+                      padding: "8px 12px",
+                      borderRadius: 999,
+                      border: active ? "1px solid #0B0B0B" : "1px solid transparent",
+                      background: active ? "#0B0B0B" : "transparent",
+                      color: active ? "#fff" : "#6E6E68",
+                      font: "600 11px/1 'Space Mono', ui-monospace, monospace",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div
+              role="tabpanel"
+              aria-labelledby={`share-tab-${tab}`}
+              style={{ flex: 1, overflowY: "auto", padding: "16px 22px 22px" }}
+            >
+              {tab === "link" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <UnfurlPreview
+                    name={name}
+                    headline={displayHeadline}
+                    avatarUrl={avatarUrl}
+                    ogSrc={ogPreview}
+                    urlLabel={(shortUrl || shareUrl).replace(/^https?:\/\//, "")}
+                  />
+                  <CopyRow
+                    label="Profile link"
+                    value={shareUrl}
+                    copied={copied === "link"}
+                    onCopy={() => onCopy(shareUrl, "link", "copy")}
+                  />
+                  {shortUrl && (
+                    <CopyRow
+                      label="Short alias"
+                      value={shortUrl}
+                      hint="Canonical SEO URL stays /p/…"
+                      copied={copied === "alias"}
+                      onCopy={() => onCopy(shortUrl, "alias", "alias")}
+                    />
+                  )}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <TargetButton
+                      label="LinkedIn"
+                      onClick={() => {
+                        trackShare("linkedin");
+                        window.open(
+                          `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`,
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
+                      }}
+                    />
+                    <TargetButton
+                      label="X"
+                      onClick={() => {
+                        trackShare("x");
+                        window.open(
+                          `https://twitter.com/intent/tweet?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(name)}`,
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
+                      }}
+                    />
+                    <TargetButton
+                      label="WhatsApp"
+                      onClick={() => {
+                        trackShare("whatsapp");
+                        window.open(
+                          `https://wa.me/?text=${encodeURIComponent(`${name} — ${shareUrl}`)}`,
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
+                      }}
+                    />
+                    <TargetButton
+                      label="Email"
+                      icon={<Mail size={13} />}
+                      onClick={() => {
+                        trackShare("email");
+                        window.location.href = `mailto:?subject=${encodeURIComponent(name)}&body=${encodeURIComponent(shareUrl)}`;
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {tab === "qr" && (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+                  <div style={{ borderRadius: 16, overflow: "hidden", border: "1px solid #F0F0EA", padding: 12, background: "#fff", lineHeight: 0 }}>
+                    <QRCodeSVG
+                      ref={svgRef}
+                      value={shareUrl}
+                      size={272}
+                      fgColor="#0B0B0B"
+                      bgColor="#ffffff"
+                      level="M"
+                      marginSize={4}
+                      style={{ width: "min(272px, 66vw)", height: "min(272px, 66vw)" }}
+                    />
+                  </div>
+                  <span style={{ font: "400 10px/1.4 'Space Mono', ui-monospace, monospace", color: "#8E8E88", textAlign: "center", wordBreak: "break-all", maxWidth: 280 }}>
+                    {shareUrl.replace(/^https?:\/\//, "")}
+                  </span>
+                  <span style={{ font: "700 9px/1 'Space Mono', ui-monospace, monospace", letterSpacing: ".14em", textTransform: "uppercase", color: "#7B72E9" }}>
+                    Scan to view profile
+                  </span>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                    <ActionChip onClick={() => setQrFull(true)} icon={<Maximize2 size={12} />}>Fullscreen</ActionChip>
+                    <ActionChip onClick={() => { downloadQrSvg(svgRef.current); trackShare("qr_svg"); }} icon={<Download size={12} />}>SVG</ActionChip>
+                    <ActionChip onClick={() => { void downloadQrPng(svgRef.current, handle); trackShare("qr_png"); }} icon={<Download size={12} />}>PNG</ActionChip>
+                  </div>
+                </div>
+              )}
+
+              {tab === "card" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <p style={{ margin: 0, font: "400 13px/1.5 sans-serif", color: "#6E6E68" }}>
+                    Offline / print PNG with your QR. Distinct from the link unfurl image.
+                  </p>
+                  <div aria-hidden style={{ position: "absolute", width: 0, height: 0, overflow: "hidden" }}>
+                    <QRCodeSVG ref={cardSvgRef} value={shareUrl} size={272} fgColor="#0B0B0B" bgColor="#ffffff" level="M" marginSize={4} />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onDownloadCard}
+                    disabled={downloading}
+                    style={{
+                      cursor: downloading ? "wait" : "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      padding: "12px 16px",
+                      borderRadius: 999,
+                      border: "none",
+                      background: "#0B0B0B",
+                      color: "#fff",
+                      font: "600 12px/1 'Space Mono', ui-monospace, monospace",
+                      opacity: downloading ? 0.6 : 1,
+                    }}
+                  >
+                    <Download size={14} />
+                    {downloading ? "Building…" : "Download Identity Card"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { if (resume) { setPickerOpen(true); trackShare("resume"); } }}
+                    disabled={!resume}
+                    style={{
+                      cursor: resume ? "pointer" : "not-allowed",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      padding: "12px 16px",
+                      borderRadius: 999,
+                      border: "1px solid #E4E4DE",
+                      background: "#fff",
+                      color: "#0B0B0B",
+                      font: "600 12px/1 'Space Mono', ui-monospace, monospace",
+                      opacity: resume ? 1 : 0.5,
+                    }}
+                  >
+                    <FileText size={14} />
+                    Download Resume
+                  </button>
+                </div>
+              )}
+
+              {tab === "embed" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <CopyBlock
+                    title="Email signature (plain)"
+                    value={emailSigPlain}
+                    copied={copied === "sig-plain"}
+                    onCopy={() => onCopy(emailSigPlain, "sig-plain", "email_sig")}
+                  />
+                  <CopyBlock
+                    title="Email signature (HTML)"
+                    value={emailSigHtml}
+                    copied={copied === "sig-html"}
+                    onCopy={() => onCopy(emailSigHtml, "sig-html", "email_sig_html")}
+                  />
+                  <CopyBlock
+                    title="LinkedIn Featured"
+                    value={linkedinFeatured}
+                    copied={copied === "li-featured"}
+                    onCopy={() => onCopy(linkedinFeatured, "li-featured", "linkedin_featured")}
+                  />
+                  <CopyBlock
+                    title="README badge"
+                    value={badgeMd}
+                    copied={copied === "badge"}
+                    onCopy={() => onCopy(badgeMd, "badge", "readme_badge")}
+                  />
+                  <a
+                    href={`/p/${encodeURIComponent(handle)}/vcard`}
+                    onClick={() => trackShare("vcard")}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      padding: "12px 16px",
+                      borderRadius: 999,
+                      border: "1px solid #E4E4DE",
+                      background: "#fff",
+                      color: "#0B0B0B",
+                      font: "600 12px/1 'Space Mono', ui-monospace, monospace",
+                      textDecoration: "none",
+                    }}
+                  >
+                    <Download size={14} />
+                    Download vCard
+                  </a>
+                </div>
+              )}
+            </div>
           </div>
-        </>
+        </div>
       )}
 
-      {/* QR fullscreen */}
       {qrFull && (
         <div
           role="dialog"
           aria-modal="true"
           aria-label="QR code"
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4"
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/85 p-4"
           onClick={() => setQrFull(false)}
         >
-          <div
-            className="flex flex-col items-center gap-4"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="flex flex-col items-center gap-4" onClick={(e) => e.stopPropagation()}>
             <div className="rounded-2xl bg-white p-5 leading-none" style={{ maxWidth: "90vw" }}>
               <QRCodeSVG
                 ref={fullSvgRef}
@@ -633,6 +865,207 @@ export function ShareQrGroup({
         <ResumePicker resume={resume} handle={handle} onClose={() => setPickerOpen(false)} />
       )}
     </div>
+  );
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function UnfurlPreview({
+  name,
+  headline,
+  avatarUrl,
+  ogSrc,
+  urlLabel,
+}: {
+  name: string;
+  headline: string;
+  avatarUrl?: string | null;
+  ogSrc: string;
+  urlLabel: string;
+}) {
+  return (
+    <div style={{ border: "1px solid #E4E4DE", borderRadius: 16, overflow: "hidden", background: "#fff" }}>
+      <div style={{ height: 120, background: "linear-gradient(120deg,#1e1b4b,#4f46e5)", position: "relative" }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={ogSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      </div>
+      <div style={{ display: "flex", gap: 10, padding: 12, alignItems: "center" }}>
+        {avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={avatarUrl} alt="" width={40} height={40} style={{ borderRadius: 10, objectFit: "cover" }} />
+        ) : (
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: "#EDEBFD", color: "#6157DE", display: "flex", alignItems: "center", justifyContent: "center", font: "700 14px/1 sans-serif" }}>
+            {name.slice(0, 1).toUpperCase()}
+          </div>
+        )}
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ font: "700 13px/1.2 sans-serif", color: "#0B0B0B", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+          <div style={{ font: "400 12px/1.3 sans-serif", color: "#6E6E68", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{headline}</div>
+          <div style={{ font: "400 10px/1.3 'Space Mono', ui-monospace, monospace", color: "#8E8E88", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{urlLabel}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CopyRow({
+  label,
+  value,
+  hint,
+  copied,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+        <span style={{ font: "700 10px/1 'Space Mono', ui-monospace, monospace", letterSpacing: ".12em", textTransform: "uppercase", color: "#8E8E88" }}>{label}</span>
+        {hint && <span style={{ font: "400 10px/1 sans-serif", color: "#A8A8A2" }}>{hint}</span>}
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <code style={{ flex: 1, minWidth: 0, padding: "10px 12px", borderRadius: 12, background: "#fff", border: "1px solid #E4E4DE", font: "400 11px/1.3 'Space Mono', ui-monospace, monospace", color: "#0B0B0B", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {value.replace(/^https?:\/\//, "")}
+        </code>
+        <button
+          type="button"
+          onClick={onCopy}
+          style={{
+            cursor: "pointer",
+            flex: "none",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "10px 12px",
+            borderRadius: 12,
+            border: "none",
+            background: copied ? "#10b981" : "#0B0B0B",
+            color: "#fff",
+            font: "600 11px/1 'Space Mono', ui-monospace, monospace",
+          }}
+        >
+          {copied ? <Check size={13} /> : <Copy size={13} />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CopyBlock({
+  title,
+  value,
+  copied,
+  onCopy,
+}: {
+  title: string;
+  value: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <span style={{ font: "700 10px/1 'Space Mono', ui-monospace, monospace", letterSpacing: ".12em", textTransform: "uppercase", color: "#8E8E88" }}>{title}</span>
+        <button
+          type="button"
+          onClick={onCopy}
+          style={{
+            cursor: "pointer",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            padding: "6px 10px",
+            borderRadius: 999,
+            border: "1px solid #E4E4DE",
+            background: copied ? "#10b981" : "#fff",
+            color: copied ? "#fff" : "#0B0B0B",
+            font: "600 10px/1 'Space Mono', ui-monospace, monospace",
+          }}
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <pre style={{ margin: 0, padding: 12, borderRadius: 12, background: "#fff", border: "1px solid #E4E4DE", font: "400 11px/1.45 'Space Mono', ui-monospace, monospace", color: "#0B0B0B", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 110, overflow: "auto" }}>
+        {value}
+      </pre>
+    </div>
+  );
+}
+
+function TargetButton({
+  label,
+  onClick,
+  icon,
+}: {
+  label: string;
+  onClick: () => void;
+  icon?: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        cursor: "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+        padding: "11px 10px",
+        borderRadius: 14,
+        border: "1px solid #E4E4DE",
+        background: "#fff",
+        color: "#0B0B0B",
+        font: "600 11px/1 'Space Mono', ui-monospace, monospace",
+      }}
+    >
+      {icon ?? <Share2 size={13} />}
+      {label}
+    </button>
+  );
+}
+
+function ActionChip({
+  children,
+  onClick,
+  icon,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  icon: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        cursor: "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "8px 12px",
+        borderRadius: 999,
+        border: "1px solid #E4E4DE",
+        background: "#fff",
+        color: "#0B0B0B",
+        font: "600 10px/1 'Space Mono', ui-monospace, monospace",
+      }}
+    >
+      {icon}
+      {children}
+    </button>
   );
 }
 

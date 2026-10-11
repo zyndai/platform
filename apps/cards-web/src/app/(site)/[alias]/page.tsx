@@ -1,4 +1,4 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import { CARDS_API } from "@/lib/cards";
 
 export const revalidate = 300;
@@ -30,7 +30,7 @@ export default async function AliasRedirectPage({ params }: PageProps) {
     });
     if (!res.ok) notFound();
     const card = (await res.json()) as { handle?: string };
-    if (card.handle) redirect(`/p/${encodeURIComponent(card.handle)}`);
+    if (card.handle) permanentRedirect(`/p/${encodeURIComponent(card.handle)}`);
   } catch {
     // fetch threw (timeout/network) — fall through to 404 rather than a 500
   }

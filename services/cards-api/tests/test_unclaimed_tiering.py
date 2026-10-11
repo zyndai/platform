@@ -286,11 +286,12 @@ def test_chat_refuses_unclaimed_cards(monkeypatch):
 
 def test_set_card_alias_owner_only_and_reserved(monkeypatch):
     sb = MagicMock()
-    sb.table("agent_profile_cards").select("id").or_("alias.eq.hello,handle.eq.hello").execute.return_value = MagicMock(data=[])
+    sb.table("agent_profile_cards").select("id").or_("alias.eq.hello,handle.eq.hello").neq("handle", "alice").execute.return_value = MagicMock(data=[])
     sb.table("agent_profile_cards").select("owner_email").eq("handle", "alice").execute.return_value = MagicMock(
         data=[{"owner_email": "alice@example.com"}]
     )
     monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(cards_service.config, "SUPABASE_DB_SCHEMA", "cards")
 
     ok, msg, slug = cards_service.set_card_alias("alice", "Hello", "alice@example.com")
     assert ok is True and slug == "hello"
@@ -301,6 +302,20 @@ def test_set_card_alias_owner_only_and_reserved(monkeypatch):
 
     ok3, msg3, _ = cards_service.set_card_alias("alice", "find", "alice@example.com")
     assert ok3 is False and "reserved" in msg3
+
+
+def test_set_card_alias_allows_own_handle(monkeypatch):
+    sb = MagicMock()
+    sb.table("agent_profile_cards").select("id").or_("alias.eq.alice,handle.eq.alice").neq("handle", "alice").execute.return_value = MagicMock(data=[])
+    sb.table("agent_profile_cards").select("owner_email").eq("handle", "alice").execute.return_value = MagicMock(
+        data=[{"owner_email": "alice@example.com"}]
+    )
+    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(cards_service.config, "SUPABASE_DB_SCHEMA", "cards")
+
+    ok, msg, slug = cards_service.set_card_alias("alice", "alice", "alice@example.com")
+    assert ok is True and slug == "alice"
+    sb.table("agent_profile_cards").update.assert_called_once_with({"alias": "alice"})
 
 
 def test_claim_candidates_matches_normalised_linkedin(monkeypatch):

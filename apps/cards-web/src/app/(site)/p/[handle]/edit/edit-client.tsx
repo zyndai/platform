@@ -223,12 +223,13 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
   const handleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [aliasInput, setAliasInput] = useState(initialCard.alias ?? "");
+  const [savedAlias, setSavedAlias] = useState(initialCard.alias ?? "");
   const [aliasSaving, setAliasSaving] = useState(false);
   const [aliasMsg, setAliasMsg] = useState<string | null>(null);
 
   async function saveAlias() {
     const slug = aliasInput.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 30);
-    if (slug === (initialCard.alias ?? "")) return;
+    if (slug === savedAlias) return;
     setAliasSaving(true);
     setAliasMsg(null);
     try {
@@ -242,8 +243,10 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
         setAliasMsg(typeof data.detail === "string" ? data.detail : "Could not save alias");
         return;
       }
-      setAliasInput(data.alias ?? "");
-      setAliasMsg(data.alias ? "Alias saved" : "Alias removed");
+      const next = data.alias ?? "";
+      setAliasInput(next);
+      setSavedAlias(next);
+      setAliasMsg(next ? "Alias saved" : "Alias removed");
     } catch {
       setAliasMsg("Could not save alias");
     } finally {

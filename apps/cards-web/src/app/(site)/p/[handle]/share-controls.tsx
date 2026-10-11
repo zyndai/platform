@@ -5,6 +5,7 @@ import { Check, Copy, Download, FileText, Link2, Mail, Maximize2, QrCode, Share2
 import { QRCodeSVG } from "qrcode.react";
 
 import { withShareRef } from "@/lib/attr";
+import { cardsSiteOrigin } from "@/lib/cards";
 import { track } from "@/lib/track";
 import { ResumePicker } from "./resume-picker";
 import type { ResumeData } from "./resume-pdf";
@@ -444,13 +445,14 @@ export function ShareQrGroup({
   const fullSvgRef = useRef<SVGSVGElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
+  const siteOrigin = cardsSiteOrigin();
   const shareUrl = withShareRef(url, handle);
   const shortUrl = alias
-    ? withShareRef(`https://cards.zynd.ai/${alias}`, handle)
+    ? withShareRef(`${siteOrigin}/${alias}`, handle)
     : null;
   const displayHeadline = (headline || "").trim() || "Zynd Card";
   const ogPreview = `/p/${encodeURIComponent(handle)}/opengraph-image`;
-  const badgeMd = `[![Zynd Card](https://cards.zynd.ai/p/${encodeURIComponent(handle)}/badge.svg)](${shareUrl})`;
+  const badgeMd = `[![Zynd Card](${siteOrigin}/p/${encodeURIComponent(handle)}/badge.svg)](${shareUrl})`;
   const emailSigPlain = `${name}\n${displayHeadline}\n${shareUrl}`;
   const emailSigHtml = `<div style="font-family:sans-serif;font-size:13px;line-height:1.45;color:#0B0B0B"><strong>${escapeHtml(name)}</strong><br/>${escapeHtml(displayHeadline)}<br/><a href="${escapeHtml(shareUrl)}" style="color:#6157DE">${escapeHtml(shareUrl.replace(/^https?:\/\//, ""))}</a></div>`;
   const linkedinFeatured = `Add this to LinkedIn Featured:\n${shareUrl}`;

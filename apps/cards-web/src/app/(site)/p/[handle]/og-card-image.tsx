@@ -6,6 +6,29 @@ export const OG_ALT = "Zynd Card profile";
 export const OG_CONTENT_TYPE = "image/png";
 export const OG_REVALIDATE = 3600;
 
+/** Same CDN allowlist as /api/img — never fetch arbitrary owner-supplied URLs. */
+const AVATAR_HOSTS = new Set([
+  "media.licdn.com",
+  "static.licdn.com",
+  "pbs.twimg.com",
+  "abs.twimg.com",
+  "avatars.githubusercontent.com",
+  "github.com",
+  "lh3.googleusercontent.com",
+]);
+
+function allowlistedAvatarUrl(raw: string): string | null {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "https:") return null;
+    const host = u.hostname.toLowerCase();
+    if (AVATAR_HOSTS.has(host) || host.endsWith(".googleusercontent.com")) return u.toString();
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function buildCardOgImage(handle: string): Promise<ImageResponse> {
   const card = await fetchCardByHandle(handle);
 
@@ -26,13 +49,19 @@ export async function buildCardOgImage(handle: string): Promise<ImageResponse> {
 
   let avatar: string | null = null;
   const avatarUrl = card?.identity?.avatar_url;
-  if (avatarUrl && /^https?:\/\//.test(avatarUrl)) {
+  const safeAvatar = avatarUrl ? allowlistedAvatarUrl(avatarUrl) : null;
+  if (safeAvatar) {
     try {
-      const res = await fetch(avatarUrl, { signal: AbortSignal.timeout(3000) });
+      const res = await fetch(safeAvatar, {
+        signal: AbortSignal.timeout(1500),
+        next: { revalidate: 3600 },
+      });
       if (res.ok) {
         const buf = Buffer.from(await res.arrayBuffer());
         const mime = res.headers.get("content-type") || "image/jpeg";
-        avatar = `data:${mime};base64,${buf.toString("base64")}`;
+        if (mime.startsWith("image/")) {
+          avatar = `data:${mime};base64,${buf.toString("base64")}`;
+        }
       }
     } catch {
       avatar = null;

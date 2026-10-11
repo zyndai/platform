@@ -745,6 +745,15 @@ def _claimed_from_row(row: dict) -> bool:
     return bool((row.get("owner_email") or "").strip())
 
 
+def _public_card_columns() -> str:
+    """Select list for public card reads. `claimed`/`alias` exist only on the
+    aafo `cards` schema (migrations 0004 + 0006). On xmfj/`public` PostgREST
+    rejects unknown columns, so keep the legacy select there."""
+    if config.SUPABASE_DB_SCHEMA == "cards":
+        return "card,handle,owner_email,claimed,alias"
+    return "card,handle,owner_email"
+
+
 def card_is_claimed(handle: str) -> bool | None:
     """Claimed flag for one published card; None when the card doesn't exist."""
     sb = config.get_supabase()
@@ -778,9 +787,10 @@ def claimed_by_handles(handles: list[str]) -> dict[str, bool]:
 def get_card_by_handle_public(handle: str) -> dict | None:
     """Card dict with the `claimed` flag, for public (unauthenticated) reads."""
     sb = config.get_supabase()
+    cols = _public_card_columns()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card,handle,owner_email,claimed,alias")
+        .select(cols)
         .eq("handle", handle)
         .eq("status", "published")
         .execute()
@@ -792,7 +802,7 @@ def get_card_by_handle_public(handle: str) -> dict | None:
         try:
             resp = (
                 sb.table("agent_profile_cards")
-                .select("card,handle,owner_email,claimed,alias")
+                .select(cols)
                 .contains("card", {"previous_handles": [handle]})
                 .eq("status", "published")
                 .limit(1)
@@ -818,7 +828,7 @@ def list_published_public(limit: int = 1000) -> list[dict]:
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card,handle,owner_email,claimed,alias")
+        .select(_public_card_columns())
         .eq("status", "published")
         .order("created_at", desc=True)
         .limit(limit)
@@ -905,10 +915,12 @@ def set_card_alias(handle: str, raw_alias: str | None, owner_email: str) -> tupl
     if slug and slug in RESERVED_ALIASES:
         return False, f'"{slug}" is reserved — pick another alias', None
     if slug:
+        # Exclude self so alias === own handle is a valid vanity short URL.
         clash = (
             sb.table("agent_profile_cards")
             .select("id")
             .or_(f"alias.eq.{slug},handle.eq.{slug}")
+            .neq("handle", handle)
             .execute()
         )
         if clash.data:
@@ -923,6 +935,8 @@ def set_card_alias(handle: str, raw_alias: str | None, owner_email: str) -> tupl
         return False, "card not found", None
     if (stored.data[0].get("owner_email") or "").strip().lower() != (owner_email or "").strip().lower():
         return False, "not the card owner", None
+    if config.SUPABASE_DB_SCHEMA != "cards":
+        return False, "alias not available on this database", None
     sb.table("agent_profile_cards").update({"alias": slug or None}).eq("handle", handle).execute()
     return True, "saved", slug or None
 
@@ -930,12 +944,12 @@ def set_card_alias(handle: str, raw_alias: str | None, owner_email: str) -> tupl
 def get_card_by_alias(alias: str) -> dict | None:
     """Public card dict (with `claimed`) for a short alias, or None."""
     slug = normalize_alias(alias)
-    if not slug:
+    if not slug or config.SUPABASE_DB_SCHEMA != "cards":
         return None
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card,handle,owner_email,claimed,alias")
+        .select(_public_card_columns())
         .eq("alias", slug)
         .eq("status", "published")
         .limit(1)

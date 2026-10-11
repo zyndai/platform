@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchCardByHandle } from "@/lib/cards";
+import { cardsSiteOrigin, fetchCardByHandle } from "@/lib/cards";
 
 export const revalidate = 3600;
 
@@ -32,7 +32,7 @@ export async function GET(_req: Request, { params }: RouteProps) {
   const name = (card.identity?.name || handle).trim();
   const { family, given } = splitName(name);
   const headline = (card.identity?.headline || "").trim();
-  const profileUrl = `https://cards.zynd.ai/p/${encodeURIComponent(card.handle || handle)}`;
+  const profileUrl = `${cardsSiteOrigin()}/p/${encodeURIComponent(card.handle || handle)}`;
   const email = (card.identity?.links?.email || "").trim();
   const photo = (card.identity?.avatar_url || "").trim();
 

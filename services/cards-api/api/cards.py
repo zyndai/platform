@@ -74,8 +74,8 @@ async def check_handle_available(handle: str):
     if len(slug) < 2:
         return {"available": False, "slug": slug, "reason": "too short"}
     sb = config.get_supabase()
-    resp = sb.table("agent_profile_cards").select("id").eq("handle", slug).execute()
-    return {"available": not resp.data, "slug": slug}
+    taken = await asyncio.to_thread(cards_service._slug_taken, sb, slug)
+    return {"available": not taken, "slug": slug}
 
 
 @router.get("/by-handle/{handle}")

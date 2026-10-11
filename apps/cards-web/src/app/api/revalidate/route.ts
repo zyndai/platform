@@ -8,13 +8,20 @@ export async function POST(req: Request) {
   }
   let handle = "";
   let alias = "";
+  let previousAlias = "";
   try {
-    const body = (await req.json()) as { handle?: string; alias?: string };
+    const body = (await req.json()) as {
+      handle?: string;
+      alias?: string;
+      previous_alias?: string;
+    };
     handle = (body.handle || "").replace(/^@/, "").trim();
     alias = (body.alias || "").replace(/^@/, "").trim().toLowerCase();
+    previousAlias = (body.previous_alias || "").replace(/^@/, "").trim().toLowerCase();
   } catch {
     handle = "";
     alias = "";
+    previousAlias = "";
   }
   if (!handle || handle.includes("/") || handle.includes(".")) {
     return Response.json({ error: "handle required" }, { status: 422 });
@@ -25,8 +32,15 @@ export async function POST(req: Request) {
   revalidatePath(`/p/${handle}/twitter-image`);
   revalidatePath(`/p/${handle}/badge.svg`);
   revalidatePath(`/p/${handle}/vcard`);
-  if (alias && !alias.includes("/") && !alias.includes(".") && alias.length >= 2) {
-    revalidatePath(`/${alias}`);
+  for (const slug of [alias, previousAlias]) {
+    if (slug && !slug.includes("/") && !slug.includes(".") && slug.length >= 2) {
+      revalidatePath(`/${slug}`);
+    }
   }
-  return Response.json({ ok: true, handle, ...(alias ? { alias } : {}) });
+  return Response.json({
+    ok: true,
+    handle,
+    ...(alias ? { alias } : {}),
+    ...(previousAlias ? { previous_alias: previousAlias } : {}),
+  });
 }

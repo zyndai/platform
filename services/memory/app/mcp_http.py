@@ -10,6 +10,7 @@ auth. The ZyndTokenVerifier handles both token types transparently.
 Run:  uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
 """
 import asyncio
+import re
 from datetime import datetime, timezone
 
 import asyncpg
@@ -66,16 +67,42 @@ _ZYND_INSTRUCTIONS = """\
 You have access to ZYND — my cross-AI memory, context, people-discovery, and networking layer.
 
 ZYND is a TWO-WAY system:
-1. FEED IT: When I share facts about myself → call remember() so ZYND builds my context graph.
+1. FEED IT: When I share durable professional facts → call report_user_info (structured) or remember (free text).
 2. READ IT: At the start of every conversation → call get_my_context() so you know who I am and what I'm working on.
 
 If you skip either direction, ZYND cannot help — the graph stays empty and you have no context about me.
 
+== Milestone reporting (important) ==
+
+Report at milestones, not continuously. Good moments: end of a meaningful session, after learning a new durable skill/tool, when a project ships or goals change, when I explicitly ask you to save something.
+Do NOT call report_user_info on every keystroke, every file edit, or every transient task.
+Batch several facts into one report_user_info call when you do report.
+
+== What to report ==
+
+Durable professional facts only: role/title, skills, programming languages, frameworks, tools I use, named projects I am building, goals I am working toward.
+Use the typed fields (skills, languages, frameworks, tools, projects, goals, role). Put free-form extras in notes. Use remember only for a single free-text fact I stated.
+
+== What NOT to report ==
+
+- Repo names / paths (owner/repo, *.git, /Users/..., node_modules)
+- Tools as projects (do not put "Claude Code" or "Docker" in projects — use tools/skills)
+- Internal jargon ("worker trees", worktree paths, agent session ids)
+- One-off task details ("rename this variable today")
+- Secrets, API keys, passwords, tokens, .env contents, credentials — never
+- Health, politics, immigration, legal, financial, or highly personal facts unless I explicitly ask you to save them
+
+If unsure whether something is durable or sensitive, ask: "Want me to save this to your Zynd card memory?"
+
 == Available ZYND tools ==
 
-remember — Use when I share a durable fact about myself: my role, skills, projects, goals, tools, location, affiliations, interests, beliefs, what I am building, learning, seeking, or open to. Do NOT use for casual chatter, temporary task instructions, secrets, API keys, passwords, private tokens, or one-off details. If I explicitly say "remember this", "save this", or "add this to ZYND", call remember.
+report_user_info — Preferred for structured professional facts. Pass typed lists; facts stay private until I review them on my card.
+
+remember — Use for a single free-text durable fact I stated ("I'm learning Rust"). Do NOT use for casual chatter, temporary task instructions, or secrets.
 
 get_my_context — Use when I ask what ZYND knows about me, ask you to recall my context, or when my stored context would help answer the current question. Call this EARLY in every conversation. If I ask about a topic, pass that topic. Show the natural-language statements returned.
+
+get_my_card — My PUBLIC card facts (what I approved for discovery).
 
 export_my_context — Use when I ask to export, download, back up, or inspect my full ZYND profile/context graph.
 
@@ -109,13 +136,13 @@ list_my_pages — Use when I ask to see pages I have published or hosted.
 
 disconnect — Use when I ask to sign out or disconnect ZYND. Revokes all ZYND tokens.
 
-get_my_system_prompt — Use at the START of a conversation. Returns your personalized instructions plus my profile and everything ZYND remembers about me. After loading, if I share anything new, call remember.
+get_my_system_prompt — Use at the START of a conversation. Returns your personalized instructions plus my profile and everything ZYND remembers about me. After loading, if I share anything new, call remember or report_user_info at a milestone.
 
 == General behavior ==
 
 Do not invent ZYND results. Only report what tools actually return.
 Do not claim something was remembered, confirmed, forgotten, connected, messaged, or booked unless the relevant tool succeeded and returned success.
-Use ZYND quietly and naturally when helpful, but don't overuse tools.
+Use ZYND quietly and naturally when helpful, but don't overuse tools — especially report_user_info.
 If a tool fails, explain briefly and continue helping.
 If you are unsure whether a fact should be saved, ask: "Do you want me to save this to ZYND?"
 
@@ -129,7 +156,8 @@ Do not reveal raw internal IDs unless needed for a tool call or I ask.
 
 == Preferred flow ==
 
-If I share a durable fact → call remember.
+If I share durable professional facts at a milestone → call report_user_info (batched).
+If I share a single free-text fact → call remember.
 If I ask what you know about me → call get_my_context.
 If I ask who is similar to me → call find_similar_users.
 If I ask who can help me / who I should meet → call find_people.
@@ -306,49 +334,135 @@ async def report_user_info(
     notes: str = "",
     uid: str = Depends(_uid),
 ) -> dict:
-    """Report durable professional facts about the user. Facts stay private
-    until the user reviews them. Pass only what you actually learned. Never
-    pass secrets, API keys, passwords, tokens, .env contents, or file contents."""
+    """Report durable professional facts at a milestone (not continuously).
+
+    Prefer typed fields: tools/languages/frameworks/skills → skills;
+    projects → building; goals → intends. role and notes stay free text.
+    Never pass secrets, API keys, passwords, tokens, .env, repo paths, or
+    one-off task details. Facts stay private until the user reviews them."""
+    from app.services.findability import (
+        declare_for_review,
+        under_daily_cap,
+    )
+    from app.services.quality import (
+        assess,
+        assess_typed_field,
+        log_observe,
+    )
+
+    pool = await _get_pool()
+    typed_on = settings.feature_s05_typed_capture
+    observe = settings.feature_s05_observe or typed_on
+
+    typed_saved = 0
+    typed_skipped = 0
+    typed_fields: list[tuple[str, list[str] | None, str]] = [
+        ("tools", tools, "has_skill"),
+        ("languages", languages, "has_skill"),
+        ("frameworks", frameworks, "has_skill"),
+        ("skills", skills, "has_skill"),
+        ("projects", projects, "is_building"),
+    ]
+
+    if typed_on or observe:
+        if typed_on and not await under_daily_cap(pool, uid):
+            return {
+                "saved": False,
+                "reason": "daily report cap reached — try again tomorrow",
+            }
+        for field, values, predicate in typed_fields:
+            for result in assess_typed_field(field, values, predicate=predicate):
+                if observe and not typed_on:
+                    log_observe(uid, field, result)
+                    continue
+                if result.drop:
+                    log_observe(uid, field, result)
+                    typed_skipped += 1
+                    continue
+                if result.group == "noise":
+                    log_observe(uid, field, result)
+                # Soft triage: store look/noise so the owner can dismiss; hard-drop only.
+                ok = await declare_for_review(
+                    pool, uid, result.suggested_predicate or predicate, result.value,
+                )
+                if ok:
+                    typed_saved += 1
+                else:
+                    typed_skipped += 1
+
+        # goals is a string — split lightly into clauses when typed.
+        if goals_text := _clip(goals, 600):
+            for chunk in re.split(r"[;\n]+", goals_text):
+                result = assess(chunk, intended_predicate="intends_to", field="goals")
+                if not result.value:
+                    continue
+                if observe and not typed_on:
+                    log_observe(uid, "goals", result)
+                    continue
+                if result.drop:
+                    typed_skipped += 1
+                    continue
+                ok = await declare_for_review(
+                    pool, uid, result.suggested_predicate or "intends_to", result.value,
+                )
+                if ok:
+                    typed_saved += 1
+                else:
+                    typed_skipped += 1
+
+    # role + notes (and legacy text path when typed capture is off) use extraction.
     lines: list[str] = []
     if role_text := _clip(role, 200):
         lines.append(f"The user's role: {role_text}")
-    for label, values in (("skill", skills), ("programming language", languages),
-                          ("framework", frameworks), ("tool", tools)):
-        for value in values or []:
-            value = _clip(value, 120)
-            if value:
-                lines.append(f"The user has a {label}: {value}")
-    for project in projects or []:
-        project = _clip(project, 240)
-        if project:
-            lines.append(f"The user works on the project: {project}")
-    if goals_text := _clip(goals, 600):
-        lines.append(f"The user's goal: {goals_text}")
     for line in (notes or "").splitlines():
         line = _clip(line)
         if line:
             lines.append(line)
-    if not lines:
-        return {"saved": False, "reason": "nothing to report — pass at least one fact"}
-    stamp = datetime.now(timezone.utc)
-    turns = [
-        Turn(role="user", content=clean_text(line).strip(), timestamp=stamp)
-        for line in lines
-        if len(clean_text(line).strip()) >= _REMEMBER_MIN_CHARS
-    ]
-    if not turns:
-        return {"saved": False, "reason": "nothing new (too short or duplicates)"}
-    inserted, skipped = await ingest_turns(
-        await _get_pool(), await _get_arq(), uid, _CARDS_SOURCE, turns,
-        min_chars=_REMEMBER_MIN_CHARS,
-    )
-    if inserted == 0:
-        return {"saved": False, "reason": "nothing new (too short or duplicates)"}
+
+    if not typed_on:
+        for label, values in (("skill", skills), ("programming language", languages),
+                              ("framework", frameworks), ("tool", tools)):
+            for value in values or []:
+                value = _clip(value, 120)
+                if value:
+                    lines.append(f"The user has a {label}: {value}")
+        for project in projects or []:
+            project = _clip(project, 240)
+            if project:
+                lines.append(f"The user works on the project: {project}")
+        if goals_text := _clip(goals, 600):
+            lines.append(f"The user's goal: {goals_text}")
+
+    text_saved = 0
+    text_skipped = 0
+    if lines:
+        stamp = datetime.now(timezone.utc)
+        turns = [
+            Turn(role="user", content=clean_text(line).strip(), timestamp=stamp)
+            for line in lines
+            if len(clean_text(line).strip()) >= _REMEMBER_MIN_CHARS
+        ]
+        if turns:
+            inserted, skipped = await ingest_turns(
+                pool, await _get_arq(), uid, _CARDS_SOURCE, turns,
+                min_chars=_REMEMBER_MIN_CHARS,
+            )
+            text_saved = inserted
+            text_skipped = skipped
+
+    total_saved = typed_saved + text_saved
+    total_skipped = typed_skipped + text_skipped
+    if total_saved == 0:
+        return {
+            "saved": False,
+            "reason": "nothing new (too short, duplicates, or filtered)",
+            "items_skipped": total_skipped,
+        }
     return {
         "saved": True,
         "note": "Saved privately. The user reviews facts before anything becomes public.",
-        "items_saved": inserted,
-        "items_skipped": skipped,
+        "items_saved": total_saved,
+        "items_skipped": total_skipped,
     }
 
 

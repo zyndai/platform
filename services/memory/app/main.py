@@ -269,16 +269,39 @@ async def service_suggestions(email: str, authorization: str = Header(default=""
 
 @app.post("/v1/service/approve")
 async def service_approve(body: dict, authorization: str = Header(default="")) -> dict:
-    """Publish one private findability fact onto the user's public card."""
+    """Publish one private findability fact onto the user's public card.
+
+    Optional as_predicate overrides the default review→public remap so the
+    owner can retype before publishing (S05)."""
+    user_id = await _service_caller(authorization, body.get("email", ""))
+    predicate = (body.get("predicate") or "").strip()
+    value = (body.get("value") or "").strip()
+    as_predicate = (body.get("as_predicate") or "").strip() or None
+    if not predicate or not value:
+        raise HTTPException(status_code=422, detail="predicate and value are required")
+    from app.services.findability import approve
+    result = await approve(
+        get_pool(), user_id, predicate, value, as_predicate=as_predicate,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="no matching private findability fact")
+    return result
+
+
+@app.post("/v1/service/dismiss")
+async def service_dismiss(body: dict, authorization: str = Header(default="")) -> dict:
+    """Permanently hide a private suggestion from the review inbox (S05).
+
+    The fact stays in private memory; it never reappears in suggestions."""
     user_id = await _service_caller(authorization, body.get("email", ""))
     predicate = (body.get("predicate") or "").strip()
     value = (body.get("value") or "").strip()
     if not predicate or not value:
         raise HTTPException(status_code=422, detail="predicate and value are required")
-    from app.services.findability import approve
-    if not await approve(get_pool(), user_id, predicate, value):
-        raise HTTPException(status_code=404, detail="no matching private findability fact")
-    return {"status": "approved", "predicate": predicate, "value": value}
+    from app.services.findability import dismiss
+    if not await dismiss(get_pool(), user_id, predicate, value):
+        raise HTTPException(status_code=404, detail="no matching private suggestion")
+    return {"status": "dismissed", "predicate": predicate, "value": value}
 
 
 @app.post("/v1/service/revoke")
@@ -299,8 +322,7 @@ async def service_revoke(body: dict, authorization: str = Header(default="")) ->
 async def service_forget(body: dict, authorization: str = Header(default="")) -> dict:
     """Delete one fact from the user's memory (soft-delete via valid_until).
 
-    Called by the cards backend when an owner rejects a suggestion — the fact
-    leaves the review queue and private memory entirely."""
+    Hard-delete path — triage reject should use /v1/service/dismiss instead."""
     user_id = await _service_caller(authorization, body.get("email", ""))
     predicate = (body.get("predicate") or "").strip()
     value = (body.get("value") or "").strip()
@@ -524,9 +546,10 @@ async def my_findability_suggestions(user_id: str = Depends(current_user)) -> li
 async def approve_findability(ref: FactRef, user_id: str = Depends(current_user)) -> dict:
     """Publish an inferred fact onto the card so it becomes matchable."""
     from app.services.findability import approve
-    if not await approve(get_pool(), user_id, ref.predicate, ref.object):
+    result = await approve(get_pool(), user_id, ref.predicate, ref.object)
+    if not result:
         raise HTTPException(status_code=404, detail="no matching private findability fact")
-    return {"status": "approved", "predicate": ref.predicate, "object": ref.object}
+    return result
 
 
 @app.post("/me/findability/revoke")

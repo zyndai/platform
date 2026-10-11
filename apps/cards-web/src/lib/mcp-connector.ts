@@ -9,10 +9,15 @@ export interface McpConnectResult {
   instructions: string[];
 }
 
+export type SuggestionGroup = "right" | "look" | "noise";
+
 export interface SuggestedFact {
   predicate: string;
   object: string;
   confidence: number;
+  group?: SuggestionGroup;
+  suggested_predicate?: string;
+  public_label?: string;
 }
 
 /** Public memory snapshot returned by /cards/mcp/approve. An array (possibly
@@ -81,11 +86,17 @@ export async function approveSuggestedFact(
   supabaseToken: string,
   predicate: string,
   value: string,
+  asPredicate?: string,
 ): Promise<MemorySnapshot> {
+  const body: { predicate: string; value: string; as_predicate?: string } = {
+    predicate,
+    value,
+  };
+  if (asPredicate) body.as_predicate = asPredicate;
   const res = await fetch(`${CARDS_API}/cards/mcp/approve`, {
     method: "POST",
     headers: { Authorization: `Bearer ${supabaseToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ predicate, value }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await errDetail(res));
   const data = (await res.json()) as { zynd_memory?: unknown };
@@ -94,7 +105,21 @@ export async function approveSuggestedFact(
     : null;
 }
 
-/** Delete one suggested fact from memory entirely (rejects it). */
+/** Permanently hide one suggestion from the inbox (keeps private memory). */
+export async function dismissSuggestedFact(
+  supabaseToken: string,
+  predicate: string,
+  value: string,
+): Promise<void> {
+  const res = await fetch(`${CARDS_API}/cards/mcp/dismiss`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${supabaseToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ predicate, value }),
+  });
+  if (!res.ok) throw new Error(await errDetail(res));
+}
+
+/** Delete one suggested fact from memory entirely (hard reject). */
 export async function deleteSuggestedFact(
   supabaseToken: string,
   predicate: string,

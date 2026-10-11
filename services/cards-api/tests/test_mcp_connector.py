@@ -108,20 +108,44 @@ def test_approve_proxies_predicate_and_value(client, monkeypatch):
     seen = {}
     monkeypatch.setattr(mcp_module, "verify_supabase_jwt", lambda auth: PRINCIPAL)
 
-    async def fake_approve(email, predicate, value):
-        seen.update(email=email, predicate=predicate, value=value)
-        return {"status": "approved", "predicate": predicate, "value": value}
+    async def fake_approve(email, predicate, value, *, as_predicate=None):
+        seen.update(email=email, predicate=predicate, value=value,
+                    as_predicate=as_predicate)
+        return {"status": "approved", "predicate": predicate, "value": value,
+                "public_label": value}
 
     monkeypatch.setattr(zynd_mcp, "approve_fact", fake_approve)
     monkeypatch.setattr("services.zynd_memory.refresh_owner_snapshot", lambda email: [])
 
-    r = client.post("/cards/mcp/approve", json={"predicate": "is_building", "value": "micro-SaaS"},
+    r = client.post(
+        "/cards/mcp/approve",
+        json={"predicate": "has_skill", "value": "Rust", "as_predicate": "has_expertise_in"},
+        headers=_auth(monkeypatch=monkeypatch),
+    )
+
+    assert r.status_code == 200
+    assert seen == {"email": "alice@example.com", "predicate": "has_skill",
+                    "value": "Rust", "as_predicate": "has_expertise_in"}
+    assert r.json()["status"] == "approved"
+
+
+def test_dismiss_proxies_predicate_and_value(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(mcp_module, "verify_supabase_jwt", lambda auth: PRINCIPAL)
+
+    async def fake_dismiss(email, predicate, value):
+        seen.update(email=email, predicate=predicate, value=value)
+        return {"status": "dismissed", "predicate": predicate, "value": value}
+
+    monkeypatch.setattr(zynd_mcp, "dismiss_fact", fake_dismiss)
+    monkeypatch.setattr("services.zynd_memory.refresh_owner_snapshot", lambda email: [])
+
+    r = client.post("/cards/mcp/dismiss", json={"predicate": "has_skill", "value": "noise"},
                     headers=_auth(monkeypatch=monkeypatch))
 
     assert r.status_code == 200
-    assert seen == {"email": "alice@example.com", "predicate": "is_building",
-                    "value": "micro-SaaS"}
-    assert r.json()["status"] == "approved"
+    assert seen == {"email": "alice@example.com", "predicate": "has_skill", "value": "noise"}
+    assert r.json()["status"] == "dismissed"
 
 
 def test_revoke_proxies_predicate_and_value(client, monkeypatch):

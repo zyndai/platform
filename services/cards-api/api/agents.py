@@ -66,7 +66,15 @@ async def search_agents(
 
 @router.get("/{agent_id}")
 async def get_agent(agent_id: str):
+    """One agent profile. Unclaimed (scraped, no owner) cards are hidden from
+    agents by default — same as /v1/agents/search — and contact fields (booking
+    links, social URLs) are only attached for claimed cards via CardView."""
+    from services.card_view import build_card_view
+
     card = await asyncio.to_thread(cards_service.get_card, agent_id)
     if not card:
         raise HTTPException(status_code=404, detail="agent not found")
-    return card.model_dump(mode="json")
+    claimed = cards_service.card_is_claimed(card.handle) if card.handle else True
+    if claimed is False:
+        raise HTTPException(status_code=404, detail="agent not found")
+    return build_card_view(card, claimed=True)

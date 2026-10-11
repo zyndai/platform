@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import config
+from api import agents as agents_api
 from api import ask as ask_api
 from api import cards as cards_api
 from api import chat as chat_api
@@ -202,6 +203,57 @@ def test_ask_flag_off_restores_old_behaviour(monkeypatch):
     client = TestClient(app)
     client.get("/ask?q=engineer")
     assert captured["include_unclaimed"] is True
+
+
+def test_get_agent_hides_unclaimed_and_uses_card_view(monkeypatch):
+    app = FastAPI()
+    app.include_router(agents_api.router, prefix="/v1/agents")
+    client = TestClient(app)
+
+    card = AgentProfileCard.model_validate(_card_json())
+
+    monkeypatch.setattr(agents_api.cards_service, "get_card", lambda agent_id: card)
+    monkeypatch.setattr(agents_api.cards_service, "card_is_claimed", lambda handle: False)
+    assert client.get("/v1/agents/cid1").status_code == 404
+
+    monkeypatch.setattr(agents_api.cards_service, "card_is_claimed", lambda handle: True)
+    resp = client.get("/v1/agents/cid1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["claimed"] is True
+    assert "owner_email" not in body
+
+
+def test_request_takedown_notifies_review_channel(monkeypatch):
+    sb = MagicMock()
+    sb.table("agent_profile_cards").select("id").eq("handle", "alice").eq("status", "published").execute.return_value = MagicMock(
+        data=[{"id": "cid1"}]
+    )
+    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+    notified = {}
+    monkeypatch.setattr(cards_service, "_notify_takedown", lambda handle, uid, note: notified.update(handle=handle, uid=uid, note=note))
+
+    assert cards_service.request_takedown("alice", "sub-x", "not me") is True
+    assert notified == {"handle": "alice", "uid": "sub-x", "note": "not me"}
+
+
+def test_notify_takedown_posts_to_mattermost(monkeypatch):
+    monkeypatch.setattr(cards_service.config, "MATTERMOST_WEBHOOK_URL", "https://mattermost.example/hooks/abc")
+    posted = {}
+    monkeypatch.setattr(cards_service.httpx, "post", lambda url, json, timeout: posted.update(url=url, json=json))
+
+    cards_service._notify_takedown("alice", "sub-x", "not me")
+    assert posted["url"] == "https://mattermost.example/hooks/abc"
+    assert "alice" in posted["json"]["text"]
+    assert "not me" in posted["json"]["text"]
+
+
+def test_notify_takedown_skips_without_webhook(monkeypatch):
+    monkeypatch.setattr(cards_service.config, "MATTERMOST_WEBHOOK_URL", "")
+    called = {}
+    monkeypatch.setattr(cards_service.httpx, "post", lambda *a, **k: called.update(called=True))
+    cards_service._notify_takedown("alice", None, None)
+    assert called == {}
 
 
 # ── chat prompt honesty (S14) ───────────────────────────────────────

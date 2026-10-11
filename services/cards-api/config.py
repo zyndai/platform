@@ -58,6 +58,12 @@ FEATURE_S04_EVENTS: bool = os.getenv("FEATURE_S04_EVENTS", "false").lower() in (
 # SUPABASE_JWT_SECRET + UTC date.
 EVENTS_IP_SALT: str = os.getenv("EVENTS_IP_SALT", "")
 
+# S03 "Not me" takedown: when a visitor reports a scraped card isn't theirs,
+# cards-api posts the request to the shared Mattermost incoming webhook so a
+# human can review the queue manually (same webhook URL as the deploy-failure
+# alert in infra). Empty = no notification (the queue still fills).
+MATTERMOST_WEBHOOK_URL: str = os.getenv("MATTERMOST_WEBHOOK_URL", "")
+
 # cards-web cache bust after a memory snapshot write. Both empty = no-op.
 WEB_REVALIDATE_URL: str = os.getenv("WEB_REVALIDATE_URL", "")
 WEB_REVALIDATE_SECRET: str = os.getenv("WEB_REVALIDATE_SECRET", "")

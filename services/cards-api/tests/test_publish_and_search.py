@@ -37,8 +37,15 @@ def publish_client(monkeypatch):
 
     captured = {}
 
-    def fake_insert(card, gh, x, raw, intent, owner_email, custom_handle, claim_token_hash=None, owner_user_id=None):
-        captured.update(card=card, owner_email=owner_email, claim_token_hash=claim_token_hash, owner_user_id=owner_user_id)
+    def fake_insert(
+        card, gh, x, raw, intent, owner_email, custom_handle,
+        claim_token_hash=None, owner_user_id=None,
+        source=None, ref=None, utm=None, created_via=None,
+    ):
+        captured.update(
+            card=card, owner_email=owner_email, claim_token_hash=claim_token_hash,
+            owner_user_id=owner_user_id, source=source, ref=ref, utm=utm, created_via=created_via,
+        )
         return "alice"
 
     monkeypatch.setattr(onboard_api.cards_service, "insert_card", fake_insert)

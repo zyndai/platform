@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
-from models.card import AgentProfileCard
-from services.card_view import build_card_view, is_expired, live_facts
+from models.card import AgentProfileCard, CardView
+from services.card_view import build_card_view, freshness_boost, is_expired, live_facts
 from services.embed import card_search_text
 
 
@@ -35,17 +35,20 @@ def test_build_card_view_strips_contact_when_unclaimed():
         _card(zynd_memory=[{"predicate": "is_building", "object": "SendPilot", "source": "inferred", "approved_at": datetime.now(timezone.utc).isoformat()}]),
         claimed=False,
     )
-    assert view["claimed"] is False
-    assert view["calendly_url"] is None
-    assert view["links"] == {}
-    assert view["facts"][0]["text"] == "SendPilot"
-    assert view["cite_as"].endswith("/p/alice")
+    assert isinstance(view, CardView)
+    assert view.claimed is False
+    assert view.calendly_url is None
+    assert view.links == {}
+    assert view.facts[0].text == "SendPilot"
+    assert view.facts[0].source == "inferred"
+    assert view.facts[0].expires_at
+    assert view.cite_as.endswith("/p/alice")
 
 
 def test_build_card_view_keeps_contact_when_claimed():
     view = build_card_view(_card(), claimed=True)
-    assert view["calendly_url"] == "https://calendly.com/alice"
-    assert "linkedin" in view["links"]
+    assert view.calendly_url == "https://calendly.com/alice"
+    assert "linkedin" in view.links
 
 
 def test_search_text_includes_approved_memory():
@@ -53,3 +56,21 @@ def test_search_text_includes_approved_memory():
     text = card_search_text(card).lower()
     assert "sendpilot" in text
     assert "building" in text
+
+
+def test_search_text_excludes_expired_seeking():
+    old = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+    card = _card(zynd_memory=[{"predicate": "is_seeking", "object": "cofounder", "approved_at": old}])
+    text = card_search_text(card).lower()
+    assert "cofounder" not in text
+
+
+def test_freshness_boost_higher_when_newer():
+    now = datetime.now(timezone.utc)
+    fresh = {"predicate": "is_seeking", "object": "x", "approved_at": now.isoformat()}
+    stale = {
+        "predicate": "is_seeking",
+        "object": "y",
+        "approved_at": (now - timedelta(days=6)).isoformat(),
+    }
+    assert freshness_boost(fresh) > freshness_boost(stale)

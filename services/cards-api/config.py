@@ -54,6 +54,10 @@ FEATURE_S03_UNCLAIMED_TIERING: bool = os.getenv("FEATURE_S03_UNCLAIMED_TIERING",
 # S04: card_events + attribution columns. Default off until migration 0008
 # is applied on aafo and SUPABASE_DB_SCHEMA=cards. Rollback: set false.
 FEATURE_S04_EVENTS: bool = os.getenv("FEATURE_S04_EVENTS", "false").lower() in ("1", "true", "yes")
+
+# S06: CardView on new surfaces (chat facts, typed memory match_reasons +
+# freshness boost). /view + memory-in-embed stay always on. Rollback: false.
+FEATURE_S06_CARDVIEW: bool = os.getenv("FEATURE_S06_CARDVIEW", "false").lower() in ("1", "true", "yes")
 # Optional fixed prefix for the daily-rotating IP salt. Empty = derive from
 # SUPABASE_JWT_SECRET + UTC date.
 EVENTS_IP_SALT: str = os.getenv("EVENTS_IP_SALT", "")

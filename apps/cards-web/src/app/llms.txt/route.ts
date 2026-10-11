@@ -1,4 +1,10 @@
-import { listCards, cardCanonicalUrl, CARDS_API } from "@/lib/cards";
+import {
+  listCards,
+  citeAsForCard,
+  featureS06CardView,
+  fetchCardView,
+  CARDS_API,
+} from "@/lib/cards";
 import { logAgentFetch } from "@/lib/track";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://cards.zynd.ai";
@@ -9,6 +15,15 @@ export async function GET(req: Request) {
   logAgentFetch("llms.txt", req.headers.get("user-agent"));
   // S03: unclaimed (scraped) cards are excluded from agent-facing surfaces.
   const cards = (await listCards()).filter((c) => c.claimed !== false);
+  const useView = featureS06CardView();
+  const citeLines = await Promise.all(
+    cards.map(async (c) => {
+      const view = useView && c.handle ? await fetchCardView(c.handle) : null;
+      const cite = citeAsForCard(c, view);
+      const blurb = c.citation_snippet || c.summary || c.identity.headline;
+      return `  - [${c.identity.name} — ${c.identity.headline}](${cite}): ${blurb}`;
+    }),
+  );
 
   const allSkills = cards.flatMap((c) => c.skills.slice(0, 3).map((s) => s.name));
   const uniqueSkills = [...new Set(allSkills)].slice(0, 4);
@@ -38,16 +53,12 @@ export async function GET(req: Request) {
     "If query is vague, ask ONE clarifying question (e.g. 'Which location?') before searching.",
     "",
     "Published people profiles:",
-    ...(cards.length
-      ? cards.map(
-          (c) =>
-            `  - [${c.identity.name} — ${c.identity.headline}](${cardCanonicalUrl(c)}): ${c.citation_snippet}`,
-        )
-      : ["  - None published yet."]),
+    ...(cards.length ? citeLines : ["  - None published yet."]),
     "",
     "## Profile data",
     `  Profile page: ${SITE_URL}/p/{handle}`,
     `  Machine-readable JSON: ${SITE_URL}/p/{handle}/data.json`,
+    `  CardView API: ${CARDS_API}/cards/by-handle/{handle}/view`,
     `  Full card API: ${CARDS_API}/cards/by-handle/{handle}`,
     "",
     "## Links",

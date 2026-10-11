@@ -1,4 +1,10 @@
-import { listCards, cardCanonicalUrl } from "@/lib/cards";
+import {
+  listCards,
+  cardCanonicalUrl,
+  citeAsForCard,
+  featureS06CardView,
+  fetchCardView,
+} from "@/lib/cards";
 import { logAgentFetch } from "@/lib/track";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://cards.zynd.ai";
@@ -9,6 +15,27 @@ export async function GET(req: Request) {
   logAgentFetch("llms-full.txt", req.headers.get("user-agent"));
   // S03: unclaimed (scraped) cards are excluded from agent-facing surfaces.
   const cards = (await listCards()).filter((c) => c.claimed !== false);
+  const useView = featureS06CardView();
+  const profileBlocks = await Promise.all(
+    cards.map(async (c) => {
+      const view = useView && c.handle ? await fetchCardView(c.handle) : null;
+      const cite = citeAsForCard(c, view);
+      return [
+        `### ${c.identity.name} — ${c.identity.headline}`,
+        "",
+        `- Cite as: ${cite}`,
+        `- URL: ${cardCanonicalUrl(c)}`,
+        `- Entity JSON: ${cardCanonicalUrl(c)}/data.json`,
+        `- ${c.citation_snippet || c.summary || ""}`,
+        c.summary ? `- Summary: ${c.summary}` : "",
+        c.skills.length ? `- Skills: ${c.skills.map((s) => s.name).join(", ")}` : "",
+        view?.facts?.length
+          ? `- Approved facts: ${view.facts.map((f) => f.text).slice(0, 6).join("; ")}`
+          : "",
+        "",
+      ];
+    }),
+  );
   const lines = [
     "# Zynd Cards — Complete Reference",
     "",
@@ -24,18 +51,7 @@ export async function GET(req: Request) {
     "",
     "## Profiles",
     "",
-    ...(cards.length
-      ? cards.flatMap((c) => [
-          `### ${c.identity.name} — ${c.identity.headline}`,
-          "",
-          `- URL: ${cardCanonicalUrl(c)}`,
-          `- Entity JSON: ${cardCanonicalUrl(c)}/data.json`,
-          `- ${c.citation_snippet}`,
-          c.summary ? `- Summary: ${c.summary}` : "",
-          c.skills.length ? `- Skills: ${c.skills.map((s) => s.name).join(", ")}` : "",
-          "",
-        ])
-      : ["_No profiles published yet._", ""]),
+    ...(cards.length ? profileBlocks.flat() : ["_No profiles published yet._", ""]),
   ];
   return new Response(lines.join("\n"), {
     headers: { "Content-Type": "text/plain; charset=utf-8" },

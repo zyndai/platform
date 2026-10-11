@@ -125,6 +125,36 @@ class Review(BaseModel):
     reviewed_at: str = ""
 
 
+class CardFact(BaseModel):
+    text: str = ""
+    type: str = ""
+    source: str = ""
+    approved_at: str | None = None
+    expires_at: str | None = None
+    confidence: float | None = None
+
+
+class CardView(BaseModel):
+    """Canonical public card: identity + approved live memory facts."""
+
+    handle: str = ""
+    claimed: bool = False
+    identity: Identity = Field(default_factory=Identity)
+    summary: str = ""
+    skills: list[Skill] = Field(default_factory=list)
+    projects: list[Project] = Field(default_factory=list)
+    working_on: list[str] = Field(default_factory=list)
+    can_help_with: list[str] = Field(default_factory=list)
+    love_talking_about: list[str] = Field(default_factory=list)
+    availability: str = ""
+    facts: list[CardFact] = Field(default_factory=list)
+    cite_as: str = ""
+    fresh_as_of: str | None = None
+    calendly_url: str | None = None
+    google_calendar_url: str | None = None
+    links: dict[str, str] = Field(default_factory=dict)
+
+
 class AgentProfileCard(BaseModel):
     id: str
     schema_version: str = "1.0"

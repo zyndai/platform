@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CARDS_API } from "@/lib/cards";
+import { CARDS_API, formatMatchReason } from "@/lib/cards";
 
 export const revalidate = 0;
 
@@ -13,8 +13,8 @@ interface SearchResult {
   skills: string[];
   availability: string;
   experience_years: number | null;
+  match_reasons: Array<string | { type: string; text: string }>;
   match_score: number;
-  match_reasons: string[];
   url: string;
   claimed?: boolean;
 }
@@ -175,7 +175,7 @@ export default async function FindPage({ searchParams }: PageProps) {
 
                   {r.match_reasons.length > 0 && (
                     <p style={{ marginTop: "0.5rem", fontSize: "0.82rem", color: FAINT }}>
-                      {r.match_reasons.join(" · ")}
+                      {r.match_reasons.map(formatMatchReason).filter(Boolean).join(" · ")}
                     </p>
                   )}
 

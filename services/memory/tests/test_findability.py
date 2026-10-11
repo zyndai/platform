@@ -120,6 +120,8 @@ async def test_declare_creates_public_fact(client):
     card = await get_card(pool, UID)
     row = next(c for c in card if c["object"] == "developer tooling startup")
     assert row["source"] == "declared"
+    assert "observed_at" in row
+    assert row["half_life_days"] == 60
 
 
 async def test_declare_validates_enum_values(client):

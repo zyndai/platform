@@ -92,8 +92,9 @@ async def get_card_by_handle(handle: str, request: Request):
     return card
 
 
-@router.get("/by-handle/{handle}/view")
+@router.get("/by-handle/{handle}/view", response_model=None)
 async def get_card_view(handle: str):
+    from models.card import CardView
     from services.card_view import build_card_view
 
     found = await asyncio.to_thread(cards_service.get_card_by_handle, handle)
@@ -102,7 +103,8 @@ async def get_card_view(handle: str):
     claimed = cards_service.card_is_claimed(handle)
     if claimed is False:
         raise HTTPException(status_code=404, detail="card not found")
-    return build_card_view(found, claimed=True)
+    view: CardView = build_card_view(found, claimed=True)
+    return view
 
 
 class NotMeRequest(BaseModel):

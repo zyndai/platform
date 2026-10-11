@@ -6,6 +6,7 @@ import {
   approveSuggestedFact,
   deleteSuggestedFact,
   fetchSuggestedFacts,
+  type MemorySnapshot,
   type SuggestedFact,
 } from "@/lib/mcp-connector";
 import { factLabel } from "@/lib/memory-facts";
@@ -28,7 +29,7 @@ export function SuggestedFactsReview({
   onChanged,
 }: {
   tone?: "light" | "dark";
-  onChanged?: (anyApproved: boolean) => void;
+  onChanged?: (snapshot: MemorySnapshot) => void;
 } = {}) {
   const light = tone === "light";
   const [facts, setFacts] = useState<SuggestedFact[] | null>(null);
@@ -67,13 +68,13 @@ export function SuggestedFactsReview({
     setError("");
     try {
       const t = await sessionToken();
-      await approveSuggestedFact(t, fact.predicate, fact.object);
+      const snapshot = await approveSuggestedFact(t, fact.predicate, fact.object);
       setFacts((prev) =>
         (prev ?? []).filter(
           (f) => !(f.predicate === fact.predicate && f.object === fact.object),
         ),
       );
-      onChanged?.(true);
+      onChanged?.(snapshot);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not publish that fact");
     } finally {
@@ -92,13 +93,12 @@ export function SuggestedFactsReview({
           (f) => !(f.predicate === fact.predicate && f.object === fact.object),
         ),
       );
-      onChanged?.(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not delete that fact");
     } finally {
       setPending(null);
     }
-  }, [onChanged]);
+  }, []);
 
   const isPending = (fact: SuggestedFact) =>
     pending?.predicate === fact.predicate && pending?.object === fact.object;

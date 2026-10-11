@@ -15,6 +15,10 @@ export interface SuggestedFact {
   confidence: number;
 }
 
+/** Public memory snapshot returned by /cards/mcp/approve. An array (possibly
+ *  empty) is a live snapshot; null means none was returned. */
+export type MemorySnapshot = Array<Record<string, unknown>> | null;
+
 async function errDetail(res: Response): Promise<string> {
   const data = (await res.json().catch(() => ({}))) as { detail?: string };
   return data.detail || `Request failed (${res.status})`;
@@ -71,18 +75,23 @@ export async function fetchSuggestedFacts(supabaseToken: string): Promise<Sugges
   return data.suggestions ?? [];
 }
 
-/** Publish one suggested fact onto the user's public card. */
+/** Publish one suggested fact onto the user's public card. Returns the fresh
+ *  public memory snapshot (null when the API returned none). */
 export async function approveSuggestedFact(
   supabaseToken: string,
   predicate: string,
   value: string,
-): Promise<void> {
+): Promise<MemorySnapshot> {
   const res = await fetch(`${CARDS_API}/cards/mcp/approve`, {
     method: "POST",
     headers: { Authorization: `Bearer ${supabaseToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ predicate, value }),
   });
   if (!res.ok) throw new Error(await errDetail(res));
+  const data = (await res.json()) as { zynd_memory?: unknown };
+  return Array.isArray(data.zynd_memory)
+    ? (data.zynd_memory as Array<Record<string, unknown>>)
+    : null;
 }
 
 /** Delete one suggested fact from memory entirely (rejects it). */

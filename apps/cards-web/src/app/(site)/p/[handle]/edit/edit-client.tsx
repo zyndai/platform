@@ -17,6 +17,7 @@ import { factLabel } from "@/lib/memory-facts";
 import { MemoryProviderOnboard } from "@/components/memory/MemoryProviderOnboard";
 import { McpConnectPanel } from "@/components/mcp/McpConnectPanel";
 import { SuggestedFactsReview } from "@/components/mcp/SuggestedFactsReview";
+import type { MemorySnapshot } from "@/lib/mcp-connector";
 import { AutoGrowTextArea } from "@/components/AutoGrowTextArea";
 import { ContributionHeatmap } from "../contribution-heatmap";
 import { CountUp } from "../count-up";
@@ -57,6 +58,16 @@ function safeUrl(url: string | null | undefined): string | null {
 function usernameFromUrl(url: string | null | undefined): string | null {
   if (!url) return null;
   return url.replace(/\/+$/, "").split("/").pop() || null;
+}
+
+function formatAgo(ms: number | null, now: number): string {
+  if (!ms) return "";
+  const s = Math.max(0, Math.floor((now - ms) / 1000));
+  if (s < 10) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.floor(m / 60)}h ago`;
 }
 
 function withDefaultLinks(entries: [string, string][]): [string, string][] {
@@ -130,6 +141,8 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
   );
   const [memorySkipped, setMemorySkipped] = useState(false);
   const [showProviderImport, setShowProviderImport] = useState(false);
+  const [lastSync, setLastSync] = useState<number | null>(null);
+  const [now, setNow] = useState<number>(() => Date.now());
 
   function showToast(msg: string, type: "ok" | "err" | "info" = "info") {
     setToast({ msg, type });
@@ -140,6 +153,12 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     const t = setTimeout(() => setToast(null), 3200);
     return () => clearTimeout(t);
   }, [toast]);
+
+  useEffect(() => {
+    if (memoryConnected !== true) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [memoryConnected]);
 
   async function save(updated: AgentProfileCard) {
     setSaving(true);
@@ -164,6 +183,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
       const connected = Boolean(data.connected);
       const facts: Array<Record<string, unknown>> = Array.isArray(data.zynd_memory) ? data.zynd_memory : [];
       setMemoryConnected(connected);
+      if (connected) setLastSync(Date.now());
       if (connected && facts.length > 0) {
         setMemoryFacts(facts);
         setDraft((prev) => ({ ...prev, zynd_memory: facts }));
@@ -182,6 +202,19 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
       setMemoryStatus("disconnected");
       showToast("Memory sync failed — try again", "err");
     }
+  }
+
+  function applyMemorySnapshot(snapshot: MemorySnapshot) {
+    if (snapshot === null) {
+      void syncMemory();
+      return;
+    }
+    setMemoryFacts(snapshot);
+    setDraft((prev) => ({ ...prev, zynd_memory: snapshot }));
+    setMemoryConnected(true);
+    setMemoryStatus("connected");
+    setLastSync(Date.now());
+    showToast(`Live · synced — ${snapshot.length} fact${snapshot.length === 1 ? "" : "s"} on your card`, "ok");
   }
 
   const [handleInput, setHandleInput] = useState(handle);
@@ -407,6 +440,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
   const githubHandle = usernameFromUrl(githubUrl) || handle;
   const contributions = draft.contribution_stats ?? null;
   const seenFactKeys = new Set<string>();
+  const syncedAgo = lastSync ? formatAgo(lastSync, now) : "";
   const visibleFacts = memoryFacts.map((fact) => {
     const predicate = typeof fact.predicate === "string" ? fact.predicate : "";
     const object = typeof fact.object === "string" ? fact.object.trim() : "";
@@ -612,9 +646,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
               <div className="pe-title">Facts from your coding agents</div>
               <SuggestedFactsReview
                 tone="light"
-                onChanged={() => {
-                  void syncMemory();
-                }}
+                onChanged={applyMemorySnapshot}
               />
             </section>
 
@@ -738,7 +770,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                   <>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
                       <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#15803d", flexShrink: 0 }} />
-                      <span style={{ fontSize: 13, fontWeight: 600, color: "#15803d" }}>Live · synced</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#15803d" }}>Live · synced{syncedAgo ? ` ${syncedAgo}` : ""}</span>
                       <span style={{ fontSize: 12, color: T.muted }}>{visibleFacts.length} fact{visibleFacts.length === 1 ? "" : "s"} on your public card</span>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -754,6 +786,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                             setDraft((prev) => ({ ...prev, zynd_memory: snapshot }));
                             setMemoryStatus("connected");
                             setMemoryConnected(true);
+                            setLastSync(Date.now());
                             setShowProviderImport(false);
                           }} />
                       </div>
@@ -767,7 +800,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                       <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#15803d", flexShrink: 0 }} />
-                      <span style={{ fontSize: 13, fontWeight: 600, color: "#15803d" }}>Live · synced</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#15803d" }}>Live · synced{syncedAgo ? ` ${syncedAgo}` : ""}</span>
                     </div>
                     <p className="pe-help" style={{ marginBottom: 12 }}>
                       Nothing public yet. Facts appear here once agents report them and you approve them.
@@ -790,6 +823,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                             setMemoryFacts(snapshot);
                             setDraft((prev) => ({ ...prev, zynd_memory: snapshot }));
                             setMemoryStatus("connected");
+                            setLastSync(Date.now());
                             setShowProviderImport(false);
                           }} />
                       </div>
@@ -804,6 +838,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                       setDraft((prev) => ({ ...prev, zynd_memory: snapshot }));
                       setMemoryStatus("connected");
                       setMemoryConnected(true);
+                      setLastSync(Date.now());
                     }} />
                 ) : (
                   <div>

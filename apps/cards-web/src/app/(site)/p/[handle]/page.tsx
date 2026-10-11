@@ -5,16 +5,21 @@ import { BadgeCheck, Calendar, Clock, Globe, Search, Sparkles, Video } from "luc
 
 import {
   fetchCardByHandle,
+  fetchCardView,
   fetchGithubExtras,
   cardCanonicalUrl,
+  featureS06CardView,
   getMyCard,
   type AgentProfileCard,
+  type CardFact,
+  type CardView,
   type ContributionStats,
   type Project,
 } from "@/lib/cards";
 import { createClient } from "@/lib/supabase/server";
 import { pageMetadata } from "@/lib/seo";
 import { SkillMatrix } from "./skill-matrix";
+import { withShareRef } from "@/lib/attr";
 import { ShareQrGroup, CopyPermalinkIcon } from "./share-controls";
 import type { ResumeData } from "./resume-pdf";
 import { EditCardButton } from "./edit-card-button";
@@ -284,25 +289,36 @@ function buildView(card: AgentProfileCard) {
 
 /* ─── SEO ───────────────────────────────────────────────────────────────── */
 
-function buildJsonLd(card: AgentProfileCard) {
-  const { identity } = card;
-  const sameAs = Object.values(identity.links)
+function buildJsonLd(card: AgentProfileCard, view?: CardView | null) {
+  const identity = view?.identity ?? card.identity;
+  const sameAs = Object.values(identity.links || {})
     .filter((v): v is string => Boolean(v))
     .filter((v) => /^https?:\/\//.test(v));
   const image = /^https?:\/\//.test(identity.avatar_url || "") ? identity.avatar_url : undefined;
+  const facts = (view?.facts ?? []) as CardFact[];
+  const expertise = facts
+    .filter((f) => f.type === "has_expertise_in" || f.type === "is_learning")
+    .map((f) => f.text);
+  const knowsAbout = [...new Set([...card.skills.map((s) => s.name), ...expertise])].filter(Boolean);
+  const worksFor = facts
+    .filter((f) => f.type === "is_affiliated_with" && f.text)
+    .map((f) => ({ "@type": "Organization", name: f.text }));
+  const jobTitle = identity.headline || facts.find((f) => f.type === "is_affiliated_with")?.text;
+  const url = view?.cite_as || cardCanonicalUrl(card);
   return {
     "@context": "https://schema.org",
     "@type": "ProfilePage",
     dateCreated: card.created_at,
-    dateModified: card.updated_at,
+    dateModified: view?.fresh_as_of || card.updated_at,
     mainEntity: {
       "@type": "Person",
       name: identity.name,
-      description: card.citation_snippet || card.summary,
+      description: card.citation_snippet || view?.summary || card.summary,
       image,
       sameAs,
-      knowsAbout: card.skills.map((s) => s.name),
-      ...(identity.headline ? { hasOccupation: { "@type": "Occupation", name: identity.headline } } : {}),
+      knowsAbout,
+      ...(jobTitle ? { jobTitle, hasOccupation: { "@type": "Occupation", name: jobTitle } } : {}),
+      ...(worksFor.length ? { worksFor } : {}),
       ...(identity.location ? { address: { "@type": "PostalAddress", addressLocality: identity.location } } : {}),
     },
     breadcrumb: {
@@ -310,7 +326,7 @@ function buildJsonLd(card: AgentProfileCard) {
       itemListElement: [
         { "@type": "ListItem", position: 1, name: "Zynd", item: "https://cards.zynd.ai" },
         { "@type": "ListItem", position: 2, name: "Directory", item: "https://cards.zynd.ai/directory" },
-        { "@type": "ListItem", position: 3, name: identity.name, item: cardCanonicalUrl(card) },
+        { "@type": "ListItem", position: 3, name: identity.name, item: url },
       ],
     },
   };
@@ -360,6 +376,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export default async function PersonPage({ params }: PageProps) {
   const { handle } = await params;
   const card = await fetchCardByHandle(handle);
+  const cardView = featureS06CardView() && card ? await fetchCardView(handle) : null;
   if (!card) {
     // Self-heal stale "my profile" links: a visitor who is signed in and
     // owns a card lands on their current handle instead of a dead 404
@@ -463,8 +480,6 @@ export default async function PersonPage({ params }: PageProps) {
     { label: "Google Calendar", url: safeUrl(card.google_calendar_url) },
   ].filter((l): l is { label: string; url: string } => !!l.url);
 
-  const memoryFacts = (card.zynd_memory ?? []) as Array<Record<string, unknown>>;
-
   const MEMORY_GROUPS: Record<string, { label: string; icon: string }> = {
     is_building: { label: "Currently building", icon: "⚙️" },
     is_learning: { label: "Learning", icon: "📚" },
@@ -482,31 +497,63 @@ export default async function PersonPage({ params }: PageProps) {
     community: "community", coffee_chat: "coffee chats", mentoring_others: "mentoring others",
     early_user_testing: "early user testing",
   };
+  const HALF_LIFE_DAYS: Record<string, number> = {
+    is_seeking: 7,
+    is_working_on: 14,
+    is_building: 60,
+  };
 
+  // Server request timestamp for expiry filtering (not client render purity).
+  // eslint-disable-next-line react-hooks/purity -- RSC request-scoped clock
+  const nowMs = Date.now();
   const memoryGroups = (() => {
-    const facts = memoryFacts
-      .map((f) => ({
-        predicate: String(f.predicate ?? ""),
-        object: String(f.object ?? "").trim(),
-        source: String(f.source ?? ""),
-        confidence: typeof f.confidence === "number" ? f.confidence : 0,
-        approved_at: typeof f.approved_at === "string" ? f.approved_at : "",
-      }))
-      .filter((f) => f.predicate && f.object);
+    type MemItem = { text: string; inferred: boolean; confidence: number; approved_at: string; expires_at: string };
+    const byPredicate = new Map<string, MemItem[]>();
     const seen = new Set<string>();
-    const byPredicate = new Map<string, { text: string; inferred: boolean; confidence: number; approved_at: string }[]>();
-    for (const f of facts) {
-      const meta = MEMORY_GROUPS[f.predicate];
-      if (!meta) continue;
-      const dedupeKey = `${f.predicate}|${f.object.toLowerCase()}`;
-      if (seen.has(dedupeKey)) continue;
+
+    const pushFact = (predicate: string, object: string, source: string, confidence: number, approved_at: string, expires_at: string) => {
+      const meta = MEMORY_GROUPS[predicate];
+      if (!meta || !object) return;
+      if (expires_at) {
+        const end = Date.parse(expires_at);
+        if (!Number.isNaN(end) && end <= nowMs) return;
+      }
+      const dedupeKey = `${predicate}|${object.toLowerCase()}`;
+      if (seen.has(dedupeKey)) return;
       seen.add(dedupeKey);
-      const list = byPredicate.get(f.predicate) ?? [];
-      const rawText = ENUM_LABELS[f.object] ?? f.object;
-      const text = f.predicate === "is_building" ? rawText.replace(/^building\s+/i, "") : rawText;
-      list.push({ text, inferred: f.source === "inferred", confidence: f.confidence, approved_at: f.approved_at });
-      byPredicate.set(f.predicate, list);
+      const list = byPredicate.get(predicate) ?? [];
+      const rawText = ENUM_LABELS[object] ?? object;
+      const text = predicate === "is_building" ? rawText.replace(/^building\s+/i, "") : rawText;
+      list.push({ text, inferred: source === "inferred", confidence, approved_at, expires_at });
+      byPredicate.set(predicate, list);
+    };
+
+    if (cardView?.facts?.length) {
+      for (const f of cardView.facts) {
+        pushFact(f.type, f.text, f.source || "", f.confidence ?? 0, f.approved_at || "", f.expires_at || "");
+      }
+    } else {
+      for (const f of (card.zynd_memory ?? []) as Array<Record<string, unknown>>) {
+        const predicate = String(f.predicate ?? "");
+        const object = String(f.object ?? "").trim();
+        const approved_at = typeof f.approved_at === "string" ? f.approved_at : "";
+        let expires_at = "";
+        const days = HALF_LIFE_DAYS[predicate];
+        if (days && approved_at) {
+          const t = Date.parse(approved_at);
+          if (!Number.isNaN(t)) expires_at = new Date(t + days * 86400000).toISOString();
+        }
+        pushFact(
+          predicate,
+          object,
+          String(f.source ?? ""),
+          typeof f.confidence === "number" ? f.confidence : 0,
+          approved_at,
+          expires_at,
+        );
+      }
     }
+
     return GROUP_ORDER
       .filter((p) => byPredicate.has(p))
       .map((p) => {
@@ -519,6 +566,14 @@ export default async function PersonPage({ params }: PageProps) {
       });
   })();
   const memoryTotal = memoryGroups.reduce((n, g) => n + g.items.length, 0);
+  const memoryFreshLabel = (() => {
+    const stamps = memoryGroups.flatMap((g) => g.items.map((i) => i.expires_at).filter(Boolean));
+    if (!stamps.length) return cardView?.fresh_as_of ? "LIVE" : "LIVE";
+    const soonest = stamps.map((s) => Date.parse(s)).filter((n) => !Number.isNaN(n)).sort((a, b) => a - b)[0];
+    if (!soonest) return "LIVE";
+    const daysLeft = Math.max(0, Math.ceil((soonest - nowMs) / 86400000));
+    return daysLeft <= 7 ? `${daysLeft}d left` : "LIVE";
+  })();
   const firstName = identity.name?.split(" ")[0] || "They";
   const liJobs = (card.work_experience ?? []).filter((j) => !!(j.title || j.company));
   const nowJob = liJobs.find((j) =>
@@ -583,7 +638,7 @@ export default async function PersonPage({ params }: PageProps) {
       <script
         type="application/ld+json"
         // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(buildJsonLd(card)).replace(/</g, "\\u003c") }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(buildJsonLd(card, cardView)).replace(/</g, "\\u003c") }}
         suppressHydrationWarning
       />
 
@@ -621,6 +676,7 @@ export default async function PersonPage({ params }: PageProps) {
         .pf-hero { grid-column: span 4; padding: 18px; height: 100%; }
         .pf-right-stack { grid-column: span 8; display: flex; flex-direction: column; gap: 16px; height: 100%; }
         .pf-ai-work { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; align-items: stretch; }
+        .pf-ai-work > *:only-child { grid-column: 1 / -1; }
         .pf-ai-fact { grid-column: span 5; padding: 20px 24px; height: 100%; min-height: 0; }
         .pf-work { grid-column: span 7; height: 100%; min-height: 0; }
         .pf-span-12 { grid-column: span 12; }
@@ -801,7 +857,7 @@ export default async function PersonPage({ params }: PageProps) {
                 </div>
               )}
 
-              <HeroAskPanel firstName={firstName} handle={card.handle || handle} permalink={permalink} />
+              {claimed && <HeroAskPanel firstName={firstName} handle={card.handle || handle} permalink={permalink} />}
 
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", gap: 8 }}>
@@ -878,7 +934,7 @@ export default async function PersonPage({ params }: PageProps) {
 
             {/* ── AI FACT + WORK EXP: equal height, fact card fills ── */}
             <div className="pf-span-12 pf-ai-work">
-            {(() => {
+            {claimed && (() => {
               const q = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
               const arr = (items: string[]) => `[${items.map(q).join(", ")}]`;
               const currentRoles = (card.work_experience ?? [])
@@ -1058,7 +1114,7 @@ export default async function PersonPage({ params }: PageProps) {
 
             {/* ── SOCIAL: ZYND MEMORY ── */}
             {showMemory && (
-              <MemoryCard firstName={firstName} groups={memoryGroups} total={memoryTotal} />
+              <MemoryCard firstName={firstName} groups={memoryGroups} total={memoryTotal} freshLabel={memoryFreshLabel} />
             )}
 
             {/* ── BOOK A CALL (only when a Calendly or Google Calendar link exists) ── */}
@@ -1343,10 +1399,13 @@ export default async function PersonPage({ params }: PageProps) {
             <div className="pf-footer-links flex flex-wrap items-center gap-3">
               <div className="pf-permalink-badge flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gray-50 border border-gray-200">
                 <span className="pf-permalink-text" style={{ color: "#0f172a", fontWeight: 600 }}>{permalink}</span>
-                <CopyPermalinkIcon url={`https://${permalink}`} />
+                <CopyPermalinkIcon
+                  url={withShareRef(`https://${permalink}`, card.handle ?? card.id)}
+                  handle={card.handle ?? card.id}
+                />
               </div>
               <Link href="/directory" className="hover:text-slate-800">DIRECTORY</Link>
-              <a href={`/p/${card.handle ?? card.id}/data.json`} className="hover:text-slate-800">FOR AI</a>
+              {claimed && <a href={`/p/${card.handle ?? card.id}/data.json`} className="hover:text-slate-800">FOR AI</a>}
               <Link href="/create" className="hover:text-slate-800">CREATE</Link>
             </div>
           </footer>

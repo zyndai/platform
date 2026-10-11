@@ -138,6 +138,39 @@ export interface AgentProfileCard {
   previous_handles?: string[];
 }
 
+/** S06 canonical public object from GET /cards/by-handle/{handle}/view */
+export interface CardFact {
+  text: string;
+  type: string;
+  source: string;
+  approved_at?: string | null;
+  expires_at?: string | null;
+  confidence?: number | null;
+}
+
+export interface CardView {
+  handle: string;
+  claimed: boolean;
+  identity: Identity;
+  summary: string;
+  skills: Skill[];
+  projects: Project[];
+  working_on: string[];
+  can_help_with: string[];
+  love_talking_about: string[];
+  availability: string;
+  facts: CardFact[];
+  cite_as: string;
+  fresh_as_of?: string | null;
+  calendly_url?: string | null;
+  google_calendar_url?: string | null;
+  links?: Record<string, string>;
+}
+
+export function featureS06CardView(): boolean {
+  return process.env.NEXT_PUBLIC_FEATURE_S06_CARDVIEW === "true";
+}
+
 export interface AgentSearchResult {
   agent_id: string;
   handle: string;
@@ -149,7 +182,7 @@ export interface AgentSearchResult {
   availability: string;
   experience_years: number | null;
   match_score: number;
-  match_reasons: string[];
+  match_reasons: Array<string | { type: string; text: string }>;
   url: string;
   /** S03: false when the card has no owner yet (shown with an "Unclaimed" chip). */
   claimed?: boolean;
@@ -198,6 +231,29 @@ export async function fetchCardByHandle(handle: string): Promise<AgentProfileCar
   } catch {
     return null;
   }
+}
+
+export async function fetchCardView(handle: string): Promise<CardView | null> {
+  try {
+    const res = await fetch(`${API_BASE}/cards/by-handle/${encodeURIComponent(handle)}/view`, {
+      next: { revalidate: 60 },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as CardView;
+  } catch {
+    return null;
+  }
+}
+
+export function formatMatchReason(reason: string | { type: string; text: string }): string {
+  if (typeof reason === "string") return reason;
+  if (reason?.type === "memory" && reason.text) return `Memory: ${reason.text}`;
+  return reason?.text || "";
+}
+
+export function citeAsForCard(card: AgentProfileCard, view?: CardView | null): string {
+  if (view?.cite_as) return view.cite_as;
+  return cardCanonicalUrl(card);
 }
 
 export async function listCards(): Promise<AgentProfileCard[]> {

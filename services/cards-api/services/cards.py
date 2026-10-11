@@ -6,6 +6,8 @@ import re
 import secrets
 from urllib.parse import urlparse
 
+import httpx
+
 import config
 from models.card import AgentProfileCard, CardSynthesis, Source, WritingSample
 from services import embed
@@ -438,6 +440,10 @@ def insert_card(
     custom_handle: str | None = None,
     claim_token_hash: str | None = None,
     owner_user_id: str | None = None,
+    source: str | None = None,
+    ref: str | None = None,
+    utm: dict | None = None,
+    created_via: str | None = None,
 ) -> str:
     handle = (
         _try_custom_handle(custom_handle, card.id)
@@ -464,6 +470,22 @@ def insert_card(
     }
     if owner_user_id and config.WRITES_OWNER_USER_ID:
         row["owner_user_id"] = owner_user_id
+    # S04 attribution columns exist only on the cards schema (aafo).
+    if config.WRITES_OWNER_USER_ID:
+        from services import events as events_service
+
+        clean_source = events_service.sanitize_source(source)
+        clean_ref = events_service.sanitize_ref(ref)
+        clean_utm = events_service.sanitize_utm(utm)
+        clean_via = events_service.sanitize_created_via(created_via)
+        if clean_source:
+            row["source"] = clean_source
+        if clean_ref:
+            row["ref"] = clean_ref
+        if clean_utm:
+            row["utm"] = clean_utm
+        if clean_via:
+            row["created_via"] = clean_via
     sb.table("agent_profile_cards").upsert(row, on_conflict="id").execute()
     return handle
 
@@ -713,7 +735,13 @@ def list_published(limit: int = 1000) -> list[AgentProfileCard]:
 
 def _claimed_from_row(row: dict) -> bool:
     """A card is "claimed" when an owner has taken it over (owner_email set).
-    The email itself is never exposed — only this boolean."""
+    The email itself is never exposed — only this boolean.
+
+    Prefers the stored `claimed` generated column (cards schema, migration
+    0006); falls back to owner_email on the dashboard schema (xmfj) where the
+    column doesn't exist yet."""
+    if "claimed" in row and row.get("claimed") is not None:
+        return bool(row["claimed"])
     return bool((row.get("owner_email") or "").strip())
 
 
@@ -752,7 +780,7 @@ def get_card_by_handle_public(handle: str) -> dict | None:
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card,handle,owner_email,alias")
+        .select("card,handle,owner_email,claimed,alias")
         .eq("handle", handle)
         .eq("status", "published")
         .execute()
@@ -764,7 +792,7 @@ def get_card_by_handle_public(handle: str) -> dict | None:
         try:
             resp = (
                 sb.table("agent_profile_cards")
-                .select("card,handle,owner_email,alias")
+                .select("card,handle,owner_email,claimed,alias")
                 .contains("card", {"previous_handles": [handle]})
                 .eq("status", "published")
                 .limit(1)
@@ -790,7 +818,7 @@ def list_published_public(limit: int = 1000) -> list[dict]:
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card,handle,owner_email,alias")
+        .select("card,handle,owner_email,claimed,alias")
         .eq("status", "published")
         .order("created_at", desc=True)
         .limit(limit)
@@ -907,7 +935,7 @@ def get_card_by_alias(alias: str) -> dict | None:
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("card,handle,owner_email,alias")
+        .select("card,handle,owner_email,claimed,alias")
         .eq("alias", slug)
         .eq("status", "published")
         .limit(1)
@@ -946,7 +974,30 @@ def request_takedown(handle: str, requester_user_id: str | None, note: str | Non
     except Exception as exc:
         logger.warning("takedown insert failed handle=%s err=%s", handle, exc)
     sb.table("agent_profile_cards").update({"status": "takedown_requested"}).eq("handle", handle).execute()
+    _notify_takedown(handle, requester_user_id, note)
     return True
+
+
+def _notify_takedown(handle: str, requester_user_id: str | None, note: str | None) -> None:
+    """Best-effort ping of the takedown-review channel (Mattermost incoming
+    webhook). Never raises — a downed webhook must not block the takedown."""
+    url = config.MATTERMOST_WEBHOOK_URL
+    if not url:
+        return
+    payload = {
+        "text": (
+            f"**Takedown request — manual review**\n"
+            f"- handle: `{handle}`\n"
+            f"- url: {config.SITE_BASE_URL}/p/{handle}\n"
+            f"- requester_user_id: `{requester_user_id or 'anonymous'}`\n"
+            f"- note: {note or ''}\n"
+            f"- status: `pending` (card hidden from all surfaces, now `takedown_requested`)"
+        )
+    }
+    try:
+        httpx.post(url, json=payload, timeout=5.0)
+    except Exception as exc:  # noqa: BLE001 — notification is best-effort
+        logger.warning("takedown webhook failed handle=%s err=%s", handle, exc)
 
 
 def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:

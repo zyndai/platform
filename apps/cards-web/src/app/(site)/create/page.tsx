@@ -15,6 +15,7 @@ import { MemoryProviderOnboard } from "@/components/memory/MemoryProviderOnboard
 import { AutoGrowTextArea } from "@/components/AutoGrowTextArea";
 import { imgProxyUrl } from "@/lib/avatar";
 import { claimHeaders, forgetClaimToken, saveClaimToken } from "@/lib/claim-tokens";
+import { appendAttrToForm, attrPublishFields } from "@/lib/attr";
 import { T, ZC_CSS, ZC_FONTS } from "./zc-theme";
 
 const { SANS, DISPLAY, MONO } = ZC_FONTS;
@@ -686,6 +687,7 @@ function CreateProfilePageContent() {
     const form = new FormData();
     urls.forEach(u => form.append("url", u));
     if (resume) form.append("resume", resume);
+    appendAttrToForm(form);
     try {
       const res = await fetch(`${CARDS_API}/onboard/start`, { method: "POST", body: form });
       if (!res.ok) throw new Error((await res.text()) || `Status ${res.status}`);
@@ -797,6 +799,7 @@ function CreateProfilePageContent() {
           user_answers: userAnswers,
           owner_email: user?.email ?? null,
           custom_handle: customHandle.length >= 2 ? customHandle : undefined,
+          ...attrPublishFields(),
         }),
       });
       if (!res.ok) throw new Error((await res.text()) || `Status ${res.status}`);
@@ -952,6 +955,7 @@ function CreateProfilePageContent() {
     allUrls.forEach(u => form.append("url", u));
     const resumeFile = addMoreResume || resume;
     if (resumeFile) form.append("resume", resumeFile);
+    appendAttrToForm(form);
     try {
       const res = await fetch(`${CARDS_API}/onboard/start`, { method: "POST", body: form });
       if (!res.ok) throw new Error((await res.text()) || `Status ${res.status}`);
@@ -984,6 +988,7 @@ function CreateProfilePageContent() {
     next.forEach(u => form.append("url", u));
     const resumeFile = addMoreResume || resume;
     if (resumeFile) form.append("resume", resumeFile);
+    appendAttrToForm(form);
     try {
       const res = await fetch(`${CARDS_API}/onboard/start`, { method: "POST", body: form });
       if (!res.ok) throw new Error((await res.text()) || `Status ${res.status}`);

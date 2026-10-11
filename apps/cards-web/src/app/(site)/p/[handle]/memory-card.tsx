@@ -7,6 +7,7 @@ export interface MemoryGroupItem {
   inferred: boolean;
   confidence: number;
   approved_at: string;
+  expires_at?: string;
 }
 
 export interface MemoryGroup {
@@ -20,11 +21,12 @@ interface MemoryCardProps {
   firstName: string;
   groups: MemoryGroup[];
   total: number;
+  freshLabel?: string;
 }
 
 /** ZYND memory tile: shows the top facts collapsed with a "See all" expander
  *  so long lists never hide content behind a scroll without a cue. */
-export function MemoryCard({ firstName, groups, total }: MemoryCardProps) {
+export function MemoryCard({ firstName, groups, total, freshLabel = "LIVE" }: MemoryCardProps) {
   const [expanded, setExpanded] = useState(false);
   const visibleGroups = expanded ? groups : groups.slice(0, 3);
   const hiddenCount = total - visibleGroups.reduce(
@@ -39,7 +41,7 @@ export function MemoryCard({ firstName, groups, total }: MemoryCardProps) {
     >
       <div className="pf-mono flex justify-between items-start mb-3" style={{ fontSize: "0.65rem", fontWeight: 700 }}>
         <span>● MEMORY</span>
-        <span style={{ color: "#64748b" }}>LIVE</span>
+        <span style={{ color: "#64748b" }}>{freshLabel}</span>
       </div>
       <div style={{ fontSize: "1.1rem", fontWeight: 800, marginBottom: 2 }}>What {firstName}&apos;s working on</div>
       <div style={{ fontSize: "0.75rem", fontWeight: 400, color: "#94a3b8", marginBottom: 12 }}>Synced from coding agents</div>

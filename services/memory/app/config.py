@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     # "findability predicates are public on insert" behaviour (rollback).
     feature_s01_private_default: bool = True
 
+    # S05 — typed MCP capture: tools/skills/projects map to predicates directly
+    # instead of English → LLM extraction. Off by default (rollback = leave off).
+    feature_s05_typed_capture: bool = False
+    # When typed capture is off, still run quality scoring and log what would
+    # be grouped/dropped (observe / flag-only). Ignored once typed capture is on
+    # (quality then always runs and enforces soft triage).
+    feature_s05_observe: bool = True
+
     # M2 — JWT + OAuth (dev-grade; see docs/CHATGPT_PLUGIN.md security notes).
     # Empty by default: production must set a strong random value (openssl rand -hex 32)
     # or the boot guard below refuses to start.

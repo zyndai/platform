@@ -40,7 +40,7 @@ class ChatRequest(BaseModel):
     messages: list[dict]  # [{role: "user"|"assistant", content: str}]
 
 
-def _build_system_prompt(card: dict) -> str:
+def _build_system_prompt(card: dict, *, memory_facts: list[dict] | None = None, fresh_as_of: str | None = None) -> str:
     identity = card.get("identity", {})
     name = identity.get("name", "this person")
     first = name.split(" ")[0]
@@ -64,6 +64,16 @@ def _build_system_prompt(card: dict) -> str:
     linkedin_link = links.get("linkedin")
     website = links.get("website")
 
+    fact_lines = []
+    for f in (memory_facts or [])[:12]:
+        text = (f.get("text") or "").strip()
+        if not text:
+            continue
+        kind = (f.get("type") or "").replace("_", " ")
+        exp = f.get("expires_at")
+        suffix = f" (fresh until {exp[:10]})" if isinstance(exp, str) and exp else ""
+        fact_lines.append(f"- Approved memory ({kind}): {text}{suffix}" if kind else f"- Approved memory: {text}{suffix}")
+
     lines = [
         f"You are the AI assistant for {name}'s Zynd Card — not {name}. You help visitors understand this public profile.",
         "You are an AI model and must say so plainly if asked. Never claim to be a human, never speak in the first person as if you were the card's owner.",
@@ -78,6 +88,8 @@ def _build_system_prompt(card: dict) -> str:
         f"- Loves talking about: {', '.join(topics)}" if topics else "",
         f"- Projects: {'; '.join(projects)}" if projects else "",
         f"- Writes about: {' | '.join(posts)}" if posts else "",
+        *fact_lines,
+        f"- Card facts fresh as of: {fresh_as_of}" if fresh_as_of else "",
         f"- Calendly booking link: {calendly}" if calendly else "",
         f"- Google Calendar booking link: {google_calendar}" if google_calendar else "",
         f"- GitHub: {github_link}" if github_link else "",
@@ -169,7 +181,28 @@ async def chat(handle: str, body: ChatRequest, request: Request):
     if _rate_limited(f"{handle}|{client_ip}"):
         raise HTTPException(status_code=429, detail="Too many questions — please slow down")
 
-    system_prompt = _build_system_prompt(card_obj.model_dump())
+    from services import events as events_service
+
+    events_service.emit(
+        "chat_message",
+        handle=handle,
+        request=request,
+        meta={"handle": handle},
+    )
+
+    memory_facts = None
+    fresh_as_of = None
+    if config.FEATURE_S06_CARDVIEW:
+        from services.card_view import build_card_view
+
+        view = build_card_view(card_obj, claimed=True)
+        memory_facts = [f.model_dump(mode="json") for f in view.facts]
+        fresh_as_of = view.fresh_as_of
+    system_prompt = _build_system_prompt(
+        card_obj.model_dump(),
+        memory_facts=memory_facts,
+        fresh_as_of=fresh_as_of,
+    )
 
     return StreamingResponse(
         _stream_cf(system_prompt, body.messages),

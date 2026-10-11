@@ -70,6 +70,8 @@ ALTER TABLE assertions ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'in
 ALTER TABLE assertions ADD COLUMN IF NOT EXISTS is_public boolean NOT NULL DEFAULT false; -- approved onto the public findability card
 ALTER TABLE assertions ADD COLUMN IF NOT EXISTS approved_at timestamptz;
 ALTER TABLE assertions ADD COLUMN IF NOT EXISTS gate text;                                -- health | politics | immigration | null
+-- S05 — permanent triage dismiss (fact stays in private memory, leaves the inbox).
+ALTER TABLE assertions ADD COLUMN IF NOT EXISTS dismissed_at timestamptz;
 
 -- persona integration: link a ZYND user to their Supabase identity + persona agent.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS supabase_user_id text;   -- Supabase auth.users.id (keys the persona network)

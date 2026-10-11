@@ -15,6 +15,7 @@ from api.onboard import router as onboard_router
 from api.ask import router as ask_router
 from api.chat import router as chat_router
 from api.internal import router as internal_router
+from api.events import router as events_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -92,3 +93,4 @@ app.include_router(agents_router, prefix="/v1/agents", tags=["Agents"])
 app.include_router(chat_router, prefix="/v1/chat", tags=["Chat"])
 app.include_router(health_router, prefix="/health", tags=["Health"])
 app.include_router(internal_router, prefix="/internal", tags=["Internal"])
+app.include_router(events_router, tags=["Events"])

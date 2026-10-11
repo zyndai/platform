@@ -37,8 +37,15 @@ def publish_client(monkeypatch):
 
     captured = {}
 
-    def fake_insert(card, gh, x, raw, intent, owner_email, custom_handle, claim_token_hash=None, owner_user_id=None):
-        captured.update(card=card, owner_email=owner_email, claim_token_hash=claim_token_hash, owner_user_id=owner_user_id)
+    def fake_insert(
+        card, gh, x, raw, intent, owner_email, custom_handle,
+        claim_token_hash=None, owner_user_id=None,
+        source=None, ref=None, utm=None, created_via=None,
+    ):
+        captured.update(
+            card=card, owner_email=owner_email, claim_token_hash=claim_token_hash,
+            owner_user_id=owner_user_id, source=source, ref=ref, utm=utm, created_via=created_via,
+        )
         return "alice"
 
     monkeypatch.setattr(onboard_api.cards_service, "insert_card", fake_insert)
@@ -434,4 +441,56 @@ def test_maintenance_503_carries_cors_headers():
         assert resp.headers.get("access-control-allow-origin") == origin
     finally:
         main_module.config.MAINTENANCE_READONLY = old
+
+
+def _memory_card_json():
+    from datetime import datetime, timezone
+
+    data = _card_json("sendpilot-builder")
+    data["zynd_memory"] = [
+        {
+            "predicate": "is_building",
+            "object": "LinkedIn outreach infrastructure SendPilot",
+            "source": "declared",
+            "approved_at": datetime.now(timezone.utc).isoformat(),
+            "confidence": 0.97,
+        }
+    ]
+    return data
+
+
+def test_search_memory_match_string_reason_when_flag_off(monkeypatch):
+    sb = MagicMock()
+    sb.rpc.side_effect = RuntimeError("no rpc")
+    monkeypatch.setattr(search_service.config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(search_service.config, "FEATURE_S06_CARDVIEW", False)
+    monkeypatch.setattr(search_service, "embed_text", lambda q: [])
+    monkeypatch.setattr(
+        search_service.cards_service,
+        "list_published_rows",
+        lambda **kw: [{"card": _memory_card_json(), "handle": "sendpilot-builder", "owner_email": "a@b.com"}],
+    )
+    results = search_service.search_agents(q="linkedin outreach", include_unclaimed=True)
+    assert results
+    assert results[0]["handle"] == "sendpilot-builder"
+    assert "Approved fact" in results[0]["match_reasons"]
+
+
+def test_search_memory_match_typed_reason_when_flag_on(monkeypatch):
+    sb = MagicMock()
+    sb.rpc.side_effect = RuntimeError("no rpc")
+    monkeypatch.setattr(search_service.config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(search_service.config, "FEATURE_S06_CARDVIEW", True)
+    monkeypatch.setattr(search_service, "embed_text", lambda q: [])
+    monkeypatch.setattr(
+        search_service.cards_service,
+        "list_published_rows",
+        lambda **kw: [{"card": _memory_card_json(), "handle": "sendpilot-builder", "owner_email": "a@b.com"}],
+    )
+    results = search_service.search_agents(q="linkedin outreach", include_unclaimed=True)
+    assert results
+    reasons = results[0]["match_reasons"]
+    typed = [r for r in reasons if isinstance(r, dict) and r.get("type") == "memory"]
+    assert typed
+    assert "SendPilot" in typed[0]["text"] or "outreach" in typed[0]["text"].lower()
 

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, jsonb, pgPolicy, text, uuid, vector } from 'drizzle-orm/pg-core';
+import { boolean, index, jsonb, pgPolicy, text, uuid, vector } from 'drizzle-orm/pg-core';
 import { authUsers, fk, serviceRole, tsvector, tstz } from '../../lib/shared';
 import { cards } from './_schema';
 
@@ -30,6 +30,10 @@ export const agentProfileCards = cards.table(
     scrapeRaw: jsonb('scrape_raw'),
     userIntent: jsonb('user_intent'),
     ownerEmail: text('owner_email'),
+    // S03: derived claimed flag. GENERATED so it can never disagree with
+    // owner_email; indexed so agent-facing searches can filter cheaply. The
+    // email itself is never exposed — only this boolean.
+    claimed: boolean('claimed').generatedAlwaysAs(sql`"owner_email" IS NOT NULL`),
     // S07: optional short share alias. cards.zynd.ai/<alias> redirects to the
     // canonical /p/<handle>; reserved words are rejected in cards-api.
     alias: text('alias').unique('agent_profile_cards_alias_key'),
@@ -39,6 +43,11 @@ export const agentProfileCards = cards.table(
     // Backfilled by email at cutover, then set by cards-api on signed-in writes.
     // owner_email stays the ownership authority until Stage 2.
     ownerUserId: uuid('owner_user_id'),
+    // S04: first-touch attribution (nullable; written only when schema=cards).
+    source: text('source'),
+    ref: text('ref'),
+    utm: jsonb('utm'),
+    createdVia: text('created_via'),
   },
   (t) => [
     fk('agent_profile_cards_owner_user_id_fkey', t.ownerUserId, authUsers.id, 'set null'),
@@ -46,6 +55,7 @@ export const agentProfileCards = cards.table(
     index('agent_profile_cards_tsv_idx').using('gin', t.searchTsv),
     index('agent_profile_cards_embedding_hnsw_idx').using('hnsw', t.embedding.op('vector_cosine_ops')),
     index('idx_cards_owner_email').on(t.ownerEmail),
+    index('idx_cards_claimed').on(t.claimed),
     index('agent_profile_cards_owner_user_id_idx').on(t.ownerUserId),
     // xmfj's agent_profile_cards_handle_idx is not recreated: it duplicates
     // the unique constraint's index.

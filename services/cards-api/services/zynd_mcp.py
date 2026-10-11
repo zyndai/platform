@@ -2,8 +2,8 @@
 
 Service-to-service, MEMORY_SERVICE_TOKEN shared secret (same contract as
 services/zynd_memory.py). cards-api vouches for the caller's identity after
-verifying their Supabase session and proxies suggestion/approve/revoke calls;
-memory owns the data. The cards MCP server and its token-mint path
+verifying their Supabase session and proxies suggestion/approve/revoke/dismiss
+calls; memory owns the data. The cards MCP server and its token-mint path
 (`connect_mcp_sync`) have been removed — no cards MCP token is minted anymore.
 """
 import logging
@@ -59,14 +59,33 @@ async def _request(method: str, path: str, json_body: dict | None = None,
 # ── Fact review (suggested → approved → public on the card) ──────────────────
 
 async def suggested_facts(email: str) -> list[dict]:
-    """Findability-eligible facts not yet public — review candidates for the card."""
+    """Findability-eligible facts not yet public — review candidates for the card.
+
+    Passes through memory enrichment fields (group, public_label, suggested_predicate).
+    """
     path = "/v1/service/suggestions/" + quote(email.strip().lower(), safe="")
     data = await _request("GET", path)
     return data.get("suggestions") or []
 
 
-async def approve_fact(email: str, predicate: str, value: str) -> dict:
-    return await _request("POST", "/v1/service/approve", {
+async def approve_fact(
+    email: str,
+    predicate: str,
+    value: str,
+    *,
+    as_predicate: str | None = None,
+) -> dict:
+    body: dict = {
+        "email": email.strip().lower(), "predicate": predicate, "value": value,
+    }
+    if as_predicate:
+        body["as_predicate"] = as_predicate
+    return await _request("POST", "/v1/service/approve", body)
+
+
+async def dismiss_fact(email: str, predicate: str, value: str) -> dict:
+    """Permanently hide a private suggestion from the inbox (keeps memory)."""
+    return await _request("POST", "/v1/service/dismiss", {
         "email": email.strip().lower(), "predicate": predicate, "value": value,
     })
 

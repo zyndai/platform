@@ -106,7 +106,7 @@ def search_agents(
         search_text = card_search_text(card).lower()
 
         score = 0.0
-        reasons: list[str] = []
+        reasons: list = []
 
         sim = row.get("similarity")
         if sim is None and query_vec:
@@ -121,14 +121,25 @@ def search_agents(
             if hits:
                 score += 0.25 * (len(hits) / len(q_tokens))
                 reasons.append("Matches your search terms")
-            memory_blob = " ".join(
-                str(f.get("object") or f.get("value") or "")
-                for f in (card.zynd_memory or [])
-                if isinstance(f, dict)
-            ).lower()
-            if any(t and t in memory_blob for t in q_tokens):
+            from services.card_view import fact_object, freshness_boost, live_facts
+
+            matched_memory = []
+            for fact in live_facts(card.zynd_memory):
+                blob = fact_object(fact).lower()
+                if blob and any(t and t in blob for t in q_tokens):
+                    matched_memory.append(fact)
+            if matched_memory:
                 score += 0.2
-                reasons.append("Approved fact")
+                if config.FEATURE_S06_CARDVIEW:
+                    boost = max(freshness_boost(f) for f in matched_memory)
+                    score += boost
+                    for fact in matched_memory[:3]:
+                        reasons.append({
+                            "type": "memory",
+                            "text": fact_object(fact),
+                        })
+                else:
+                    reasons.append("Approved fact")
 
         if role_norm and (role_norm in _norm(card.identity.headline) or role_norm in search_text):
             score += 0.25

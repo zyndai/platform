@@ -2,7 +2,15 @@
 import pytest
 import pytest_asyncio
 
-from app.services.findability import declare, get_card, get_suggestions, approve, revoke
+from app.services.findability import (
+    declare,
+    declare_for_review,
+    dismiss,
+    get_card,
+    get_suggestions,
+    approve,
+    revoke,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -85,8 +93,10 @@ async def test_approve_publishes_onto_card(client):
     pool = get_pool()
     await _seed_inferred(pool, UID, "is_learning", "rust async", "skill_domain")
 
-    ok = await approve(pool, UID, "is_learning", "Rust Async")  # case-insensitive
-    assert ok is True
+    result = await approve(pool, UID, "is_learning", "Rust Async")  # case-insensitive
+    assert result is not None
+    assert result["predicate"] == "is_learning"
+    assert result["public_label"]
     card = await get_card(pool, UID)
     assert ("is_learning", "rust async") in [(c["predicate"], c["object"]) for c in card]
     assert card[0]["source"] == "both"  # inferred -> both after approval
@@ -100,7 +110,7 @@ async def test_approve_rejects_non_findability_predicate(client):
     from app.db import get_pool
     pool = get_pool()
     await _seed_inferred(pool, UID, "believes", "speed over polish", "belief_opinion")
-    assert await approve(pool, UID, "believes", "speed over polish") is False
+    assert await approve(pool, UID, "believes", "speed over polish") is None
 
 
 async def test_declare_creates_public_fact(client):
@@ -110,6 +120,8 @@ async def test_declare_creates_public_fact(client):
     card = await get_card(pool, UID)
     row = next(c for c in card if c["object"] == "developer tooling startup")
     assert row["source"] == "declared"
+    assert "observed_at" in row
+    assert row["half_life_days"] == 60
 
 
 async def test_declare_validates_enum_values(client):
@@ -120,3 +132,50 @@ async def test_declare_validates_enum_values(client):
         await declare(pool, UID, "is_seeking", "world domination")  # not in allowed set
     with pytest.raises(ValueError):
         await declare(pool, UID, "believes", "anything")            # not declarable
+
+
+async def test_dismiss_excludes_from_suggestions(client):
+    from app.db import get_pool
+    pool = get_pool()
+    await _seed_inferred(pool, UID, "is_building", "noise-bot", "project_venture")
+    assert any(s["object"] == "noise-bot" for s in await get_suggestions(pool, UID))
+    assert await dismiss(pool, UID, "is_building", "noise-bot") is True
+    assert all(s["object"] != "noise-bot" for s in await get_suggestions(pool, UID))
+    # Idempotent
+    assert await dismiss(pool, UID, "is_building", "noise-bot") is True
+
+
+async def test_cards_mcp_typed_fact_appears_in_suggestions(client):
+    from app.db import get_pool
+    pool = get_pool()
+    assert await declare_for_review(pool, UID, "has_skill", "Claude Code") is True
+    sugg = await get_suggestions(pool, UID)
+    row = next(s for s in sugg if s["object"] == "Claude Code")
+    assert row["predicate"] == "has_skill"
+    assert row["group"] in ("right", "look", "noise")
+    assert "public_label" in row
+    assert row["suggested_predicate"]
+
+
+async def test_approve_as_predicate_override(client):
+    from app.db import get_pool
+    pool = get_pool()
+    await declare_for_review(pool, UID, "has_skill", "SendPilot")
+    result = await approve(
+        pool, UID, "has_skill", "SendPilot", as_predicate="is_building",
+    )
+    assert result is not None
+    assert result["predicate"] == "is_building"
+    assert result["value"] == "SendPilot"
+    card = await get_card(pool, UID)
+    assert ("is_building", "SendPilot") in [(c["predicate"], c["object"]) for c in card]
+
+
+async def test_suggestions_surface_dedupe_stocks(client):
+    from app.db import get_pool
+    pool = get_pool()
+    await declare_for_review(pool, UID, "has_skill", "Stocks")
+    await _seed_inferred(pool, UID, "has_expertise_in", "Stocks", "skill_domain")
+    sugg = await get_suggestions(pool, UID)
+    stocks = [s for s in sugg if s["object"].lower() == "stocks"]
+    assert len(stocks) == 1

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { searchAgents } from "@/lib/cards";
+import { formatMatchReason, searchAgents } from "@/lib/cards";
 import { pageMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = pageMetadata({
@@ -210,7 +210,7 @@ export default async function SearchPage({ searchParams }: PageProps) {
                         <div className="mt-auto text-xs text-zinc-500">
                           <span className="text-zinc-600">Why: </span>
                           <span className="text-zinc-400">
-                            {r.match_reasons.join(" · ")}
+                            {r.match_reasons.map(formatMatchReason).filter(Boolean).join(" · ")}
                           </span>
                         </div>
                       )}

@@ -1,10 +1,12 @@
 import { CARDS_API } from "@/lib/cards";
+import { logAgentFetch } from "@/lib/track";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://cards.zynd.ai";
 
 export const revalidate = 60;
 
-export async function GET() {
+export async function GET(req: Request) {
+  logAgentFetch("agents.txt", req.headers.get("user-agent"));
   const body = [
     "# Zynd Cards — For AI agents",
     "",

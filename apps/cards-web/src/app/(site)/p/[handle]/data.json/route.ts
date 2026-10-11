@@ -1,4 +1,11 @@
-import { fetchCardByHandle, cardCanonicalUrl } from "@/lib/cards";
+import {
+  fetchCardByHandle,
+  fetchCardView,
+  cardCanonicalUrl,
+  featureS06CardView,
+  type CardFact,
+} from "@/lib/cards";
+import { logAgentFetch } from "@/lib/track";
 
 export const revalidate = 60;
 
@@ -6,8 +13,44 @@ interface Params {
   params: Promise<{ handle: string }>;
 }
 
-export async function GET(_req: Request, { params }: Params) {
+function liveFactsFromMemory(raw: Array<Record<string, unknown>> | null | undefined): CardFact[] {
+  const HALF: Record<string, number> = {
+    is_seeking: 7,
+    is_working_on: 14,
+    is_building: 60,
+  };
+  const now = Date.now();
+  const out: CardFact[] = [];
+  for (const f of raw || []) {
+    if (!f) continue;
+    const text = String(f.object || f.value || "").trim();
+    const type = String(f.predicate || f.type || "").trim();
+    if (!text) continue;
+    const approved = typeof f.approved_at === "string" ? f.approved_at : null;
+    let expires_at: string | null = null;
+    const days = HALF[type];
+    if (days && approved) {
+      const t = Date.parse(approved);
+      if (!Number.isNaN(t)) {
+        expires_at = new Date(t + days * 86400000).toISOString();
+        if (Date.parse(expires_at) <= now) continue;
+      }
+    }
+    out.push({
+      text,
+      type,
+      source: String(f.source || ""),
+      approved_at: approved,
+      expires_at,
+      confidence: typeof f.confidence === "number" ? f.confidence : null,
+    });
+  }
+  return out;
+}
+
+export async function GET(req: Request, { params }: Params) {
   const { handle } = await params;
+  logAgentFetch("data.json", req.headers.get("user-agent"), handle);
   const card = await fetchCardByHandle(handle);
 
   if (!card) {
@@ -32,23 +75,36 @@ export async function GET(_req: Request, { params }: Params) {
     );
   }
 
-  const { identity } = card;
-  const canonical = cardCanonicalUrl(card);
+  const view = featureS06CardView() ? await fetchCardView(handle) : null;
+  const identity = view?.identity ?? card.identity;
+  const canonical = view?.cite_as || cardCanonicalUrl(card);
 
-  const sameAs = Object.values(identity.links)
+  const sameAs = Object.values(identity.links || {})
     .filter((v): v is string => Boolean(v))
     .filter((v) => /^https?:\/\//.test(v));
 
   const image = /^https?:\/\//.test(identity.avatar_url || "") ? identity.avatar_url : undefined;
 
-  const knowsAbout = card.skills.map((s) => s.name).filter(Boolean);
-  const credentials = card.skills
+  const skills = view?.skills ?? card.skills;
+  const knowsAboutSkills = skills.map((s) => s.name).filter(Boolean);
+  const credentials = skills
     .filter((s) => s.name && s.level)
     .map((s) => ({
       "@type": "EducationalOccupationalCredential",
       name: s.name,
       competencyRequired: s.level,
     }));
+
+  const facts: CardFact[] = view?.facts?.length
+    ? view.facts.filter((f) => f && f.text)
+    : liveFactsFromMemory(card.zynd_memory as Array<Record<string, unknown>> | null);
+
+  const expertise = facts.filter((f) => f.type === "has_expertise_in" || f.type === "is_learning").map((f) => f.text);
+  const knowsAbout = [...new Set([...knowsAboutSkills, ...expertise])];
+
+  const affiliationOrgs = facts
+    .filter((f) => f.type === "is_affiliated_with" && f.text)
+    .map((f) => ({ "@type": "Organization", name: f.text }));
 
   const currentJobs = (card.work_experience ?? [])
     .filter((j) => /^(present|current|now)$/i.test((j.end_date || "").trim()) && (j.title || j.company))
@@ -58,41 +114,43 @@ export async function GET(_req: Request, { params }: Params) {
       ...(j.title && j.company ? { department: { "@type": "Organization", name: j.title } } : {}),
     }));
 
+  const worksFor = [...currentJobs, ...affiliationOrgs.filter((o) => !currentJobs.some((j) => j.name === o.name))];
+
+  const jobFromFacts = facts.find((f) => f.type === "is_affiliated_with")?.text;
+  const jobTitle = identity.headline || jobFromFacts || undefined;
+
   const entity = {
     "@context": "https://schema.org",
     "@type": "Person",
     "@id": canonical,
     name: identity.name,
     url: canonical,
-    description: card.summary || identity.headline,
+    description: (view?.summary ?? card.summary) || identity.headline,
     ...(image ? { image } : {}),
-    ...(identity.headline ? { jobTitle: identity.headline } : {}),
+    ...(jobTitle ? { jobTitle } : {}),
     ...(identity.location ? { address: { "@type": "PostalAddress", addressLocality: identity.location } } : {}),
     ...(sameAs.length ? { sameAs } : {}),
     ...(knowsAbout.length ? { knowsAbout } : {}),
     ...(credentials.length ? { hasCredential: credentials } : {}),
-    ...(currentJobs.length ? { worksFor: currentJobs } : {}),
-    // Zynd-specific extensions
+    ...(worksFor.length ? { worksFor } : {}),
     "zynd:handle": handle,
     "zynd:card_id": card.id,
     ...(card.citation_snippet ? { "zynd:citation": card.citation_snippet } : {}),
-    ...((card.zynd_memory || []).some((f) => f && (f.object || f.value))
+    ...(facts.length
       ? {
-          "zynd:facts": (card.zynd_memory || [])
-            .filter((f) => f && (f.object || f.value))
-            .map((f) => ({
-              text: f.object || f.value,
-              type: f.predicate || f.type || "",
-              source: f.source || "",
-              approved_at: f.approved_at || null,
-            })),
+          "zynd:facts": facts.map((f) => ({
+            text: f.text,
+            type: f.type,
+            source: f.source || "",
+            approved_at: f.approved_at || null,
+            expires_at: f.expires_at || null,
+            ...(f.confidence != null ? { confidence: f.confidence } : {}),
+          })),
         }
-      : card.searchable_facts?.length
-        ? { "zynd:facts": card.searchable_facts }
-        : {}),
+      : {}),
     "zynd:claimed": true,
     "zynd:cite_as": canonical,
-    ...(card.updated_at ? { "zynd:verified_at": card.updated_at } : {}),
+    ...((view?.fresh_as_of || card.updated_at) ? { "zynd:verified_at": view?.fresh_as_of || card.updated_at } : {}),
   };
 
   return new Response(JSON.stringify(entity, null, 2), {

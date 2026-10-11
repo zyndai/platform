@@ -51,6 +51,23 @@ LEGACY_UNOWNED_CLAIM: bool = os.getenv("LEGACY_UNOWNED_CLAIM", "false").lower() 
 # set to "false" and the old include-everyone behaviour returns.
 FEATURE_S03_UNCLAIMED_TIERING: bool = os.getenv("FEATURE_S03_UNCLAIMED_TIERING", "true").lower() in ("1", "true", "yes")
 
+# S04: card_events + attribution columns. Default off until migration 0008
+# is applied on aafo and SUPABASE_DB_SCHEMA=cards. Rollback: set false.
+FEATURE_S04_EVENTS: bool = os.getenv("FEATURE_S04_EVENTS", "false").lower() in ("1", "true", "yes")
+
+# S06: CardView on new surfaces (chat facts, typed memory match_reasons +
+# freshness boost). /view + memory-in-embed stay always on. Rollback: false.
+FEATURE_S06_CARDVIEW: bool = os.getenv("FEATURE_S06_CARDVIEW", "false").lower() in ("1", "true", "yes")
+# Optional fixed prefix for the daily-rotating IP salt. Empty = derive from
+# SUPABASE_JWT_SECRET + UTC date.
+EVENTS_IP_SALT: str = os.getenv("EVENTS_IP_SALT", "")
+
+# S03 "Not me" takedown: when a visitor reports a scraped card isn't theirs,
+# cards-api posts the request to the shared Mattermost incoming webhook so a
+# human can review the queue manually (same webhook URL as the deploy-failure
+# alert in infra). Empty = no notification (the queue still fills).
+MATTERMOST_WEBHOOK_URL: str = os.getenv("MATTERMOST_WEBHOOK_URL", "")
+
 # cards-web cache bust after a memory snapshot write. Both empty = no-op.
 WEB_REVALIDATE_URL: str = os.getenv("WEB_REVALIDATE_URL", "")
 WEB_REVALIDATE_SECRET: str = os.getenv("WEB_REVALIDATE_SECRET", "")

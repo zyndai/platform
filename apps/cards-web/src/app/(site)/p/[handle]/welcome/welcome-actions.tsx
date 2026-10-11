@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { withShareRef } from "@/lib/attr";
 import { ShareButton, QrButton } from "../share-controls";
 
 interface WelcomeActionsProps {
@@ -51,10 +52,11 @@ export function WelcomeActions({ handle, firstName, action, claimed, canonical }
   }
 
   if (action === "share") {
+    const shareUrl = withShareRef(canonical, handle);
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-        <ShareButton url={canonical} />
-        <QrButton url={canonical} />
+        <ShareButton url={shareUrl} handle={handle} />
+        <QrButton url={shareUrl} handle={handle} />
       </div>
     );
   }

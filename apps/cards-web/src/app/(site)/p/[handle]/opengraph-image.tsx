@@ -1,15 +1,9 @@
-import {
-  OG_ALT,
-  OG_CONTENT_TYPE,
-  OG_REVALIDATE,
-  OG_SIZE,
-  buildCardOgImage,
-} from "./og-card-image";
+import { buildCardOgImage } from "./og-card-image";
 
-export const revalidate = OG_REVALIDATE;
-export const alt = OG_ALT;
-export const size = OG_SIZE;
-export const contentType = OG_CONTENT_TYPE;
+export const revalidate = 3600;
+export const alt = "Zynd Card profile";
+export const size = { width: 1200, height: 630 };
+export const contentType = "image/png";
 
 interface ImageProps {
   params: Promise<{ handle: string }>;

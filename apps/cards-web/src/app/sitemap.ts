@@ -1,5 +1,5 @@
 import { MetadataRoute } from "next";
-import { listCards, cardCanonicalUrl } from "@/lib/cards";
+import { listCards, cardCanonicalUrl, cardIsClaimed } from "@/lib/cards";
 import { logAgentFetch } from "@/lib/track";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +9,7 @@ const BASE_URL = "https://cards.zynd.ai";
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   logAgentFetch("sitemap", null);
   // S03: unclaimed cards carry noindex and stay out of the sitemap.
-  const cards = (await listCards()).filter((c) => c.claimed !== false);
+  const cards = (await listCards()).filter((c) => cardIsClaimed(c));
 
   const staticEntries: MetadataRoute.Sitemap = [
     { url: BASE_URL, lastModified: new Date(), changeFrequency: "weekly", priority: 1.0 },

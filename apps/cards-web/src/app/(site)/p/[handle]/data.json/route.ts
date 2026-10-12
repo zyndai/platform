@@ -7,6 +7,7 @@ import {
   type CardFact,
 } from "@/lib/cards";
 import { logAgentFetch } from "@/lib/track";
+import { ownerHomeEnabled } from "@/lib/owner-home";
 
 export const revalidate = 60;
 
@@ -54,6 +55,12 @@ export async function GET(req: Request, { params }: Params) {
   logAgentFetch("data.json", req.headers.get("user-agent"), handle);
   const card = await fetchCardByHandle(handle);
 
+  if (card?.handle && card.handle !== handle) {
+    const target = new URL(req.url);
+    target.pathname = `/p/${encodeURIComponent(card.handle)}/data.json`;
+    return Response.redirect(target, 301);
+  }
+
   if (!card) {
     return new Response(JSON.stringify({ error: "not found" }), {
       status: 404,
@@ -69,7 +76,7 @@ export async function GET(req: Request, { params }: Params) {
         status: 410,
         headers: {
           "Content-Type": "application/json",
-          "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600",
+          "Cache-Control": ownerHomeEnabled ? "no-store" : "public, s-maxage=300, stale-while-revalidate=600",
           "Access-Control-Allow-Origin": "*",
         },
       },
@@ -157,7 +164,7 @@ export async function GET(req: Request, { params }: Params) {
   return new Response(JSON.stringify(entity, null, 2), {
     headers: {
       "Content-Type": "application/json",
-      "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+      "Cache-Control": ownerHomeEnabled ? "no-store" : "public, s-maxage=60, stale-while-revalidate=300",
       "Access-Control-Allow-Origin": "*",
     },
   });

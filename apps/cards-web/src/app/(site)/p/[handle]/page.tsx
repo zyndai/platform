@@ -37,6 +37,7 @@ import { ClaimBanner } from "./claim-banner";
 
 interface PageProps {
   params: Promise<{ handle: string }>;
+  searchParams: Promise<{ preview?: string }>;
 }
 
 /* ─── utils ─────────────────────────────────────────────────────────────── */
@@ -373,8 +374,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 /* ─── page ──────────────────────────────────────────────────────────────── */
 
-export default async function PersonPage({ params }: PageProps) {
+export default async function PersonPage({ params, searchParams }: PageProps) {
   const { handle } = await params;
+  const visitorPreview = (await searchParams).preview === "visitor";
   const card = await fetchCardByHandle(handle);
   const cardView = featureS06CardView() && card ? await fetchCardView(handle) : null;
   if (!card) {
@@ -591,7 +593,7 @@ export default async function PersonPage({ params }: PageProps) {
   try {
     const supabase = await createClient();
     const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token) {
+    if (session?.access_token && !visitorPreview) {
       isSignedIn = true;
       const myCard = await getMyCard(session.access_token);
       isOwner = !!(myCard && myCard.handle === handle);

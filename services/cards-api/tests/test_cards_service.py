@@ -417,6 +417,9 @@ class _OwnerLookupQuery:
     def ilike(self, *_a, **_k):
         return self
 
+    def neq(self, *_a, **_k):
+        return self
+
     def eq(self, col, val):
         if col == "status":
             self.status_filters.append(val)
@@ -436,6 +439,9 @@ class _OwnerLookupQuery:
 
 
 def test_get_card_by_owner_falls_back_to_unpublished_owned_card(monkeypatch):
+    # This fixture exercises the legacy lookup; S10's merged-aware lookup has
+    # separate coverage and queries the authoritative row status.
+    monkeypatch.setattr(cards_service.config, "FEATURE_S10_HOME", False)
     pending = _card()
     pending.status = "pending_review"
     q = _OwnerLookupQuery([{"card": pending.model_dump(mode="json"), "handle": "chandan-kumar-c5r4"}])

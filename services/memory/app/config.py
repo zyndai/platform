@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     # Shared secret for service-to-service endpoints (e.g. /v1/service/*) called
     # by zynd-cards. Empty = endpoint disabled.
     memory_service_token: str = ""
+    # S10 owner read tools use the same cards aggregation over service HTTP.
+    feature_s10_home: bool = False
+    cards_api_url: str = "https://cards.api.zynd.ai"
     access_token_ttl_seconds: int = 3600
     refresh_token_ttl_seconds: int = 30 * 24 * 3600
     mcp_token_ttl_seconds: int = 90 * 24 * 3600   # long-lived token pasted into MCP clients

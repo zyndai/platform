@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ownerHomeEnabled } from "@/lib/owner-home";
 import { notFound } from "next/navigation";
 import { fetchCardByHandle, cardCanonicalUrl } from "@/lib/cards";
 import { ProfileChatWidget, type ChatMessage } from "@/components/ProfileChatWidget";
@@ -145,8 +146,8 @@ export default async function WelcomePage({ params }: PageProps) {
         </div>
 
         <div style={{ textAlign: "center", marginTop: 36 }}>
-          <Link href={`/p/${encodeURIComponent(handle)}`} style={{ color: "#7B72E9", fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
-            View my profile →
+          <Link href={ownerHomeEnabled ? "/home" : `/p/${encodeURIComponent(handle)}`} style={{ color: "#7B72E9", fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
+            {ownerHomeEnabled ? "Go to my home →" : "View my profile →"}
           </Link>
         </div>
       </div>

@@ -397,6 +397,24 @@ def _row_to_card(row: dict) -> AgentProfileCard:
     return AgentProfileCard.model_validate(data)
 
 
+def merged_target(handle: str) -> str | None:
+    """Resolve a merged handle/alias, only when its canonical card is public."""
+    if config.SUPABASE_DB_SCHEMA != "cards":
+        return None
+    sb = config.get_supabase()
+    try:
+        rows = (sb.table("agent_profile_cards").select("merged_into")
+                .or_(f"handle.eq.{_postgrest_quote(handle)},alias.eq.{_postgrest_quote(handle)}")
+                .eq("status", "merged").limit(1).execute().data or [])
+        if not rows or not rows[0].get("merged_into"):
+            return None
+        target = (sb.table("agent_profile_cards").select("handle").eq("id", rows[0]["merged_into"])
+                  .eq("status", "published").limit(1).execute().data or [])
+        return target[0]["handle"] if target else None
+    except Exception:
+        return None  # Pre-migration deployments keep serving public reads.
+
+
 def get_card_by_handle(handle: str) -> AgentProfileCard | None:
     sb = config.get_supabase()
     resp = (
@@ -424,7 +442,8 @@ def get_card_by_handle(handle: str) -> AgentProfileCard | None:
             logger.warning("previous-handle lookup failed handle=%s err=%s", handle, exc)
             rows = []
     if not rows:
-        return None
+        target = merged_target(handle)
+        return get_card_by_handle(target) if target else None
     return _row_to_card(rows[0])
 
 
@@ -498,6 +517,10 @@ def get_card_by_owner(email: str) -> tuple[AgentProfileCard, str] | None:
     along in the card JSON, so the frontend can offer a "publish" action
     instead of pretending the profile doesn't exist."""
     sb = config.get_supabase()
+    if config.FEATURE_S10_HOME and config.SUPABASE_DB_SCHEMA == "cards":
+        from services.owner_home import current_row, card_from_row
+        row = current_row(email)
+        return (card_from_row(row), row["handle"]) if row else None
     resp = (
         sb.table("agent_profile_cards")
         .select("card,handle")
@@ -513,6 +536,7 @@ def get_card_by_owner(email: str) -> tuple[AgentProfileCard, str] | None:
             sb.table("agent_profile_cards")
             .select("card,handle")
             .ilike("owner_email", _like_literal(email))
+            .neq("status", "merged")
             .order("created_at", desc=True)
             .limit(1)
             .execute()
@@ -875,7 +899,8 @@ def get_card_by_handle_public(handle: str) -> dict | None:
             logger.warning("previous-handle lookup failed handle=%s err=%s", handle, exc)
             rows = []
     if not rows:
-        return None
+        target = merged_target(handle)
+        return get_card_by_handle_public(target) if target else None
     return _public_card_payload(rows[0])
 
 
@@ -1003,7 +1028,8 @@ def get_card_by_alias(alias: str) -> dict | None:
         logger.warning("alias lookup failed alias=%s err=%s", slug, exc)
         return None
     if not resp.data:
-        return None
+        target = merged_target(slug)
+        return get_card_by_handle_public(target) if target else None
     return _public_card_payload(resp.data[0])
 
 
@@ -1071,6 +1097,18 @@ def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:
     if zynd_memory is None:
         return False
     sb = config.get_supabase()
+    if config.FEATURE_S10_HOME and config.SUPABASE_DB_SCHEMA == "cards":
+        saved = patch_system_fields(handle, {"zynd_memory": dedupe_memory_facts(zynd_memory)})
+        if not saved:
+            return False
+        try:
+            from services import embed
+            vec = embed.embed_text(embed.card_search_text(AgentProfileCard.model_validate(saved)))
+            if vec:
+                sb.table("agent_profile_cards").update({"embedding": vec}).eq("handle", handle).eq("updated_at", saved["updated_at"]).execute()
+        except Exception:
+            pass  # FTS is current; a stale revoked-fact vector is never retained.
+        return True
     resp = (
         sb.table("agent_profile_cards")
         .select("card,embedding")
@@ -1093,6 +1131,23 @@ def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:
         logger.warning("re-embed after memory update failed handle=%s err=%s", handle, exc)
     sb.table("agent_profile_cards").update(payload).eq("handle", handle).execute()
     return True
+
+
+def patch_system_fields(handle: str, patch: dict) -> dict | None:
+    """Service-only atomic writes for memory/scrapers, preserving owner edits."""
+    return config.get_supabase().rpc("s10_patch_system_fields", {"p_handle": handle, "p_patch": patch}).execute().data
+
+
+def get_card_for_owner(handle: str, email: str) -> AgentProfileCard | None:
+    if not config.FEATURE_S10_HOME or config.SUPABASE_DB_SCHEMA != "cards":
+        return get_card_by_handle(handle)
+    rows = (config.get_supabase().table("agent_profile_cards").select("card,handle,status")
+            .eq("handle", handle).ilike("owner_email", _like_literal(email)).neq("status", "merged").limit(1).execute().data or [])
+    if not rows:
+        return None
+    card = _row_to_card(rows[0])
+    card.status = rows[0]["status"]
+    return card
 
 
 def list_published_rows(

@@ -229,7 +229,7 @@ async def refresh_linkedin(
     if not principal:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    card = await asyncio.to_thread(cards_service.get_card_by_handle, handle)
+    card = await asyncio.to_thread(cards_service.get_card_for_owner, handle, principal.email)
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
 
@@ -270,6 +270,12 @@ async def refresh_linkedin(
     cards_service.apply_linkedin_avatar(card_json, (stats or {}).get("avatar"))
 
     card_json["updated_at"] = utcnow()
+    if config.FEATURE_S10_HOME and config.SUPABASE_DB_SCHEMA == "cards":
+        await asyncio.to_thread(cards_service.patch_system_fields, handle, {
+            "work_experience": work_experience,
+            "avatar_url": (card_json.get("identity") or {}).get("avatar_url", ""),
+        })
+        return {"work_experience": work_experience}
     sb.table("agent_profile_cards").update(
         {"card": card_json, "updated_at": card_json["updated_at"]}
     ).eq("handle", handle).execute()
@@ -292,7 +298,7 @@ async def refresh_github(
     if not principal:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    card = await asyncio.to_thread(cards_service.get_card_by_handle, handle)
+    card = await asyncio.to_thread(cards_service.get_card_for_owner, handle, principal.email)
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
 
@@ -336,6 +342,15 @@ async def refresh_github(
         card_json["contribution_stats"] = contribution_stats
     card_json.setdefault("identity", {}).setdefault("links", {})["github"] = github_url
     card_json["updated_at"] = utcnow()
+    if config.FEATURE_S10_HOME and config.SUPABASE_DB_SCHEMA == "cards":
+        patch = {}
+        if github_stats:
+            patch["github_stats"] = github_stats
+        if contribution_stats:
+            patch["contribution_stats"] = contribution_stats
+        if patch:
+            await asyncio.to_thread(cards_service.patch_system_fields, handle, patch)
+        return {"github_stats": github_stats, "contribution_stats": contribution_stats}
     sb.table("agent_profile_cards").update(
         {"card": card_json, "updated_at": card_json["updated_at"]}
     ).eq("handle", handle).execute()
@@ -358,7 +373,7 @@ async def refresh_memory(
     if not principal:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    card = await asyncio.to_thread(cards_service.get_card_by_handle, handle)
+    card = await asyncio.to_thread(cards_service.get_card_for_owner, handle, principal.email)
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
 

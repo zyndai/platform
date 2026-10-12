@@ -16,6 +16,7 @@ from api.ask import router as ask_router
 from api.chat import router as chat_router
 from api.internal import router as internal_router
 from api.events import router as events_router
+from api.owner_home import router as owner_home_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -58,6 +59,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Zynd Cards API", version="1.0.0", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def owner_no_cache(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith(("/cards/mine", "/cards/notifications", "/internal/owner-status")):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Vary"] = "Authorization"
+    return response
+
 # Registered before CORSMiddleware so CORS wraps it (the last middleware added
 # runs first): the 503 then carries CORS headers and browsers show the message
 # instead of a CORS error.
@@ -87,6 +97,7 @@ app.add_middleware(
 
 app.include_router(onboard_router, prefix="/onboard", tags=["Onboard"])
 app.include_router(ask_router, prefix="/ask", tags=["Ask"])
+app.include_router(owner_home_router, prefix="/cards", tags=["Owner home"])
 app.include_router(cards_router, prefix="/cards", tags=["Cards"])
 app.include_router(mcp_router, prefix="/cards", tags=["MCP connector"])
 app.include_router(agents_router, prefix="/v1/agents", tags=["Agents"])

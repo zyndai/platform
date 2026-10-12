@@ -1,5 +1,8 @@
 "use client";
 
+import { useSectionAutosave } from "@/hooks/useSectionAutosave";
+import { ownerHomeEnabled } from "@/lib/owner-home";
+
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
@@ -130,7 +133,7 @@ function Toast({ msg, type }: { msg: string; type: "ok" | "err" | "info" }) {
 interface Props { initialCard: AgentProfileCard; handle: string; token: string; }
 
 export function EditProfileClient({ initialCard, handle, token }: Props) {
-  const [draft, setDraft] = useState<AgentProfileCard>({ ...initialCard, status: "published" });
+  const [draft, setDraft] = useState<AgentProfileCard>({ ...initialCard, status: ownerHomeEnabled ? initialCard.status : "published" });
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: "ok" | "err" | "info" } | null>(null);
@@ -289,7 +292,29 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     };
   }
 
+  const formCard = draftFromForm(draft);
+  const autosave = useSectionAutosave(handle, token, {
+    identity: { identity: formCard.identity },
+    summary: { summary: formCard.summary, availability: formCard.availability, industries: formCard.industries },
+    signals: { working_on: formCard.working_on, connect_with: formCard.connect_with, love_talking_about: formCard.love_talking_about },
+    skills: { skills: formCard.skills },
+    settings: { calendly_url: formCard.calendly_url ?? null, google_calendar_url: formCard.google_calendar_url ?? null },
+  }, ownerHomeEnabled);
+
+  function restoreUnsavedEdits() {
+    if (!autosave.recovery) return;
+    const restored = { ...draft, ...Object.assign({}, ...Object.values(autosave.recovery)) } as AgentProfileCard;
+    setHName(restored.identity.name); setHHeadline(restored.identity.headline);
+    setHLocation(restored.identity.location); setHAvatar(restored.identity.avatar_url);
+    setHLinks(withDefaultLinks(Object.entries(restored.identity.links || {})));
+    setSText(restored.summary); setSAvail(restored.availability); setSIndustries(restored.industries);
+    setOWorking(restored.working_on); setOConnect(restored.connect_with); setOTalking(restored.love_talking_about);
+    setSkillList(restored.skills); setCalInput(restored.calendly_url || ""); setGcalInput(restored.google_calendar_url || "");
+    autosave.discardRecovery();
+  }
+
   async function saveAll() {
+    if (ownerHomeEnabled) { await autosave.flush(); return; }
     await save(draftFromForm(draft));
   }
 
@@ -303,8 +328,11 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     }
     setRefreshing(true);
     try {
-      const saved = await updateCard(handle, { ...draftFromForm(draft), status: "published" }, token);
-      if (saved) setDraft({ ...saved, status: "published" });
+      // Flush section saves before a source refresh; don't replace the whole
+      // card with an older local memory snapshot or publish a private card.
+      if (ownerHomeEnabled && !await autosave.flush()) return;
+      const saved = ownerHomeEnabled ? draft : await updateCard(handle, { ...draftFromForm(draft), status: "published" }, token);
+      if (saved) setDraft({ ...saved, status: ownerHomeEnabled ? saved.status : "published" });
 
       const parts: string[] = [];
       const failures: string[] = [];
@@ -335,7 +363,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
         }
       }
 
-      setDraft({ ...next, status: "published" });
+      setDraft({ ...next, status: ownerHomeEnabled ? next.status : "published" });
       if (parts.length > 0 && failures.length === 0) {
         showToast(`Updated ${parts.join(" & ")}`, "ok");
       } else if (parts.length > 0) {
@@ -543,8 +571,14 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
               <div className="pe-h1">Edit profile</div>
               <p className="pe-sub">zynd.ai/p/{handle}</p>
             </div>
+            {ownerHomeEnabled && <Link href="/home" className="pe-secondary">Owner home</Link>}
             <Link href={`/p/${handle}`} className="pe-secondary" style={{ textDecoration: "none" }}>View live</Link>
           </header>
+
+          {ownerHomeEnabled && <><nav aria-label="Edit sections" style={{ display: "flex", flexWrap: "wrap", gap: 16, marginBottom: 24 }}>
+            {["identity", "summary", "signals", "memory", "career", "skills", "projects", "settings"].map(section => <a key={section} href={`#${section}`} style={{ color: "#655dbe", fontSize: 13 }}>{section} <small>{autosave.sectionStates[section] || "Saved"}</small></a>)}
+          </nav><p role="status" aria-live="polite">{autosave.status}{autosave.error ? ` — ${autosave.error}` : " · Changes save automatically"}</p></>}
+          {ownerHomeEnabled && autosave.recovery && <aside role="status" style={{ marginBottom: 20 }}><p>You have unsaved changes from your last visit.</p><button type="button" className="pe-secondary" onClick={restoreUnsavedEdits}>Restore unsaved changes</button> <button type="button" className="pe-secondary" onClick={autosave.discardRecovery}>Discard draft</button></aside>}
 
           <div className="pe-stack">
             <section className="pe-sec" id="connect-mcp">
@@ -558,7 +592,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
             </section>
 
             <section className="pe-sec">
-              <div className="pe-kicker">Review</div>
+              <div className="pe-kicker" id="inbox">Review</div>
               <div className="pe-title">Facts from your coding agents</div>
               <SuggestedFactsReview
                 tone="light"
@@ -567,7 +601,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
             </section>
 
             <section className="pe-sec">
-              <div className="pe-kicker">Identity</div>
+              <div className="pe-kicker" id="identity">Identity</div>
               <div className="pe-title">How you appear</div>
               <p className="pe-help">Name, photo, and the links people use to find you.</p>
               <div className="pe-id">
@@ -633,7 +667,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
             </section>
 
             <section className="pe-sec">
-              <div className="pe-kicker">About</div>
+              <div className="pe-kicker" id="summary">About</div>
               <div className="pe-title">Summary</div>
               <p className="pe-help">A few sentences on what you do and who you want to meet.</p>
               <AutoGrowTextArea
@@ -657,7 +691,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
             </section>
 
             <section className="pe-sec">
-              <div className="pe-kicker">Signals</div>
+              <div className="pe-kicker" id="signals">Signals</div>
               <div className="pe-title">Interests</div>
               <p className="pe-help">Shown as chips on your public card. Press Enter to add.</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -674,7 +708,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
               <section className="pe-sec">
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
                   <div>
-                    <div className="pe-kicker">Memory</div>
+                    <div className="pe-kicker" id="memory">Memory</div>
                     <div className="pe-title">ZYND Memory</div>
                   </div>
                   <button type="button" className="pe-ghost" onClick={syncMemory} disabled={memoryStatus === "loading"}>
@@ -775,7 +809,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
               </section>
 
               <section className="pe-sec">
-                <div className="pe-kicker">Career</div>
+                <div className="pe-kicker" id="career">Career</div>
                 <div className="pe-title">Work experience</div>
                 <p className="pe-help">
                   {draft.experience_years != null ? `${draft.experience_years} years · imported from LinkedIn` : "Imported from LinkedIn when a URL is set."}
@@ -808,7 +842,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
 
 
             <section className="pe-sec">
-              <div className="pe-kicker">Craft</div>
+              <div className="pe-kicker" id="skills">Craft</div>
               <div className="pe-title">Skills</div>
               <p className="pe-help">Listed on your public skill matrix.</p>
               {skillList.length > 0 && (
@@ -864,7 +898,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
 
             {draft.projects.length > 0 && (
               <section className="pe-sec">
-                <div className="pe-kicker">Work</div>
+                <div className="pe-kicker" id="projects">Work</div>
                 <div className="pe-title">Projects</div>
                 <p className="pe-help">Extracted from GitHub and LinkedIn.</p>
                 <div className="pe-list">
@@ -885,7 +919,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
             )}
 
             <section className="pe-sec">
-              <div className="pe-kicker">Settings</div>
+              <div className="pe-kicker" id="settings">Settings</div>
               <div className="pe-title">Booking</div>
               <p className="pe-help">A scheduling link, if you take meetings. Profile URL is set when you create the card.</p>
               <div className="pe-fields">
@@ -906,7 +940,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
               <Link href={`/p/${handle}`} className="pe-secondary">Cancel</Link>
               <button type="button" className="pe-primary" onClick={saveAll} disabled={saving}>
                 {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-                {saving ? "Saving…" : "Save changes"}
+                {ownerHomeEnabled ? (autosave.error ? "Retry saving" : autosave.status) : saving ? "Saving…" : "Save changes"}
               </button>
             </div>
           </div>

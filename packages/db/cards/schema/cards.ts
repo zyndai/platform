@@ -48,6 +48,10 @@ export const agentProfileCards = cards.table(
     ref: text('ref'),
     utm: jsonb('utm'),
     createdVia: text('created_via'),
+    // S10: owner notifications and durable merged-card redirects.
+    notificationPrefs: jsonb('notification_prefs').notNull().default(sql`'{"weekly_digest":true,"email_nudges":false}'::jsonb`),
+    unsubscribeToken: uuid('unsubscribe_token').notNull().defaultRandom().unique('agent_profile_cards_unsubscribe_token_key'),
+    mergedInto: text('merged_into'),
   },
   (t) => [
     fk('agent_profile_cards_owner_user_id_fkey', t.ownerUserId, authUsers.id, 'set null'),

@@ -17,7 +17,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "NEXT_PUBLIC_API_URL=http://127.0.0.1:3030 NEXT_PUBLIC_FEATURE_S08_ONBOARDING_V2=true NEXT_PUBLIC_FEATURE_S08_PCT=100 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 NEXT_PUBLIC_SUPABASE_ANON_KEY=smoke-anon-key npm run dev -- -p 3010",
+      "NEXT_PUBLIC_API_URL=http://127.0.0.1:3030 NEXT_PUBLIC_FEATURE_S10_HOME=true NEXT_PUBLIC_FEATURE_S08_ONBOARDING_V2=true NEXT_PUBLIC_FEATURE_S08_PCT=100 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:3030 NEXT_PUBLIC_SUPABASE_ANON_KEY=smoke-anon-key npm run dev -- -p 3010",
     url: "http://127.0.0.1:3010",
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,

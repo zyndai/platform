@@ -472,6 +472,24 @@ async def get_my_card(uid: str = Depends(_uid)) -> list[dict]:
     return await get_card(await _get_pool(), uid)
 
 
+@mcp.tool()
+async def get_card_status(uid: str = Depends(_uid)) -> dict:
+    """Read my card completeness, review count, sources and owner actions. Owner only."""
+    from app.tools.card_status import get_owner_status
+    return await get_owner_status(await _get_pool(), uid)
+
+
+@mcp.tool()
+async def get_card_activity(uid: str = Depends(_uid)) -> dict:
+    """Read my last seven days of recorded card views and agent hits. Owner only."""
+    from app.tools.card_status import get_owner_status
+    result = await get_owner_status(await _get_pool(), uid)
+    if result.get("ok") and result.get("data"):
+        result["data"] = result["data"]["activity"]
+        result["next_actions"] = []
+    return result
+
+
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
 async def get_my_context(topic: str | None = None, k: int = 20, uid: str = Depends(_uid)) -> list[dict]:
     """YOUR WINDOW INTO WHO THE USER IS. Call this at the START of every

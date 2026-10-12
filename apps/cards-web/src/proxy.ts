@@ -16,8 +16,28 @@ function readExisting(request: NextRequest): AttrPayload | null {
   }
 }
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { searchParams, pathname } = request.nextUrl;
+  // Resolve archived cards before page rendering so old URLs return an actual
+  // 301. Never forward a visitor session to this public lookup.
+  const mergedPath = pathname.match(/^\/p\/([^/]+)(\/.*)?$/);
+  const aliasPath = pathname.match(/^\/([^/]+)$/);
+  const reserved = new Set(["home", "create", "auth", "directory", "find", "search", "for-ai"]);
+  const slug = mergedPath?.[1] || (aliasPath && !reserved.has(aliasPath[1]) ? aliasPath[1] : null);
+  if (slug) {
+    try {
+      const api = (process.env.NEXT_PUBLIC_API_URL || "https://api.zynd.ai").replace(/\/$/, "");
+      const result = await fetch(`${api}/cards/redirect/${encodeURIComponent(slug)}`, { cache: "no-store", signal: AbortSignal.timeout(2000) });
+      if (result.ok) {
+        const data = await result.json() as { handle?: string | null };
+        if (data.handle && /^[a-zA-Z0-9_-]+$/.test(data.handle) && data.handle !== slug) {
+          const target = request.nextUrl.clone();
+          target.pathname = `/p/${data.handle}${mergedPath?.[2] || ""}`;
+          return NextResponse.redirect(target, 301);
+        }
+      }
+    } catch { /* Backend outage: keep the ordinary profile fallback. */ }
+  }
   const ref = searchParams.get("ref");
   const utm: Record<string, string> = {};
   for (const key of UTM_KEYS) {

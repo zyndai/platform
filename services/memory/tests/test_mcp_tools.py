@@ -77,9 +77,10 @@ def test_all_74_tools_registered():
     assert not missing, f"Missing tools: {sorted(missing)}"
 
 
-def test_tool_count_is_76():
+def test_tool_count_includes_s10_owner_reads():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert len(names) == 76
+    assert len(names) == 78
+    assert {"get_card_status", "get_card_activity"} <= names
 
 
 # ── Auth: HTTP-level rejection ─────────────────────────────────────────────────

@@ -1,0 +1,24 @@
+# S10: scan daily, send the weekly digest at most once per ISO week.
+# Disabled flags/noop adapter make the endpoint a safe no-send operation.
+name: owner-notifications
+on:
+  schedule:
+    - cron: "30 2 * * *" # 08:00 IST
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: owner-notifications
+  cancel-in-progress: false
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scan owner notifications
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CARDS_API: ${{ secrets.CARDS_API_URL }}
+        run: |
+          test -n "$CRON_SECRET" && test -n "$CARDS_API" || { echo "Owner notification secrets are not configured; skipping"; exit 0; }
+          curl --max-time 900 -fsS -X POST "${CARDS_API%/}/internal/owner-notifications" \
+            -H "Authorization: Bearer ${CRON_SECRET}"

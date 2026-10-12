@@ -31,13 +31,21 @@ def _effective_include(include_unclaimed: bool) -> bool:
     return include_unclaimed or not config.FEATURE_S03_UNCLAIMED_TIERING
 
 
-def _annotate_claimed(results: list[dict]) -> list[dict]:
-    """Add the claimed flag to each result (never the email)."""
+def _annotate_claimed(results: list[dict], *, keep_unclaimed: bool) -> list[dict]:
+    """Add the claimed flag (never the email).
+
+    Search SQL is supposed to drop unclaimed cards, but a database whose
+    RPC predates that filter still returns them. Drop them here so /ask
+    cannot leak a scraped card to agents.
+    """
     claimed = cards_service.claimed_by_handles([r["handle"] for r in results if r.get("handle")])
+    kept = []
     for r in results:
         if r.get("handle"):
             r["claimed"] = claimed.get(r["handle"], False)
-    return results
+        if keep_unclaimed or r.get("claimed") is True:
+            kept.append(r)
+    return kept
 
 
 @router.get("")
@@ -47,12 +55,14 @@ async def ask_get(
     limit: int = Query(10, ge=1, le=50),
     include_unclaimed: bool = Query(False),
 ):
+    keep_unclaimed = _effective_include(include_unclaimed)
     results = await asyncio.to_thread(
         search_service.search_agents, q, "", "", "", "", "", None, limit,
-        _effective_include(include_unclaimed),
+        keep_unclaimed,
     )
     events_service.emit("agent_fetch", request=request, meta={"endpoint": "ask"})
-    return {"query": q, "results": _annotate_claimed(results), "numberOfItems": len(results)}
+    results = _annotate_claimed(results, keep_unclaimed=keep_unclaimed)
+    return {"query": q, "results": results, "numberOfItems": len(results)}
 
 
 @router.post("")
@@ -62,9 +72,11 @@ async def ask_post(
     limit: int = Query(10, ge=1, le=50),
     include_unclaimed: bool = Query(False),
 ):
+    keep_unclaimed = _effective_include(include_unclaimed)
     results = await asyncio.to_thread(
         search_service.search_agents, body.q, "", "", "", "", "", None, limit,
-        _effective_include(include_unclaimed),
+        keep_unclaimed,
     )
     events_service.emit("agent_fetch", request=request, meta={"endpoint": "ask"})
-    return {"query": body.q, "results": _annotate_claimed(results), "numberOfItems": len(results)}
+    results = _annotate_claimed(results, keep_unclaimed=keep_unclaimed)
+    return {"query": body.q, "results": results, "numberOfItems": len(results)}

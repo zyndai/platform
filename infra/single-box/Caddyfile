@@ -50,6 +50,11 @@ api.zynd.ai {
 	handle /cards-public-mcp* {
 		reverse_proxy 127.0.0.1:8090
 	}
+	# S09: old Cards MCP path stays as an alias of the authenticated ZYND MCP.
+	handle /cards-mcp* {
+		uri replace /cards-mcp /mcp
+		reverse_proxy 127.0.0.1:8090
+	}
 	# OAuth protected-resource metadata (RFC 9728), served by FastMCP.
 	handle /.well-known/oauth-protected-resource* {
 		reverse_proxy 127.0.0.1:8090
@@ -107,6 +112,10 @@ dev.api.zynd.ai {
 		reverse_proxy 127.0.0.1:8190
 	}
 	handle /cards-public-mcp* {
+		reverse_proxy 127.0.0.1:8190
+	}
+	handle /cards-mcp* {
+		uri replace /cards-mcp /mcp
 		reverse_proxy 127.0.0.1:8190
 	}
 	handle /.well-known/oauth-protected-resource* {

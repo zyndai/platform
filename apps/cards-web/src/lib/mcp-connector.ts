@@ -7,7 +7,28 @@ export interface McpConnectResult {
   config_json: string;
   config_http: { mcpServers: Record<string, { url: string; headers: Record<string, string> }> };
   instructions: string[];
+  client_id?: string;
+  label?: string;
+  scopes?: string[];
+  cursor?: string;
+  claude_code?: string;
+  server_url?: string;
 }
+
+export interface McpClientRow {
+  id: string;
+  label: string;
+  scopes: string[];
+  created_at: string | null;
+  last_used_at: string | null;
+}
+
+export const MCP_SCOPES = [
+  { id: "memory:write", label: "Report facts", defaultOn: true, locked: true },
+  { id: "cards:read", label: "Read card status", defaultOn: false, locked: false },
+  { id: "cards:approve", label: "Publish without asking", defaultOn: false, locked: false },
+  { id: "people:message", label: "Message people", defaultOn: false, locked: false },
+] as const;
 
 export type SuggestionGroup = "right" | "look" | "noise";
 
@@ -49,16 +70,70 @@ function buildConfig(token: string, mcpUrl: string): McpConnectResult {
   };
 }
 
-/** Exchange the signed-in user's Supabase session for a personal token on the
- *  centralized MCP server, then build the paste-ready config. */
-export async function connectMcp(supabaseToken: string): Promise<McpConnectResult> {
+/** Exchange the signed-in session for one assistant token. Other assistants stay connected. */
+export async function connectMcp(
+  supabaseToken: string,
+  options?: { label?: string; scopes?: string[] },
+): Promise<McpConnectResult> {
   const res = await fetch(`${MEMORY_API}/token/exchange`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${supabaseToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      label: options?.label || "Assistant",
+      scopes: options?.scopes?.length ? options.scopes : ["memory:write"],
+    }),
+  });
+  if (!res.ok) throw new Error(await errDetail(res));
+  const data = (await res.json()) as {
+    token: string;
+    mcp_url: string;
+    config_json?: string;
+    client_id?: string;
+    label?: string;
+    scopes?: string[];
+    cursor?: string;
+    claude_code?: string;
+    server_url?: string;
+  };
+  const built = buildConfig(data.token, data.mcp_url);
+  return {
+    ...built,
+    config_json: data.config_json || built.config_json,
+    client_id: data.client_id,
+    label: data.label,
+    scopes: data.scopes,
+    cursor: data.cursor,
+    claude_code: data.claude_code,
+    server_url: data.server_url || built.mcp_url,
+  };
+}
+
+export async function listMcpClients(supabaseToken: string): Promise<McpClientRow[]> {
+  const res = await fetch(`${MEMORY_API}/me/mcp/clients`, {
+    headers: { Authorization: `Bearer ${supabaseToken}` },
+  });
+  if (!res.ok) throw new Error(await errDetail(res));
+  const data = (await res.json()) as { clients?: McpClientRow[] };
+  return data.clients ?? [];
+}
+
+export async function revokeMcpClient(supabaseToken: string, clientId: string): Promise<void> {
+  const res = await fetch(`${MEMORY_API}/me/mcp/clients/${encodeURIComponent(clientId)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${supabaseToken}` },
+  });
+  if (!res.ok) throw new Error(await errDetail(res));
+}
+
+export async function revokeAllMcpClients(supabaseToken: string): Promise<void> {
+  const res = await fetch(`${MEMORY_API}/me/mcp/revoke-all`, {
     method: "POST",
     headers: { Authorization: `Bearer ${supabaseToken}` },
   });
   if (!res.ok) throw new Error(await errDetail(res));
-  const data = (await res.json()) as { token: string; mcp_url: string };
-  return buildConfig(data.token, data.mcp_url);
 }
 
 /** Revoke every ZYND token for the user (signs the MCP connection out everywhere). */

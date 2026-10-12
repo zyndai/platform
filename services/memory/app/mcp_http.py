@@ -23,7 +23,7 @@ from pydantic import AnyHttpUrl
 
 from urllib.parse import urlsplit
 
-from app.auth import verify_access_claims
+from app.auth import verify_access_meta
 from app.config import settings
 from app.models import Turn
 from app.services import persona
@@ -232,19 +232,29 @@ class ZyndTokenVerifier(TokenVerifier):
 
         # 1) ZYND JWT — the persona dashboard mints this personal token
         try:
-            user_id, issued_at, ver = verify_access_claims(token)
+            meta = verify_access_meta(token)
         except ValueError:
             pass
         else:
+            user_id = meta["sub"]
+            issued_at = meta["iat"]
+            ver = meta["ver"]
             pool = await _get_pool()
             from app.services.sessions import token_rejected
             if await token_rejected(pool, user_id, issued_at, ver):
                 return None
+            jti = meta.get("jti")
+            if jti:
+                from app.services.mcp_clients import client_revoked, touch_client
+                if await client_revoked(pool, jti):
+                    return None
+                await touch_client(pool, jti)
+            scopes = meta.get("scopes") or ["user"]
             return AccessToken(
                 token=token,
                 client_id=user_id,
-                scopes=["user"],
-                claims={"sub": user_id, "iat": issued_at},
+                scopes=scopes,
+                claims={"sub": user_id, "iat": issued_at, "jti": jti},
             )
 
         # 2) OAuth opaque access token — fallback for non-JWT tokens
@@ -1175,6 +1185,13 @@ async def add_todo(title: str, suid: str = Depends(_suid)) -> dict:
 # Personal MCP stays auth'd at /mcp. When FEATURE_S11_PUBLIC_MCP is on, a second
 # FastMCP (no auth) is merged at /cards-public-mcp in the same process.
 # uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
+
+if settings.feature_s09_mcp_clients:
+    from app.mcp_owner import register as register_owner_tools
+    from app.services.mcp_gate import ScopeGate
+
+    register_owner_tools(mcp, _uid)
+    mcp.add_middleware(ScopeGate())
 
 _allowed_hosts = [
     h for h in (urlsplit(settings.mcp_public_base_url).hostname, "localhost", "127.0.0.1") if h

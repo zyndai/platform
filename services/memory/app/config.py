@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # "findability predicates are public on insert" behaviour (rollback).
     feature_s01_private_default: bool = True
 
+    # S09 — per-assistant MCP tokens, scopes, and the cards toolset.
+    # Off restores the single personal token (minting a new one revokes the old).
+    feature_s09_mcp_clients: bool = True
+
     # S05 — typed MCP capture: tools/skills/projects map to predicates directly
     # instead of English → LLM extraction. Off by default (rollback = leave off).
     feature_s05_typed_capture: bool = False

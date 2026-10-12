@@ -146,6 +146,7 @@ def test_memory_refresh_uses_atomic_system_patch_when_s10_enabled(monkeypatch):
     from services import cards, embed
     monkeypatch.setattr(config, "FEATURE_S10_HOME", True)
     monkeypatch.setattr(config, "SUPABASE_DB_SCHEMA", "cards")
+    monkeypatch.setattr(config, "get_supabase", lambda: MagicMock())
     patch = MagicMock(return_value={"id": "c1", "handle": "alice", "summary": "Concurrent owner edit", "updated_at": "2026-10-12T00:00:00Z", "zynd_memory": []})
     monkeypatch.setattr(cards, "patch_system_fields", patch)
     monkeypatch.setattr(embed, "embed_text", lambda text: [])

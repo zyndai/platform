@@ -1,6 +1,7 @@
 import {
   fetchCardByHandle,
   fetchCardView,
+  cardIsClaimed,
   cardCanonicalUrl,
   featureS06CardView,
   type CardFact,
@@ -61,7 +62,7 @@ export async function GET(req: Request, { params }: Params) {
   }
 
   // S03: unclaimed cards stay quiet to agents — a minimal marker, no facts.
-  if (card.claimed === false) {
+  if (!cardIsClaimed(card)) {
     return new Response(
       JSON.stringify({ claimed: false, error: "unclaimed — this card's owner has not published it for agents" }, null, 2),
       {

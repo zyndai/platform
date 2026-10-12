@@ -83,12 +83,15 @@ async def get_card_by_handle(handle: str, request: Request):
     card = await asyncio.to_thread(cards_service.get_card_by_handle_public, handle)
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
-    events_service.emit(
-        "view",
-        handle=handle,
-        request=request,
-        meta={"endpoint": "by-handle"},
-    )
+    try:
+        events_service.emit(
+            "view",
+            handle=handle,
+            request=request,
+            meta={"endpoint": "by-handle"},
+        )
+    except Exception:
+        logger.exception("view event failed handle=%s", handle)
     return card
 
 

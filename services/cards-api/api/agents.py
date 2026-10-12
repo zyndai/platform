@@ -68,16 +68,13 @@ async def search_agents(
 async def get_agent(agent_id: str):
     """One agent profile. Unclaimed (scraped, no owner) cards are hidden from
     agents by default — same as /v1/agents/search — when S03 tiering is on.
-    CardView (facts/cite_as) is returned when FEATURE_S06_CARDVIEW is on;
-    otherwise the legacy AgentProfileCard dump (plus claimed) is returned."""
+    Always a CardView so agents see the same facts as /view, data.json, and chat."""
     card = await asyncio.to_thread(cards_service.get_card, agent_id)
     if not card:
         raise HTTPException(status_code=404, detail="agent not found")
     claimed = cards_service.card_is_claimed(card.handle) if card.handle else True
     if claimed is False and config.FEATURE_S03_UNCLAIMED_TIERING:
         raise HTTPException(status_code=404, detail="agent not found")
-    if config.FEATURE_S06_CARDVIEW:
-        from services.card_view import build_card_view
+    from services.card_view import build_card_view
 
-        return build_card_view(card, claimed=bool(claimed))
-    return {**card.model_dump(mode="json"), "claimed": bool(claimed)}
+    return build_card_view(card, claimed=bool(claimed))

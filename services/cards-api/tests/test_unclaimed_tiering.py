@@ -226,7 +226,7 @@ def test_get_agent_hides_unclaimed_and_uses_card_view(monkeypatch):
     assert "owner_email" not in body
 
 
-def test_get_agent_legacy_dump_when_cardview_off(monkeypatch):
+def test_get_agent_cardview_even_when_search_flag_off(monkeypatch):
     app = FastAPI()
     app.include_router(agents_api.router, prefix="/v1/agents")
     client = TestClient(app)
@@ -241,8 +241,67 @@ def test_get_agent_legacy_dump_when_cardview_off(monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["claimed"] is True
-    assert body.get("schema_version") or body.get("id")
-    assert "facts" not in body
+    assert "facts" in body
+    assert body["cite_as"].endswith("/p/alice")
+    assert "owner_email" not in body
+
+
+def test_public_by_handle_falls_back_when_alias_column_missing(monkeypatch):
+    monkeypatch.setattr(cards_service.config, "SUPABASE_DB_SCHEMA", "cards")
+    good = MagicMock(data=[{"card": _card_json(), "handle": "alice", "owner_email": None}])
+
+    def select(cols):
+        q = MagicMock()
+        execute = q.eq.return_value.eq.return_value.execute
+        if "alias" in cols.split(","):
+            execute.side_effect = RuntimeError("column alias does not exist")
+        else:
+            execute.return_value = good
+        return q
+
+    sb = MagicMock()
+    sb.table.return_value.select.side_effect = select
+    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+
+    card = cards_service.get_card_by_handle_public("alice")
+    assert card is not None
+    assert card["claimed"] is False
+    assert "owner_email" not in card
+
+
+def test_search_cards_falls_back_when_text_search_raises(monkeypatch):
+    class Query:
+        def __init__(self):
+            self.mode = "start"
+
+        def select(self, *_a, **_k):
+            return self
+
+        def eq(self, *_a, **_k):
+            return self
+
+        def text_search(self, *_a, **_k):
+            self.mode = "tsv"
+            return self
+
+        def ilike(self, *_a, **_k):
+            self.mode = "ilike"
+            return self
+
+        def limit(self, *_a, **_k):
+            return self
+
+        def execute(self):
+            if self.mode == "tsv":
+                raise RuntimeError("search_tsv missing")
+            return MagicMock(data=[{"card": _card_json(), "handle": "alice"}])
+
+    sb = MagicMock()
+    sb.table.side_effect = lambda _name: Query()
+    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+
+    found = cards_service.search_cards("engineer")
+    assert [c.handle for c in found] == ["alice"]
 
 
 def test_request_takedown_notifies_review_channel(monkeypatch):

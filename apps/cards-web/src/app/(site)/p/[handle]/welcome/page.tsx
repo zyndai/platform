@@ -51,7 +51,7 @@ export default async function WelcomePage({ params }: PageProps) {
   const card = await fetchCardByHandle(handle);
   if (!card) notFound();
 
-  const claimed = card.claimed !== false;
+  const claimed = card.claimed === true;
   const firstName = (card.identity.name || "You").split(" ")[0];
   const canonical = cardCanonicalUrl(card);
   const short = canonical.replace(/^https?:\/\//, "");

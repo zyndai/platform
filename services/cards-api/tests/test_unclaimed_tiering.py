@@ -181,10 +181,34 @@ def test_ask_default_excludes_unclaimed(monkeypatch):
 
     resp = client.get("/ask?q=engineer")
     assert captured["include_unclaimed"] is False
-    assert [r["claimed"] for r in resp.json()["results"]] == [True, False]
+    body = resp.json()
+    assert [r["handle"] for r in body["results"]] == ["alice"]
+    assert body["numberOfItems"] == 1
+    assert body["results"][0]["claimed"] is True
 
     resp2 = client.get("/ask?q=engineer&include_unclaimed=true")
     assert captured["include_unclaimed"] is True
+    assert [r["handle"] for r in resp2.json()["results"]] == ["alice", "bob"]
+
+
+def test_agent_search_drops_unclaimed_the_sql_filter_missed(monkeypatch):
+    monkeypatch.setattr(agents_api.config, "FEATURE_S03_UNCLAIMED_TIERING", True)
+    monkeypatch.setattr(
+        agents_api.search_service,
+        "search_agents",
+        lambda *args: [{"handle": "alice", "name": "Alice"}, {"handle": "bob", "name": "Bob"}],
+    )
+    monkeypatch.setattr(agents_api.cards_service, "claimed_by_handles", lambda handles: {"alice": True, "bob": False})
+
+    app = FastAPI()
+    app.include_router(agents_api.router, prefix="/v1/agents")
+    client = TestClient(app)
+
+    resp = client.get("/v1/agents/search?q=engineer")
+    assert [r["handle"] for r in resp.json()["results"]] == ["alice"]
+
+    resp2 = client.get("/v1/agents/search?q=engineer&include_unclaimed=true")
+    assert [r["handle"] for r in resp2.json()["results"]] == ["alice", "bob"]
 
 
 def test_ask_flag_off_restores_old_behaviour(monkeypatch):

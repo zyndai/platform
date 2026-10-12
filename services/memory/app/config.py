@@ -48,6 +48,16 @@ class Settings(BaseSettings):
     # (quality then always runs and enforces soft triage).
     feature_s05_observe: bool = True
 
+    # S11 — public Cards MCP (no auth) at /cards-public-mcp. Off by default;
+    # mount + Caddy route when ready. Rollback: leave false / remove Caddy handle.
+    feature_s11_public_mcp: bool = False
+    # Internal cards-api base (compose: http://cards:8000; single-box: :8002).
+    cards_api_base_url: str = "http://cards:8000"
+    cards_site_base_url: str = "https://cards.zynd.ai"
+    s11_rate_limit_per_minute: int = 60
+    s11_get_card_cache_ttl_seconds: int = 60
+    s11_max_response_bytes: int = 256_000
+
     # M2 — JWT + OAuth (dev-grade; see docs/CHATGPT_PLUGIN.md security notes).
     # Empty by default: production must set a strong random value (openssl rand -hex 32)
     # or the boot guard below refuses to start.

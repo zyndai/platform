@@ -6,6 +6,10 @@ api.zynd.ai {
 	handle /mcp* {
 		reverse_proxy mcp:8090
 	}
+	# S11 public Cards MCP (no auth) — same mcp container, separate FastMCP app.
+	handle /cards-public-mcp* {
+		reverse_proxy mcp:8090
+	}
 	# OAuth protected-resource metadata (RFC 9728) — served by FastMCP.
 	handle /.well-known/oauth-protected-resource* {
 		reverse_proxy mcp:8090

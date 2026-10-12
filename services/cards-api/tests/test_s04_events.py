@@ -92,6 +92,21 @@ def test_post_events_unknown_name_400(client):
     sb.table.assert_not_called()
 
 
+def test_s08_funnel_events_allowlisted(client):
+    """S08 step events must be accepted so drop-off can be computed."""
+    c, sb = client
+    for name in (
+        "question_answered",
+        "first_win_ask",
+        "first_win_looking",
+        "first_win_share",
+        "first_win_connect",
+    ):
+        r = c.post("/events", json={"events": [{"event": name, "handle": "alice"}]})
+        assert r.status_code == 204, name
+    assert sb.table.call_count >= 5
+
+
 def test_post_events_batch_too_large_400(client):
     c, sb = client
     r = c.post("/events", json={"events": [{"event": "view"}] * 21})

@@ -217,93 +217,6 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     showToast(`Live · synced — ${snapshot.length} fact${snapshot.length === 1 ? "" : "s"} on your card`, "ok");
   }
 
-  const [handleInput, setHandleInput] = useState(handle);
-  const [handleAvail, setHandleAvail] = useState<boolean | null>(null);
-  const [handleChecking, setHandleChecking] = useState(false);
-  const handleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [aliasInput, setAliasInput] = useState(initialCard.alias ?? "");
-  const [savedAlias, setSavedAlias] = useState(initialCard.alias ?? "");
-  const [aliasSaving, setAliasSaving] = useState(false);
-  const [aliasMsg, setAliasMsg] = useState<string | null>(null);
-
-  async function saveAlias() {
-    const slug = aliasInput.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 30);
-    if (slug === savedAlias) return;
-    setAliasSaving(true);
-    setAliasMsg(null);
-    try {
-      const res = await fetch(`${CARDS_API}/cards/by-handle/${encodeURIComponent(handle)}/alias`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ alias: slug || null }),
-      });
-      const data = await res.json().catch(() => ({})) as { detail?: unknown; alias?: string };
-      if (!res.ok) {
-        setAliasMsg(typeof data.detail === "string" ? data.detail : "Could not save alias");
-        return;
-      }
-      const next = data.alias ?? "";
-      setAliasInput(next);
-      setSavedAlias(next);
-      setAliasMsg(next ? "Alias saved" : "Alias removed");
-    } catch {
-      setAliasMsg("Could not save alias");
-    } finally {
-      setAliasSaving(false);
-    }
-  }
-
-  function onHandleChange(val: string) {
-    const slug = val.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 30);
-    setHandleInput(slug);
-    setHandleAvail(null);
-    if (handleTimerRef.current) clearTimeout(handleTimerRef.current);
-    if (slug.length < 2) {
-      setHandleChecking(false);
-      return;
-    }
-    setHandleChecking(true);
-    handleTimerRef.current = setTimeout(async () => {
-      try {
-        const r = await fetch(`${CARDS_API}/cards/handle-available/${encodeURIComponent(slug)}`);
-        const d = await r.json();
-        setHandleAvail(slug === handle ? null : d.available);
-      } catch {
-        setHandleAvail(null);
-      }
-      setHandleChecking(false);
-    }, 400);
-  }
-
-  async function saveHandle() {
-    if (handleInput === handle) return;
-    if (!handleAvail) {
-      showToast("Choose an available handle first", "err");
-      return;
-    }
-    setSaving(true);
-    try {
-      const res = await fetch(
-        `${CARDS_API}/cards/by-handle/${encodeURIComponent(handle)}`,
-        {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ ...draft, status: "published", new_handle: handleInput }),
-        },
-      );
-      if (res.ok) {
-        showToast("Handle updated — redirecting", "ok");
-        setTimeout(() => { window.location.href = `/p/${handleInput}/edit`; }, 1200);
-      } else {
-        showToast("Could not update handle", "err");
-      }
-    } catch {
-      showToast("Network error", "err");
-    }
-    setSaving(false);
-  }
-
   const avatarFileRef = useRef<HTMLInputElement>(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
 
@@ -973,8 +886,8 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
 
             <section className="pe-sec">
               <div className="pe-kicker">Settings</div>
-              <div className="pe-title">Booking &amp; URL</div>
-              <p className="pe-help">Your public handle and a scheduling link, if you take meetings.</p>
+              <div className="pe-title">Booking</div>
+              <p className="pe-help">A scheduling link, if you take meetings. Profile URL is set when you create the card.</p>
               <div className="pe-fields">
                 <div>
                   <label className="pe-lab">Calendly</label>
@@ -983,37 +896,6 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                 <div>
                   <label className="pe-lab">Google Calendar</label>
                   <input value={gcalInput} onChange={(e) => setGcalInput(e.target.value)} className="ei" placeholder="https://calendar.app.google/…" />
-                </div>
-                <div className="full">
-                  <label className="pe-lab">Profile URL</label>
-                  <div style={{ display: "flex", alignItems: "center", background: "#fff", border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden" }}>
-                    <span style={{ padding: "0 0 0 16px", fontSize: 14, color: T.muted, flexShrink: 0 }}>zynd.ai/p/</span>
-                    <input value={handleInput} onChange={(e) => onHandleChange(e.target.value)}
-                      style={{ flex: 1, minWidth: 0, border: 0, outline: "none", padding: "13px 12px 13px 0", fontSize: 15 }} placeholder="handle" />
-                    <span style={{ paddingRight: 12 }}>
-                      {handleChecking && <Loader2 size={14} className="animate-spin" style={{ color: T.muted }} />}
-                      {!handleChecking && handleAvail === true && <Check size={14} style={{ color: "#15803d" }} />}
-                      {!handleChecking && handleAvail === false && <X size={14} style={{ color: "#b91c1c" }} />}
-                    </span>
-                  </div>
-                  {handleInput !== handle && (
-                    <button type="button" className="pe-ghost" style={{ marginTop: 10 }} onClick={saveHandle} disabled={saving || handleAvail !== true}>
-                      {handleAvail === false ? "That handle is taken" : "Save new handle"}
-                    </button>
-                  )}
-                </div>
-                <div className="full">
-                  <label className="pe-lab">Short alias</label>
-                  <div style={{ display: "flex", alignItems: "center", background: "#fff", border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden" }}>
-                    <span style={{ padding: "0 0 0 16px", fontSize: 14, color: T.muted, flexShrink: 0 }}>cards.zynd.ai/</span>
-                    <input value={aliasInput} onChange={(e) => setAliasInput(e.target.value)}
-                      style={{ flex: 1, minWidth: 0, border: 0, outline: "none", padding: "13px 12px 13px 0", fontSize: 15 }} placeholder="yourname" />
-                    <button type="button" className="pe-ghost" style={{ margin: 6, padding: "7px 14px" }} onClick={saveAlias} disabled={aliasSaving}>
-                      {aliasSaving ? "Saving…" : "Save"}
-                    </button>
-                  </div>
-                  {aliasMsg && <p style={{ fontSize: 12, marginTop: 6, color: aliasMsg.startsWith("Saved") || aliasMsg.startsWith("Alias") ? "#15803d" : "#b91c1c" }}>{aliasMsg}</p>}
-                  <p className="pe-help" style={{ marginBottom: 0 }}>A shorter link that redirects to your profile. Leave empty to remove it.</p>
                 </div>
               </div>
             </section>

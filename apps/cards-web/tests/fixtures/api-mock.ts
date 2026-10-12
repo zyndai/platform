@@ -65,7 +65,25 @@ export function startFixtureServer(): Promise<void> {
       });
     }
     if (path === "/onboard/claim-candidates") {
+      const linkedin = url.searchParams.get("linkedin") || "";
+      // Non-empty lookalike when the pasted URL mentions alice — drives claim-first UI.
+      if (/alice/i.test(linkedin)) {
+        return json(200, {
+          candidates: [{
+            handle: "unclaimed",
+            name: "Alex Rivera",
+            headline: "Engineer",
+          }],
+        });
+      }
       return json(200, { candidates: [] });
+    }
+    if (req.method === "POST" && path === "/onboard/job1/publish") {
+      return json(200, {
+        ...cardFixture("alice-chen"),
+        handle: "alice-chen",
+        claim_token: "smoke-claim-token",
+      });
     }
     if (path === "/cards/mine") {
       return json(200, null);

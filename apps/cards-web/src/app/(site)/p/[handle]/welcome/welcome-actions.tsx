@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { withShareRef } from "@/lib/attr";
+import { track } from "@/lib/track";
 import { ShareButton, QrButton } from "../share-controls";
 
 interface WelcomeActionsProps {
@@ -31,6 +32,7 @@ export function WelcomeActions({ handle, firstName, action, claimed, canonical }
         <button
           type="button"
           onClick={() => {
+            track("first_win_ask", { step: "ask" }, handle);
             window.dispatchEvent(new Event("zynd:open-profile-chat"));
             setAsked(true);
           }}
@@ -45,7 +47,11 @@ export function WelcomeActions({ handle, firstName, action, claimed, canonical }
 
   if (action === "looking") {
     return (
-      <Link href={`/p/${encodeURIComponent(handle)}/edit`} style={{ ...linkStyle, marginTop: 10, display: "inline-block" }}>
+      <Link
+        href={`/p/${encodeURIComponent(handle)}/edit`}
+        onClick={() => track("first_win_looking", { step: "looking" }, handle)}
+        style={{ ...linkStyle, marginTop: 10, display: "inline-block" }}
+      >
         Set what you&apos;re looking for →
       </Link>
     );
@@ -54,7 +60,10 @@ export function WelcomeActions({ handle, firstName, action, claimed, canonical }
   if (action === "share") {
     const shareUrl = withShareRef(canonical, handle);
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+      <div
+        style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, flexWrap: "wrap" }}
+        onClickCapture={() => track("first_win_share", { step: "share" }, handle)}
+      >
         <ShareButton url={shareUrl} handle={handle} />
         <QrButton url={shareUrl} handle={handle} />
       </div>
@@ -62,7 +71,11 @@ export function WelcomeActions({ handle, firstName, action, claimed, canonical }
   }
 
   return (
-    <Link href={`/p/${encodeURIComponent(handle)}/edit`} style={{ ...linkStyle, marginTop: 10, display: "inline-block" }}>
+    <Link
+      href={`/p/${encodeURIComponent(handle)}/edit`}
+      onClick={() => track("first_win_connect", { step: "connect" }, handle)}
+      style={{ ...linkStyle, marginTop: 10, display: "inline-block" }}
+    >
       Open memory &amp; MCP settings →
     </Link>
   );

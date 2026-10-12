@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { fetchCardByHandle, cardCanonicalUrl } from "@/lib/cards";
-import { ProfileChatWidget } from "@/components/ProfileChatWidget";
+import { ProfileChatWidget, type ChatMessage } from "@/components/ProfileChatWidget";
 import { WelcomeActions } from "./welcome-actions";
 
 export const revalidate = 60;
@@ -21,6 +21,31 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
+/** Build a canned Q&A from the just-published card so first-win shows a working answer. */
+function seedAskMessages(card: NonNullable<Awaited<ReturnType<typeof fetchCardByHandle>>>): ChatMessage[] {
+  const first = (card.identity.name || "You").split(" ")[0];
+  const working = (card.working_on ?? []).filter(Boolean).slice(0, 2);
+  const help = (card.can_help_with ?? []).filter(Boolean).slice(0, 2);
+  const location = card.identity.location?.trim();
+  const fact = (card.searchable_facts ?? []).find((f) => typeof f === "string" && f.length > 12);
+
+  const bits: string[] = [];
+  if (working.length) bits.push(`building ${working.join(" and ")}`);
+  if (help.length) bits.push(`can help with ${help.join(" and ")}`);
+  if (location) bits.push(`based in ${location}`);
+
+  const answer = bits.length
+    ? `${first} is ${bits.join(", ")}. That's what this card knows from their public profile.`
+    : fact
+      ? String(fact)
+      : `${first}'s card is live — ask what they're building, where they're based, or who they help.`;
+
+  return [
+    { role: "user", content: `What is ${first} working on?` },
+    { role: "assistant", content: answer },
+  ];
+}
+
 export default async function WelcomePage({ params }: PageProps) {
   const { handle } = await params;
   const card = await fetchCardByHandle(handle);
@@ -30,33 +55,34 @@ export default async function WelcomePage({ params }: PageProps) {
   const firstName = (card.identity.name || "You").split(" ")[0];
   const canonical = cardCanonicalUrl(card);
   const short = canonical.replace(/^https?:\/\//, "");
+  const seed = claimed ? seedAskMessages(card) : [];
 
   const steps = [
     {
       n: "01",
       title: "Ask your own card",
       body: "The real first win: an AI assistant answers questions about you — from this card, right now. Ask what you're building, where you're based, who you help.",
-      action: "ask",
+      action: "ask" as const,
     },
     {
       n: "02",
       title: "Say what you're looking for",
       body: "One line about what people should bring you — intros, users, feedback — keeps the right inbound coming.",
-      action: "looking",
+      action: "looking" as const,
     },
     {
       n: "03",
       title: "Share it",
       body: "This link is your living profile. Put it in your bio, signature, or QR at a meetup.",
-      action: "share",
+      action: "share" as const,
     },
     {
       n: "04",
       title: "Connect your AI",
       body: "Coding agents can keep your card current — connect ZYND memory from the edit page.",
-      action: "connect",
+      action: "connect" as const,
     },
-  ] as const;
+  ];
 
   return (
     <main style={{ minHeight: "100dvh", background: "#F7F6F2", fontFamily: "system-ui, sans-serif", color: "#0B0B0B" }}>
@@ -80,6 +106,31 @@ export default async function WelcomePage({ params }: PageProps) {
           </p>
         </header>
 
+        {claimed && seed.length >= 2 && (
+          <section
+            data-testid="first-win-demo"
+            style={{
+              background: "#fff",
+              border: "1px solid #E5E5DE",
+              borderRadius: 18,
+              padding: "18px 20px",
+              marginBottom: 16,
+            }}
+          >
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#7B72E9", marginBottom: 12 }}>
+              Ask your card — live demo
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ alignSelf: "flex-end", maxWidth: "85%", background: "#0B0B0B", color: "#fff", borderRadius: "16px 16px 4px 16px", padding: "9px 13px", fontSize: 13, lineHeight: 1.5 }}>
+                {seed[0].content}
+              </div>
+              <div style={{ alignSelf: "flex-start", maxWidth: "90%", background: "#FAFAF8", border: "1px solid #E8E8E1", borderRadius: "16px 16px 16px 4px", padding: "9px 13px", fontSize: 13, lineHeight: 1.5, color: "#1a1a1a" }}>
+                {seed[1].content}
+              </div>
+            </div>
+          </section>
+        )}
+
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {steps.map((s) => (
             <section key={s.n} style={{ background: "#fff", border: "1px solid #E5E5DE", borderRadius: 18, padding: "20px 22px", display: "flex", gap: 16, alignItems: "flex-start" }}>
@@ -100,7 +151,14 @@ export default async function WelcomePage({ params }: PageProps) {
         </div>
       </div>
 
-      {claimed && <ProfileChatWidget handle={card.handle ?? handle} personName={card.identity.name || "You"} />}
+      {claimed && (
+        <ProfileChatWidget
+          handle={card.handle ?? handle}
+          personName={card.identity.name || "You"}
+          initialMessages={seed}
+          defaultOpen={false}
+        />
+      )}
     </main>
   );
 }

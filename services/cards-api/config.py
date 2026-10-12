@@ -58,6 +58,10 @@ FEATURE_S04_EVENTS: bool = os.getenv("FEATURE_S04_EVENTS", "false").lower() in (
 # S06: CardView on new surfaces (chat facts, typed memory match_reasons +
 # freshness boost). /view + memory-in-embed stay always on. Rollback: false.
 FEATURE_S06_CARDVIEW: bool = os.getenv("FEATURE_S06_CARDVIEW", "false").lower() in ("1", "true", "yes")
+
+# S08: onboarding v2 (live preview, no quiz). UX gate lives in cards-web
+# (NEXT_PUBLIC_FEATURE_S08_* + zynd_s08 cookie). This mirrors ops visibility.
+FEATURE_S08_ONBOARDING_V2: bool = os.getenv("FEATURE_S08_ONBOARDING_V2", "false").lower() in ("1", "true", "yes")
 # Optional fixed prefix for the daily-rotating IP salt. Empty = derive from
 # SUPABASE_JWT_SECRET + UTC date.
 EVENTS_IP_SALT: str = os.getenv("EVENTS_IP_SALT", "")

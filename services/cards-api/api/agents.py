@@ -32,6 +32,7 @@ async def search_agents(
     limit: int = Query(10, ge=1, le=50),
     include_unclaimed: bool = Query(False),
 ):
+    keep_unclaimed = include_unclaimed or not config.FEATURE_S03_UNCLAIMED_TIERING
     results = await asyncio.to_thread(
         search_service.search_agents,
         q,
@@ -42,12 +43,16 @@ async def search_agents(
         availability,
         experience_min,
         limit,
-        include_unclaimed or not config.FEATURE_S03_UNCLAIMED_TIERING,
+        keep_unclaimed,
     )
     claimed = cards_service.claimed_by_handles([r["handle"] for r in results if r.get("handle")])
+    kept = []
     for r in results:
         if r.get("handle"):
             r["claimed"] = claimed.get(r["handle"], False)
+        if keep_unclaimed or r.get("claimed") is True:
+            kept.append(r)
+    results = kept
     return {
         "query": {
             "q": q,

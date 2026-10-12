@@ -77,10 +77,15 @@ def test_all_74_tools_registered():
     assert not missing, f"Missing tools: {sorted(missing)}"
 
 
-def test_tool_count_includes_s10_owner_reads():
+def test_tool_count_includes_s10_and_s09():
+    # 78 on dev (S10 owner reads) plus five S09 tools: inbox, approve,
+    # dismiss, looking-for, headline. Status and activity stay the S10 tools.
     names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert len(names) == 78
-    assert {"get_card_status", "get_card_activity"} <= names
+    assert len(names) == 83
+    assert {
+        "get_card_status", "get_card_activity", "list_pending_facts",
+        "approve_fact", "dismiss_fact", "set_looking_for", "update_headline",
+    } <= names
 
 
 # ── Auth: HTTP-level rejection ─────────────────────────────────────────────────

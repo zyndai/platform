@@ -202,3 +202,30 @@ CREATE TABLE IF NOT EXISTS oauth_access_tokens (
   expires_at      timestamptz NOT NULL,
   created_at      timestamptz NOT NULL DEFAULT now()
 );
+
+-- S09 — one row per connected assistant. The JWT is not stored; `jti` is the
+-- handle used to revoke that assistant without signing the others out.
+CREATE TABLE IF NOT EXISTS mcp_clients (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         uuid NOT NULL REFERENCES users(id),
+  label           text NOT NULL,
+  scopes          text[] NOT NULL,
+  jti             uuid NOT NULL UNIQUE,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  last_used_at    timestamptz,
+  revoked_at      timestamptz
+);
+CREATE INDEX IF NOT EXISTS mcp_clients_user_live_idx
+  ON mcp_clients (user_id) WHERE revoked_at IS NULL;
+
+-- S09 — tool-call counters. No arguments, tokens, emails, or fact text.
+CREATE TABLE IF NOT EXISTS mcp_tool_calls (
+  id              bigserial PRIMARY KEY,
+  user_id         uuid,
+  jti             uuid,
+  tool            text NOT NULL,
+  ok              boolean NOT NULL,
+  ms              integer NOT NULL,
+  error_class     text,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);

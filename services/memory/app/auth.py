@@ -19,7 +19,15 @@ _ALGO = "HS256"
 _AUD = "zynd"
 
 
-def _encode(user_id: str, token_type: str, ttl_seconds: int, *, ver: int | None = None) -> str:
+def _encode(
+    user_id: str,
+    token_type: str,
+    ttl_seconds: int,
+    *,
+    ver: int | None = None,
+    jti: str | None = None,
+    scopes: list[str] | None = None,
+) -> str:
     now = int(time.time())
     payload: dict = {
         "sub": user_id,
@@ -31,6 +39,10 @@ def _encode(user_id: str, token_type: str, ttl_seconds: int, *, ver: int | None 
     }
     if ver is not None:
         payload["ver"] = ver
+    if jti:
+        payload["jti"] = jti
+    if scopes:
+        payload["scp"] = list(scopes)
     return jwt.encode(payload, settings.jwt_secret, algorithm=_ALGO)
 
 
@@ -85,6 +97,37 @@ def issue_refresh_token(user_id: str) -> str:
     return _encode(user_id, "refresh", settings.refresh_token_ttl_seconds)
 
 
+async def issue_client_token(pool, user_id: str, *, label: str, scopes: list[str]) -> tuple[str, str]:
+    """Mint one assistant token without bumping token_version.
+
+    Older personal tokens stay valid. Revoking this assistant sets
+    mcp_clients.revoked_at for its jti. A full sign-out still bumps
+    token_version, which kills every token that embedded the old ver.
+    Returns (jwt, client_id).
+    """
+    import uuid
+
+    from app.services.mcp_clients import normalize_scopes
+
+    version = await pool.fetchval(
+        "SELECT token_version FROM users WHERE id = $1", user_id,
+    )
+    if version is None:
+        raise ValueError("unknown user")
+    jti = str(uuid.uuid4())
+    chosen = normalize_scopes(scopes)
+    client_id = await pool.fetchval(
+        """INSERT INTO mcp_clients (user_id, label, scopes, jti)
+           VALUES ($1, $2, $3, $4::uuid) RETURNING id""",
+        user_id, (label or "Assistant").strip()[:80] or "Assistant", chosen, jti,
+    )
+    token = _encode(
+        user_id, "access", settings.mcp_token_ttl_seconds,
+        ver=int(version), jti=jti, scopes=chosen,
+    )
+    return token, str(client_id)
+
+
 async def issue_personal_token(pool, user_id: str) -> str:
     """Long-lived access token a user pastes into an MCP client (Claude/Cursor).
 
@@ -107,6 +150,20 @@ def verify_access_claims(token: str) -> tuple[str, int, int | None]:
     """(user_id, iat, ver) for a valid access token — for revocation/version-aware
     auth paths. `ver` is None for short-lived OAuth access tokens."""
     return _decode_ver(token, "access")
+
+
+def verify_access_meta(token: str) -> dict:
+    """sub, iat, ver, jti, scopes. `scopes` is None on legacy tokens (full access)."""
+    payload = _decode_payload(token, "access")
+    ver = payload.get("ver")
+    scopes = payload.get("scp")
+    return {
+        "sub": payload["sub"],
+        "iat": int(payload.get("iat", 0)),
+        "ver": int(ver) if ver is not None else None,
+        "jti": payload.get("jti"),
+        "scopes": list(scopes) if isinstance(scopes, list) else None,
+    }
 
 
 def verify_refresh_token(token: str) -> str:

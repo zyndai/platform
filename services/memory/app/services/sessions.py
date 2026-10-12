@@ -21,6 +21,8 @@ async def revoke_user_tokens(pool: asyncpg.Pool, user_id: str) -> None:
         "UPDATE users SET tokens_revoked_at = now(), token_version = token_version + 1 WHERE id = $1",
         user_id,
     )
+    from app.services.mcp_clients import revoke_all_clients
+    await revoke_all_clients(pool, user_id)
 
 
 async def tokens_revoked(pool: asyncpg.Pool, user_id: str, issued_at: int) -> bool:

@@ -71,6 +71,20 @@
       "when": 1791717672197,
       "tag": "0009_s04_funnel_view",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791806302036,
+      "tag": "0010_s10_owner_home",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791806406082,
+      "tag": "0011_s10_owner_operations",
+      "breakpoints": true
     }
   ]
 }

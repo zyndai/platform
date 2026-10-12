@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { cardsSiteOrigin, fetchCardByHandle } from "@/lib/cards";
+import { ownerHomeEnabled } from "@/lib/owner-home";
 
 export const revalidate = 3600;
 
@@ -56,7 +57,7 @@ export async function GET(_req: Request, { params }: RouteProps) {
     headers: {
       "Content-Type": "text/vcard; charset=utf-8",
       "Content-Disposition": `attachment; filename="${safeFile}.vcf"`,
-      "Cache-Control": "public, max-age=3600",
+      "Cache-Control": ownerHomeEnabled ? "no-store" : "public, max-age=3600",
     },
   });
 }

@@ -1,4 +1,5 @@
 import { claimHeaders, forgetClaimToken } from "./claim-tokens";
+import { ownerHomeEnabled } from "./owner-home";
 
 export interface Identity {
   name: string;
@@ -218,7 +219,7 @@ const API_BASE =
 export async function fetchCard(id: string): Promise<AgentProfileCard | null> {
   try {
     const res = await fetch(`${API_BASE}/cards/${id}`, {
-      next: { revalidate: 60 },
+      ...(ownerHomeEnabled ? { cache: "no-store" as const } : { next: { revalidate: 60 } }),
     });
     if (!res.ok) return null;
     return (await res.json()) as AgentProfileCard;
@@ -230,7 +231,7 @@ export async function fetchCard(id: string): Promise<AgentProfileCard | null> {
 export async function fetchCardByHandle(handle: string): Promise<AgentProfileCard | null> {
   try {
     const res = await fetch(`${API_BASE}/cards/by-handle/${handle}`, {
-      next: { revalidate: 60 },
+      ...(ownerHomeEnabled ? { cache: "no-store" as const } : { next: { revalidate: 60 } }),
     });
     if (!res.ok) return null;
     return (await res.json()) as AgentProfileCard;
@@ -242,7 +243,7 @@ export async function fetchCardByHandle(handle: string): Promise<AgentProfileCar
 export async function fetchCardView(handle: string): Promise<CardView | null> {
   try {
     const res = await fetch(`${API_BASE}/cards/by-handle/${encodeURIComponent(handle)}/view`, {
-      next: { revalidate: 60 },
+      ...(ownerHomeEnabled ? { cache: "no-store" as const } : { next: { revalidate: 60 } }),
     });
     if (!res.ok) return null;
     return (await res.json()) as CardView;
@@ -265,7 +266,7 @@ export function citeAsForCard(card: AgentProfileCard, view?: CardView | null): s
 export async function listCards(): Promise<AgentProfileCard[]> {
   try {
     const res = await fetch(`${API_BASE}/cards`, {
-      next: { revalidate: 60 },
+      ...(ownerHomeEnabled ? { cache: "no-store" as const } : { next: { revalidate: 60 } }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return [];
@@ -294,7 +295,7 @@ export async function searchAgents(
   }
   try {
     const res = await fetch(`${API_BASE}/v1/agents/search?${qs}`, {
-      next: { revalidate: 60 },
+      ...(ownerHomeEnabled ? { cache: "no-store" as const } : { next: { revalidate: 60 } }),
     });
     if (!res.ok) return { query: {}, searchable_attributes: [], results: [] };
     return (await res.json()) as AgentSearchResponse;

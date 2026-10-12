@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import Depends, FastAPI, Header, HTTPException
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
@@ -183,12 +184,38 @@ async def privacy() -> HTMLResponse:
     return HTMLResponse(_PRIVACY_HTML)
 
 
-@app.post("/token/exchange")
-async def token_exchange(authorization: str = Header(default="")) -> dict:
-    """Exchange a Supabase (Google) access token for a ZYND personal token.
+class _ExchangeBody(BaseModel):
+    label: str = "Assistant"
+    scopes: list[str] = Field(default_factory=lambda: ["memory:write"])
 
-    Called by the dashboard after Google sign-in. Identity is verified by Supabase,
-    so creating the user password-less here is safe (not an unauthenticated form)."""
+
+async def _user_from_bearer(authorization: str) -> str:
+    """Supabase session or an existing ZYND access token. Never logs the secret."""
+    raw = authorization.removeprefix("Bearer ").strip()
+    if not raw:
+        raise HTTPException(status_code=401, detail="missing token")
+    try:
+        return verify_access_token(raw)
+    except ValueError:
+        pass
+    from app.supabase_auth import supabase_identity
+    identity = await supabase_identity(raw)
+    if not identity:
+        raise HTTPException(status_code=401, detail="invalid or expired session")
+    email, display_name, sub = identity
+    from app.services.users import resolve_user
+    return str(await resolve_user(get_pool(), email, display_name, sub))
+
+
+@app.post("/token/exchange")
+async def token_exchange(
+    authorization: str = Header(default=""),
+    body: _ExchangeBody | None = None,
+) -> dict:
+    """Exchange a Supabase session for one assistant token.
+
+    With S09 on, this adds a labelled client and does not revoke the others.
+    Flag off restores the single personal token."""
     supabase_token = authorization.removeprefix("Bearer ").strip()
     from app.supabase_auth import supabase_identity
     identity = await supabase_identity(supabase_token)
@@ -204,11 +231,56 @@ async def token_exchange(authorization: str = Header(default="")) -> dict:
         from app.services.persona_ingest import seed_persona_profile
         await seed_persona_profile(get_pool(), app.state.arq, user_id, sub)
     base = settings.public_base_url.rstrip("/")
+    mcp_url = f"{base}/mcp"
+    if not settings.feature_s09_mcp_clients:
+        return {
+            "token": await issue_personal_token(get_pool(), str(user_id)),
+            "mcp_url": mcp_url,
+            "email": email,
+        }
+    from app.auth import issue_client_token
+    from app.services.mcp_clients import clean_label, clean_scopes, connect_links
+    spec = body or _ExchangeBody()
+    scopes = clean_scopes(spec.scopes)
+    label = clean_label(spec.label)
+    token, client_id = await issue_client_token(
+        get_pool(), str(user_id), label=label, scopes=scopes,
+    )
+    links = connect_links(token, mcp_url)
     return {
-        "token": await issue_personal_token(get_pool(), str(user_id)),
-        "mcp_url": f"{base}/mcp",
+        "token": token,
+        "mcp_url": mcp_url,
         "email": email,
+        "client_id": client_id,
+        "label": label,
+        "scopes": scopes,
+        **links,
     }
+
+
+@app.get("/me/mcp/clients")
+async def list_my_mcp_clients(authorization: str = Header(default="")) -> dict:
+    user_id = await _user_from_bearer(authorization)
+    from app.services.mcp_clients import list_clients
+    return {"clients": await list_clients(get_pool(), user_id)}
+
+
+@app.delete("/me/mcp/clients/{client_id}")
+async def revoke_my_mcp_client(client_id: str, authorization: str = Header(default="")) -> dict:
+    user_id = await _user_from_bearer(authorization)
+    from app.services.mcp_clients import revoke_client
+    if not await revoke_client(get_pool(), user_id, client_id):
+        raise HTTPException(status_code=404, detail="assistant not found")
+    return {"status": "revoked", "id": client_id}
+
+
+@app.post("/me/mcp/revoke-all")
+async def revoke_my_mcp_clients(authorization: str = Header(default="")) -> dict:
+    """Sign every assistant out. One assistant's revoke does not use this."""
+    user_id = await _user_from_bearer(authorization)
+    from app.services.sessions import revoke_user_tokens
+    await revoke_user_tokens(get_pool(), user_id)
+    return {"status": "signed_out"}
 
 
 @app.get("/v1/service/findability/{identifier}")

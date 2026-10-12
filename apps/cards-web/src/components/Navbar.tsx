@@ -14,6 +14,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useMyCard } from "@/hooks/useMyCard";
 import { displayUserName, initialsOf, pickUserAvatar } from "@/lib/identity";
 import { imgProxyUrl } from "@/lib/avatar";
+import { ownerHomeEnabled } from "@/lib/owner-home";
 
 export function Navbar(): React.ReactElement {
   const { authenticated, user, logout } = useAuth();
@@ -27,7 +28,7 @@ export function Navbar(): React.ReactElement {
   const cardPublished = myCard?.status === "published";
   const profileLabel = hasCard ? "My card" : "Create your card";
   const profileHref = hasCard
-    ? cardPublished
+    ? ownerHomeEnabled ? "/home" : cardPublished
       ? `/p/${encodeURIComponent(cardHandle as string)}`
       : `/p/${encodeURIComponent(cardHandle as string)}/edit`
     : "/create";

@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # "findability predicates are public on insert" behaviour (rollback).
     feature_s01_private_default: bool = True
 
+    # S09 — per-assistant MCP tokens, scopes, and the cards toolset.
+    # Off restores the single personal token (minting a new one revokes the old).
+    feature_s09_mcp_clients: bool = True
+
     # S05 — typed MCP capture: tools/skills/projects map to predicates directly
     # instead of English → LLM extraction. Off by default (rollback = leave off).
     feature_s05_typed_capture: bool = False
@@ -66,6 +70,9 @@ class Settings(BaseSettings):
     # Shared secret for service-to-service endpoints (e.g. /v1/service/*) called
     # by zynd-cards. Empty = endpoint disabled.
     memory_service_token: str = ""
+    # S10 owner read tools use the same cards aggregation over service HTTP.
+    feature_s10_home: bool = False
+    cards_api_url: str = "https://cards.api.zynd.ai"
     access_token_ttl_seconds: int = 3600
     refresh_token_ttl_seconds: int = 30 * 24 * 3600
     mcp_token_ttl_seconds: int = 90 * 24 * 3600   # long-lived token pasted into MCP clients

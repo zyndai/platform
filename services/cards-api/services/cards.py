@@ -694,15 +694,22 @@ def get_card(card_id: str) -> AgentProfileCard | None:
 
 def search_cards(q: str, limit: int = 50) -> list[AgentProfileCard]:
     sb = config.get_supabase()
-    resp = (
-        sb.table("agent_profile_cards")
-        .select("card,handle")
-        .eq("status", "published")
-        .text_search("search_tsv", q)
-        .limit(limit)
-        .execute()
-    )
-    rows = resp.data or []
+    rows: list[dict] = []
+    try:
+        resp = (
+            sb.table("agent_profile_cards")
+            .select("card,handle")
+            .eq("status", "published")
+            .text_search("search_tsv", q)
+            .limit(limit)
+            .execute()
+        )
+        rows = resp.data or []
+    except Exception as exc:
+        # A missing search_tsv (or a PostgREST search error) must not 500
+        # GET /cards?q=. Fall through to the summary ilike below.
+        logger.warning("card text search failed q=%s err=%s", q, exc)
+        rows = []
     if not rows and q:
         resp = (
             sb.table("agent_profile_cards")
@@ -748,6 +755,41 @@ def _public_card_columns() -> str:
     if config.SUPABASE_DB_SCHEMA == "cards":
         return "card,handle,owner_email,claimed,alias"
     return "card,handle,owner_email"
+
+
+def _public_select_attempts() -> list[str]:
+    """Widest select first, then narrower ones. A missing optional column
+    (alias/claimed not migrated yet) must not 500 the public read."""
+    primary = _public_card_columns()
+    fallbacks = (
+        "card,handle,owner_email,claimed",
+        "card,handle,owner_email",
+        "card,handle",
+    )
+    out: list[str] = []
+    for cols in (primary, *fallbacks):
+        if cols not in out:
+            out.append(cols)
+    return out
+
+
+def _select_public(sb, finish):
+    """Run `finish(query)` against agent_profile_cards, retrying with fewer columns.
+
+    `finish` adds filters (.eq/.order/...) and must return the query builder.
+    The last attempt is `card,handle`, which every schema has. Re-raises only
+    when even that select fails.
+    """
+    last_exc: Exception | None = None
+    for cols in _public_select_attempts():
+        try:
+            query = sb.table("agent_profile_cards").select(cols)
+            return finish(query).execute()
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("public card select failed cols=%s err=%s", cols, exc)
+    assert last_exc is not None
+    raise last_exc
 
 
 def _slug_taken(sb, slug: str, *, exclude_handle: str | None = None) -> bool:
@@ -800,29 +842,33 @@ def claimed_by_handles(handles: list[str]) -> dict[str, bool]:
     return {r["handle"]: _claimed_from_row(r) for r in (resp.data or [])}
 
 
+def _public_card_payload(row: dict) -> dict:
+    """JSON card plus claimed/alias. Never includes owner_email."""
+    card = _row_to_card(row)
+    return {
+        **card.model_dump(mode="json"),
+        "claimed": _claimed_from_row(row),
+        "alias": row.get("alias"),
+    }
+
+
 def get_card_by_handle_public(handle: str) -> dict | None:
     """Card dict with the `claimed` flag, for public (unauthenticated) reads."""
     sb = config.get_supabase()
-    cols = _public_card_columns()
-    resp = (
-        sb.table("agent_profile_cards")
-        .select(cols)
-        .eq("handle", handle)
-        .eq("status", "published")
-        .execute()
+    resp = _select_public(
+        sb,
+        lambda q: q.eq("handle", handle).eq("status", "published"),
     )
     rows = resp.data or []
     if not rows:
         # The handle may have been renamed — resolve through the previous
         # handles recorded in the card JSON so old links keep working.
         try:
-            resp = (
-                sb.table("agent_profile_cards")
-                .select(cols)
-                .contains("card", {"previous_handles": [handle]})
+            resp = _select_public(
+                sb,
+                lambda q: q.contains("card", {"previous_handles": [handle]})
                 .eq("status", "published")
-                .limit(1)
-                .execute()
+                .limit(1),
             )
             rows = resp.data or []
         except Exception as exc:
@@ -830,35 +876,18 @@ def get_card_by_handle_public(handle: str) -> dict | None:
             rows = []
     if not rows:
         return None
-    card = _row_to_card(rows[0])
-    return {
-        **card.model_dump(mode="json"),
-        "claimed": _claimed_from_row(rows[0]),
-        "alias": rows[0].get("alias"),
-    }
+    return _public_card_payload(rows[0])
 
 
 def list_published_public(limit: int = 1000) -> list[dict]:
     """All published cards as dicts with `claimed`, for the website's own
     directory/llms/sitemap surfaces (never includes owner_email)."""
     sb = config.get_supabase()
-    resp = (
-        sb.table("agent_profile_cards")
-        .select(_public_card_columns())
-        .eq("status", "published")
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
+    resp = _select_public(
+        sb,
+        lambda q: q.eq("status", "published").order("created_at", desc=True).limit(limit),
     )
-    out: list[dict] = []
-    for r in resp.data or []:
-        card = _row_to_card(r)
-        out.append({
-            **card.model_dump(mode="json"),
-            "claimed": _claimed_from_row(r),
-            "alias": r.get("alias"),
-        })
-    return out
+    return [_public_card_payload(r) for r in (resp.data or [])]
 
 
 def claim_card_by_owner(handle: str, principal: dict) -> tuple[bool, str]:
@@ -956,24 +985,26 @@ def set_card_alias(handle: str, raw_alias: str | None, owner_email: str) -> tupl
 
 
 def get_card_by_alias(alias: str) -> dict | None:
-    """Public card dict (with `claimed`) for a short alias, or None."""
+    """Public card dict (with `claimed`) for a short alias, or None.
+
+    A missing `alias` column (migration not applied) returns None — 404 —
+    instead of 500ing the public route.
+    """
     slug = normalize_alias(alias)
     if not slug or config.SUPABASE_DB_SCHEMA != "cards":
         return None
     sb = config.get_supabase()
-    resp = (
-        sb.table("agent_profile_cards")
-        .select(_public_card_columns())
-        .eq("alias", slug)
-        .eq("status", "published")
-        .limit(1)
-        .execute()
-    )
+    try:
+        resp = _select_public(
+            sb,
+            lambda q: q.eq("alias", slug).eq("status", "published").limit(1),
+        )
+    except Exception as exc:
+        logger.warning("alias lookup failed alias=%s err=%s", slug, exc)
+        return None
     if not resp.data:
         return None
-    row = resp.data[0]
-    card = _row_to_card(row)
-    return {**card.model_dump(mode="json"), "claimed": _claimed_from_row(row), "alias": row.get("alias")}
+    return _public_card_payload(resp.data[0])
 
 
 def request_takedown(handle: str, requester_user_id: str | None, note: str | None) -> bool:
@@ -1031,11 +1062,14 @@ def _notify_takedown(handle: str, requester_user_id: str | None, note: str | Non
 def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:
     """Backend-only refresh of the stored ZYND memory snapshot on a card row.
 
-    Called by the periodic memory refresh cron, not by end users — no ownership
-    check. None = not connected (clears the snapshot). [] = connected, nothing
-    public. The search embedding is recomputed so /ask sees approved facts;
-    an embed failure leaves the previous embedding in place.
+    Called by approve/revoke and the memory refresh cron, not by end users —
+    no ownership check. None = not connected or the fetch failed: leave the
+    stored snapshot alone. [] = connected, nothing public: write the empty
+    list and re-embed so search, JSON, and chat drop the revoked facts.
+    An embed failure leaves the previous embedding in place.
     """
+    if zynd_memory is None:
+        return False
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")

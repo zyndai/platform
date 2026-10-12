@@ -1,5 +1,6 @@
 import {
   listCards,
+  cardIsClaimed,
   cardCanonicalUrl,
   citeAsForCard,
   featureS06CardView,
@@ -14,7 +15,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   logAgentFetch("llms-full.txt", req.headers.get("user-agent"));
   // S03: unclaimed (scraped) cards are excluded from agent-facing surfaces.
-  const cards = (await listCards()).filter((c) => c.claimed !== false);
+  const cards = (await listCards()).filter((c) => cardIsClaimed(c));
   const useView = featureS06CardView();
   const profileBlocks = await Promise.all(
     cards.map(async (c) => {

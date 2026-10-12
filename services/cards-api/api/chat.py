@@ -112,6 +112,17 @@ def _build_system_prompt(card: dict, *, memory_facts: list[dict] | None = None, 
     return "\n".join(l for l in lines if l is not None)
 
 
+def memory_context_for_chat(card) -> tuple[list[dict], str | None]:
+    """Approved, unexpired CardView facts for the assistant. Always on — chat
+    must not fall back to a prompt that can impersonate the owner or cite
+    revoked/expired facts."""
+    from services.card_view import build_card_view
+
+    view = build_card_view(card, claimed=True)
+    facts = [f.model_dump(mode="json") for f in view.facts]
+    return facts, view.fresh_as_of
+
+
 def _clean_artifacts(text: str) -> str:
     """Strip markdown/formatting artifacts the model sometimes leaks."""
     return (
@@ -190,14 +201,7 @@ async def chat(handle: str, body: ChatRequest, request: Request):
         meta={"handle": handle},
     )
 
-    memory_facts = None
-    fresh_as_of = None
-    if config.FEATURE_S06_CARDVIEW:
-        from services.card_view import build_card_view
-
-        view = build_card_view(card_obj, claimed=True)
-        memory_facts = [f.model_dump(mode="json") for f in view.facts]
-        fresh_as_of = view.fresh_as_of
+    memory_facts, fresh_as_of = memory_context_for_chat(card_obj)
     system_prompt = _build_system_prompt(
         card_obj.model_dump(),
         memory_facts=memory_facts,

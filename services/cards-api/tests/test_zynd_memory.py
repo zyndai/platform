@@ -132,11 +132,12 @@ def test_update_card_memory_sets_snapshot(monkeypatch):
     assert query.payload["card"]["summary"] == "Engineer."  # rest of card preserved
 
 
-def test_update_card_memory_clears_snapshot(monkeypatch):
+def test_update_card_memory_none_leaves_snapshot(monkeypatch):
+    """None means not connected / fetch failed. Do not wipe public facts."""
     query = _mock_sb(monkeypatch, [{"card": _card_json([{"predicate": "is_building", "object": "old"}])}])
 
-    assert cards_service.update_card_memory("alice", None) is True
-    assert query.payload["card"]["zynd_memory"] is None
+    assert cards_service.update_card_memory("alice", None) is False
+    assert query.payload is None
 
 
 def test_update_card_memory_writes_empty_list(monkeypatch):
@@ -205,6 +206,48 @@ def test_refresh_cycle_clears_revoked_facts(monkeypatch):
 
     assert stats["updated"] == 1
     assert calls == [("alice", [])]
+
+
+def test_update_card_memory_empty_list_clears_and_reembeds(monkeypatch):
+    stored = {
+        "card": {
+            "id": "cid",
+            "handle": "alice",
+            "status": "published",
+            "identity": {"name": "Alice", "headline": "Founder", "location": "SF", "links": {}},
+            "summary": "Builds.",
+            "zynd_memory": [{
+                "predicate": "is_building",
+                "object": "SendPilot",
+                "approved_at": "2026-01-01T00:00:00+00:00",
+            }],
+        },
+    }
+    updates: list[dict] = []
+
+    class Table:
+        def select(self, *_a, **_k):
+            return self
+
+        def eq(self, *_a, **_k):
+            return self
+
+        def execute(self):
+            return MagicMock(data=[stored])
+
+        def update(self, payload):
+            updates.append(payload)
+            return self
+
+    sb = MagicMock()
+    sb.table.return_value = Table()
+    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+    seen: dict = {}
+    monkeypatch.setattr(cards_service.embed, "embed_text", lambda text: seen.update(text=text) or [0.2])
+
+    assert cards_service.update_card_memory("alice", []) is True
+    assert updates[0]["card"]["zynd_memory"] == []
+    assert "SendPilot" not in seen["text"]
 
 
 def test_snapshot_from_payload_distinguishes_empty():

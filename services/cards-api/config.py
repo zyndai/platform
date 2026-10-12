@@ -55,9 +55,10 @@ FEATURE_S03_UNCLAIMED_TIERING: bool = os.getenv("FEATURE_S03_UNCLAIMED_TIERING",
 # is applied on aafo and SUPABASE_DB_SCHEMA=cards. Rollback: set false.
 FEATURE_S04_EVENTS: bool = os.getenv("FEATURE_S04_EVENTS", "false").lower() in ("1", "true", "yes")
 
-# S06: CardView on new surfaces (chat facts, typed memory match_reasons +
-# freshness boost). /view + memory-in-embed stay always on. Rollback: false.
-FEATURE_S06_CARDVIEW: bool = os.getenv("FEATURE_S06_CARDVIEW", "false").lower() in ("1", "true", "yes")
+# S06: typed memory match_reasons + freshness boost on /ask. Chat always
+# uses CardView (see api/chat.py). /view + memory-in-embed stay always on.
+# Rollback the search boost: set false.
+FEATURE_S06_CARDVIEW: bool = os.getenv("FEATURE_S06_CARDVIEW", "true").lower() in ("1", "true", "yes")
 
 # S08: onboarding v2 (live preview, no quiz). UX gate lives in cards-web
 # (NEXT_PUBLIC_FEATURE_S08_* + zynd_s08 cookie). This mirrors ops visibility.

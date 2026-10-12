@@ -345,7 +345,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const name = card.identity.name || "Profile";
   const headline = card.identity.headline;
   const canonical = cardCanonicalUrl(card);
-  const claimed = card.claimed !== false;
+  const claimed = card.claimed === true;
   return {
     ...pageMetadata({
       title: headline ? `${name} — ${headline} — Zynd` : `${name} — Zynd`,
@@ -407,7 +407,7 @@ export default async function PersonPage({ params }: PageProps) {
   }
 
   const { identity } = card;
-  const claimed = card.claimed !== false;
+  const claimed = card.claimed === true;
   const v = buildView(card);
   const canonical = cardCanonicalUrl(card);
   // Shown and copied without the scheme; this is where the card actually lives

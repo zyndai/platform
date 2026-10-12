@@ -3,14 +3,17 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MessageCircle, X, ArrowUp } from "lucide-react";
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 interface ProfileChatWidgetProps {
   handle: string;
   personName: string;
-}
-
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
+  /** Seeded demo Q&A for the first-win screen (no LLM round-trip). */
+  initialMessages?: ChatMessage[];
+  defaultOpen?: boolean;
 }
 
 const MAX_HISTORY = 8;
@@ -37,17 +40,29 @@ function linkify(text: string): ReactNode {
   return out;
 }
 
-export function ProfileChatWidget({ handle, personName }: ProfileChatWidgetProps) {
-  const [open, setOpen] = useState(false);
+export function ProfileChatWidget({
+  handle,
+  personName,
+  initialMessages,
+  defaultOpen = false,
+}: ProfileChatWidgetProps) {
+  const [open, setOpen] = useState(defaultOpen);
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => initialMessages ?? []);
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const seededRef = useRef(false);
 
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 80);
   }, [open]);
+
+  useEffect(() => {
+    if (seededRef.current || !initialMessages?.length) return;
+    seededRef.current = true;
+    setMessages(initialMessages);
+  }, [initialMessages]);
 
   useEffect(() => {
     const openChat = () => setOpen(true);

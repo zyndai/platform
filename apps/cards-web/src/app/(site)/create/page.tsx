@@ -16,6 +16,8 @@ import { AutoGrowTextArea } from "@/components/AutoGrowTextArea";
 import { imgProxyUrl } from "@/lib/avatar";
 import { claimHeaders, forgetClaimToken, saveClaimToken } from "@/lib/claim-tokens";
 import { appendAttrToForm, attrPublishFields } from "@/lib/attr";
+import { track } from "@/lib/track";
+import { featureS08OnboardingV2 } from "@/lib/s08";
 import { T, ZC_CSS, ZC_FONTS } from "./zc-theme";
 
 const { SANS, DISPLAY, MONO } = ZC_FONTS;
@@ -501,6 +503,9 @@ function CreateProfilePageContent() {
   // S08 auth-before-build: offer sign-in before the scrape starts.
   const [authNudge, setAuthNudge] = useState(false);
   const authNudgeRef = useRef(false);
+  // S08 v2: live preview + no 6-step quiz (cookie/env gated). Sticky after first read.
+  const [s08V2] = useState(() => featureS08OnboardingV2());
+  const [livePreview, setLivePreview] = useState<AgentProfileCard | null>(null);
 
   // Photo change
   const [showPhotoInput, setShowPhotoInput] = useState(false);
@@ -659,6 +664,14 @@ function CreateProfilePageContent() {
 
   function onNext() {
     const q = QUESTIONS[questionIndexRef.current];
+    if (q) {
+      track("question_answered", {
+        id: q.id,
+        index: questionIndexRef.current,
+        skipped: false,
+        v2: s08V2,
+      });
+    }
     if (q?.type === "chips") commitDraft(q.id, q.options);
     advanceQuestion();
   }
@@ -684,6 +697,12 @@ function CreateProfilePageContent() {
     setError(null);
     setAuthNudge(false);
     setPhase("working");
+    setLivePreview(null);
+    // v2 skips the multi-step quiz — mark questions done so poll → review.
+    if (s08V2) {
+      questionIndexRef.current = QUESTIONS.length;
+      setQuestionIndex(QUESTIONS.length);
+    }
     const form = new FormData();
     urls.forEach(u => form.append("url", u));
     if (resume) form.append("resume", resume);
@@ -694,6 +713,8 @@ function CreateProfilePageContent() {
       const data = await res.json();
       setJobId(data.job_id);
       pollRef.current = setInterval(() => pollJob(data.job_id), 1500);
+      // Kick once immediately so a fast mock/fixture doesn't wait 1.5s.
+      void pollJob(data.job_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start");
       setPhase("error");
@@ -721,10 +742,11 @@ function CreateProfilePageContent() {
       if (!res.ok) return;
       const status: OnboardStatus = await res.json();
       if (status.status === "ready" && status.card) {
-        clearInterval(pollRef.current!);
+        if (pollRef.current) clearInterval(pollRef.current);
         pendingCardRef.current = status.card;
         jobDoneRef.current = true;
         setJobDone(true);
+        setLivePreview(status.card);
         if (status.url_warnings?.length) setUrlWarnings(status.url_warnings);
         // The location question is always asked now — prefill the field with
         // the extraction's best guess so the user can accept or correct it
@@ -732,13 +754,20 @@ function CreateProfilePageContent() {
         if (!locationRef.current.trim() && status.card?.identity.location) {
           setLocationInput(status.card.identity.location);
         }
-        // If user already answered all questions, go to review immediately
+        // v2 (or quiz finished): go to review. Brief live preview paints first.
         if (questionIndexRef.current >= QUESTIONS.length) {
-          goToReview(status.card);
+          if (s08V2) {
+            // Show live card on the working screen for a beat, then review.
+            setTimeout(() => {
+              if (pendingCardRef.current) goToReview(pendingCardRef.current);
+            }, 600);
+          } else {
+            goToReview(status.card);
+          }
         }
         // else: user still on questions — they'll trigger goToReview via Next/Done button
       } else if (status.status === "error") {
-        clearInterval(pollRef.current!);
+        if (pollRef.current) clearInterval(pollRef.current);
         setError(status.error || "Unknown error");
         setPhase("error");
       }
@@ -1054,6 +1083,12 @@ function CreateProfilePageContent() {
           body: editHandle
             ? "Make any changes below — your profile updates the moment you save."
             : "Every line came from what's public. Edit anything that reads wrong — publishing is the only step that makes it visible.",
+        }
+      : phase === "working" && s08V2
+      ? {
+          badge: jobDone ? "Draft ready · Review next" : "Scraping public profiles",
+          title: <>Your card<br />is assembling</>,
+          body: "The draft appears on the right as soon as we finish reading what's public. Nothing is live until you publish.",
         }
       : existingHandle && !editHandle
       ? {
@@ -1397,8 +1432,68 @@ function CreateProfilePageContent() {
                 </form>
               )}
 
-              {/* ── STEPS 1–5 — questions ── */}
-              {phase === "working" && (() => {
+              {/* ── WORKING — v2 live preview OR v1 quiz ── */}
+              {phase === "working" && s08V2 && (
+                <div className="zc-card zc-step-card" data-testid="s08-live-preview" style={{ padding: "28px 28px 24px", display: "flex", flexDirection: "column", gap: "20px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                    <span style={{ font: `500 10px/1 ${MONO}`, letterSpacing: ".14em", textTransform: "uppercase", color: T.muted }}>
+                      {jobDone ? "Draft ready" : "Assembling"}
+                    </span>
+                    <span style={{ font: `400 13px/1 ${SANS}`, color: jobDone ? T.accentHi : T.faint }}>
+                      {jobDone ? "✓ scraped" : "scraping…"}
+                    </span>
+                  </div>
+
+                  {livePreview ? (
+                    <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+                      <Avatar url={livePreview.identity.avatar_url || ""} name={livePreview.identity.name || "?"} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ font: `700 22px/1.2 ${DISPLAY}`, color: T.ink, letterSpacing: "-.02em" }}>
+                          {livePreview.identity.name || "Your card"}
+                        </div>
+                        {livePreview.identity.headline && (
+                          <div style={{ font: `400 14px/1.45 ${SANS}`, color: T.soft, marginTop: 4 }}>{livePreview.identity.headline}</div>
+                        )}
+                        {livePreview.identity.location && (
+                          <div style={{ font: `400 12px/1.4 ${SANS}`, color: T.muted, marginTop: 6 }}>{livePreview.identity.location}</div>
+                        )}
+                        {(livePreview.skills ?? []).length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
+                            {livePreview.skills.slice(0, 6).map((s) => (
+                              <span key={s.name} style={{ font: `500 12px/1 ${SANS}`, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 999, padding: "6px 10px", color: T.ink }}>
+                                {s.name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, minHeight: 72 }}>
+                      <span className="zc-spin" style={{ width: 18, height: 18, borderRadius: "50%", border: `2px solid ${T.dotOff}`, borderTopColor: T.accent, display: "block" }} />
+                      <div>
+                        <div className="zc-question" style={{ fontSize: 20 }}>Building your card…</div>
+                        <p style={{ font: `400 13px/1.5 ${SANS}`, color: T.soft, margin: "6px 0 0" }}>
+                          Paste stayed on this screen — the draft appears here as soon as the scrape finishes.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {urls.length > 0 && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      {urls.map((url) => (
+                        <span key={url} className="zc-chipbox" style={{ display: "flex", alignItems: "center", gap: 8, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 999, padding: "7px 12px" }}>
+                          <KindSquare kind={detectKind(url)} size={11} />
+                          <span className="zc-clip" style={{ font: `500 12px/1 ${MONO}`, color: T.soft }}>{shortenUrl(url)}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {phase === "working" && !s08V2 && (() => {
                 const q = QUESTIONS[questionIndex];
                 const isLast = questionIndex === QUESTIONS.length - 1;
                 const isDone = questionIndex >= QUESTIONS.length;

@@ -54,9 +54,14 @@ services:
   mcp:
     build: ../../services/memory
     env_file: ../../services/memory/.env.prod
+    # CARDS_API_BASE_URL / FEATURE_S11_PUBLIC_MCP come from .env.prod when enabling S11.
+    # Default cards reachability on the compose network:
+    environment:
+      CARDS_API_BASE_URL: ${CARDS_API_BASE_URL:-http://cards:8000}
     command: uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
     depends_on:
       postgres: { condition: service_healthy }
+      cards: { condition: service_started }
     restart: unless-stopped
 
   # Zynd agent profile cards API — a sibling service in this monorepo, merged

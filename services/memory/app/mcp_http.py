@@ -1154,10 +1154,42 @@ async def add_todo(title: str, suid: str = Depends(_suid)) -> dict:
 
 
 # ── ASGI app ────────────────────────────────────────────────────────────────────
-# FastMCP's auth provider handles all authentication — no custom ASGI wrapper needed.
-# The app is what uvicorn runs:  uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
+# Personal MCP stays auth'd at /mcp. When FEATURE_S11_PUBLIC_MCP is on, a second
+# FastMCP (no auth) is merged at /cards-public-mcp in the same process.
+# uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
 
-app = mcp.http_app(
+_allowed_hosts = [
+    h for h in (urlsplit(settings.mcp_public_base_url).hostname, "localhost", "127.0.0.1") if h
+]
+
+_auth_app = mcp.http_app(
     stateless_http=True,
-    allowed_hosts=[urlsplit(settings.mcp_public_base_url).hostname],
+    allowed_hosts=_allowed_hosts,
 )
+
+if settings.feature_s11_public_mcp:
+    from contextlib import AsyncExitStack, asynccontextmanager
+
+    from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+
+    from app.cards_public_mcp import RateLimitMiddleware
+    from app.cards_public_mcp import build_http_app as _build_public_mcp
+
+    _public_app = _build_public_mcp(allowed_hosts=_allowed_hosts)
+
+    @asynccontextmanager
+    async def _combined_lifespan(app):
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(_auth_app.lifespan(app))
+            await stack.enter_async_context(_public_app.lifespan(app))
+            yield
+
+    # Merge routes (public first). Both FastMCP lifespans must run on the parent.
+    app = Starlette(
+        routes=list(_public_app.routes) + list(_auth_app.routes),
+        lifespan=_combined_lifespan,
+        middleware=[Middleware(RateLimitMiddleware)],
+    )
+else:
+    app = _auth_app

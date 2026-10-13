@@ -64,7 +64,7 @@ export function startFixtureServer(): Promise<void> {
     completeness: { score: 75, actions: [{ section: "projects", title: "Add a project", href: "/p/owner/edit#projects" }] },
     inbox_count: 3, connection: { memory_connected: true, assistants_available: false },
     sources: [{ platform: "github", scraped_at: "2026-10-10T00:00:00Z", state: "fresh" }],
-    activity: { available: true, views: 12, agent_hits: 4, intro_requests: null, queries: [], query_capture_available: false },
+    activity: { available: true, views: 12, agent_hits: 4, intro_requests: null, queries: [], query_capture_available: false, chat_topics: [] },
     notification_prefs: prefs,
     duplicates: hasDuplicate ? [{ id: "id-old-owner", handle: "old-owner", name: "Alice Chen", status: "published" }] : [],
     nudges: [{ id: "n1", kind: "expiring", title: "What you are looking for expires within 3 days", href: "/p/owner/edit#memory" }],

@@ -23,6 +23,7 @@ export interface OwnerStatus {
     intro_requests: number | null;
     queries: { query: string; count?: number }[];
     query_capture_available: boolean;
+    chat_topics?: { category: string; count: number }[];
   };
   notification_prefs: { weekly_digest: boolean; email_nudges: boolean };
   duplicates: { id: string; handle: string; name: string; status: string }[];

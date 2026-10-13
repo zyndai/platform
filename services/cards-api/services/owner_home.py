@@ -41,7 +41,8 @@ def card_from_row(row: dict):
 def activity(handle: str, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     empty = {"available": False, "views": None, "agent_hits": None,
-             "intro_requests": None, "queries": [], "query_capture_available": False}
+             "intro_requests": None, "queries": [], "query_capture_available": False,
+             "chat_topics": []}
     if not events.events_enabled():
         return empty
     try:
@@ -56,7 +57,8 @@ def activity(handle: str, now: datetime | None = None) -> dict:
         return {**empty, "available": True, "views": count("view", "human"),
                 "agent_hits": count("agent_fetch", "ai_agent") + count("view", "ai_agent"),
                 "intro_requests": count("intro_request") if config.FEATURE_S12_INTROS else None,
-                "queries": queries, "query_capture_available": bool(queries)}
+                "queries": queries, "query_capture_available": bool(queries),
+                "chat_topics": chat_topics(sb, handle, since)}
     except Exception:
         # An unavailable event store is not zero traffic.
         return empty
@@ -81,6 +83,24 @@ def query_summaries(sb, handle: str, since: str) -> list[dict]:
         text = re.sub(r"[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}|https?://\S+|\b\d[\d ()+-]{8,}\d\b|\b[A-Za-z0-9_-]{32,}\b", "[redacted]", text)
         counts[text] += 1
     return [{"query": query, "count": count} for query, count in counts.most_common(5)]
+
+
+_CHAT_CATEGORIES = ("contact", "work", "skills", "background", "other")
+
+
+def chat_topics(sb, handle: str, since: str) -> list[dict]:
+    """Category counts from chat_message events. Never reads question text."""
+    rows = (sb.table("card_events").select("meta").eq("handle", handle)
+            .eq("event", "chat_message").gte("ts", since)
+            .order("ts", desc=True).limit(1000).execute().data or [])
+    counts = Counter()
+    for row in rows:
+        meta = row.get("meta") or {}
+        category = meta.get("category")
+        if category in _CHAT_CATEGORIES:
+            counts[category] += 1
+    return [{"category": category, "count": counts[category]}
+            for category in sorted(counts, key=lambda name: (-counts[name], name))]
 
 
 def nudge_candidates(card, pending: int | None, now: datetime | None = None, matches: int = 0) -> list[dict]:

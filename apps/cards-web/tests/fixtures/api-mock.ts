@@ -45,6 +45,17 @@ export function cardFixture(handle: string, opts: { claimed?: boolean; name?: st
 }
 
 export function startFixtureServer(): Promise<void> {
+  const initialIntro = () => ({
+    id: "33333333-3333-4333-8333-333333333333", handle: "owner",
+    owner_uid: "11111111-1111-4111-8111-111111111111", requester_uid: "22222222-2222-4222-8222-222222222222",
+    requester_name: "Bob", owner_name: "Alice Chen", why: "Could we discuss Python APIs for my project?",
+    asks: ["meeting", "message"], status: "pending", permissions: { can_request_meetings: false },
+    thread_id: "44444444-4444-4444-8444-444444444444", meeting_task_id: null as string | null,
+    conversation_url: "http://127.0.0.1:3010/persona-conversation", created_at: "2026-10-13T00:00:00Z",
+  });
+  let intro = initialIntro();
+  let sentIntros: ReturnType<typeof initialIntro>[] = [];
+  const retryKeys = new Map<string, ReturnType<typeof initialIntro>>();
   let ownerCard = cardFixture("owner");
   let hasDuplicate = true;
   let prefs = { weekly_digest: true, email_nudges: false };
@@ -67,6 +78,27 @@ export function startFixtureServer(): Promise<void> {
     };
 
     if (req.method === "OPTIONS") return json(200, {});
+    if (path === "/__s12/reset") { intro = initialIntro(); sentIntros = []; retryKeys.clear(); return json(200, {}); }
+    if (path.endsWith("/intro-eligibility")) return json(200, { available: !path.includes("unclaimed"), agent_id: "test-agent" });
+    if (path === "/cards/mine/intros") return json(200, { intros: url.searchParams.get("outgoing") === "true" ? sentIntros : [intro] });
+    if (req.method === "POST" && (path.endsWith("/intro") || path.endsWith("/respond"))) {
+      let raw = "";
+      req.on("data", chunk => { raw += chunk; });
+      req.on("end", () => {
+        const body = JSON.parse(raw || "{}");
+        if (path.endsWith("/intro")) {
+          if (retryKeys.has(body.idempotency_key)) return json(200, retryKeys.get(body.idempotency_key));
+          const sent = { ...initialIntro(), handle: "claimed", requester_name: "Alice Chen", owner_name: "Dan",
+            requester_uid: "11111111-1111-4111-8111-111111111111", owner_uid: "22222222-2222-4222-8222-222222222222", why: body.why, asks: body.asks };
+          retryKeys.set(body.idempotency_key, sent); sentIntros.push(sent); return json(200, sent);
+        }
+        intro.status = body.action === "accept" || body.action === "propose_time" ? "accepted" : body.action === "decline" ? "declined" : "blocked";
+        intro.permissions.can_request_meetings = body.action === "propose_time" || body.allow_meetings === true;
+        if (body.start_time) intro.meeting_task_id = "55555555-5555-4555-8555-555555555555";
+        return json(200, intro);
+      });
+      return;
+    }
     if (path === "/__s10/reset") {
       ownerCard = cardFixture("owner"); hasDuplicate = true; prefs = { weekly_digest: true, email_nudges: false };
       return json(200, {});

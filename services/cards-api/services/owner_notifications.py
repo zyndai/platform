@@ -32,6 +32,9 @@ def render_weekly(data: dict, unsubscribe_url: str | None) -> tuple[str, str]:
              *(questions or ["Matching queries are not recorded yet."]), "", f"Review your inbox: {inbox}",
              f"Owner home: {base}/home"]
     body = "\n".join(lines)
+    intro_waiting = data.get("intro_inbox_count")
+    if intro_waiting is not None:
+        body += f"\n{intro_waiting} intro requests waiting for your decision\nReview introductions: {base}/intros"
     if unsubscribe_url:
         body += "\n\nUnsubscribe: " + unsubscribe_url
     esc = lambda value: html.escape(str(value), quote=True)
@@ -40,6 +43,7 @@ def render_weekly(data: dict, unsubscribe_url: str | None) -> tuple[str, str]:
               f'<main style="max-width:600px;margin:auto;background:white;padding:24px;border-radius:16px"><h1>Your week on Zynd</h1>{content}'
               '<h2>Questions that found your card</h2><ul>' + "".join(f"<li>{esc(q)}</li>" for q in (questions or ["Matching queries are not recorded yet."])) + '</ul>'
               f'<p><a href="{esc(inbox)}">Review your inbox</a> · <a href="{esc(base + "/home")}">Owner home</a></p>'
+              + (f'<p>{intro_waiting} intro requests waiting. <a href="{esc(base + "/intros")}">Review introductions</a></p>' if intro_waiting is not None else '')
               + (f'<footer>You receive this because you own a Zynd card. <a href="{esc(unsubscribe_url)}">Unsubscribe</a></footer>' if unsubscribe_url else '<footer>Preview only</footer>')
               + '</main></body></html>')
     return body, markup

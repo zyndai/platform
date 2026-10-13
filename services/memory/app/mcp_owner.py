@@ -17,6 +17,13 @@ from app.services.mcp_scopes import approve_gate
 
 
 def register(mcp, uid_dep) -> None:
+    @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+    async def list_intros(uid: str = Depends(uid_dep)) -> dict:
+        """Read my inbound intro requests. Human owners make decisions in the UI."""
+        from app.mcp_http import _get_pool
+        from app.tools.card_intros import get_owner_intros
+        return await get_owner_intros(await _get_pool(), uid)
+
     # get_card_status and get_card_activity already exist (S10). ScopeGate
     # hides them unless the token has cards:read or the legacy user scope.
     @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})

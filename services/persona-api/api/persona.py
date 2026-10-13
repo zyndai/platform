@@ -528,6 +528,11 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend, caller: Caller
         raise HTTPException(status_code=404, detail="Thread not found.")
     t = thread.data[0]
 
+    if config.FEATURE_S12_INTROS:
+        intro = sb.table("persona_intro_requests").select("status").eq("thread_id", req.thread_id).limit(1).execute().data or []
+        if intro and (intro[0]["status"] != "accepted" or t["status"] != "accepted"):
+            raise HTTPException(409, "Wait for the receiving owner to accept the intro")
+
     # Figure out who the partner is on this thread.
     if t["initiator_id"] in (user_id, my_agent_id):
         partner_agent_id = t["receiver_id"]
@@ -712,13 +717,14 @@ async def create_thread(user_id: str, req: ThreadCreateRequest, caller: Caller =
 async def get_thread_permissions(thread_id: str, caller: Caller = Depends(thread_participant)):
     """Return the current per-connection permission set for a thread, with defaults filled in."""
     sb = _supabase()
-    r = sb.table("dm_threads").select("permissions").eq("id", thread_id).execute()
+    r = sb.table("dm_threads").select("*").eq("id", thread_id).execute()
     if not r.data:
         raise HTTPException(status_code=404, detail="Thread not found")
     stored = r.data[0].get("permissions") or {}
     # Merge with defaults so missing keys come back as their default value
     merged = {**DEFAULT_CONNECTION_PERMISSIONS, **stored}
-    return {"thread_id": thread_id, "permissions": merged}
+    return {"thread_id": thread_id, "permissions": merged,
+            "can_edit": not caller.is_service and _my_side(r.data[0], caller.user_id) == "receiver"}
 
 @router.patch("/threads/{thread_id}/permissions")
 async def update_thread_permissions(thread_id: str, req: ThreadPermissionsUpdate, caller: Caller = Depends(thread_participant)):
@@ -738,30 +744,37 @@ async def update_thread_permissions(thread_id: str, req: ThreadPermissionsUpdate
         raise HTTPException(status_code=400, detail=f"Unknown permission keys: {sorted(unknown)}")
 
     sb = _supabase()
-    existing = sb.table("dm_threads").select("permissions").eq("id", thread_id).execute()
+    existing = sb.table("dm_threads").select("*").eq("id", thread_id).execute()
     if not existing.data:
         raise HTTPException(status_code=404, detail="Thread not found")
+
+    # The receiver grants access to their Persona. Participation alone must
+    # never let the requester turn on access to the receiver's accounts.
+    if caller.is_service or _my_side(existing.data[0], caller.user_id) != "receiver":
+        raise HTTPException(status_code=403, detail="Only the receiving owner can grant permissions")
 
     current = existing.data[0].get("permissions") or {}
     merged = {**DEFAULT_CONNECTION_PERMISSIONS, **current, **incoming}
 
-    sb.table("dm_threads").update({"permissions": merged}).eq("id", thread_id).execute()
-    return {"status": "ok", "thread_id": thread_id, "permissions": merged}
+    if config.FEATURE_S12_INTROS:
+        intro = sb.table("persona_intro_requests").select("permissions,status").eq("thread_id", thread_id).limit(1).execute().data or []
+        if intro and any(value and not intro[0]["permissions"].get(key, False) for key, value in incoming.items()):
+            raise HTTPException(status_code=403, detail="This permission was not granted for the intro")
+
+    from services import intros as intro_service
+    return await asyncio.to_thread(intro_service.operation, "s12_save_thread_permissions", {
+        "p_thread":thread_id,"p_actor":caller.user_id,"p_patch":incoming})
 
 class ThreadStatusUpdate(BaseModel):
-    # 'decline' on a pending request, 'revoke' on an accepted connection,
-    # or 'unblock' to lift a block. (Accept and block keep using the
-    # existing direct-Supabase update path the UI already wires up via
-    # the dm_threads RLS policy — no behavior change there.)
-    action: str  # 'decline' | 'revoke' | 'unblock'
+    # All connection decisions use the authenticated API.
+    action: str  # 'accept' | 'decline' | 'block' | 'revoke' | 'unblock'
     user_id: str  # whoever is acting — must be a participant
 
 @router.patch("/threads/{thread_id}/status")
 async def update_thread_status(thread_id: str, req: ThreadStatusUpdate, caller: Caller = Depends(thread_participant)):
     """Apply a ConnectionFSM transition driven by the v3 spec §3.1.3.
 
-    Supports the transitions the existing UI doesn't already cover via
-    direct Supabase updates:
+    All transitions require the authenticated participant/receiver checks:
       • decline: requested → declined  (receiver soft-rejects)
       • revoke:  accepted  → revoked   (either side ends the relationship)
       • unblock: blocked   → accepted  (we don't track prior state yet,
@@ -772,8 +785,8 @@ async def update_thread_status(thread_id: str, req: ThreadStatusUpdate, caller: 
     with reason='connection_<action>' so handlers don't keep running on
     a connection that no longer exists (T-2 + EV_T_PERMISSION_REVOKED).
     """
-    if req.action not in ("decline", "revoke", "unblock"):
-        raise HTTPException(status_code=400, detail="action must be 'decline', 'revoke', or 'unblock'")
+    if req.action not in ("accept", "decline", "block", "revoke", "unblock"):
+        raise HTTPException(status_code=400, detail="Invalid connection action")
     ensure_actor(caller, req.user_id)
 
     sb = _supabase()
@@ -786,10 +799,26 @@ async def update_thread_status(thread_id: str, req: ThreadStatusUpdate, caller: 
     if not side:
         raise HTTPException(status_code=403, detail="You are not a participant of this thread.")
 
+    if req.action in ("accept", "decline", "unblock") and side != "receiver":
+        raise HTTPException(status_code=403, detail="Only the receiving owner can decide this request")
+
+    if config.FEATURE_S12_INTROS:
+        rows = sb.table("persona_intro_requests").select("id,status").eq("thread_id", thread_id).limit(1).execute().data or []
+        if rows:
+            if req.action not in ("accept", "decline", "block", "revoke"):
+                raise HTTPException(409, "Manage blocked intro permissions from your intro inbox")
+            from services import intros as intro_service
+            from types import SimpleNamespace
+            decided = await asyncio.to_thread(intro_service.respond, rows[0]["id"], req.user_id,
+                SimpleNamespace(action=req.action, allow_meetings=False, start_time=None, end_time=None))
+            return {"status": "ok", "thread_id": thread_id, "new_status": decided["status"], "side": side}
+
     cur_status = thread.get("status") or "pending"
 
     # Validate the FSM transition.
     transitions = {
+        "accept":  {"from": ("pending",), "to": "accepted"},
+        "block":   {"from": ("pending", "accepted"), "to": "blocked"},
         "decline": {"from": ("pending",),  "to": "declined"},
         "revoke":  {"from": ("accepted",), "to": "revoked"},
         "unblock": {"from": ("blocked",),  "to": "accepted"},
@@ -802,7 +831,9 @@ async def update_thread_status(thread_id: str, req: ThreadStatusUpdate, caller: 
         )
     new_status = rule["to"]
 
-    sb.table("dm_threads").update({"status": new_status}).eq("id", thread_id).execute()
+    updated = sb.table("dm_threads").update({"status": new_status}).eq("id", thread_id).eq("status", cur_status).execute()
+    if not updated.data:
+        raise HTTPException(409, "Connection changed; reload before deciding")
 
     # Cancel in-flight tasks on this thread per design §3.2.3
     # (EV_T_PERMISSION_REVOKED).

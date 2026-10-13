@@ -55,6 +55,7 @@ def activity(handle: str, now: datetime | None = None) -> dict:
         queries = query_summaries(sb, handle, since)
         return {**empty, "available": True, "views": count("view", "human"),
                 "agent_hits": count("agent_fetch", "ai_agent") + count("view", "ai_agent"),
+                "intro_requests": count("intro_request") if config.FEATURE_S12_INTROS else None,
                 "queries": queries, "query_capture_available": bool(queries)}
     except Exception:
         # An unavailable event store is not zero traffic.
@@ -167,9 +168,22 @@ async def status(email: str, *, persist: bool = True) -> dict | None:
         asyncio.to_thread(unclaimed_duplicates, row),
     )
     matches = sum(q["count"] for q in metrics["queries"])
+    intro_pending = None
+    if config.FEATURE_S12_INTROS and row.get("owner_user_id"):
+        try:
+            from services import intros
+            incoming_status = await intros.persona("/users/" + row["owner_user_id"])
+            incoming = incoming_status["intros"]
+            intros.require_scope(incoming, row["owner_user_id"])
+            await intros.sync(incoming)
+            intro_pending = incoming_status["pending_count"]
+            metrics = await asyncio.to_thread(activity, card.handle)
+        except Exception:
+            # An intro outage must not hide fact review/home or imply zero requests.
+            pass
     nudges = await asyncio.to_thread(persist_nudges, email, card, pending, matches=matches) if persist else nudge_candidates(card, pending, matches=matches)
     return {"handle": card.handle, "name": card.identity.name, "card_id": card.id,
-            "completeness": completeness(card), "inbox_count": pending,
+            "completeness": completeness(card), "inbox_count": pending, "intro_inbox_count": intro_pending,
             "connection": {"memory_connected": connected, "assistants_available": False},
             "sources": [{"platform": s.platform, "scraped_at": s.scraped_at,
                          "state": "stale" if (_parse_ts(s.scraped_at) is None or _parse_ts(s.scraped_at) < datetime.now(timezone.utc) - timedelta(days=30)) else "fresh"}

@@ -1,7 +1,8 @@
 import hmac
+from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 import config
 from services.digest import clear_suggested_posts, run_digest
@@ -11,6 +12,29 @@ router = APIRouter()
 
 class OwnerStatusRequest(BaseModel):
     email: str
+
+
+class OwnerIntrosRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    zynd_uid: UUID
+    issuer: str
+
+
+@router.post("/owner-intros")
+async def service_owner_intros(body: OwnerIntrosRequest, authorization: str | None = Header(default=None)):
+    secret = config.MEMORY_SERVICE_TOKEN
+    supplied = (authorization or "").removeprefix("Bearer ").strip()
+    if not secret or not hmac.compare_digest(supplied.encode(), secret.encode()):
+        raise HTTPException(401,"Unauthorized")
+    from services import intros
+    intros.enabled()
+    if body.issuer != config.AAFO_ISSUER:
+        raise HTTPException(403,"Shared identity issuer does not match")
+    await intros.memory_identity(str(body.zynd_uid))
+    result = await intros.persona("/users/" + str(body.zynd_uid))
+    intros.require_scope(result["intros"],str(body.zynd_uid))
+    await intros.sync(result["intros"])
+    return {"intros": [intros.public_record(row) for row in result["intros"]]}
 
 
 @router.post("/owner-status")

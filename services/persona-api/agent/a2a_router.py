@@ -1708,21 +1708,25 @@ async def a2a_push_inbound(user_id: str, request: Request):
     if not isinstance(wrapper, dict):
         raise HTTPException(status_code=400, detail="Push body is not a JSON object.")
 
-    auth_header_preview = (request.headers.get("authorization") or "")[:30]
-    logger.info(
-        "[a2a push-inbound] received push user=%s from=%s auth=%s body_keys=%s",
-        user_id[:8],
-        request.client.host if request.client else "unknown",
-        auth_header_preview or "(none)",
-        list(wrapper.keys()),
-    )
-
-    # MVP posture: accept and route the push on a best-effort basis. zynd
-    # peers push bearer-only and sometimes unsigned, so identity checks
-    # (signature, token↔user, token↔peer) degrade to warnings instead of
-    # rejecting. The only fatal cases are "can't parse" and "can't correlate
-    # to any callback we issued" — without a callback row there's nowhere to
-    # route the result.
+    # The issued callback token authenticates bearer-only peers. A task id
+    # is correlation data, never a substitute for that token. When a peer
+    # also signs the message, verification and sender binding are mandatory.
+    auth_header = request.headers.get("authorization") or ""
+    bearer = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
+    if not bearer:
+        raise HTTPException(status_code=401, detail="Missing callback token")
+    from services import callbacks as cb_service
+    callback = cb_service.lookup_by_token(bearer)
+    if callback is None:
+        raise HTTPException(status_code=401, detail="Invalid callback token")
+    try:
+        expires = datetime.fromisoformat(str(callback.get("expires_at", "")).replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid callback expiry") from exc
+    if not expires.tzinfo or expires <= datetime.now(timezone.utc) or callback.get("status") == "expired":
+        raise HTTPException(status_code=401, detail="Expired callback token")
+    if callback.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Callback belongs to another user")
     try:
         ctx = verify_message(
             wrapper,
@@ -1732,56 +1736,18 @@ async def a2a_push_inbound(user_id: str, request: Request):
         )
         sender_entity_id = ctx["entity_id"]
     except ZyndAuthError as e:
-        logger.warning("[a2a push-inbound] signature present but invalid (accepting, MVP): %s", e.reason)
-        sender_entity_id = None
+        raise HTTPException(status_code=401, detail="Invalid callback signature") from e
+
+    if sender_entity_id and callback.get("peer_agent_id") != sender_entity_id:
+        raise HTTPException(status_code=403, detail="Callback sender does not match")
 
     event = _extract_push_event(wrapper)
     task_id = (event.get("taskId") if event else None) or wrapper.get("taskId")
 
-    auth_header = request.headers.get("authorization") or ""
-    bearer = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
-
-    from services import callbacks as cb_service
-
-    callback = cb_service.lookup_by_token(bearer) if bearer else None
-    if callback is None and task_id:
-        # Fallback 1: correlate by the peer Task.id we linked at dispatch.
-        callback = cb_service.lookup_by_peer_task(task_id)
-    if callback is None and sender_entity_id:
-        # Fallback 2: peer didn't send our bearer token and the push arrived
-        # before mark_peer_task ran (race between push delivery and our ack
-        # processing). Match the most recent pending row for this peer+user.
-        callback = cb_service.lookup_pending_for_peer(user_id, sender_entity_id)
-        if callback:
-            logger.info(
-                "[a2a push-inbound user=%s] correlated via peer fallback cb=%s peer=%s task=%s",
-                user_id[:8], str(callback.get("id", ""))[:8],
-                sender_entity_id[:16], str(task_id or "")[:8],
-            )
-            # Link the task ID now so future pushes and the poller can use it.
-            if task_id and not callback.get("peer_task_id"):
-                try:
-                    cb_service.mark_peer_task_sync(callback["id"], task_id)
-                    callback["peer_task_id"] = task_id
-                except Exception as _e:
-                    logger.warning("[a2a push-inbound] mark_peer_task_sync failed: %s", _e)
-    if callback is None:
-        logger.warning(
-            "[a2a push-inbound user=%s] uncorrelated push (bearer=%s task=%s from=%s) — acking & dropping",
-            user_id[:8], bool(bearer), str(task_id or "")[:8], (sender_entity_id or "")[:12],
-        )
-        return {"status": "ack_uncorrelated", "task_id": task_id}
-
-    if callback.get("user_id") != user_id:
-        logger.warning(
-            "[a2a push-inbound] token user %s != path user %s — proceeding (MVP)",
-            str(callback.get("user_id"))[:8], user_id[:8],
-        )
-    if sender_entity_id and callback.get("peer_agent_id") != sender_entity_id:
-        logger.warning(
-            "[a2a push-inbound] signed sender %s != token peer %s — proceeding (MVP)",
-            sender_entity_id[:12], str(callback.get("peer_agent_id"))[:12],
-        )
+    if callback.get("peer_task_id") and task_id != callback["peer_task_id"]:
+        raise HTTPException(status_code=403, detail="Callback task does not match")
+    if task_id and not callback.get("peer_task_id"):
+        cb_service.mark_peer_task_sync(callback["id"], task_id)
 
     if event is None:
         event = {"taskId": task_id, "status": wrapper.get("status") or {}}
@@ -1792,11 +1758,6 @@ async def a2a_push_inbound(user_id: str, request: Request):
     # background, pull the real Task with tasks/get and record it only
     # once the result is actually present.
     task_state = (event.get("status") or {}).get("state") or "unknown"
-    try:
-        logger.info("[a2a push-inbound] raw body cb=%s: %s",
-                    callback.get("id"), json.dumps(wrapper)[:2000])
-    except Exception:  # noqa: BLE001
-        pass
     # Stash this raw push on the call row so the Agent Calls panel can show
     # the latest webhook response immediately, regardless of readiness.
     cb_service.record_push_event(callback.get("id"), task_state, event)

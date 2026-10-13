@@ -7,6 +7,8 @@ import {
   type OwnerStatus,
 } from "@/lib/owner-home";
 import { OwnerHome } from "./owner-home";
+import { introsEnabled, type Intro } from "@/lib/intros";
+import { IntroInbox } from "@/components/intros/IntroInbox";
 
 export const metadata = {
   title: "Your home · Zynd Cards",
@@ -44,5 +46,13 @@ export default async function HomePage() {
         <Link href="/create">Create your card →</Link>
       </main>
     );
-  return <OwnerHome initial={data} token={session.access_token} />;
+  let intros: Intro[] | null = null;
+  if (introsEnabled) {
+    try { intros = (await ownerRequest<{ intros: Intro[] }>("mine/intros", session.access_token)).intros; }
+    catch { /* Intro outage must not hide the rest of owner home. */ }
+  }
+  return <><OwnerHome initial={data} token={session.access_token} />
+    {introsEnabled && <div style={{ maxWidth: 1100, margin: "auto", padding: 24 }}>
+      <IntroInbox initial={intros} token={session.access_token} />
+    </div>}</>;
 }

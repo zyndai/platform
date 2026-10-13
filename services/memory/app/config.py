@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     # Shared secret for service-to-service endpoints (e.g. /v1/service/*) called
     # by zynd-cards. Empty = endpoint disabled.
     memory_service_token: str = ""
+    # Explicit shared Supabase issuer for UUID-only S12 identity checks.
+    # Empty keeps the bridge disabled; legacy email links are never used here.
+    s12_identity_issuer: str = ""
+    feature_s12_intros: bool = False
     # S10 owner read tools use the same cards aggregation over service HTTP.
     feature_s10_home: bool = False
     cards_api_url: str = "https://cards.api.zynd.ai"

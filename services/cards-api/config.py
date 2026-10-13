@@ -38,6 +38,10 @@ MAINTENANCE_READONLY: bool = os.getenv("MAINTENANCE_READONLY", "false").lower() 
 # "cards", never send it: PostgREST rejects writes naming an unknown column.
 # Cards written before then get owner_user_id from the cutover backfill (by email).
 WRITES_OWNER_USER_ID: bool = SUPABASE_DB_SCHEMA == "cards"
+FEATURE_S12_INTROS: bool = os.getenv("FEATURE_S12_INTROS", "false").lower() in ("1", "true", "yes")
+PERSONA_API_URL: str = os.getenv("PERSONA_API_URL", "http://127.0.0.1:8000")
+PERSONA_SITE_URL: str = os.getenv("PERSONA_SITE_URL", "https://persona.zynd.ai")
+CARDS_INTRO_SERVICE_TOKEN: str = os.getenv("CARDS_INTRO_SERVICE_TOKEN", "")
 
 # Unowned cards published after claim tokens shipped can only be claimed with
 # the one-time token returned at publish. Cards published before that have no

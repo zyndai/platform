@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     # redirects users here to sign in and set up their persona; persona then calls
     # /oauth/complete with the verified session and bounces the browser back.
     persona_login_url: str = "https://persona.zynd.ai"
+    # Cards login is the OAuth front door for MCP/ChatGPT connectors. The user
+    # signs in there (LinkedIn today) and cards posts the session to /oauth/complete.
+    cards_login_url: str = "https://cards.zynd.ai/auth"
 
     # Supabase (for Google sign-in via the dashboard). Used to verify a user's
     # Supabase access token server-side before issuing a ZYND token.
@@ -133,7 +136,8 @@ class Settings(BaseSettings):
     # Browser origins allowed to call the API (dashboard + persona front-door, which
     # POSTs the session to /oauth/complete from the browser) — comma-separated.
     cors_origins: str = (
-        "https://zynd.ai,https://www.zynd.ai,https://persona.zynd.ai,https://dev.persona.zynd.ai,http://localhost:3000"
+        "https://zynd.ai,https://www.zynd.ai,https://persona.zynd.ai,https://dev.persona.zynd.ai,"
+        "https://cards.zynd.ai,https://dev.cards.zynd.ai,http://localhost:3000,http://localhost:3002"
     )
 
     @property

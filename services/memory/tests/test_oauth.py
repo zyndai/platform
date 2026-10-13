@@ -35,11 +35,11 @@ async def _make_code(user_id) -> str:
     return code
 
 
-async def test_authorize_redirects_to_persona_login(client):
+async def test_authorize_redirects_to_cards_login(client):
     r = await client.get("/oauth/authorize", params=AUTHORIZE_PARAMS)
     assert r.status_code == 302
     loc = r.headers["location"]
-    assert loc.startswith(settings.persona_login_url.rstrip("/") + "/?")
+    assert loc.startswith(settings.cards_login_url.rstrip("/") + "/?")
     req = parse_qs(urlparse(loc).query)["zynd_oauth"][0]
     payload = jwt.decode(req, settings.jwt_secret, algorithms=["HS256"])
     assert payload["typ"] == "oauth_req"

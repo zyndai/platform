@@ -10,6 +10,7 @@ auth. The ZyndTokenVerifier handles both token types transparently.
 Run:  uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
 """
 import asyncio
+import logging
 import re
 from datetime import datetime, timezone
 
@@ -223,6 +224,7 @@ class ZyndTokenVerifier(TokenVerifier):
 
     def __init__(self, required_scopes: list[str] | None = None):
         super().__init__(required_scopes=required_scopes)
+        self._log = logging.getLogger("zynd.mcp_verify")
 
     async def verify_token(self, token: str) -> AccessToken | None:
         # No anonymous surface. Empty or whitespace bearers are a hard reject.
@@ -239,7 +241,8 @@ class ZyndTokenVerifier(TokenVerifier):
                 allowed_audiences=["zynd", settings.mcp_resource_url],
                 allowed_issuers=[settings.jwt_issuer, settings.public_base_url.rstrip("/")],
             )
-        except ValueError:
+        except ValueError as exc:
+            self._log.warning("JWT verification failed (trying opaque fallback): %s", exc)
             pass
         else:
             user_id = meta["sub"]
@@ -248,14 +251,17 @@ class ZyndTokenVerifier(TokenVerifier):
             pool = await _get_pool()
             from app.services.sessions import token_rejected
             if await token_rejected(pool, user_id, issued_at, ver):
+                self._log.warning("JWT rejected: revocation/version mismatch for user %s", user_id)
                 return None
             jti = meta.get("jti")
             if jti:
                 from app.services.mcp_clients import client_revoked, touch_client
                 if await client_revoked(pool, jti):
+                    self._log.warning("JWT rejected: client %s revoked", jti)
                     return None
                 await touch_client(pool, jti)
             scopes = meta.get("scopes") or ["user"]
+            self._log.debug("accepted token: user=%s iss-scopes=%s", user_id, scopes)
             return AccessToken(
                 token=token,
                 client_id=user_id,

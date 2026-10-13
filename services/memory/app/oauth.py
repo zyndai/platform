@@ -504,8 +504,12 @@ async def authorize(
         raise HTTPException(status_code=400, detail="response_type must be 'code'")
 
     if resource:
-        if resource.rstrip("/") != settings.mcp_resource_url:
+        res = resource.rstrip("/")
+        # Accept the canonical resource or its origin (some hosts send the
+        # server URL without the /mcp path); normalize to the canonical value.
+        if res != settings.mcp_resource_url and res != settings.mcp_origin.rstrip("/"):
             raise HTTPException(status_code=400, detail="unsupported resource indicator")
+        resource = settings.mcp_resource_url
 
     is_connector_client = client_id.startswith("https://") or not _is_known_client(client_id)
 
@@ -769,6 +773,17 @@ async def token(
         stored_resource = parsed.get("resource", "") if isinstance(parsed, dict) else ""
         if stored_resource and not hmac.compare_digest(resource, stored_resource):
             raise HTTPException(status_code=400, detail="invalid_grant")
+        if not stored_resource and resource:
+            # Resource only came at redemption (not at authorize): bind it if
+            # it is the canonical MCP resource, so the token response echoes it.
+            res = resource.rstrip("/")
+            if res != settings.mcp_resource_url and res != settings.mcp_origin.rstrip("/"):
+                raise HTTPException(status_code=400, detail="invalid_grant")
+            stored_resource = settings.mcp_resource_url
+        logger.info(
+            "token exchange grant=%s client=%s stored_resource=%s provided_resource=%s",
+            grant_type, (client_id or "")[:40], bool(stored_resource), bool(resource),
+        )
 
         pkce = await _get_pkce_params(redis, code)
         if pkce:

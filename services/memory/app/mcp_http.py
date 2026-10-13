@@ -10,6 +10,7 @@ auth. The ZyndTokenVerifier handles both token types transparently.
 Run:  uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
 """
 import asyncio
+import logging
 import re
 from datetime import datetime, timezone
 
@@ -223,6 +224,7 @@ class ZyndTokenVerifier(TokenVerifier):
 
     def __init__(self, required_scopes: list[str] | None = None):
         super().__init__(required_scopes=required_scopes)
+        self._log = logging.getLogger("zynd.mcp_verify")
 
     async def verify_token(self, token: str) -> AccessToken | None:
         # No anonymous surface. Empty or whitespace bearers are a hard reject.
@@ -230,10 +232,17 @@ class ZyndTokenVerifier(TokenVerifier):
         if not token or not token.strip():
             return None
 
-        # 1) ZYND JWT — the persona dashboard mints this personal token
+        # 1) ZYND JWT — the persona dashboard mints this personal token. Connector
+        #    OAuth tokens are accepted alongside legacy ones: they carry the AS
+        #    issuer (PUBLIC_BASE_URL) and the RFC 8707 resource audience.
         try:
-            meta = verify_access_meta(token)
-        except ValueError:
+            meta = verify_access_meta(
+                token,
+                allowed_audiences=["zynd", settings.mcp_resource_url],
+                allowed_issuers=[settings.jwt_issuer, settings.public_base_url.rstrip("/")],
+            )
+        except ValueError as exc:
+            self._log.warning("JWT verification failed (trying opaque fallback): %s", exc)
             pass
         else:
             user_id = meta["sub"]
@@ -242,19 +251,35 @@ class ZyndTokenVerifier(TokenVerifier):
             pool = await _get_pool()
             from app.services.sessions import token_rejected
             if await token_rejected(pool, user_id, issued_at, ver):
+                self._log.warning("JWT rejected: revocation/version mismatch for user %s", user_id)
                 return None
             jti = meta.get("jti")
             if jti:
                 from app.services.mcp_clients import client_revoked, touch_client
                 if await client_revoked(pool, jti):
+                    self._log.warning("JWT rejected: client %s revoked", jti)
                     return None
                 await touch_client(pool, jti)
             scopes = meta.get("scopes") or ["user"]
+            self._log.debug("accepted token: user=%s iss-scopes=%s", user_id, scopes)
             return AccessToken(
                 token=token,
                 client_id=user_id,
                 scopes=scopes,
-                claims={"sub": user_id, "iat": issued_at, "jti": jti},
+                expires_at=meta.get("exp"),
+                # RFC 8707 resource binding: newer FastMCP/SDK releases reject
+                # tokens whose `resource` doesn't match the resource-server URL.
+                # Every accepted audience (legacy "zynd" or the MCP resource)
+                # is valid for this server, so bind to the canonical resource.
+                resource=settings.mcp_resource_url,
+                subject=str(user_id),
+                claims={
+                    "sub": user_id,
+                    "iat": issued_at,
+                    "jti": jti,
+                    "iss": meta.get("iss"),
+                    "aud": meta.get("aud"),
+                },
             )
 
         # 2) OAuth opaque access token — fallback for non-JWT tokens
@@ -278,6 +303,8 @@ class ZyndTokenVerifier(TokenVerifier):
                 token=token,
                 client_id=str(row["user_id"]),
                 scopes=row["scopes"] if isinstance(row["scopes"], list) else ["user"],
+                resource=settings.mcp_resource_url,
+                subject=str(row["user_id"]),
                 claims={"sub": str(row["user_id"])},
             )
         return None
@@ -285,24 +312,29 @@ class ZyndTokenVerifier(TokenVerifier):
 
 # ── FastMCP server ──────────────────────────────────────────────────────────────
 
-def _mcp_origin(url: str) -> str:
-    """Origin only. MCP_PUBLIC_BASE_URL is often https://api.zynd.ai/mcp; FastMCP
-    appends the transport path, so a base that already ends in /mcp advertises
-    https://api.zynd.ai/mcp/mcp and clients never list tools."""
-    parts = urlsplit(url)
-    return f"{parts.scheme}://{parts.netloc}"
-
-
 auth = RemoteAuthProvider(
     # S09 client tokens carry granular scopes, not the legacy full-access
     # "user" scope. Require authentication here; ScopeGate authorizes tools.
     token_verifier=ZyndTokenVerifier(required_scopes=[]),
     authorization_servers=[AnyHttpUrl(settings.public_base_url)],
-    base_url=AnyHttpUrl(_mcp_origin(settings.mcp_public_base_url)),
+    base_url=AnyHttpUrl(settings.mcp_origin),
+    scopes_supported=["user"],
     resource_name="ZYND",
 )
 
 mcp = FastMCP("zynd", auth=auth, instructions=_ZYND_INSTRUCTIONS)
+
+# ── Skills ─────────────────────────────────────────────────────────────────────
+# The connector ships basic memory skills (when/what to store) as MCP resources
+# (skill://<name>/SKILL.md). Claude loads them alongside the connector; the same
+# files are importable into ChatGPT Skills and Claude Code skill directories.
+from pathlib import Path
+
+from fastmcp.server.providers.skills import SkillsDirectoryProvider
+
+_SKILLS_ROOT = Path(__file__).resolve().parent.parent / "skills"
+if _SKILLS_ROOT.is_dir():
+    mcp.add_provider(SkillsDirectoryProvider(roots=[_SKILLS_ROOT]))
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
@@ -1232,10 +1264,15 @@ if settings.feature_s11_public_mcp:
             yield
 
     # Merge routes (public first). Both FastMCP lifespans must run on the parent.
+    # _auth_app's middleware must carry over too: AuthenticationMiddleware
+    # (BearerAuthBackend → ZyndTokenVerifier) populates scope["user"], which the
+    # /mcp route's RequireAuthMiddleware needs. Starlette drops app-level
+    # middleware when only routes are merged, so without this every
+    # authenticated POST /mcp 401s as invalid_token before the verifier runs.
     app = Starlette(
         routes=list(_public_app.routes) + list(_auth_app.routes),
         lifespan=_combined_lifespan,
-        middleware=[Middleware(RateLimitMiddleware)],
+        middleware=list(_auth_app.user_middleware) + [Middleware(RateLimitMiddleware)],
     )
 else:
     app = _auth_app

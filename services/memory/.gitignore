@@ -6,9 +6,12 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .uv/
-uv.lock
 
 # local-only: docs, plans, notes, agent config
 *.md
 docs/
 .claude/
+
+# connector skills ship with the Docker image — re-include their SKILL.md files
+!skills/
+!skills/**

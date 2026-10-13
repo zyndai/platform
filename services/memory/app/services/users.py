@@ -14,6 +14,32 @@ logger = logging.getLogger("zynd.users")
 _SYNTHETIC_EMAIL_DOMAIN = "conflict.zynd.local"
 
 
+async def find_user(
+    pool: asyncpg.Pool,
+    email: str,
+    sub: str | None,
+) -> str | None:
+    """Lookup-only identity resolution for MCP connector auth.
+
+    Connector sign-in must NEVER create a memory user — only existing accounts
+    get a token (locked decision). Returns the memory-layer user id, or None
+    when no user is linked to this verified Supabase identity. Keying mirrors
+    resolve_user: sub first, then email."""
+    email = (email or "").strip().lower()
+    sub = (sub or "").strip() or None
+
+    if sub:
+        row = await pool.fetchrow("SELECT id FROM users WHERE supabase_user_id = $1", sub)
+        if row:
+            return str(row["id"])
+
+    row = await pool.fetchrow(
+        "SELECT id FROM users WHERE lower(email) = lower($1)", email)
+    if row:
+        return str(row["id"])
+    return None
+
+
 async def resolve_user(
     pool: asyncpg.Pool,
     email: str,

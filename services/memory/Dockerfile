@@ -11,8 +11,12 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Install dependencies first (layer cache) — prod deps only, no dev/test tools.
-COPY pyproject.toml ./
-RUN uv sync --no-dev
+# uv.lock is copied alongside pyproject.toml and the install is --frozen: without
+# the lockfile, `uv sync` re-resolves from pyproject.toml (which allows newer
+# versions than the pin) and a lock-only change never invalidates this layer,
+# so the pinned dependency set never reaches the containers.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
 
 COPY . .
 

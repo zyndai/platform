@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     # Comma-separated allowlist of redirect_uri prefixes (prevents open redirect).
     oauth_allowed_redirect_prefixes: str = (
         "https://chat.openai.com/aip/,https://chatgpt.com/aip/,"
+        "https://chat.openai.com/connector/,https://chatgpt.com/connector/,"
         "https://claude.ai/api/mcp/,"
         "http://localhost,http://127.0.0.1"
     )

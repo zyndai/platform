@@ -19,8 +19,11 @@ export function ZyndOAuthHandoff() {
 
     void (async () => {
       const { data: { session } } = await createClient().auth.getSession();
-      if (session?.access_token && await completeZyndOAuth(session.access_token)) return;
-      if (!session) await startLinkedInOAuth(`${path}${window.location.search}`);
+      if (session?.access_token) {
+        await completeZyndOAuth(session.access_token);
+        return;
+      }
+      await startLinkedInOAuth("/auth");
     })();
   }, []);
 

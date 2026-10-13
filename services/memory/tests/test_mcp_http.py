@@ -70,3 +70,5 @@ async def test_oauth_protected_resource():
         data = r.json()
         assert "authorization_servers" in data
         assert len(data["authorization_servers"]) >= 1
+        assert "/mcp/mcp" not in data["resource"]
+        assert data["resource"].rstrip("/").endswith("/mcp")

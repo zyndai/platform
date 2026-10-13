@@ -51,6 +51,18 @@ async def test_authorize_rejects_unknown_client(client):
     assert r.status_code == 400
 
 
+async def test_chatgpt_connector_redirect_is_allowlisted(client):
+    r = await client.get("/oauth/authorize", params={
+        **AUTHORIZE_PARAMS,
+        "redirect_uri": "https://chatgpt.com/connector/oauth/ZTBtVlLoND7c",
+    })
+    assert r.status_code == 302
+    loc = r.headers["location"]
+    req = parse_qs(urlparse(loc).query)["zynd_oauth"][0]
+    payload = jwt.decode(req, settings.jwt_secret, algorithms=["HS256"])
+    assert payload["redirect_uri"] == "https://chatgpt.com/connector/oauth/ZTBtVlLoND7c"
+
+
 async def test_authorize_rejects_unlisted_redirect(client):
     r = await client.get("/oauth/authorize", params={
         **AUTHORIZE_PARAMS, "redirect_uri": "https://evil.example.com/cb"})

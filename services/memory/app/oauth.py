@@ -1,23 +1,15 @@
 """OAuth2 authorization-code server for ChatGPT Action AND Claude OAuth 2.1.
 
-Two flows, both issuing the same ZYND HS256 JWT:
+Both flows issue the same ZYND HS256 JWT. /oauth/authorize always hands the
+browser to cards login (`cards_login_url?zynd_oauth=<signed req>`). Cards uses
+whatever Supabase session is already there (LinkedIn today; any trusted
+provider the user signed in with). It then POSTs that session to
+/oauth/complete, which mints an auth code and redirects back to the client.
 
-  ChatGPT Action (legacy, no PKCE):
-    ChatGPT opens /oauth/authorize -> redirect to persona login -> persona calls
-    /oauth/complete -> mint code in Redis -> ChatGPT exchanges at /oauth/token.
-
-  Claude Connectors (OAuth 2.1 with PKCE + DCR):
-    Claude discovers /.well-known/oauth-protected-resource (FastMCP) and
-    /.well-known/oauth-authorization-server -> registers via DCR -> opens
-    /oauth/authorize?code_challenge=... -> server stores params in Redis,
-    redirects to Supabase Auth (Google) -> Supabase redirects to /oauth/callback
-    (HTML page extracts session from URL hash) -> POST /oauth/complete with
-    state_id + token -> server mints auth code -> Claude exchanges at /oauth/token
-    with code_verifier -> gets ZYND JWT.
-
-The Claude flow bypasses the persona frontend entirely — Supabase Auth handles
-login directly. Both /token paths call the same issue_access_token() function:
-OAuth is just another way to obtain the exact same JWT that MCP clients use.
+Claude Connectors (OAuth 2.1 with PKCE + DCR/CIMD) put code_challenge on the
+signed request so /oauth/token can still check the verifier. The older
+Supabase-direct Google path (/oauth/callback + Redis state_id) remains for
+in-flight handoffs only.
 """
 import base64
 import hashlib
@@ -351,12 +343,23 @@ async def _clear_oauth_state(redis, state_id: str) -> None:
 
 # ── Authorize request signing (ChatGPT/persona legacy flow only) ────────────────
 
-def _sign_oauth_request(redirect_uri: str, state: str, scope: str) -> str:
-    """Sign the authorize params so they survive the round-trip through the
-    persona login without trusting client-supplied params."""
+def _sign_oauth_request(
+    redirect_uri: str, state: str, scope: str,
+    code_challenge: str = "", code_challenge_method: str = "",
+) -> str:
+    """Sign the authorize params so they survive the round-trip through cards
+    login without trusting client-supplied params. PKCE fields ride along so
+    Claude can redeem the code with its verifier."""
     return jwt.encode(
-        {"typ": "oauth_req", "redirect_uri": redirect_uri, "state": state, "scope": scope,
-         "exp": datetime.now(timezone.utc) + timedelta(seconds=_OAUTH_REQ_TTL)},
+        {
+            "typ": "oauth_req",
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "scope": scope,
+            "code_challenge": code_challenge,
+            "code_challenge_method": code_challenge_method or ("S256" if code_challenge else ""),
+            "exp": datetime.now(timezone.utc) + timedelta(seconds=_OAUTH_REQ_TTL),
+        },
         settings.jwt_secret, algorithm="HS256",
     )
 
@@ -455,37 +458,21 @@ async def authorize(
 ) -> RedirectResponse:
     """OAuth 2.1 authorize endpoint.
 
-    Two paths:
-      ChatGPT client_id → persona frontend login (legacy, no PKCE).
-      DCR-registered client_id → Supabase Auth Google login (Claude, with PKCE).
-
-    For DCR clients, OAuth params are stored in Redis and the user is sent
-    directly to Supabase Auth. After login, the /oauth/callback HTML page
-    completes the flow by posting back to /oauth/complete."""
+    Every client (ChatGPT, Hermes, Claude DCR/CIMD) is sent to cards login.
+    Cards completes with the Supabase session already on that origin — LinkedIn
+    or whichever trusted provider the user signed in with. Not Google-only.
+    """
     if response_type != "code":
         raise HTTPException(status_code=400, detail="response_type must be 'code'")
 
-    # ChatGPT and the Hermes Deployer are confidential clients that authenticate
-    # via the persona-hosted login (no PKCE). Everything else is a DCR-registered
-    # client (Claude) that goes straight to Supabase Auth.
     if _is_known_client(client_id):
-        # ── ChatGPT / Hermes Deployer → persona login (legacy, no PKCE) ──
         _check_redirect_uri(redirect_uri)
-        req = _sign_oauth_request(redirect_uri, state, scope)
-        dest = settings.persona_login_url.rstrip("/") + "/?" + urlencode({"zynd_oauth": req})
-        return RedirectResponse(dest, status_code=302)
-
-    # ── Client ID Metadata Document (Claude.ai / MCP clients using a URL client_id) ──
-    # RFC 9728 / draft-parecki-oauth-client-id-metadata-document: when client_id is
-    # an https:// URL, fetch the document at that URL, verify self-consistency, and
-    # validate redirect_uri against the document's declared redirect_uris. Then
-    # continue into the same Supabase-direct PKCE path as DCR clients.
-    if client_id.startswith("https://"):
+    elif client_id.startswith("https://"):
+        # Client ID Metadata Document (Claude.ai / MCP clients using a URL client_id).
         meta = await _fetch_metadata_document(client_id)
         if not _check_dcr_redirect_uri(redirect_uri, meta["redirect_uris"]):
             _check_redirect_uri(redirect_uri)
     else:
-        # ── DCR-registered client (Claude Desktop via /oauth/register) ──
         row = await get_pool().fetchrow(
             "SELECT allowed_redirect_uris FROM oauth_clients WHERE client_id = $1",
             client_id,
@@ -495,26 +482,11 @@ async def authorize(
         if not _check_dcr_redirect_uri(redirect_uri, row["allowed_redirect_uris"]):
             _check_redirect_uri(redirect_uri)
 
-    # Store the OAuth params in Redis so /oauth/complete can retrieve them
-    # after Supabase Auth sends the user back.
-    state_id = secrets.token_urlsafe(32)
-    await _store_oauth_state(request.app.state.arq, state_id, {
-        "redirect_uri": redirect_uri,
-        "state": state,
-        "scope": scope,
-        "code_challenge": code_challenge,
-        "code_challenge_method": code_challenge_method or "S256",
-    })
-
-    # Redirect to Supabase Auth (Google login)
-    supabase_authorize_url = settings.supabase_url.rstrip("/") + "/auth/v1/authorize"
-    callback_url = settings.public_base_url.rstrip("/") + "/oauth/callback?state=" + state_id
-    params = urlencode({
-        "provider": "google",
-        "redirect_to": callback_url,
-        "scopes": "email profile",
-    })
-    return RedirectResponse(f"{supabase_authorize_url}?{params}", status_code=302)
+    req = _sign_oauth_request(
+        redirect_uri, state, scope, code_challenge, code_challenge_method,
+    )
+    dest = settings.cards_login_url.rstrip("/") + "/?" + urlencode({"zynd_oauth": req})
+    return RedirectResponse(dest, status_code=302)
 
 
 # ── Callback HTML page (Supabase-direct flow) ───────────────────────────────────
@@ -582,7 +554,7 @@ async def _resolve_user_and_mint_code(
     identity = await supabase_identity(supabase_token)
     if not identity:
         _log_token_diag(supabase_token)
-        raise HTTPException(status_code=401, detail="Google sign-in could not be verified")
+        raise HTTPException(status_code=401, detail="Sign-in could not be verified")
     email, display_name, sub = identity
 
     from app.services.users import resolve_user

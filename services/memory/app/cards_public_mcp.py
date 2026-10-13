@@ -58,6 +58,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     """Token-bucket style limit: N requests per IP|UA per rolling minute.
 
     Only applies to /cards-public-mcp* so personal /mcp OAuth traffic is untouched.
+    Successful public-MCP responses get Cache-Control matching get_card TTL
+    (streamable-HTTP POSTs are not intermediary-cached; header is advisory for clients).
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
@@ -80,10 +82,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 {"error": "rate_limited", "message": "Too many requests — slow down and retry."},
                 status_code=429,
+                headers={"Retry-After": "60", "Cache-Control": "no-store"},
             )
         hits.append(now)
         _buckets[key] = hits
-        return await call_next(request)
+        response = await call_next(request)
+        ttl = max(0, settings.s11_get_card_cache_ttl_seconds)
+        if response.status_code < 400 and "cache-control" not in {
+            k.lower() for k in response.headers.keys()
+        }:
+            response.headers["Cache-Control"] = (
+                f"public, max-age={ttl}" if ttl > 0 else "no-store"
+            )
+        return response
 
 
 def _require_enabled() -> None:
@@ -241,6 +252,13 @@ async def search_people_impl(
     }
 
 
+def _with_cache_control(data: dict, ttl: int) -> dict:
+    """Annotate CardView with Cache-Control-style hint for MCP clients."""
+    out = dict(data)
+    out["cache_control"] = f"public, max-age={ttl}" if ttl > 0 else "no-store"
+    return out
+
+
 async def get_card_impl(handle: str) -> dict:
     _require_enabled()
     h = (handle or "").strip().lstrip("@")
@@ -250,7 +268,7 @@ async def get_card_impl(handle: str) -> dict:
     ttl = max(0, settings.s11_get_card_cache_ttl_seconds)
     cached = _cache.get(h)
     if cached and cached[0] > now:
-        return cached[1]
+        return _with_cache_control(cached[1], ttl)
     try:
         data = await _http_get(f"/cards/by-handle/{h}/view")
     except httpx.HTTPStatusError as e:
@@ -262,10 +280,13 @@ async def get_card_impl(handle: str) -> dict:
         data["claimed"] = False
     if isinstance(data, dict) and not data.get("cite_as") and h:
         data["cite_as"] = _cite(h)
+    if not isinstance(data, dict):
+        data = {"value": data}
     if ttl:
-        _cache[h] = (now + ttl, data)
+        # Store without cache_control so TTL annotation stays fresh on read.
+        _cache[h] = (now + ttl, dict(data))
     await _emit_agent_fetch("get_card", "card", handle=h)
-    return data
+    return _with_cache_control(data, ttl)
 
 
 def _parse_sse_answer(body: str) -> str:

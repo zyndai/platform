@@ -7,9 +7,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+from starlette.testclient import TestClient
 
 from app import cards_public_mcp as pub
 from app.cards_public_mcp import (
+    RateLimitMiddleware,
     ask_card_impl,
     coarse_query_category,
     get_card_impl,
@@ -184,13 +190,37 @@ def test_get_card_view():
     mock_client.post = AsyncMock(return_value=_FakeResp({}, status=204))
 
     with patch("app.cards_public_mcp.httpx.AsyncClient", return_value=mock_client):
-        # claimed cards keep calendly etc from view; email still stripped by policy? 
+        # claimed cards keep calendly etc from view; email still stripped by policy?
         # Plan: strip contact only when unclaimed. Claimed may retain calendly.
         out = asyncio.run(get_card_impl("alice"))
 
     assert out["handle"] == "alice"
     assert out["fresh_as_of"]
     assert out["cite_as"].endswith("/p/alice")
+    assert out["cache_control"] == "no-store"  # fixture sets ttl=0
+
+
+def test_get_card_cache_control_and_hit(monkeypatch):
+    monkeypatch.setattr(pub.settings, "s11_get_card_cache_ttl_seconds", 60)
+    view = {
+        "handle": "alice",
+        "claimed": True,
+        "cite_as": "https://cards.zynd.ai/p/alice",
+        "fresh_as_of": "2026-01-01T00:00:00Z",
+    }
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = AsyncMock(return_value=_FakeResp(view))
+    mock_client.post = AsyncMock(return_value=_FakeResp({}, status=204))
+
+    with patch("app.cards_public_mcp.httpx.AsyncClient", return_value=mock_client):
+        first = asyncio.run(get_card_impl("alice"))
+        second = asyncio.run(get_card_impl("alice"))
+
+    assert first["cache_control"] == "public, max-age=60"
+    assert second["cache_control"] == "public, max-age=60"
+    assert mock_client.get.await_count == 1
 
 
 def test_get_card_404():
@@ -247,3 +277,59 @@ def test_find_people_prompt_mentions_tools():
     assert "search_people" in text
     assert "get_card" in text
     assert "ask_card" in text
+
+
+def _public_mcp_app():
+    async def ok(_request):
+        return PlainTextResponse("ok")
+
+    return Starlette(
+        routes=[
+            Route("/cards-public-mcp", ok, methods=["POST", "GET"]),
+            Route("/mcp", ok, methods=["POST", "GET"]),
+        ],
+        middleware=[Middleware(RateLimitMiddleware)],
+    )
+
+
+def test_rate_limit_returns_429(monkeypatch):
+    monkeypatch.setattr(pub.settings, "feature_s11_public_mcp", True)
+    monkeypatch.setattr(pub.settings, "s11_rate_limit_per_minute", 2)
+    monkeypatch.setattr(pub.settings, "s11_get_card_cache_ttl_seconds", 30)
+    pub.clear_caches()
+    client = TestClient(_public_mcp_app())
+    headers = {"user-agent": "s11-test-ua", "x-forwarded-for": "203.0.113.9"}
+    assert client.post("/cards-public-mcp", headers=headers).status_code == 200
+    assert client.post("/cards-public-mcp", headers=headers).status_code == 200
+    limited = client.post("/cards-public-mcp", headers=headers)
+    assert limited.status_code == 429
+    body = limited.json()
+    assert body["error"] == "rate_limited"
+    assert "slow down" in body["message"].lower()
+    assert limited.headers.get("retry-after") == "60"
+    assert limited.headers.get("cache-control") == "no-store"
+
+
+def test_rate_limit_skips_personal_mcp(monkeypatch):
+    monkeypatch.setattr(pub.settings, "feature_s11_public_mcp", True)
+    monkeypatch.setattr(pub.settings, "s11_rate_limit_per_minute", 1)
+    pub.clear_caches()
+    client = TestClient(_public_mcp_app())
+    headers = {"user-agent": "s11-test-ua", "x-forwarded-for": "203.0.113.10"}
+    assert client.post("/mcp", headers=headers).status_code == 200
+    assert client.post("/mcp", headers=headers).status_code == 200
+    assert client.post("/mcp", headers=headers).status_code == 200
+
+
+def test_rate_limit_sets_cache_control_on_ok(monkeypatch):
+    monkeypatch.setattr(pub.settings, "feature_s11_public_mcp", True)
+    monkeypatch.setattr(pub.settings, "s11_rate_limit_per_minute", 10)
+    monkeypatch.setattr(pub.settings, "s11_get_card_cache_ttl_seconds", 45)
+    pub.clear_caches()
+    client = TestClient(_public_mcp_app())
+    resp = client.post(
+        "/cards-public-mcp",
+        headers={"user-agent": "s11-cc", "x-forwarded-for": "203.0.113.11"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("cache-control") == "public, max-age=45"

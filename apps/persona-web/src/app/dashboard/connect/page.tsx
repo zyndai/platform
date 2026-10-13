@@ -25,12 +25,15 @@ interface Client {
   logoUrl: string;
   color: string;
   initial: string;
+  primaryMethodLabel?: string;
   steps: Step[];
   snippetStep: number;
   snippetLabel: string;
   snippet: (token: string, url: string) => string;
   altMethod?: AltMethod;
 }
+
+const OAUTH_CLIENTS = new Set<ClientId>(["claudedesktop", "claudecode"]);
 
 function Logo({ client, size = 18 }: { client: Client; size?: number }) {
   const [err, setErr] = useState(false);
@@ -69,26 +72,50 @@ const CLIENTS: Client[] = [
     name: "Claude Desktop",
     logoUrl: "https://anthropic.gallerycdn.vsassets.io/extensions/anthropic/claude-code/2.1.235/1787085642251/Microsoft.VisualStudio.Services.Icons.Default",
     color: "#C96442", initial: "C",
+    primaryMethodLabel: "Browser sign-in (OAuth)",
     snippetStep: 1, snippetLabel: "MCP URL",
     steps: [
       { title: "Open Connectors settings", desc: "In Claude Desktop, go to Settings, then click Connectors." },
-      { title: "Add the ZYND MCP server", desc: "Click Add custom connector and paste this URL." },
-      { title: "Authorize in your browser", desc: "A browser window will open automatically. Sign in to authorize." },
+      { title: "Add the ZYND MCP server", desc: "Click Add custom connector and paste this URL. No API key." },
+      { title: "Authorize in your browser", desc: "A browser window opens. Sign in on Zynd to authorize. Claude returns you automatically — you do not add a callback." },
     ],
     snippet: (_t, url) => url,
+    altMethod: {
+      label: "Manual token",
+      steps: [
+        { title: "Copy your token and MCP URL", desc: "Use this only if browser sign-in is not available. The token is long-lived — revoke it from Connections if you stop using it." },
+        { title: "Add a Bearer header", desc: "Paste the MCP URL and this Authorization header into the connector or MCP config." },
+        { title: "Prefer browser sign-in when you can", desc: "OAuth signs you in on Zynd and returns to Claude. You do not register a callback." },
+      ],
+      snippetStep: 1,
+      snippetLabel: "MCP URL + header",
+      snippet: (token, url) => `${url}\nAuthorization: Bearer ${token}`,
+    },
   },
   {
     id: "claudecode",
     name: "Claude Code",
     logoUrl: "https://anthropic.gallerycdn.vsassets.io/extensions/anthropic/claude-code/2.1.235/1787085642251/Microsoft.VisualStudio.Services.Icons.Default",
     color: "#C96442", initial: "C",
+    primaryMethodLabel: "Browser sign-in (OAuth)",
     snippetStep: 0, snippetLabel: "terminal",
     steps: [
-      { title: "Run the setup command", desc: "Run this in your terminal — your token is pre-filled." },
-      { title: "Authorize the connection", desc: 'Type /mcp in Claude Code, select "zynd", and complete the sign-in. Required even though the token is pre-filled.' },
+      { title: "Run the setup command", desc: "Adds the MCP server by URL only — no token. Claude opens a browser so you can sign in on Zynd." },
+      { title: "Authorize the connection", desc: 'Type /mcp in Claude Code, select "zynd", and complete the sign-in. Claude uses a localhost callback and returns automatically — you do not configure one.' },
       { title: "Be specific when you ask", desc: "Claude Code has its own tools for things like hosting a page — say something like \"publish this as a ZYND page\" so it uses the zynd MCP tool instead of its own (e.g. Vercel)." },
     ],
-    snippet: (token, url) => `claude mcp add --scope user --transport http zynd ${url} --header "Authorization: Bearer ${token}"`,
+    snippet: (_t, url) => `claude mcp add --scope user --transport http zynd ${url}`,
+    altMethod: {
+      label: "Manual token",
+      steps: [
+        { title: "Run the setup command", desc: "Your token is pre-filled. Use this if browser sign-in is not available." },
+        { title: "Authorize if asked", desc: 'Type /mcp in Claude Code, select "zynd". With a Bearer header, the server can accept the token without a new OAuth code exchange.' },
+        { title: "Be specific when you ask", desc: "Claude Code has its own tools for things like hosting a page — say something like \"publish this as a ZYND page\" so it uses the zynd MCP tool instead of its own (e.g. Vercel)." },
+      ],
+      snippetStep: 0,
+      snippetLabel: "terminal",
+      snippet: (token, url) => `claude mcp add --scope user --transport http zynd ${url} --header "Authorization: Bearer ${token}"`,
+    },
   },
   {
     id: "cursor",
@@ -285,7 +312,7 @@ export default function ConnectPage() {
   const [copied, setCopied] = useState(false);
   const [reload, setReload] = useState(0);
   const [showMore, setShowMore] = useState(false);
-  const [useAlt, setUseAlt] = useState(true);
+  const [useAlt, setUseAlt] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -329,7 +356,7 @@ export default function ConnectPage() {
   const moreClients = CLIENTS.slice(PRIMARY);
   const activeInMore = moreClients.some((c) => c.id === activeId);
 
-  const select = (id: ClientId) => { setActiveId(id); setCopied(false); setShowMore(false); setUseAlt(true); };
+  const select = (id: ClientId) => { setActiveId(id); setCopied(false); setShowMore(false); setUseAlt(!OAUTH_CLIENTS.has(id)); };
 
   const copy = () => {
     navigator.clipboard.writeText(snippet);
@@ -401,7 +428,7 @@ export default function ConnectPage() {
             {active.altMethod && (
               <div style={methodToggle}>
                 <button style={!useAlt ? methodPillOn : methodPillOff} onClick={() => setUseAlt(false)}>
-                  Edit config file
+                  {active.primaryMethodLabel ?? "Edit config file"}
                 </button>
                 <button style={useAlt ? methodPillOn : methodPillOff} onClick={() => setUseAlt(true)}>
                   {active.altMethod.label}

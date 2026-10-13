@@ -6,6 +6,7 @@ import {
   fetchCardView,
   CARDS_API,
 } from "@/lib/cards";
+import { featureS11PublicMcp, PUBLIC_CARDS_MCP_URL } from "@/lib/s11";
 import { logAgentFetch } from "@/lib/track";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://cards.zynd.ai";
@@ -32,6 +33,13 @@ export async function GET(req: Request) {
     ? uniqueSkills.map((s) => `${s} developer`)
     : ["blockchain developer", "React engineer", "GTM engineer"];
 
+  const mcpLines = featureS11PublicMcp()
+    ? [
+        `  MCP (no auth):    ${PUBLIC_CARDS_MCP_URL}`,
+        "                    tools: search_people, get_card, ask_card; resource zynd://card/{handle}; prompt find-people",
+      ]
+    : [];
+
   const lines = [
     "# Zynd Cards",
     "",
@@ -42,10 +50,11 @@ export async function GET(req: Request) {
     "",
     `  HTML (browsable): ${SITE_URL}/find?q={natural language query}`,
     `  JSON API:         ${CARDS_API}/ask?q={natural language query}`,
-    "  MCP (no auth):    https://api.zynd.ai/cards-public-mcp",
-    "                    tools: search_people, get_card, ask_card; resource zynd://card/{handle}; prompt find-people",
+    ...mcpLines,
     "",
-    "HTTP and MCP return ranked real people with: name, headline, skills, location, availability, match_score, match_reasons (claimed cards by default).",
+    featureS11PublicMcp()
+      ? "HTTP and MCP return ranked real people with: name, headline, skills, location, availability, match_score, match_reasons (claimed cards by default)."
+      : "Results include: name, headline, skills, location, availability, match_score, match_reasons (claimed cards by default).",
     "",
     "Example people searches:",
     ...exampleQueries.map((q) => `  ${SITE_URL}/find?q=${encodeURIComponent(q)}`),

@@ -2,6 +2,7 @@
 
 import { type ReactNode } from "react";
 import { AuthProvider, type AuthSnapshot } from "@/hooks/useAuth";
+import { ZyndOAuthHandoff } from "@/components/ZyndOAuthHandoff";
 
 export function Providers({
   initialAuth,
@@ -10,5 +11,10 @@ export function Providers({
   initialAuth?: AuthSnapshot;
   children: ReactNode;
 }) {
-  return <AuthProvider initial={initialAuth}>{children}</AuthProvider>;
+  return (
+    <AuthProvider initial={initialAuth}>
+      <ZyndOAuthHandoff />
+      {children}
+    </AuthProvider>
+  );
 }

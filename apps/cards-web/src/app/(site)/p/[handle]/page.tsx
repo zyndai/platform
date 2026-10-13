@@ -36,6 +36,7 @@ import { MemoryCard } from "./memory-card";
 import { ClaimBanner } from "./claim-banner";
 import { RequestIntro } from "@/components/intros/RequestIntro";
 import { introsEnabled } from "@/lib/intros";
+import { memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
 
 interface PageProps {
   params: Promise<{ handle: string }>;
@@ -477,7 +478,8 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
   const githubHandle = usernameFromUrl(identity.links?.github) || card.handle || "profile";
   const githubUrl = safeUrl(identity.links?.github);
   const ghLogin = usernameFromUrl(identity.links?.github);
-  const ghExtras = ghLogin ? await fetchGithubExtras(ghLogin) : null;
+  const cardHasGithub = !!(identity.links?.github || card.github_stats || card.contribution_stats);
+  const ghExtras = cardHasGithub && ghLogin ? await fetchGithubExtras(ghLogin) : null;
   const xUrl = safeUrl(identity.links?.x);
   const bookingLinks = [
     { label: "Calendly", url: safeUrl(card.calendly_url) },
@@ -516,20 +518,21 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
     const seen = new Set<string>();
 
     const pushFact = (predicate: string, object: string, source: string, confidence: number, approved_at: string, expires_at: string) => {
-      const meta = MEMORY_GROUPS[predicate];
+      const family = memoryFactFamily(predicate);
+      const meta = MEMORY_GROUPS[family];
       if (!meta || !object) return;
       if (expires_at) {
         const end = Date.parse(expires_at);
         if (!Number.isNaN(end) && end <= nowMs) return;
       }
-      const dedupeKey = `${predicate}|${object.toLowerCase()}`;
+      const dedupeKey = memoryFactKey(predicate, object);
       if (seen.has(dedupeKey)) return;
       seen.add(dedupeKey);
-      const list = byPredicate.get(predicate) ?? [];
+      const list = byPredicate.get(family) ?? [];
       const rawText = ENUM_LABELS[object] ?? object;
-      const text = predicate === "is_building" ? rawText.replace(/^building\s+/i, "") : rawText;
+      const text = family === "is_building" ? rawText.replace(/^building\s+/i, "") : rawText;
       list.push({ text, inferred: source === "inferred", confidence, approved_at, expires_at });
-      byPredicate.set(predicate, list);
+      byPredicate.set(family, list);
     };
 
     if (cardView?.facts?.length) {
@@ -606,7 +609,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
   const showLinkedin = !!(linkedinHandle || linkedinUrl || liJobs.length > 0);
   const showX = !!(v.x.handle || v.x.followers != null);
-  const showGithub = !!(identity.links?.github || card.github_stats || card.contribution_stats || ghExtras?.contributions);
+  const showGithub = cardHasGithub;
   const contributions = (v.contributions && Array.isArray(v.contributions.levels) && v.contributions.levels.length > 0)
     ? v.contributions
     : ghExtras?.contributions ?? null;

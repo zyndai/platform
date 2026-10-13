@@ -1,0 +1,12 @@
+.persona-intros { overflow-wrap: anywhere; color: #232329; background: #fff; border: 1px solid #e8e5ef; border-radius: 16px; }
+.persona-intros h1 { font-size: 28px; margin-bottom: 12px; }
+.persona-intros h2 { font-size: 18px; margin-bottom: 8px; }
+.persona-intros h1, .persona-intros h2 { color: #232329; -webkit-text-fill-color: currentColor !important; background: none; background-clip: border-box; }
+.persona-intros p { margin: 12px 0; line-height: 1.6; }
+.persona-intros button { padding: 10px 16px; margin: 6px 4px 6px 0; border-radius: 8px; background: #6952c9; color: #fff; cursor: pointer; }
+.persona-intros button:disabled { opacity: .5; cursor: default; }
+.persona-intros button:focus-visible { outline: 3px solid #bfb2f3; outline-offset: 3px; }
+.persona-intros input[type="datetime-local"] { padding: 10px; border-radius: 8px; border: 1px solid #d8d3e6; background: white; color: #232329; max-width: 100%; }
+.persona-intros label { display: block; margin: 12px 0; }
+.persona-intros a { color: #6952c9; text-decoration: underline; }
+.persona-intros [role="alert"] { color: #a02b38; }

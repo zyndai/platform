@@ -27,6 +27,7 @@ CARDS_READ_TOOLS = frozenset({
     "get_card_status",
     "list_pending_facts",
     "get_card_activity",
+    "list_intros",
 })
 CARDS_APPROVE_TOOLS = frozenset({
     "approve_fact",

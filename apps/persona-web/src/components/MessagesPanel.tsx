@@ -298,11 +298,13 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
 
   const updateThreadStatus = async (status: string, thread?: Thread) => {
     const target = thread || activeThread;
-    if (!target) return;
-    await getSupabase()
-      .from("dm_threads")
-      .update({ status })
-      .eq("id", target.id);
+    if (!target || !sessionUser) return;
+    const action = status === "accepted" ? "accept" : "block";
+    const response = await authFetch(`${API}/api/persona/threads/${target.id}/status`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, user_id: sessionUser.id }),
+    });
+    if (!response.ok) throw new Error(await response.text());
 
     setThreads((prev) =>
       prev.map((t) => (t.id === target.id ? { ...t, status: status as any } : t))
@@ -583,6 +585,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [permissions, setPermissions] = useState<ConnectionPermissions | null>(null);
   const [permissionsSaving, setPermissionsSaving] = useState<keyof ConnectionPermissions | null>(null);
+  const [canEditPermissions, setCanEditPermissions] = useState(false);
 
   // Load permissions whenever the drawer opens for a thread.
   // Depend on the id (not the object reference) so re-renders that
@@ -596,6 +599,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
       .then((data) => {
         if (cancelled || !data) return;
         setPermissions(data.permissions);
+        setCanEditPermissions(data.can_edit === true);
       })
       .catch((e) => console.error("Failed to load permissions:", e));
     return () => {
@@ -605,7 +609,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
 
   // Optimistic toggle: flip locally immediately, PATCH the backend, roll back on failure.
   const toggleConnectionPermission = async (key: keyof ConnectionPermissions) => {
-    if (!activeThread || !permissions) return;
+    if (!activeThread || !permissions || !canEditPermissions) return;
     const previous = permissions[key];
     const next = !previous;
     setPermissions({ ...permissions, [key]: next });
@@ -1711,6 +1715,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                       <p className="messages-history-empty">Loading permissions...</p>
                     ) : (
                       <div>
+                        {!canEditPermissions && <p>The receiving owner controls these permissions.</p>}
                         {PERMISSION_LABELS.map(({ key, label, help }) => {
                           const on = permissions[key];
                           const saving = permissionsSaving === key;
@@ -1722,7 +1727,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                               </div>
                               <button
                                 onClick={() => toggleConnectionPermission(key)}
-                                disabled={saving}
+                                disabled={saving || !canEditPermissions}
                                 className={`permission-toggle ${on ? "is-on" : ""}`}
                                 aria-pressed={on}
                                 aria-label={label}

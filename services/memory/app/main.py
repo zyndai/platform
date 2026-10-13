@@ -2,6 +2,7 @@ import hmac
 import json
 import logging
 from contextlib import asynccontextmanager
+from uuid import UUID
 
 from arq import create_pool
 from arq.connections import RedisSettings
@@ -309,6 +310,22 @@ async def service_findability(identifier: str, authorization: str = Header(defau
     from app.services.findability import get_card
     facts = await get_card(get_pool(), str(row["id"]))
     return {"connected": True, "facts": facts}
+
+
+@app.get("/v1/service/identity/{uid}")
+async def service_identity(uid: UUID, authorization: str = Header(default="")) -> dict:
+    """Verified UUID linkage only, with no private memory or email fallback."""
+    if not _valid_service_token(authorization.removeprefix("Bearer ").strip()):
+        raise HTTPException(401, "invalid service token")
+    if not settings.s12_identity_issuer:
+        raise HTTPException(503, "shared identity issuer is not configured")
+    rows = await get_pool().fetch(
+        "SELECT id, supabase_user_id FROM users WHERE supabase_user_id = $1 LIMIT 2", str(uid))
+    if not rows:
+        raise HTTPException(404, "shared identity is not linked")
+    if len(rows) != 1:
+        raise HTTPException(409, "shared identity has conflicting links")
+    return {"zynd_uid": str(uid), "memory_uid": str(rows[0]["id"]), "issuer": settings.s12_identity_issuer}
 
 
 async def _service_caller(authorization: str, email: str) -> str:

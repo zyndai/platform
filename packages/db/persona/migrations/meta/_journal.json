@@ -15,6 +15,41 @@
       "when": 1790430024353,
       "tag": "0001_persona_drop_public_read",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791872547386,
+      "tag": "0002_s12_intro_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791872622685,
+      "tag": "0003_s12_intro_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791876857256,
+      "tag": "0004_s12_audit_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791881342579,
+      "tag": "0005_s12_deletion_compatibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791881946908,
+      "tag": "0006_s12_meeting_grants",
+      "breakpoints": true
     }
   ]
 }

@@ -34,6 +34,11 @@ load_dotenv(_env_path)
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "http://127.0.0.1:54321")
 SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
 SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
+FEATURE_S12_INTROS: bool = os.getenv("FEATURE_S12_INTROS", "false").lower() in ("1", "true", "yes")
+# Dedicated Cards credential, never accepted as a generic Persona service key.
+CARDS_INTRO_SERVICE_TOKEN: str = os.getenv("CARDS_INTRO_SERVICE_TOKEN", "")
+S12_REQUESTER_DAILY_CAP: int = max(1, int(os.getenv("S12_REQUESTER_DAILY_CAP", "10")))
+S12_CARD_DAILY_CAP: int = max(1, int(os.getenv("S12_CARD_DAILY_CAP", "20")))
 
 # Extra bearer keys accepted as trusted internal-service callers (comma-separated),
 # in addition to SUPABASE_SERVICE_KEY which memory-layer sends today. Interim until

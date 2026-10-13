@@ -932,10 +932,11 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
     TELEGRAM_WEBHOOK_SECRET is configured.
     """
     secret = config.TELEGRAM_WEBHOOK_SECRET
-    if secret:
-        sent = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if not hmac.compare_digest(sent.encode(), secret.encode()):
-            raise HTTPException(status_code=401, detail="bad webhook secret")
+    if not secret:
+        raise HTTPException(status_code=503, detail="Telegram webhook is not configured")
+    sent = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not hmac.compare_digest(sent.encode(), secret.encode()):
+        raise HTTPException(status_code=401, detail="bad webhook secret")
     try:
         data = await request.json()
     except Exception:

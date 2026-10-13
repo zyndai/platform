@@ -266,7 +266,20 @@ class ZyndTokenVerifier(TokenVerifier):
                 token=token,
                 client_id=user_id,
                 scopes=scopes,
-                claims={"sub": user_id, "iat": issued_at, "jti": jti},
+                expires_at=meta.get("exp"),
+                # RFC 8707 resource binding: newer FastMCP/SDK releases reject
+                # tokens whose `resource` doesn't match the resource-server URL.
+                # Every accepted audience (legacy "zynd" or the MCP resource)
+                # is valid for this server, so bind to the canonical resource.
+                resource=settings.mcp_resource_url,
+                subject=str(user_id),
+                claims={
+                    "sub": user_id,
+                    "iat": issued_at,
+                    "jti": jti,
+                    "iss": meta.get("iss"),
+                    "aud": meta.get("aud"),
+                },
             )
 
         # 2) OAuth opaque access token — fallback for non-JWT tokens
@@ -290,6 +303,8 @@ class ZyndTokenVerifier(TokenVerifier):
                 token=token,
                 client_id=str(row["user_id"]),
                 scopes=row["scopes"] if isinstance(row["scopes"], list) else ["user"],
+                resource=settings.mcp_resource_url,
+                subject=str(row["user_id"]),
                 claims={"sub": str(row["user_id"])},
             )
         return None

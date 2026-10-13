@@ -247,6 +247,10 @@ async def test_verifier_accepts_connector_token(rejected_mock):
         result = await ZyndTokenVerifier().verify_token(token)
     assert result is not None
     assert result.client_id == "u-1"
+    # RFC 8707 binding: newer FastMCP releases reject tokens whose `resource`
+    # doesn't match the resource-server URL.
+    assert result.resource == settings.mcp_resource_url
+    assert result.expires_at is not None
 
 
 @patch("app.services.sessions.token_rejected", new_callable=AsyncMock, return_value=False)

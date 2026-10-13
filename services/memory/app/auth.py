@@ -210,7 +210,8 @@ def verify_access_meta(
     allowed_audiences: list[str] | None = None,
     allowed_issuers: list[str] | None = None,
 ) -> dict:
-    """sub, iat, ver, jti, scopes. `scopes` is None on legacy tokens (full access).
+    """sub, iat, ver, jti, scopes, exp, iss, aud. `scopes` is None on legacy
+    tokens (full access).
 
     Connector verification passes allowed_audiences/allowed_issuers so tokens
     bound to the MCP resource (aud) minted by the AS issuer (PUBLIC_BASE_URL)
@@ -228,6 +229,9 @@ def verify_access_meta(
         "ver": int(ver) if ver is not None else None,
         "jti": payload.get("jti"),
         "scopes": list(scopes) if isinstance(scopes, list) else None,
+        "exp": int(payload["exp"]) if payload.get("exp") else None,
+        "iss": payload.get("iss"),
+        "aud": payload.get("aud"),
     }
 
 

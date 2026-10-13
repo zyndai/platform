@@ -279,6 +279,46 @@ def test_find_people_prompt_mentions_tools():
     assert "ask_card" in text
 
 
+def test_merged_app_carries_auth_middleware():
+    """S11 route-merge must keep _auth_app's middleware: without it, /mcp's
+    RequireAuthMiddleware never sees scope["user"] (set by
+    AuthenticationMiddleware → BearerAuthBackend → ZyndTokenVerifier) and every
+    authenticated request 401s as invalid_token before the verifier runs.
+
+    Runs in a subprocess: importing app.mcp_http with the flag on in-process
+    would leak a duplicate module into sys.modules and break later
+    patch("app.mcp_http.…") targets in this test session.
+    """
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    service_root = str(Path(__file__).resolve().parents[1])
+    code = (
+        "import os, json, sys\n"
+        f"sys.path.insert(0, {service_root!r})\n"
+        "os.environ['FEATURE_S11_PUBLIC_MCP'] = 'true'\n"
+        "from starlette.middleware.authentication import AuthenticationMiddleware\n"
+        "from app.cards_public_mcp import RateLimitMiddleware\n"
+        "import app.mcp_http\n"
+        "names = [mw.cls.__name__ for mw in app.mcp_http.app.user_middleware]\n"
+        "print(json.dumps({'auth': AuthenticationMiddleware.__name__ in names,\n"
+        "                 'rate': RateLimitMiddleware.__name__ in names}))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=service_root,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert result["auth"] is True
+    assert result["rate"] is True
+
+
 def _public_mcp_app():
     async def ok(_request):
         return PlainTextResponse("ok")

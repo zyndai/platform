@@ -1264,10 +1264,15 @@ if settings.feature_s11_public_mcp:
             yield
 
     # Merge routes (public first). Both FastMCP lifespans must run on the parent.
+    # _auth_app's middleware must carry over too: AuthenticationMiddleware
+    # (BearerAuthBackend → ZyndTokenVerifier) populates scope["user"], which the
+    # /mcp route's RequireAuthMiddleware needs. Starlette drops app-level
+    # middleware when only routes are merged, so without this every
+    # authenticated POST /mcp 401s as invalid_token before the verifier runs.
     app = Starlette(
         routes=list(_public_app.routes) + list(_auth_app.routes),
         lifespan=_combined_lifespan,
-        middleware=[Middleware(RateLimitMiddleware)],
+        middleware=list(_auth_app.user_middleware) + [Middleware(RateLimitMiddleware)],
     )
 else:
     app = _auth_app

@@ -27,11 +27,14 @@ function AuthPageContent() {
       const { data: { session } } = await createClient().auth.getSession();
       if (cancelled) return;
       if (session?.access_token) {
-        const done = await completeZyndOAuth(session.access_token);
-        if (!done && !cancelled) setHandoff(false);
+        const message = await completeZyndOAuth(session.access_token);
+        if (message && !cancelled) {
+          setOauthError(message);
+          setHandoff(false);
+        }
         return;
       }
-      const next = searchParams.get("next") || "/directory";
+      const next = hasPendingZyndOAuth() ? "/auth" : (searchParams.get("next") || "/directory");
       const message = await startLinkedInOAuth(next);
       if (message && !cancelled) {
         setOauthError(message);
@@ -42,7 +45,7 @@ function AuthPageContent() {
   }, [handoff, searchParams]);
 
   const loginWithLinkedin = async () => {
-    const next = searchParams.get("next") || "/directory";
+    const next = hasPendingZyndOAuth() || handoff ? "/auth" : (searchParams.get("next") || "/directory");
     const message = await startLinkedInOAuth(next);
     if (message) setOauthError(message);
   };
@@ -70,7 +73,7 @@ function AuthPageContent() {
 
         {oauthError && (
           <p style={{ color: "#f87171", fontSize: "14px", marginBottom: "16px" }}>
-            Sign-in failed — please try again.
+            {oauthError === "auth_callback_failed" ? "Sign-in failed — please try again." : oauthError}
           </p>
         )}
 

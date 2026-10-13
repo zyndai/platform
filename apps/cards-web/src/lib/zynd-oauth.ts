@@ -28,15 +28,15 @@ export function hasPendingZyndOAuth(): boolean {
   }
 }
 
-export async function completeZyndOAuth(accessToken: string | undefined): Promise<boolean> {
-  if (typeof window === "undefined" || !accessToken || !MEMORY_API) return false;
+export async function completeZyndOAuth(accessToken: string | undefined): Promise<string | null> {
+  if (typeof window === "undefined" || !accessToken || !MEMORY_API) return "Not signed in.";
   let req: string | null = null;
   try {
     req = window.sessionStorage.getItem(KEY);
   } catch {
-    return false;
+    return "Couldn't read the connector request.";
   }
-  if (!req) return false;
+  if (!req) return null;
 
   try {
     const res = await fetch(`${MEMORY_API}/oauth/complete`, {
@@ -44,19 +44,23 @@ export async function completeZyndOAuth(accessToken: string | undefined): Promis
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ req, supabase_token: accessToken }),
     });
-    if (!res.ok) throw new Error(`oauth/complete returned ${res.status}`);
-    const { redirect_url } = await res.json();
-    if (typeof redirect_url !== "string" || !redirect_url) throw new Error("no redirect_url");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const detail = typeof data.detail === "string" ? data.detail : `oauth/complete returned ${res.status}`;
+      throw new Error(detail);
+    }
+    if (typeof data.redirect_url !== "string" || !data.redirect_url) throw new Error("no redirect_url");
     window.sessionStorage.removeItem(KEY);
-    window.location.href = redirect_url;
-    return true;
+    window.location.href = data.redirect_url;
+    return null;
   } catch (e) {
+    const message = e instanceof Error ? e.message : "Connector sign-in failed.";
     console.warn("[zynd-oauth] hand-off failed:", e);
     try {
       window.sessionStorage.removeItem(KEY);
     } catch {
       /* ignore */
     }
-    return false;
+    return message;
   }
 }

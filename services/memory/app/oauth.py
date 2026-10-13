@@ -618,14 +618,15 @@ async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
         )
         return response
 
-    # ── Persona frontend flow (ChatGPT, legacy) ──
+    # Signed req from /authorize. redirect_uri was already validated there
+    # (known client, DCR, or CIMD) and sealed into the JWT — don't re-check
+    # the global allowlist, which would reject ChatGPT connector callbacks.
     payload = _verify_oauth_request(body.req)
     redirect_uri = payload["redirect_uri"]
     state = payload.get("state", "")
     scope = payload.get("scope", "ingest")
     code_challenge = payload.get("code_challenge", "")
     code_challenge_method = payload.get("code_challenge_method", "S256")
-    _check_redirect_uri(redirect_uri)
 
     return await _resolve_user_and_mint_code(
         body.supabase_token, redirect_uri, state, scope,

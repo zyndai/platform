@@ -45,7 +45,9 @@ def test_activity_flag_off_means_unavailable_not_zero(monkeypatch):
     monkeypatch.setattr(config, "FEATURE_S04_EVENTS", False)
     sb = MagicMock()
     monkeypatch.setattr(config, "get_supabase", lambda: sb)
-    assert owner_home.activity("alice")["views"] is None
+    result = owner_home.activity("alice")
+    assert result["views"] is None
+    assert result["chat_topics"] == []
     sb.assert_not_called()
 
 
@@ -62,6 +64,24 @@ def test_available_matching_queries_are_grouped_and_redacted():
     assert result == [{"query": "Python engineer", "count": 2}, {"query": "Ask [redacted]", "count": 1}]
 
 
+def test_chat_topics_group_categories_and_ignore_text():
+    sb = MagicMock()
+    q = sb.table.return_value
+    for method in ("select", "eq", "gte", "order", "limit"):
+        getattr(q, method).return_value = q
+    q.execute.return_value.data = [
+        {"meta": {"category": "contact", "chars": 12, "query": "email me at secret@example.com"}},
+        {"meta": {"category": "work", "chars": 20}},
+        {"meta": {"category": "contact", "chars": 8}},
+        {"meta": {"category": "nope", "chars": 4}},
+        {"meta": {}},
+    ]
+    assert owner_home.chat_topics(sb, "alice", "2026-10-05") == [
+        {"category": "contact", "count": 2},
+        {"category": "work", "count": 1},
+    ]
+
+
 def test_activity_real_counts_are_owner_handle_scoped(monkeypatch):
     monkeypatch.setattr(config, "FEATURE_S04_EVENTS", True)
     monkeypatch.setattr(config, "SUPABASE_DB_SCHEMA", "cards")
@@ -70,11 +90,15 @@ def test_activity_real_counts_are_owner_handle_scoped(monkeypatch):
     q.select.return_value = q
     q.eq.return_value = q
     q.gte.return_value = q
-    q.execute.side_effect = [SimpleNamespace(count=7), SimpleNamespace(count=2), SimpleNamespace(count=3)]
+    q.execute.side_effect = [
+        SimpleNamespace(count=7), SimpleNamespace(count=2), SimpleNamespace(count=3),
+        SimpleNamespace(data=[]), SimpleNamespace(data=[]),
+    ]
     monkeypatch.setattr(config, "get_supabase", lambda: sb)
     result = owner_home.activity("alice")
     assert result["views"] == 7 and result["agent_hits"] == 5
     assert result["intro_requests"] is None
+    assert result["chat_topics"] == []
     assert ("handle", "alice") in [call.args for call in q.eq.call_args_list]
 
 

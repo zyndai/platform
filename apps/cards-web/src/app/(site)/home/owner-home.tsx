@@ -14,6 +14,14 @@ import {
 import { ownerRequest, type OwnerStatus } from "@/lib/owner-home";
 import "./owner-home.css";
 
+const CHAT_TOPIC_LABELS: Record<string, string> = {
+  contact: "Contact",
+  work: "Work",
+  skills: "Skills",
+  background: "Background",
+  other: "Other",
+};
+
 export function OwnerHome({
   initial,
   token,
@@ -236,6 +244,18 @@ export function OwnerHome({
               Counts reflect recorded requests, rather than unique people.
               Requester identities stay private.
             </p>
+            <h3>What people asked the assistant</h3>
+            {(data.activity.chat_topics ?? []).length ? (
+              <ul>
+                {(data.activity.chat_topics ?? []).map((topic) => (
+                  <li key={topic.category}>
+                    {CHAT_TOPIC_LABELS[topic.category] ?? topic.category} · {topic.count}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>No assistant questions recorded yet.</p>
+            )}
           </section>
           <section className="oh-panel">
             <p className="oh-eyebrow">NEEDS YOUR ATTENTION</p>
@@ -350,6 +370,11 @@ export function OwnerHome({
             >
               Preview weekly digest →
             </button>
+            <p className="oh-caption">
+              The public assistant records the topic of each question, such as
+              contact or work, and how long it was. It does not store the
+              question text.
+            </p>
             <div className="oh-preview-links">
               {data.visibility === "public" ? (
                 <>

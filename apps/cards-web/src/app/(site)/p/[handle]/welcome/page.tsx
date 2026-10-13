@@ -57,6 +57,15 @@ export default async function WelcomePage({ params }: PageProps) {
   const canonical = cardCanonicalUrl(card);
   const short = canonical.replace(/^https?:\/\//, "");
   const seed = claimed ? seedAskMessages(card) : [];
+  const chatPrompts = [
+    card.working_on?.find((item) => item.trim()) ? `What is ${firstName} building?` : "",
+    card.skills?.find((skill) => skill.name.trim()) ? `What is ${firstName} good at?` : "",
+    card.identity.headline?.trim() ? `What does ${firstName} do?` : "",
+  ].filter(Boolean).slice(0, 3);
+  const bookingLinks = [
+    { label: "Calendly", url: card.calendly_url },
+    { label: "Google Calendar", url: card.google_calendar_url },
+  ].filter((link): link is { label: string; url: string } => !!link.url && /^https?:\/\//i.test(link.url));
 
   const steps = [
     {
@@ -158,6 +167,8 @@ export default async function WelcomePage({ params }: PageProps) {
           personName={card.identity.name || "You"}
           initialMessages={seed}
           defaultOpen={false}
+          prompts={chatPrompts}
+          bookingLinks={bookingLinks}
         />
       )}
     </main>

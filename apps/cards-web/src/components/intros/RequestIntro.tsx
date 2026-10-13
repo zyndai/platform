@@ -23,10 +23,25 @@ export function RequestIntro({ handle }: { handle: string }) {
     const api = (process.env.NEXT_PUBLIC_API_URL || "https://api.zynd.ai").replace(/\/$/, "");
     fetch(`${api}/cards/by-handle/${encodeURIComponent(handle)}/intro-eligibility`, { cache: "no-store" })
       .then(r => r.ok ? r.json() : { available: false })
-      .then(data => { if (!cancelled) setAvailable(data.available === true); })
+      .then(data => {
+        if (cancelled) return;
+        const ready = data.available === true;
+        setAvailable(ready);
+        if (ready) window.dispatchEvent(new Event("zynd:intro-ready"));
+      })
       .catch(() => { if (!cancelled) setAvailable(false); });
     return () => { cancelled = true; };
   }, [handle]);
+
+  useEffect(() => {
+    const openIntro = () => {
+      if (!available) return;
+      setOpen(true);
+      requestAnimationFrame(() => document.querySelector(".intro-request")?.scrollIntoView({ block: "nearest" }));
+    };
+    window.addEventListener("zynd:open-intro", openIntro);
+    return () => window.removeEventListener("zynd:open-intro", openIntro);
+  }, [available]);
 
   async function send(event: React.FormEvent) {
     event.preventDefault();

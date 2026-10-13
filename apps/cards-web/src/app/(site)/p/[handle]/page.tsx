@@ -582,6 +582,11 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
     return daysLeft <= 7 ? `${daysLeft}d left` : "LIVE";
   })();
   const firstName = identity.name?.split(" ")[0] || "They";
+  const chatPrompts = [
+    card.working_on.find((item) => !isBlank(item)) ? `What is ${firstName} building?` : "",
+    skills.find((skill) => !isBlank(skill.name)) ? `What is ${firstName} good at?` : "",
+    !isBlank(identity.headline) ? `What does ${firstName} do?` : "",
+  ].filter(Boolean).slice(0, 3);
   const liJobs = (card.work_experience ?? []).filter((j) => !!(j.title || j.company));
   const nowJob = liJobs.find((j) =>
     /^(present|current|now)$/i.test((j.end_date || "").trim()) && (j.title || j.company),
@@ -1429,7 +1434,14 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
         </div>
       </div>
 
-      {claimed && <ProfileChatWidget handle={card.handle ?? card.id} personName={identity.name} />}
+      {claimed && (
+        <ProfileChatWidget
+          handle={card.handle ?? card.id}
+          personName={identity.name}
+          prompts={chatPrompts}
+          bookingLinks={bookingLinks}
+        />
+      )}
     </>
   );
 }

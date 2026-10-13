@@ -12,3 +12,7 @@ uv.lock
 *.md
 docs/
 .claude/
+
+# connector skills ship with the Docker image — re-include their SKILL.md files
+!skills/
+!skills/**

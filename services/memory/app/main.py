@@ -20,6 +20,7 @@ from app.connect import router as connect_router
 from app.docs import router as docs_router
 from app.oauth import router as oauth_router
 from app.oauth import _well_known_router as oauth_well_known_router
+from app.oauth_ui import router as oauth_ui_router
 
 
 def _valid_service_token(token: str) -> bool:
@@ -46,6 +47,7 @@ app.add_middleware(
 )
 app.include_router(oauth_router)
 app.include_router(oauth_well_known_router)
+app.include_router(oauth_ui_router)
 app.include_router(connect_router)
 app.include_router(docs_router)
 

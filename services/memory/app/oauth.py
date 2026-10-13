@@ -1,10 +1,23 @@
 """OAuth2 authorization-code server for ChatGPT Action AND Claude OAuth 2.1.
 
-Both flows issue the same ZYND HS256 JWT. /oauth/authorize always hands the
-browser to cards login (`cards_login_url?zynd_oauth=<signed req>`). Cards uses
-whatever Supabase session is already there (LinkedIn today; any trusted
-provider the user signed in with). It then POSTs that session to
-/oauth/complete, which mints an auth code and redirects back to the client.
+MCP connector clients (Claude DCR/CIMD, ChatGPT connector) are handed to the
+self-hosted auth page on the memory layer (`{public_base_url}/oauth/login`) —
+the layer stays platform-agnostic, with no cards/persona dependency. The page
+signs the user in through Supabase (Google/LinkedIn OIDC, the providers already
+trusted by app/supabase_auth.py) and POSTs the session to /oauth/complete,
+which verifies the identity, resolves the EXISTING memory user (lookup-only,
+never creates), mints an auth code and redirects back to the client.
+
+The legacy confidential clients (ChatGPT Action, Hermes Deployer) keep the
+cards front door and user-creation semantics.
+
+Both flows issue the same ZYND HS256 JWT family. Connector flows additionally:
+  - RFC 8707: the `resource` indicator is validated at /authorize, sealed into
+    the signed request, bound to the code, echoed at /token, and becomes the
+    token audience (iss = AS issuer = PUBLIC_BASE_URL).
+  - RFC 9207: an empty `iss` authorize param echoes the issuer in the callback.
+  - RFC 6749 refresh rotation: public clients get single-use rotated refresh
+    tokens.
 
 Claude Connectors (OAuth 2.1 with PKCE + DCR/CIMD) put code_challenge on the
 signed request so /oauth/token can still check the verifier. The older
@@ -28,7 +41,14 @@ from fastapi import APIRouter, Body, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
-from app.auth import issue_access_token, issue_personal_token, issue_refresh_token, verify_refresh_claims
+from app.auth import (
+    issue_access_token,
+    issue_connector_access_token,
+    issue_personal_token,
+    issue_refresh_token,
+    issue_rotating_refresh_token,
+    verify_refresh_meta,
+)
 from app.config import settings
 from app.db import get_pool
 from app.supabase_auth import supabase_identity
@@ -57,6 +77,7 @@ def _log_token_diag(token: str) -> None:
 _CODE_PREFIX = "oauth:code:"
 _PKCE_PREFIX = "oauth:pkce:"
 _STATE_PREFIX = "oauth:state:"    # stored OAuth params for the Supabase-direct flow
+_REFRESH_PREFIX = "oauth:refresh:"  # single-use refresh-token jtis (rotation)
 _CODE_TTL_SECONDS = 600
 _OAUTH_REQ_TTL = 600  # the signed authorize request is valid for 10 minutes
 _STATE_TTL_SECONDS = 600  # stored state TTL for the Supabase-direct flow
@@ -346,10 +367,14 @@ async def _clear_oauth_state(redis, state_id: str) -> None:
 def _sign_oauth_request(
     redirect_uri: str, state: str, scope: str,
     code_challenge: str = "", code_challenge_method: str = "",
+    resource: str = "", create_user: bool = True, iss_supported: bool = False,
 ) -> str:
-    """Sign the authorize params so they survive the round-trip through cards
-    login without trusting client-supplied params. PKCE fields ride along so
-    Claude can redeem the code with its verifier."""
+    """Sign the authorize params so they survive the round-trip through the
+    auth page without trusting client-supplied params. PKCE fields ride along
+    so Claude can redeem the code with its verifier. `resource` (RFC 8707) is
+    validated at /authorize and bound to the minted code and token audience.
+    `create_user=false` makes /complete lookup-only (MCP connector path).
+    `iss_supported` echoes the AS issuer per RFC 9207 (ChatGPT stable redirect)."""
     return jwt.encode(
         {
             "typ": "oauth_req",
@@ -358,6 +383,9 @@ def _sign_oauth_request(
             "scope": scope,
             "code_challenge": code_challenge,
             "code_challenge_method": code_challenge_method or ("S256" if code_challenge else ""),
+            "resource": resource,
+            "create_user": bool(create_user),
+            "iss_supported": bool(iss_supported),
             "exp": datetime.now(timezone.utc) + timedelta(seconds=_OAUTH_REQ_TTL),
         },
         settings.jwt_secret, algorithm="HS256",
@@ -393,6 +421,7 @@ async def authorization_server_metadata() -> dict:
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
         "client_id_metadata_document_supported": True,
+        "authorization_response_iss_parameter_supported": True,
         "token_endpoint_auth_methods_supported": [
             "client_secret_basic",
             "client_secret_post",
@@ -454,16 +483,31 @@ async def authorize(
     scope: str = "ingest",
     code_challenge: str = "",
     code_challenge_method: str = "",
+    resource: str = "",
+    iss: str = "",
     request: Request = None,
 ) -> RedirectResponse:
     """OAuth 2.1 authorize endpoint.
 
-    Every client (ChatGPT, Hermes, Claude DCR/CIMD) is sent to cards login.
-    Cards completes with the Supabase session already on that origin — LinkedIn
-    or whichever trusted provider the user signed in with. Not Google-only.
+    MCP connector clients (Claude DCR/CIMD, ChatGPT connector) are sent to the
+    self-hosted auth page on the memory layer (api.zynd.ai/oauth/login) — the
+    layer stays platform-agnostic; no cards/persona dependency. The legacy
+    confidential clients (ChatGPT Action, Hermes Deployer) keep the cards
+    front door and user-creation semantics.
+
+    RFC 8707: `resource` (when present) must be the canonical MCP resource and
+    is sealed into the signed request so /token can echo + bind it.
+    RFC 9207: an empty `iss` parameter signals the client wants the issuer
+    echoed in the callback redirect.
     """
     if response_type != "code":
         raise HTTPException(status_code=400, detail="response_type must be 'code'")
+
+    if resource:
+        if resource.rstrip("/") != settings.mcp_resource_url:
+            raise HTTPException(status_code=400, detail="unsupported resource indicator")
+
+    is_connector_client = client_id.startswith("https://") or not _is_known_client(client_id)
 
     if _is_known_client(client_id):
         _check_redirect_uri(redirect_uri)
@@ -484,8 +528,14 @@ async def authorize(
 
     req = _sign_oauth_request(
         redirect_uri, state, scope, code_challenge, code_challenge_method,
+        resource=resource,
+        create_user=not is_connector_client,
+        iss_supported=iss == "",
     )
-    dest = settings.cards_login_url.rstrip("/") + "/?" + urlencode({"zynd_oauth": req})
+    if is_connector_client:
+        dest = settings.public_base_url.rstrip("/") + "/oauth/login?" + urlencode({"zynd_oauth": req})
+    else:
+        dest = settings.cards_login_url.rstrip("/") + "/?" + urlencode({"zynd_oauth": req})
     return RedirectResponse(dest, status_code=302)
 
 
@@ -547,18 +597,31 @@ class _CompleteRequest(BaseModel):
 async def _resolve_user_and_mint_code(
     supabase_token: str, redirect_uri: str, state: str, scope: str,
     code_challenge: str, code_challenge_method: str, redis,
+    resource: str = "", create_user: bool = True, iss_supported: bool = False,
 ) -> JSONResponse:
-    """Verify the Supabase identity, resolve/create the ZYND user, mint a
+    """Verify the Supabase identity, resolve the ZYND user, mint a
     single-use authorization code with optional PKCE params, and return the
-    redirect URL for the browser."""
+    redirect URL for the browser.
+
+    create_user=False (MCP connector path) is lookup-only: a verified identity
+    with no existing memory user gets a 401 instead of an account."""
     identity = await supabase_identity(supabase_token)
     if not identity:
         _log_token_diag(supabase_token)
         raise HTTPException(status_code=401, detail="Sign-in could not be verified")
     email, display_name, sub = identity
 
-    from app.services.users import resolve_user
-    user_id = await resolve_user(get_pool(), email, display_name, sub)
+    from app.services.users import find_user, resolve_user
+    if create_user:
+        user_id = await resolve_user(get_pool(), email, display_name, sub)
+    else:
+        user_id = await find_user(get_pool(), email, sub)
+        if user_id is None:
+            raise HTTPException(
+                status_code=401,
+                detail=(f"No ZYND account found for {email} — create your card "
+                        "at cards.zynd.ai, then connect again."),
+            )
 
     from app.services.persona import link_user
     agent_id = await link_user(get_pool(), user_id, sub, display_name, email)
@@ -569,17 +632,26 @@ async def _resolve_user_and_mint_code(
     code = secrets.token_urlsafe(32)
     # Bind the code to the redirect_uri so a confidential client can only redeem it
     # with the same URI at /token (RFC 6749 §4.1.3). PKCE params (Claude) are stored
-    # alongside and validated independently at /token.
+    # alongside and validated independently at /token. The RFC 8707 resource
+    # indicator is stored so /token can echo it and bind the token audience.
+    stored: dict = {"user_id": str(user_id), "redirect_uri": redirect_uri}
+    if resource:
+        stored["resource"] = resource
     await redis.set(
         f"{_CODE_PREFIX}{code}",
-        json.dumps({"user_id": str(user_id), "redirect_uri": redirect_uri}),
+        json.dumps(stored),
         ex=_CODE_TTL_SECONDS,
     )
     if code_challenge:
         await _store_pkce_params(redis, code, code_challenge, code_challenge_method)
 
+    params = {"code": code, "state": state}
+    if iss_supported:
+        # RFC 9207: echo the authorization server issuer so ChatGPT's stable
+        # redirect URI (connector_platform_oauth_redirect) can be validated.
+        params["iss"] = settings.public_base_url.rstrip("/")
     separator = "&" if "?" in redirect_uri else "?"
-    location = f"{redirect_uri}{separator}{urlencode({'code': code, 'state': state})}"
+    location = f"{redirect_uri}{separator}{urlencode(params)}"
     return JSONResponse({"redirect_url": location})
 
 
@@ -588,14 +660,16 @@ async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
     """Complete the OAuth authorization flow after user authentication.
 
     Two paths:
-      1. Persona frontend (ChatGPT): body.req contains the signed JWT from
-         /authorize, body.supabase_token is the Supabase session.
+      1. Signed request: body.req contains the signed JWT from /authorize,
+         body.supabase_token is the Supabase session. Used by the self-hosted
+         auth page (/oauth/login) for MCP connectors (lookup-only when
+         create_user=false) and by cards/persona for legacy clients.
       2. Supabase-direct (Claude): body.state_id is the Redis state key from
          /authorize, body.supabase_token is the Supabase session from the
          /oauth/callback HTML page.
 
-    Both paths verify the Supabase session, resolve/create the ZYND user,
-    and mint an authorization code."""
+    Both paths verify the Supabase session, resolve the ZYND user, and mint an
+    authorization code."""
     redis = request.app.state.arq
 
     if body.state_id:
@@ -627,10 +701,14 @@ async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
     scope = payload.get("scope", "ingest")
     code_challenge = payload.get("code_challenge", "")
     code_challenge_method = payload.get("code_challenge_method", "S256")
+    resource = payload.get("resource", "")
+    create_user = payload.get("create_user", True)   # legacy requests default to create
+    iss_supported = payload.get("iss_supported", False)
 
     return await _resolve_user_and_mint_code(
         body.supabase_token, redirect_uri, state, scope,
         code_challenge, code_challenge_method, redis,
+        resource=resource, create_user=create_user, iss_supported=iss_supported,
     )
 
 
@@ -646,19 +724,23 @@ async def token(
     redirect_uri: str = Form(""),
     code_verifier: str = Form(""),
     refresh_token: str = Form(""),
+    resource: str = Form(""),
+    scope: str = Form(""),
 ) -> JSONResponse:
     """OAuth 2.1 token endpoint — exchange authorization code or refresh token for
     a ZYND JWT access token.
 
     Authorization code grant:
       Validates the code (single-use, 10-min TTL). If PKCE was used, validates
-      code_verifier against the stored challenge.
+      code_verifier against the stored challenge. Codes minted for a connector
+      (RFC 8707 resource indicator) require the same `resource` at redemption;
+      the token is then minted with iss=AS issuer and aud=resource and the
+      response echoes `resource`.
 
     Refresh token grant:
-      Issues a new access token. Revoked tokens are rejected (sign-out watermark).
-
-    Both paths issue the same HS256 JWT — OAuth is just another way to obtain
-    the exact same token format that existing MCP clients already use."""
+      Public clients get single-use rotated refresh tokens; replaying a used
+      token is invalid_grant. Revoked tokens are rejected (sign-out watermark).
+    """
 
     is_chatgpt = hmac.compare_digest(client_id, settings.oauth_client_id)
     if is_chatgpt:
@@ -683,6 +765,14 @@ async def token(
         await redis.delete(key)  # single use
         stored = raw.decode() if isinstance(raw, bytes) else raw
 
+        try:
+            parsed = json.loads(stored)
+        except (ValueError, TypeError):
+            parsed = None
+        stored_resource = parsed.get("resource", "") if isinstance(parsed, dict) else ""
+        if stored_resource and not hmac.compare_digest(resource, stored_resource):
+            raise HTTPException(status_code=400, detail="invalid_grant")
+
         pkce = await _get_pkce_params(redis, code)
         if pkce:
             # PKCE clients (Claude): the code_verifier binds the code, so the
@@ -702,35 +792,89 @@ async def token(
                 user_id = _resolve_code_user(stored, redirect_uri)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail="invalid_grant") from exc
+
+        # The Hermes Deployer stores the token inside a long-lived agent container and
+        # has no refresh loop, so hand it a personal token (mcp_token_ttl_seconds) and
+        # no refresh token — the owner re-connects at expiry. Only on the initial
+        # code exchange; refresh_token grants keep the standard short-lived path.
+        if _is_deployer_client(client_id):
+            return JSONResponse({
+                "access_token": await issue_personal_token(get_pool(), user_id),
+                "token_type": "bearer",
+                "expires_in": settings.mcp_token_ttl_seconds,
+                "scope": "ingest",
+            })
+
+        if stored_resource:
+            # MCP connector path: resource-bound access token + rotated refresh.
+            access_token, expires_in = issue_connector_access_token(user_id, stored_resource)
+            refresh_tok, refresh_jti = issue_rotating_refresh_token(user_id)
+            await redis.set(
+                f"{_REFRESH_PREFIX}{refresh_jti}", stored_resource,
+                ex=settings.refresh_token_ttl_seconds,
+            )
+            return JSONResponse({
+                "access_token": access_token,
+                "token_type": "Bearer",
+                "expires_in": expires_in,
+                "refresh_token": refresh_tok,
+                "resource": stored_resource,
+                "scope": scope or "user",
+            })
+
+        access_token, expires_in = issue_access_token(user_id)
+        return JSONResponse({
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": expires_in,
+            "refresh_token": issue_refresh_token(user_id),
+            "scope": "ingest user",
+        })
+
     elif grant_type == "refresh_token":
+        redis = request.app.state.arq
         try:
-            user_id, issued_at = verify_refresh_claims(refresh_token)
+            user_id, issued_at, jti = verify_refresh_meta(refresh_token)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="invalid_grant") from exc
+
+        stored_resource = ""
+        if jti:
+            # Rotation (public clients): single-use. Replay → invalid_grant.
+            raw = await redis.get(f"{_REFRESH_PREFIX}{jti}")
+            if raw is None:
+                raise HTTPException(status_code=400, detail="invalid_grant")
+            await redis.delete(f"{_REFRESH_PREFIX}{jti}")
+            stored_resource = (raw.decode() if isinstance(raw, bytes) else raw) or ""
+
         from app.services.sessions import tokens_revoked
         if await tokens_revoked(get_pool(), user_id, issued_at):
             raise HTTPException(status_code=400, detail="invalid_grant")
 
-    else:
-        raise HTTPException(status_code=400, detail="unsupported_grant_type")
+        if stored_resource:
+            access_token, expires_in = issue_connector_access_token(user_id, stored_resource)
+            refresh_tok, refresh_jti = issue_rotating_refresh_token(user_id)
+            await redis.set(
+                f"{_REFRESH_PREFIX}{refresh_jti}", stored_resource,
+                ex=settings.refresh_token_ttl_seconds,
+            )
+            return JSONResponse({
+                "access_token": access_token,
+                "token_type": "Bearer",
+                "expires_in": expires_in,
+                "refresh_token": refresh_tok,
+                "resource": stored_resource,
+                "scope": scope or "user",
+            })
 
-    # The Hermes Deployer stores the token inside a long-lived agent container and
-    # has no refresh loop, so hand it a personal token (mcp_token_ttl_seconds) and
-    # no refresh token — the owner re-connects at expiry. Only on the initial
-    # code exchange; refresh_token grants keep the standard short-lived path.
-    if grant_type == "authorization_code" and _is_deployer_client(client_id):
+        access_token, expires_in = issue_access_token(user_id)
         return JSONResponse({
-            "access_token": await issue_personal_token(get_pool(), user_id),
+            "access_token": access_token,
             "token_type": "bearer",
-            "expires_in": settings.mcp_token_ttl_seconds,
-            "scope": "ingest",
+            "expires_in": expires_in,
+            "refresh_token": issue_refresh_token(user_id),
+            "scope": "ingest user",
         })
 
-    access_token, expires_in = issue_access_token(user_id)
-    return JSONResponse({
-        "access_token": access_token,
-        "token_type": "bearer",
-        "expires_in": expires_in,
-        "refresh_token": issue_refresh_token(user_id),
-        "scope": "ingest user",
-    })
+    else:
+        raise HTTPException(status_code=400, detail="unsupported_grant_type")

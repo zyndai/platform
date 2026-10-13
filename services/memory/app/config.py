@@ -1,3 +1,5 @@
+from urllib.parse import urlsplit
+
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -97,6 +99,7 @@ class Settings(BaseSettings):
     oauth_allowed_redirect_prefixes: str = (
         "https://chat.openai.com/aip/,https://chatgpt.com/aip/,"
         "https://chat.openai.com/connector/,https://chatgpt.com/connector/,"
+        "https://chatgpt.com/connector_platform_oauth_redirect,"
         "https://claude.ai/api/mcp/,"
         "http://localhost,http://127.0.0.1"
     )
@@ -126,6 +129,9 @@ class Settings(BaseSettings):
     # comma-separated. Empty (default) falls back to supabase_url/supabase_anon_key
     # alone — single-project behavior unchanged. During the aafo migration this
     # holds both xmfj and aafo so cards-web/persona-web sessions from either work.
+    # The FIRST project also powers the self-hosted connector auth page
+    # (/oauth/login): it must have Google + LinkedIn OIDC enabled and
+    # {PUBLIC_BASE_URL}/oauth/login/callback registered as a redirect URL.
     trusted_supabase_projects: str = ""
     # Persona network integration (agent-persona backend). service_key authenticates
     # service-to-service calls + Supabase PostgREST reads of dm_threads (D3).
@@ -188,6 +194,21 @@ class Settings(BaseSettings):
     def allowed_redirect_prefixes(self) -> list[str]:
         raw = f"{self.oauth_allowed_redirect_prefixes},{self.deployer_allowed_redirect_prefixes}"
         return [p.strip() for p in raw.split(",") if p.strip()]
+
+    @property
+    def mcp_origin(self) -> str:
+        """Origin of the MCP server. MCP_PUBLIC_BASE_URL is often
+        https://api.zynd.ai/mcp; FastMCP appends its own transport path, so a
+        base that already ends in /mcp must be stripped to its origin."""
+        parts = urlsplit(self.mcp_public_base_url)
+        return f"{parts.scheme}://{parts.netloc}"
+
+    @property
+    def mcp_resource_url(self) -> str:
+        """Canonical RFC 8707 resource indicator for the hosted MCP server —
+        the URL Claude/ChatGPT register and the audience connector tokens are
+        bound to."""
+        return f"{self.mcp_origin}/mcp"
 
     @model_validator(mode="after")
     def _refuse_default_secrets_in_production(self) -> "Settings":

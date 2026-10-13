@@ -230,9 +230,15 @@ class ZyndTokenVerifier(TokenVerifier):
         if not token or not token.strip():
             return None
 
-        # 1) ZYND JWT — the persona dashboard mints this personal token
+        # 1) ZYND JWT — the persona dashboard mints this personal token. Connector
+        #    OAuth tokens are accepted alongside legacy ones: they carry the AS
+        #    issuer (PUBLIC_BASE_URL) and the RFC 8707 resource audience.
         try:
-            meta = verify_access_meta(token)
+            meta = verify_access_meta(
+                token,
+                allowed_audiences=["zynd", settings.mcp_resource_url],
+                allowed_issuers=[settings.jwt_issuer, settings.public_base_url.rstrip("/")],
+            )
         except ValueError:
             pass
         else:
@@ -285,24 +291,29 @@ class ZyndTokenVerifier(TokenVerifier):
 
 # ── FastMCP server ──────────────────────────────────────────────────────────────
 
-def _mcp_origin(url: str) -> str:
-    """Origin only. MCP_PUBLIC_BASE_URL is often https://api.zynd.ai/mcp; FastMCP
-    appends the transport path, so a base that already ends in /mcp advertises
-    https://api.zynd.ai/mcp/mcp and clients never list tools."""
-    parts = urlsplit(url)
-    return f"{parts.scheme}://{parts.netloc}"
-
-
 auth = RemoteAuthProvider(
     # S09 client tokens carry granular scopes, not the legacy full-access
     # "user" scope. Require authentication here; ScopeGate authorizes tools.
     token_verifier=ZyndTokenVerifier(required_scopes=[]),
     authorization_servers=[AnyHttpUrl(settings.public_base_url)],
-    base_url=AnyHttpUrl(_mcp_origin(settings.mcp_public_base_url)),
+    base_url=AnyHttpUrl(settings.mcp_origin),
+    scopes_supported=["user"],
     resource_name="ZYND",
 )
 
 mcp = FastMCP("zynd", auth=auth, instructions=_ZYND_INSTRUCTIONS)
+
+# ── Skills ─────────────────────────────────────────────────────────────────────
+# The connector ships basic memory skills (when/what to store) as MCP resources
+# (skill://<name>/SKILL.md). Claude loads them alongside the connector; the same
+# files are importable into ChatGPT Skills and Claude Code skill directories.
+from pathlib import Path
+
+from fastmcp.server.providers.skills import SkillsDirectoryProvider
+
+_SKILLS_ROOT = Path(__file__).resolve().parent.parent / "skills"
+if _SKILLS_ROOT.is_dir():
+    mcp.add_provider(SkillsDirectoryProvider(roots=[_SKILLS_ROOT]))
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})

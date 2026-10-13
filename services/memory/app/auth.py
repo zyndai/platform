@@ -9,6 +9,7 @@ audience, so a token minted for one surface cannot work on another. Long-lived
 personal tokens additionally embed `ver` (the user's token_version), so minting
 a new personal token revokes every older one (see services/sessions.py).
 """
+import secrets
 import time
 
 import jwt
@@ -27,12 +28,14 @@ def _encode(
     ver: int | None = None,
     jti: str | None = None,
     scopes: list[str] | None = None,
+    iss: str | None = None,
+    aud: str | None = None,
 ) -> str:
     now = int(time.time())
     payload: dict = {
         "sub": user_id,
-        "iss": settings.jwt_issuer,
-        "aud": _AUD,
+        "iss": iss or settings.jwt_issuer,
+        "aud": aud or _AUD,
         "typ": token_type,
         "iat": now,
         "exp": now + ttl_seconds,
@@ -46,21 +49,44 @@ def _encode(
     return jwt.encode(payload, settings.jwt_secret, algorithm=_ALGO)
 
 
-def _decode_payload(token: str, expected_type: str) -> dict:
-    try:
-        payload = jwt.decode(
-            token, settings.jwt_secret, algorithms=[_ALGO], issuer=settings.jwt_issuer,
-            # Audience is checked explicitly below so legacy tokens (no `aud`) can
-            # default to the one remaining surface; let PyJWT not second-guess it.
-            options={"verify_aud": False},
-        )
-    except jwt.PyJWTError as exc:
-        raise ValueError(f"invalid token: {exc}") from exc
+def _decode_payload(
+    token: str,
+    expected_type: str,
+    *,
+    allowed_audiences: list[str] | None = None,
+    allowed_issuers: list[str] | None = None,
+) -> dict:
+    if allowed_issuers is None:
+        # Legacy behaviour: exactly one issuer, verified by PyJWT.
+        issuers = [settings.jwt_issuer]
+        try:
+            payload = jwt.decode(
+                token, settings.jwt_secret, algorithms=[_ALGO], issuer=settings.jwt_issuer,
+                # Audience is checked explicitly below so legacy tokens (no `aud`) can
+                # default to the one remaining surface; let PyJWT not second-guess it.
+                options={"verify_aud": False},
+            )
+        except jwt.PyJWTError as exc:
+            raise ValueError(f"invalid token: {exc}") from exc
+    else:
+        # Multi-issuer acceptance (connector tokens carry the AS issuer, legacy
+        # tokens carry jwt_issuer). Verify membership explicitly.
+        issuers = allowed_issuers
+        try:
+            payload = jwt.decode(
+                token, settings.jwt_secret, algorithms=[_ALGO],
+                options={"verify_aud": False, "verify_iss": False},
+            )
+        except jwt.PyJWTError as exc:
+            raise ValueError(f"invalid token: {exc}") from exc
+        if payload.get("iss") not in issuers:
+            raise ValueError(f"unexpected issuer {payload.get('iss')!r}")
     if payload.get("typ") != expected_type:
         raise ValueError(f"expected {expected_type} token, got {payload.get('typ')!r}")
+    audiences = allowed_audiences or [_AUD]
     # Legacy tokens (pre-audience) carry no aud; default them to the one surface
     # that remains. Drop this shim once JWT_SECRET has been rotated (Issue 2).
-    if payload.get("aud", _AUD) != _AUD:
+    if payload.get("aud", _AUD) not in audiences:
         raise ValueError(f"unexpected audience {payload.get('aud')!r}")
     sub = payload.get("sub")
     if not sub:  # signed but malformed -> ValueError (401), never a KeyError (500)
@@ -93,8 +119,34 @@ def issue_access_token(user_id: str) -> tuple[str, int]:
     return _encode(user_id, "access", ttl), ttl
 
 
+def issue_connector_access_token(user_id: str, resource: str) -> tuple[str, int]:
+    """Access token for MCP connector OAuth flows (Claude/ChatGPT connectors).
+
+    Bound to the RFC 8707 resource indicator the client asked for:
+    iss = the authorization-server issuer (PUBLIC_BASE_URL) and aud = the
+    protected resource URL (https://api.zynd.ai/mcp). Hosts validate iss
+    against the AS metadata and aud against the resource, so the legacy
+    "zynd" audience is rejected there. Full-access scope for v1."""
+    ttl = settings.access_token_ttl_seconds
+    token = _encode(
+        user_id, "access", ttl,
+        iss=settings.public_base_url.rstrip("/"),
+        aud=resource,
+        scopes=["user"],
+    )
+    return token, ttl
+
+
 def issue_refresh_token(user_id: str) -> str:
     return _encode(user_id, "refresh", settings.refresh_token_ttl_seconds)
+
+
+def issue_rotating_refresh_token(user_id: str) -> tuple[str, str]:
+    """(token, jti) — refresh tokens for public (PKCE/DCR/CIMD) clients are
+    single-use and rotated on every redemption (Claude connector requirement)."""
+    jti = secrets.token_urlsafe(24)
+    token = _encode(user_id, "refresh", settings.refresh_token_ttl_seconds, jti=jti)
+    return token, jti
 
 
 async def issue_client_token(pool, user_id: str, *, label: str, scopes: list[str]) -> tuple[str, str]:
@@ -152,9 +204,22 @@ def verify_access_claims(token: str) -> tuple[str, int, int | None]:
     return _decode_ver(token, "access")
 
 
-def verify_access_meta(token: str) -> dict:
-    """sub, iat, ver, jti, scopes. `scopes` is None on legacy tokens (full access)."""
-    payload = _decode_payload(token, "access")
+def verify_access_meta(
+    token: str,
+    *,
+    allowed_audiences: list[str] | None = None,
+    allowed_issuers: list[str] | None = None,
+) -> dict:
+    """sub, iat, ver, jti, scopes. `scopes` is None on legacy tokens (full access).
+
+    Connector verification passes allowed_audiences/allowed_issuers so tokens
+    bound to the MCP resource (aud) minted by the AS issuer (PUBLIC_BASE_URL)
+    verify alongside legacy "zynd"-audience tokens."""
+    payload = _decode_payload(
+        token, "access",
+        allowed_audiences=allowed_audiences,
+        allowed_issuers=allowed_issuers,
+    )
     ver = payload.get("ver")
     scopes = payload.get("scp")
     return {
@@ -173,3 +238,9 @@ def verify_refresh_token(token: str) -> str:
 def verify_refresh_claims(token: str) -> tuple[str, int]:
     """(user_id, iat) for a valid refresh token — for revocation-aware refresh."""
     return _decode_full(token, "refresh")
+
+
+def verify_refresh_meta(token: str) -> tuple[str, int, str | None]:
+    """(user_id, iat, jti) — jti is None for pre-rotation legacy refresh tokens."""
+    payload = _decode_payload(token, "refresh")
+    return payload["sub"], int(payload.get("iat", 0)), payload.get("jti")

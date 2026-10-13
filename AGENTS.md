@@ -128,12 +128,10 @@ This monorepo was assembled from three previously separate repos
 Current state:
 
 - ✅ All three services imported, tests passing at the baselines above.
-- ✅ `apps/cards-web` scaffolded — card reads work; login/claim/create need
-  a shared Supabase project and backend trust changes that haven't landed.
+- ✅ `apps/cards-web` is live at cards.zynd.ai from `infra/single-box`
+  (pm2 `cards-web`). Persona still auto-deploys from `dev`; cards-web on
+  that box is built, then `pm2 restart cards-web`.
 - ✅ `infra/` paths fixed for this layout.
-- ❌ **Nothing has been deployed from this checkout yet** — prod and dev
-  servers for cards and memory still run the old standalone repos. Don't
-  trust `infra/` as a description of what's currently live; it's the target.
 - 🟡 `packages/db` built (2026-09-27): identity `0000`; persona `0000`
   (baseline of prod aafo, verified) and `0001` (security fix); cards
   `0000`–`0002`; CI workflow. **Nothing applied to prod yet**: persona's

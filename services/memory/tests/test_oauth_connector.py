@@ -92,7 +92,7 @@ async def test_authorize_cimd_client_goes_to_auth_page(meta_mock):
 
 
 @patch("app.oauth.get_pool")
-async def test_authorize_known_client_keeps_cards_front_door(pool_mock):
+async def test_authorize_known_client_uses_auth_page_with_create(pool_mock):
     pool_mock.return_value = AsyncMock()
     resp = await oauth.authorize(
         client_id=settings.oauth_client_id,
@@ -100,7 +100,7 @@ async def test_authorize_known_client_keeps_cards_front_door(pool_mock):
         state="s1", resource=RESOURCE,
     )
     assert resp.status_code == 302
-    assert resp.headers["location"].startswith(settings.cards_login_url.rstrip("/") + "/")
+    assert resp.headers["location"].startswith(f"{settings.public_base_url.rstrip('/')}/oauth/login?zynd_oauth=")
     req = _sealed(resp.headers["location"].split("zynd_oauth=", 1)[1])
     assert req["create_user"] is True
 

@@ -1,15 +1,15 @@
 """OAuth2 authorization-code server for ChatGPT Action AND Claude OAuth 2.1.
 
-MCP connector clients (Claude DCR/CIMD, ChatGPT connector) are handed to the
-self-hosted auth page on the memory layer (`{public_base_url}/oauth/login`) —
-the layer stays platform-agnostic, with no cards/persona dependency. The page
-signs the user in through Supabase (Google/LinkedIn OIDC, the providers already
-trusted by app/supabase_auth.py) and POSTs the session to /oauth/complete,
-which verifies the identity, resolves the EXISTING memory user (lookup-only,
-never creates), mints an auth code and redirects back to the client.
+Every client is handed to the self-hosted auth page on the memory layer
+(`{public_base_url}/oauth/login`) — the layer stays platform-agnostic, with no
+cards/persona dependency. The page signs the user in through Supabase (Google/
+LinkedIn OIDC, the providers already trusted by app/supabase_auth.py) and POSTs
+the session to /oauth/complete, which verifies the identity, resolves the
+memory user, mints an auth code and redirects back to the client.
 
-The legacy confidential clients (ChatGPT Action, Hermes Deployer) keep the
-cards front door and user-creation semantics.
+MCP connector clients (Claude DCR/CIMD, ChatGPT connector) are lookup-only:
+no existing memory user → 401, never create. Legacy confidential clients
+(ChatGPT Action, Hermes Deployer) keep create-on-first-seen semantics.
 
 Both flows issue the same ZYND HS256 JWT family. Connector flows additionally:
   - RFC 8707: the `resource` indicator is validated at /authorize, sealed into
@@ -489,11 +489,11 @@ async def authorize(
 ) -> RedirectResponse:
     """OAuth 2.1 authorize endpoint.
 
-    MCP connector clients (Claude DCR/CIMD, ChatGPT connector) are sent to the
-    self-hosted auth page on the memory layer (api.zynd.ai/oauth/login) — the
-    layer stays platform-agnostic; no cards/persona dependency. The legacy
-    confidential clients (ChatGPT Action, Hermes Deployer) keep the cards
-    front door and user-creation semantics.
+    Every client goes to the self-hosted auth page on the memory layer
+    (api.zynd.ai/oauth/login) — cards/persona are out of the loop. Connector
+    clients (DCR/CIMD) seal create_user=false (lookup-only at /complete);
+    legacy confidential clients (ChatGPT Action, Hermes Deployer) seal
+    create_user=true.
 
     RFC 8707: `resource` (when present) must be the canonical MCP resource and
     is sealed into the signed request so /token can echo + bind it.
@@ -532,10 +532,7 @@ async def authorize(
         create_user=not is_connector_client,
         iss_supported=iss == "",
     )
-    if is_connector_client:
-        dest = settings.public_base_url.rstrip("/") + "/oauth/login?" + urlencode({"zynd_oauth": req})
-    else:
-        dest = settings.cards_login_url.rstrip("/") + "/?" + urlencode({"zynd_oauth": req})
+    dest = settings.public_base_url.rstrip("/") + "/oauth/login?" + urlencode({"zynd_oauth": req})
     return RedirectResponse(dest, status_code=302)
 
 

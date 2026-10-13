@@ -117,8 +117,10 @@ class Settings(BaseSettings):
     # redirects users here to sign in and set up their persona; persona then calls
     # /oauth/complete with the verified session and bounces the browser back.
     persona_login_url: str = "https://persona.zynd.ai"
-    # Cards login is the OAuth front door for MCP/ChatGPT connectors. The user
-    # signs in there (LinkedIn today) and cards posts the session to /oauth/complete.
+    # Legacy: cards once hosted the OAuth front door for MCP/ChatGPT connectors.
+    # Unused now — every authorize flow (connector + ChatGPT Action) uses the
+    # self-hosted page at {PUBLIC_BASE_URL}/oauth/login. Kept for env-file
+    # compatibility with older deployments.
     cards_login_url: str = "https://cards.zynd.ai/auth"
 
     # Supabase (for Google sign-in via the dashboard). Used to verify a user's

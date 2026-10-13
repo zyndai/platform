@@ -5,47 +5,16 @@
  * link). Magic link comes back once an email provider (SMTP) is chosen.
  */
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { startLinkedInOAuth } from "@/lib/auth/session";
-import { createClient } from "@/lib/supabase/client";
-import { captureZyndOAuthReq, completeZyndOAuth, hasPendingZyndOAuth } from "@/lib/zynd-oauth";
 
 function AuthPageContent() {
   const searchParams = useSearchParams();
   const [oauthError, setOauthError] = useState<string | null>(searchParams.get("error"));
-  const [handoff, setHandoff] = useState(() => {
-    if (typeof window === "undefined") return false;
-    captureZyndOAuthReq();
-    return hasPendingZyndOAuth();
-  });
-
-  useEffect(() => {
-    if (!handoff) return;
-    let cancelled = false;
-    void (async () => {
-      const { data: { session } } = await createClient().auth.getSession();
-      if (cancelled) return;
-      if (session?.access_token) {
-        const message = await completeZyndOAuth(session.access_token);
-        if (message && !cancelled) {
-          setOauthError(message);
-          setHandoff(false);
-        }
-        return;
-      }
-      const next = hasPendingZyndOAuth() ? "/auth" : (searchParams.get("next") || "/directory");
-      const message = await startLinkedInOAuth(next);
-      if (message && !cancelled) {
-        setOauthError(message);
-        setHandoff(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [handoff, searchParams]);
 
   const loginWithLinkedin = async () => {
-    const next = hasPendingZyndOAuth() || handoff ? "/auth" : (searchParams.get("next") || "/directory");
+    const next = searchParams.get("next") || "/directory";
     const message = await startLinkedInOAuth(next);
     if (message) setOauthError(message);
   };
@@ -64,12 +33,6 @@ function AuthPageContent() {
         <h1 style={{ fontSize: "32px", marginBottom: "20px", fontWeight: 700 }}>
           Sign in to <span style={{ color: "#8B5CF6" }}>Zynd Cards</span>
         </h1>
-
-        {handoff && !oauthError && (
-          <p style={{ color: "#a3a3a3", fontSize: "14px", marginBottom: "16px" }}>
-            Finishing connector sign-in…
-          </p>
-        )}
 
         {oauthError && (
           <p style={{ color: "#f87171", fontSize: "14px", marginBottom: "16px" }}>

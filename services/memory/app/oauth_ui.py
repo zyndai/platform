@@ -82,8 +82,9 @@ def _js_string(value: str) -> str:
 _LOGIN_BODY = """<div class="wrap">
   <div class="kicker"><span class="z">Z</span> ZYND &middot; connect your memory</div>
   <h1>Sign in to ZYND</h1>
-  <p class="sub">Verify your account so your AI can use ZYND tools. Existing
-   ZYND accounts only &mdash; new accounts are created on cards.zynd.ai.</p>
+  <p class="sub">Verify your account so your AI can use ZYND tools. Connector
+   connections need an existing ZYND account &mdash; new accounts are created
+   on cards.zynd.ai.</p>
   <div class="card">
     %%ERROR%%
     <button data-provider="google">Continue with Google</button>

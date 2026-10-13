@@ -34,6 +34,7 @@ from api.pages import router as pages_router
 from api.transcribe import router as transcribe_router
 from api.public_search import router as public_search_router
 from api.public_ask import router as public_ask_router
+from api.intros import router as intros_router
 
 # ─────────────────────────────────────────────────────────────────────
 
@@ -176,6 +177,7 @@ app.include_router(pages_router, prefix="/api/pages", tags=["Pages"])
 app.include_router(transcribe_router, prefix="/api/transcribe", tags=["Transcribe"])
 app.include_router(public_search_router, prefix="/api/public", tags=["Public"])
 app.include_router(public_ask_router, prefix="/api/public", tags=["Public"])
+app.include_router(intros_router,prefix="/api/intros",tags=["Intros"])
 
 
 @app.get("/health")

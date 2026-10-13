@@ -19,7 +19,7 @@ against multiple server versions).
 | Path | What it is | Stack | Prod URL |
 |---|---|---|---|
 | `apps/persona-web` | Persona's web UI — chat, connections, groups, settings | Next.js 16 | https://persona.zynd.ai |
-| `apps/cards-web` | Public profile card site (new; not live yet) | Next.js | https://cards.zynd.ai (pending) |
+| `apps/cards-web` | Public profile card site | Next.js | https://cards.zynd.ai |
 | `services/persona-api` | Persona's backend — orchestrator, A2A protocol, MCP tools | FastAPI / Python | behind persona-web |
 | `services/cards-api` | Cards' backend — onboarding, publish, search | FastAPI / Python | https://api.zynd.ai/cards |
 | `services/memory` | Shared context layer — ingest, matching, MCP server, OAuth for ChatGPT/Claude/Cursor | FastAPI / Python | https://api.zynd.ai |
@@ -34,10 +34,11 @@ Each service came from its own repo (`agent-persona`, `zynd-cards`,
 
 ## Status
 
-⚠️ **Mid-migration.** Nothing has been deployed *from this checkout* yet —
-the servers still run the old standalone repos. `infra/` describes the
-target layout, not necessarily what's live. See `AGENTS.md` §7 for the
-current checklist, or ask a maintainer for the migration plan.
+⚠️ **Mid-migration.** cards.zynd.ai is live from this checkout via
+`infra/single-box` (pm2 `cards-web` on :3002). Persona auto-deploys from
+`dev`; cards-web on that box is built, then `pm2 restart cards-web` (see
+`infra/single-box/README.md`). Persona and memory details are in
+`AGENTS.md` §7.
 
 ---
 

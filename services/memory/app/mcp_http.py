@@ -286,7 +286,9 @@ class ZyndTokenVerifier(TokenVerifier):
 # ── FastMCP server ──────────────────────────────────────────────────────────────
 
 auth = RemoteAuthProvider(
-    token_verifier=ZyndTokenVerifier(required_scopes=["user"]),
+    # S09 client tokens carry granular scopes, not the legacy full-access
+    # "user" scope. Require authentication here; ScopeGate authorizes tools.
+    token_verifier=ZyndTokenVerifier(required_scopes=[]),
     authorization_servers=[AnyHttpUrl(settings.public_base_url)],
     base_url=settings.mcp_public_base_url,
     resource_name="ZYND",

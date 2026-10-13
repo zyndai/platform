@@ -16,7 +16,7 @@ import {
   refreshCardLinkedIn,
 } from "@/lib/cards";
 import { createClient } from "@/lib/supabase/client";
-import { factLabel } from "@/lib/memory-facts";
+import { factLabel, memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
 import { MemoryProviderOnboard } from "@/components/memory/MemoryProviderOnboard";
 import { McpConnectPanel } from "@/components/mcp/McpConnectPanel";
 import { SuggestedFactsReview } from "@/components/mcp/SuggestedFactsReview";
@@ -389,10 +389,10 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     const predicate = typeof fact.predicate === "string" ? fact.predicate : "";
     const object = typeof fact.object === "string" ? fact.object.trim() : "";
     if (predicate && object) {
-      const key = `${predicate}|${object.toLowerCase()}`;
+      const key = memoryFactKey(predicate, object);
       if (seenFactKeys.has(key)) return null;
       seenFactKeys.add(key);
-      return factLabel({ predicate, object });
+      return factLabel({ predicate: memoryFactFamily(predicate), object });
     }
     for (const key of ["content", "value", "text", "description", "fact", "summary"]) {
       if (typeof fact[key] === "string" && (fact[key] as string).trim()) {

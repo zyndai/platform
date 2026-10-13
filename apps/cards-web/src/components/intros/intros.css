@@ -1,0 +1,13 @@
+.intro-panel, .intro-request { color: #232329; background: #fff; border: 1px solid #e8e5ef; border-radius: 16px; padding: 24px; overflow-wrap: anywhere; }
+.intro-panel h2, .intro-request h2 { font-size: 24px; margin-bottom: 12px; }
+.intro-panel h3 { font-size: 18px; margin-bottom: 8px; }
+.intro-panel h2, .intro-panel h3, .intro-request h2 { color: #232329; -webkit-text-fill-color: currentColor !important; background: none; background-clip: border-box; }
+.intro-panel p, .intro-request p { margin: 12px 0; line-height: 1.6; }
+.intro-panel button, .intro-request button { background: #6952c9; color: white; border: 0; border-radius: 8px; padding: 10px 16px; margin: 6px 4px 6px 0; cursor: pointer; font: inherit; }
+.intro-panel button:disabled, .intro-request button:disabled { opacity: .5; cursor: default; }
+.intro-panel button:focus-visible, .intro-request button:focus-visible { outline: 3px solid #bfb2f3; outline-offset: 3px; }
+.intro-panel input[type="datetime-local"], .intro-request textarea { border: 1px solid #d8d3e6; border-radius: 8px; padding: 10px; color: #232329; background: white; max-width: 100%; font: inherit; }
+.intro-panel label, .intro-request label { display: block; margin: 12px 0; }
+.intro-panel a, .intro-request a { color: #6952c9; text-decoration: underline; }
+.intro-panel [role="alert"], .intro-request [role="alert"] { color: #a02b38; }
+@media (max-width: 480px) { .intro-panel, .intro-request { padding: 16px; } }

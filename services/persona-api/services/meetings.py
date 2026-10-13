@@ -160,6 +160,17 @@ def _append_history(history: list[dict], entry: dict) -> list[dict]:
 
 # ── Public API ───────────────────────────────────────────────────────
 
+def _require_intro_meeting_grant(sb, thread_id: str) -> None:
+    if config.FEATURE_S12_INTROS:
+        intro = sb.table("persona_intro_requests").select("status,permissions").eq("thread_id", thread_id).limit(1).execute().data or []
+        if intro:
+            current = sb.table("dm_threads").select("status,permissions").eq("id", thread_id).execute().data or []
+            if (intro[0]["status"] != "accepted" or not current or current[0]["status"] != "accepted"
+                    or not current[0].get("permissions", {}).get("can_request_meetings")):
+                raise MeetingError("This intro has not granted permission to arrange a meeting")
+
+
+
 def create_proposal(
     *,
     thread_id: str,
@@ -175,6 +186,8 @@ def create_proposal(
     """
     sb = _supabase()
     participants = _resolve_participants(sb, thread_id)
+
+    _require_intro_meeting_grant(sb, thread_id)
 
     # The actor must be one of the two participants
     if actor_user_id not in (participants["initiator_user_id"], participants["receiver_user_id"]):
@@ -276,6 +289,9 @@ def respond_to_proposal(
 
     if actor_user_id not in (row["initiator_user_id"], row["recipient_user_id"]):
         raise MeetingError("Actor is not a participant of this task.")
+
+    if action in {"accept", "counter"}:
+        _require_intro_meeting_grant(sb, row["thread_id"])
 
     current_status = row["status"]
     key = (current_status, action)
@@ -532,6 +548,7 @@ def book_accepted_meeting(row: dict) -> dict:
     'book_failed' with a reason. Returns the final (possibly updated)
     task row so callers can return it straight to the UI.
     """
+    _require_intro_meeting_grant(_supabase(), row["thread_id"])
     task_id = row["id"]
 
     initiator_id = row["initiator_user_id"]

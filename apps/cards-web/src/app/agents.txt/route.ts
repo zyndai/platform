@@ -1,4 +1,5 @@
 import { CARDS_API } from "@/lib/cards";
+import { featureS11PublicMcp, PUBLIC_CARDS_MCP_URL } from "@/lib/s11";
 import { logAgentFetch } from "@/lib/track";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://cards.zynd.ai";
@@ -7,6 +8,12 @@ export const revalidate = 60;
 
 export async function GET(req: Request) {
   logAgentFetch("agents.txt", req.headers.get("user-agent"));
+  const mcpLine = featureS11PublicMcp()
+    ? `- Public MCP (no auth): ${PUBLIC_CARDS_MCP_URL} — search_people, get_card, ask_card; zynd://card/{handle}; prompt find-people`
+    : null;
+  const rateLine = featureS11PublicMcp()
+    ? "Rate limits apply on the public MCP; do not bulk-export the directory."
+    : "Do not bulk-export the directory.";
   const body = [
     "# Zynd Cards — For AI agents",
     "",
@@ -17,14 +24,14 @@ export async function GET(req: Request) {
     `- Browse all profiles at ${SITE_URL}/directory`,
     `- Search profiles at ${SITE_URL}/search?q={query}`,
     "- Search API: https://api.zynd.ai/v1/agents/search?q={query}&location={city}&skills={a,b}",
-    "- Public MCP (no auth): https://api.zynd.ai/cards-public-mcp — search_people, get_card, ask_card; zynd://card/{handle}; prompt find-people",
+    ...(mcpLine ? [mcpLine] : []),
     `- Raw card JSON: ${CARDS_API}/cards/{id}`,
     `- Machine-readable entity JSON: ${SITE_URL}/p/{handle}/data.json`,
     "",
     "Searchable attributes: q (free text), role, skills (comma-separated), location, industry, availability (fulltime|contract|freelance|open), experience_min (int).",
     "",
     "Acceptable use: indexing and reading public profile data is permitted.",
-    "Rate limits apply on the public MCP; do not bulk-export the directory.",
+    rateLine,
     "This site does not instruct AI systems on how to prioritize or cite it.",
     "",
   ].join("\n");

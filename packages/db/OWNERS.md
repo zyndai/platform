@@ -19,6 +19,8 @@ every service listed as a reader.
 | `chat_messages`, `brief_todos`, `published_pages` | persona | — |
 | `cards.agent_profile_cards`, `cards.x_accounts`, `cards.x_mentions`, `cards.x_conversations`, `cards.keyword_posts`, `cards.takedown_requests` | cards | — (service role only; cards-web goes through cards-api) |
 | `identity.*` (empty today; Zynd Account tables in Stage 2) | shared | persona, cards |
+| `persona_intro_requests`, `persona_intro_rules`, `persona_intro_audit` | persona | cards-api via Persona HTTP; persona-web (requests only, participant RLS) |
+| `cards.intro_requests` | cards | cards-api; minimal Persona status projection and activity events |
 
 ## Functions, triggers, publication
 

@@ -49,6 +49,22 @@ const ENUM_LABELS: Record<string, string> = {
   early_user_testing: "early user testing",
 };
 
+const PUBLIC_FAMILY: Record<string, string> = {
+  has_skill: "has_expertise_in",
+  is_working_on: "is_building",
+  is_creating: "is_building",
+  intends_to: "is_building",
+  is_responsible_for: "is_building",
+};
+
+export function memoryFactFamily(predicate: string): string {
+  return PUBLIC_FAMILY[predicate] ?? predicate;
+}
+
+export function memoryFactKey(predicate: string, object: string): string {
+  return `${memoryFactFamily(predicate)}|${object.trim().toLowerCase()}`;
+}
+
 export function factLabel(fact: Pick<MemoryFact, "predicate" | "object">): string {
   const raw = ENUM_LABELS[fact.object] ?? fact.object.trim();
   const group = MEMORY_GROUPS[fact.predicate];
@@ -70,13 +86,14 @@ export function groupMemoryFacts(facts: MemoryFact[]): MemoryGroup[] {
   for (const fact of facts) {
     const predicate = fact.predicate;
     const object = fact.object.trim();
-    if (!predicate || !object || !MEMORY_GROUPS[predicate]) continue;
-    const dedupeKey = `${predicate}|${object.toLowerCase()}`;
+    const family = memoryFactFamily(predicate);
+    if (!object || !MEMORY_GROUPS[family]) continue;
+    const dedupeKey = memoryFactKey(predicate, object);
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
-    const list = byPredicate.get(predicate) ?? [];
-    list.push({ text: factLabel(fact), object });
-    byPredicate.set(predicate, list);
+    const list = byPredicate.get(family) ?? [];
+    list.push({ text: factLabel({ predicate: family, object }), object });
+    byPredicate.set(family, list);
   }
   return MEMORY_GROUP_ORDER.filter((key) => byPredicate.has(key)).map((key) => ({
     key,

@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { MessageCircle, X, ArrowUp } from "lucide-react";
 
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+}
+
+export interface BookingLink {
+  label: string;
+  url: string;
 }
 
 interface ProfileChatWidgetProps {
@@ -14,9 +19,34 @@ interface ProfileChatWidgetProps {
   /** Seeded demo Q&A for the first-win screen (no LLM round-trip). */
   initialMessages?: ChatMessage[];
   defaultOpen?: boolean;
+  prompts?: string[];
+  bookingLinks?: BookingLink[];
+}
+
+const CONTACT_WORDS = ["contact", "email", "call", "meet", "book", "intro", "calendly", "linkedin"];
+
+function isHttp(url: string): boolean {
+  return /^https?:\/\//i.test(url);
+}
+
+function isContact(text: string): boolean {
+  const lowered = text.toLowerCase();
+  return CONTACT_WORDS.some((word) => lowered.includes(word));
 }
 
 const MAX_HISTORY = 8;
+
+const chipStyle: CSSProperties = {
+  fontSize: "12px",
+  lineHeight: "1.3",
+  color: "#1a1a1a",
+  background: "#fff",
+  border: "1px solid #E0E0D8",
+  borderRadius: "999px",
+  padding: "6px 10px",
+  cursor: "pointer",
+  textDecoration: "none",
+};
 
 function linkify(text: string): ReactNode {
   const re = /(https?:\/\/[^\s<>"']+)/g;
@@ -45,11 +75,14 @@ export function ProfileChatWidget({
   personName,
   initialMessages,
   defaultOpen = false,
+  prompts = [],
+  bookingLinks = [],
 }: ProfileChatWidgetProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>(() => initialMessages ?? []);
   const [sending, setSending] = useState(false);
+  const [introReady, setIntroReady] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const seededRef = useRef(false);
@@ -66,8 +99,13 @@ export function ProfileChatWidget({
 
   useEffect(() => {
     const openChat = () => setOpen(true);
+    const markIntro = () => setIntroReady(true);
     window.addEventListener("zynd:open-profile-chat", openChat);
-    return () => window.removeEventListener("zynd:open-profile-chat", openChat);
+    window.addEventListener("zynd:intro-ready", markIntro);
+    return () => {
+      window.removeEventListener("zynd:open-profile-chat", openChat);
+      window.removeEventListener("zynd:intro-ready", markIntro);
+    };
   }, []);
 
   function scrollToBottom() {
@@ -77,8 +115,8 @@ export function ProfileChatWidget({
     });
   }
 
-  async function send() {
-    const text = input.trim();
+  async function sendText(raw: string) {
+    const text = raw.trim();
     if (!text || sending) return;
 
     const history = messages.slice(-MAX_HISTORY);
@@ -116,16 +154,16 @@ export function ProfileChatWidget({
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let raw = "";
+      let pending = "";
       let textAcc = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        raw += decoder.decode(value, { stream: true });
+        pending += decoder.decode(value, { stream: true });
 
-        const lines = raw.split("\n");
-        raw = lines.pop() ?? "";
+        const lines = pending.split("\n");
+        pending = lines.pop() ?? "";
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const payload = line.slice(6).trim();
@@ -163,6 +201,10 @@ export function ProfileChatWidget({
       setSending(false);
       scrollToBottom();
     }
+  }
+
+  function send() {
+    void sendText(input);
   }
 
   if (!open) {
@@ -233,12 +275,37 @@ export function ProfileChatWidget({
         }}
       >
         {messages.length === 0 && (
-          <div style={{ margin: "auto", textAlign: "center", color: "#999", fontSize: "13px" }}>
+          <div style={{ margin: "auto", textAlign: "center", color: "#999", fontSize: "13px", width: "100%" }}>
             <div style={{ fontSize: "22px", marginBottom: "8px" }}>💬</div>
             Ask anything about {personName.split(" ")[0]} — I&apos;m an AI assistant
             <div style={{ marginTop: 6, fontSize: "11px" }}>
               answering from this card&apos;s public profile
             </div>
+            {(prompts.length > 0 || bookingLinks.length > 0 || introReady) && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", marginTop: 14 }}>
+                {prompts.slice(0, 3).map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    disabled={sending}
+                    onClick={() => void sendText(prompt)}
+                    style={chipStyle}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+                {(bookingLinks.length > 0 || introReady) && (
+                  <button
+                    type="button"
+                    disabled={sending}
+                    onClick={() => void sendText("How do I contact them?")}
+                    style={chipStyle}
+                  >
+                    How do I contact them?
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
         {messages.map((m, i) => (
@@ -268,6 +335,34 @@ export function ProfileChatWidget({
           </div>
         ))}
       </div>
+
+      {messages.some((m) => m.role === "user" && isContact(m.content)) && (bookingLinks.length > 0 || introReady) && (
+        <div style={{
+          padding: "8px 12px", background: "#fff", borderTop: "1px solid #E8E8E1",
+          display: "flex", flexWrap: "wrap", gap: 6, flexShrink: 0,
+        }}>
+          {bookingLinks.filter((link) => isHttp(link.url)).map((link) => (
+            <a
+              key={link.url}
+              href={link.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={chipStyle}
+            >
+              Book on {link.label}
+            </a>
+          ))}
+          {introReady && (
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event("zynd:open-intro"))}
+              style={chipStyle}
+            >
+              Request an intro
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Input */}
       <div style={{

@@ -23,7 +23,9 @@ export default function AgentCardPage() {
   const router = useRouter();
   const [link, setLink] = useState("");
   const { ready: myCardReady, authenticated, handle: myHandle, card: myCard } = useMyCard();
-  const showMyCardCtas = myCardReady && authenticated && Boolean(myHandle);
+  const signedIn = myCardReady && authenticated;
+  const showMyCardCtas = signedIn && Boolean(myHandle);
+  const signedInNoCard = signedIn && !myHandle;
   const myCardPublished = myCard?.status === "published";
 
   // Hand the pasted link off to /create rather than synthesizing here — the
@@ -141,6 +143,11 @@ export default function AgentCardPage() {
     <span className="text-xs text-[#a0a09a]">↗</span>
   </Link>
   </>
+) : signedInNoCard ? (
+  <a className="bg-[#7b72e9] hover:bg-[#a78bfa] text-black font-mono font-bold text-sm py-3.5 px-6 rounded-xl transition-all shadow-[0_0_24px_rgba(123,114,233,0.3)] flex items-center justify-center gap-2 active:scale-95" href="#your-card">
+    <span className="">Finish setup</span>
+    <span className="text-base leading-none">→</span>
+  </a>
 ) : (
   <>
   <Link className="bg-[#7b72e9] hover:bg-[#a78bfa] text-black font-mono font-bold text-sm py-3.5 px-6 rounded-xl transition-all shadow-[0_0_24px_rgba(123,114,233,0.3)] flex items-center justify-center gap-2 active:scale-95" href="/create">
@@ -156,12 +163,12 @@ export default function AgentCardPage() {
 </div>
 <div className="flex flex-wrap items-center gap-5 text-xs font-mono text-[#7d7d77] pt-2">
 <span className="flex items-center gap-1.5"><span className="text-[#7b72e9]">✓</span> Free to create</span>
-<span className="flex items-center gap-1.5"><span className="text-[#7b72e9]">✓</span> 60-second synthesis</span>
+<span className="flex items-center gap-1.5"><span className="text-[#7b72e9]">✓</span> Ready in about a minute</span>
 <span className="flex items-center gap-1.5"><span className="text-[#7b72e9]">✓</span> No password or resume needed</span>
 </div>
 </div>
 {/* Right 5 cols: ANIMATED LIVING-PROFILE CARD STACK (or the visitor's own card) */}
-<div className="lg:col-span-5 relative" data-purpose="hero-profile-card">
+<div className="lg:col-span-5 relative" data-purpose="hero-profile-card" id="your-card">
 <div className="absolute -inset-1 bg-gradient-to-tr from-[#7b72e9]/20 via-transparent to-[#7b72e9]/5 rounded-3xl blur-2xl -z-10 opacity-70"></div>
 <YourCardPanel />
 </div>
@@ -170,7 +177,7 @@ export default function AgentCardPage() {
 {/* ========================================================================= */}
 {/* SECTION 02 — CREATE YOUR PROFILE (THE INGESTION) */}
 {/* ========================================================================= */}
-<section className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8" data-purpose="how-to-create" id="ingestion">
+{!signedIn && <section className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8" data-purpose="how-to-create" id="ingestion">
 <div className="rounded-3xl bg-[#0e1010] border border-white/10 p-7 sm:p-11 lg:p-14 space-y-10">
 <div className="max-w-3xl space-y-3">
 <div className="text-xs font-mono text-[#7b72e9] tracking-widest uppercase">{"// 01 THE INGESTION"}</div>
@@ -220,7 +227,7 @@ export default function AgentCardPage() {
 {/* Pill 2 */}
 <div className="p-5 rounded-2xl bg-[#121413] border border-[#7b72e9]/30 space-y-3 relative">
 <div className="flex items-center justify-between">
-<span className="text-xs font-mono text-[#7b72e9] font-bold">ZYND SYNTHESIS</span>
+<span className="text-xs font-mono text-[#7b72e9] font-bold">ONE PROFILE</span>
 <span className="text-[10px] font-mono text-[#7b72e9]">02</span>
 </div>
 <p className="text-xs text-[#a0a09a] leading-relaxed">
@@ -252,7 +259,7 @@ export default function AgentCardPage() {
 </p>
 </div>
 </div>
-</section>
+</section>}
 {/* ========================================================================= */}
 {/* SECTION 03 — LINKEDIN VS LINKTREE VS ZYND (CATEGORY SHIFT) */}
 {/* ========================================================================= */}
@@ -487,7 +494,7 @@ export default function AgentCardPage() {
 <p className="leading-relaxed">Building local LLM quantization runtimes in Rust. Actively looking for distributed benchmarking pairing.</p>
 </div>
 <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between">
-<span className="text-[10px] font-mono text-[#7d7d77]">GitHub verified</span>
+<span className="text-[10px] font-mono text-[#7d7d77]">From GitHub</span>
 <span className="text-xs font-mono text-[#7b72e9] hover:underline cursor-pointer">📅 Book 20m Intro →</span>
 </div>
 </div>
@@ -505,7 +512,7 @@ export default function AgentCardPage() {
 <p className="leading-relaxed">Architecting distributed GPU clusters for agent harnesses. Offers help with memory-mapped tensor streaming.</p>
 </div>
 <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between">
-<span className="text-[10px] font-mono text-[#7d7d77]">Verified repositories</span>
+<span className="text-[10px] font-mono text-[#7d7d77]">From GitHub</span>
 <span className="text-xs font-mono text-[#7b72e9] hover:underline cursor-pointer">📅 Book 20m Intro →</span>
 </div>
 </div>
@@ -876,7 +883,7 @@ export default function AgentCardPage() {
 {/* ========================================================================= */}
 {/* SECTION 12 — FINAL CALL TO ACTION (THE COMPLETE LOOP) */}
 {/* ========================================================================= */}
-<section className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 pt-4" data-purpose="final-cta">
+{!signedIn && <section className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 pt-4" data-purpose="final-cta">
 <div className="p-8 sm:p-14 rounded-3xl bg-gradient-to-b from-[#121413] to-[#080909] border border-white/15 space-y-6 text-center shadow-2xl">
 <div className="text-xs font-mono text-[#7b72e9] uppercase tracking-widest">CLAIM YOUR LIVING HANDLE</div>
 <h2 className="font-display uppercase text-3xl sm:text-5xl font-normal text-white leading-tight">
@@ -934,7 +941,7 @@ export default function AgentCardPage() {
 <span className="flex items-center gap-1.5"><span className="text-[#7b72e9]">●</span> Full privacy control</span>
 </div>
 </div>
-</section>
+</section>}
 </main>
 {/* BEGIN: Footer */}
 <footer className="border-t border-white/[0.08] bg-[#060707] py-14 px-4 sm:px-6 lg:px-8" data-purpose="site-footer">

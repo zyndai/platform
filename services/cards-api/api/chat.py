@@ -1,6 +1,7 @@
 """Profile chatbot — streams Cloudflare Workers AI response for a given card handle."""
 import json
 import logging
+import re
 import time
 from collections import defaultdict, deque
 
@@ -38,6 +39,51 @@ def _rate_limited(key: str) -> bool:
 
 class ChatRequest(BaseModel):
     messages: list[dict]  # [{role: "user"|"assistant", content: str}]
+
+
+_ABUSE_DETAIL = "That question can't be sent."
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}")
+_PHONE_RE = re.compile(r"(?:\d[\s().-]*){10,}")
+_BLOCK_PHRASES = ("ignore previous", "system prompt", "api key", "owner_email")
+_CATEGORIES = (
+    ("contact", ("contact", "email", "call", "meet", "book", "intro", "calendly", "linkedin")),
+    ("work", ("build", "building", "project", "working")),
+    ("skills", ("skill", "good at", "help", "expert")),
+    ("background", ("who", "where", "based", "about")),
+)
+
+
+def _reject_messages(messages: list) -> str | None:
+    """Return the last user text, or None when the batch should be refused."""
+    if not isinstance(messages, list) or not 1 <= len(messages) <= 8:
+        return None
+    for message in messages:
+        if not isinstance(message, dict):
+            return None
+        if message.get("role") not in ("user", "assistant"):
+            return None
+        if not isinstance(message.get("content"), str):
+            return None
+    last = messages[-1]
+    if last.get("role") != "user":
+        return None
+    text = last["content"].strip()
+    if not 1 <= len(text) <= 1000:
+        return None
+    lowered = text.lower()
+    if _EMAIL_RE.search(text) or _PHONE_RE.search(text):
+        return None
+    if any(phrase in lowered for phrase in _BLOCK_PHRASES):
+        return None
+    return text
+
+
+def _category(text: str) -> str:
+    lowered = text.lower()
+    for name, words in _CATEGORIES:
+        if any(word in lowered for word in words):
+            return name
+    return "other"
 
 
 def _build_system_prompt(card: dict, *, memory_facts: list[dict] | None = None, fresh_as_of: str | None = None) -> str:
@@ -192,13 +238,17 @@ async def chat(handle: str, body: ChatRequest, request: Request):
     if _rate_limited(f"{handle}|{client_ip}"):
         raise HTTPException(status_code=429, detail="Too many questions — please slow down")
 
+    text = _reject_messages(body.messages)
+    if text is None:
+        raise HTTPException(status_code=400, detail=_ABUSE_DETAIL)
+
     from services import events as events_service
 
     events_service.emit(
         "chat_message",
         handle=handle,
         request=request,
-        meta={"handle": handle},
+        meta={"chars": len(text), "category": _category(text)},
     )
 
     memory_facts, fresh_as_of = memory_context_for_chat(card_obj)

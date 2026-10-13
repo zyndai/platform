@@ -30,7 +30,6 @@ import {
   respondToGroupInvitation,
   type GroupInvitation,
 } from "@/lib/group-invitations";
-import { getSupabase } from "@/lib/supabase";
 import { meetingStatusLabel } from "@/lib/meetingStatus";
 
 function formatMeetingTime(start?: string, end?: string): string {
@@ -97,19 +96,12 @@ export default function InboxPage() {
 
   const handleConnectionAction = useCallback(
     async (req: ConnectionRequest, action: "accept" | "decline") => {
-      if (action === "accept") {
-        const sb = getSupabase();
-        const { error: updateError } = await sb
-          .from("dm_threads")
-          .update({ status: "accepted" })
-          .eq("id", req.id);
-        if (updateError) throw updateError;
-      } else {
+      {
         const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
         const res = await authFetch(`${API}/api/persona/threads/${req.id}/status`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "decline", user_id: user?.id }),
+          body: JSON.stringify({ action, user_id: user?.id }),
         });
         if (!res.ok) throw new Error(await res.text());
       }
@@ -128,6 +120,10 @@ export default function InboxPage() {
   }, [counts.inboxAction, counts.meetingsWaiting, loading]);
 
   return (
+    <>
+    {process.env.NEXT_PUBLIC_FEATURE_S12_INTROS === "true" && <p style={{ padding: "16px 24px" }}>
+      <Link href="/dashboard/intros">Review card intro requests →</Link>
+    </p>}
     <div className="inbox-page">
       <section className="inbox-hero">
         <div>
@@ -291,6 +287,7 @@ export default function InboxPage() {
         </div>
       )}
     </div>
+    </>
   );
 }
 

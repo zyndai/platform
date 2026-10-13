@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { Navbar } from "@/components/Navbar";
+import { featureS11PublicMcp, PUBLIC_CARDS_MCP_URL } from "@/lib/s11";
 import { pageMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = pageMetadata({
@@ -152,32 +153,34 @@ export default function ForAiPage() {
             </ul>
           </section>
 
-          <section className="mb-12">
-            <h2 className="mb-4 text-lg font-bold text-white">
-              Add to your AI (MCP)
-            </h2>
-            <p className="leading-relaxed text-zinc-300">
-              Agents can search and read claimed cards over MCP with no credentials.
-              Point an MCP client at the public Cards server:
-            </p>
-            <ul className="mt-4 space-y-2 text-zinc-300">
-              <li>
-                <strong className="text-white">MCP URL:</strong>{" "}
-                <code className="text-[#a5b4fc]">https://api.zynd.ai/cards-public-mcp</code>
-              </li>
-              <li className="text-sm text-zinc-400">
-                Tools: <code className="text-[#a5b4fc]">search_people</code>,{" "}
-                <code className="text-[#a5b4fc]">get_card</code>,{" "}
-                <code className="text-[#a5b4fc]">ask_card</code> (assistant-labelled).
-                Resource: <code className="text-[#a5b4fc]">zynd://card/&#123;handle&#125;</code>.
-                Prompt: <code className="text-[#a5b4fc]">find-people</code>.
-              </li>
-              <li className="text-sm text-zinc-400">
-                Defaults return claimed cards only. Personal memory MCP at{" "}
-                <code className="text-[#a5b4fc]">/mcp</code> remains OAuth-protected and separate.
-              </li>
-            </ul>
-          </section>
+          {featureS11PublicMcp() ? (
+            <section className="mb-12">
+              <h2 className="mb-4 text-lg font-bold text-white">
+                Add to your AI (MCP)
+              </h2>
+              <p className="leading-relaxed text-zinc-300">
+                Agents can search and read claimed cards over MCP with no credentials.
+                Point an MCP client at the public Cards server:
+              </p>
+              <ul className="mt-4 space-y-2 text-zinc-300">
+                <li>
+                  <strong className="text-white">MCP URL:</strong>{" "}
+                  <code className="text-[#a5b4fc]">{PUBLIC_CARDS_MCP_URL}</code>
+                </li>
+                <li className="text-sm text-zinc-400">
+                  Tools: <code className="text-[#a5b4fc]">search_people</code>,{" "}
+                  <code className="text-[#a5b4fc]">get_card</code>,{" "}
+                  <code className="text-[#a5b4fc]">ask_card</code> (assistant-labelled).
+                  Resource: <code className="text-[#a5b4fc]">zynd://card/&#123;handle&#125;</code>.
+                  Prompt: <code className="text-[#a5b4fc]">find-people</code>.
+                </li>
+                <li className="text-sm text-zinc-400">
+                  Defaults return claimed cards only. Personal memory MCP at{" "}
+                  <code className="text-[#a5b4fc]">/mcp</code> remains OAuth-protected and separate.
+                </li>
+              </ul>
+            </section>
+          ) : null}
 
           <section>
             <h2 className="mb-4 text-lg font-bold text-white">

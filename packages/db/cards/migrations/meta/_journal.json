@@ -85,6 +85,27 @@
       "when": 1791806406082,
       "tag": "0011_s10_owner_operations",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791872548301,
+      "tag": "0012_s12_intro_projection",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791872623786,
+      "tag": "0013_s12_intro_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791881343607,
+      "tag": "0014_s12_deletion_compatibility",
+      "breakpoints": true
     }
   ]
 }

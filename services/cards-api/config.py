@@ -77,8 +77,13 @@ EVENTS_IP_SALT: str = os.getenv("EVENTS_IP_SALT", "")
 # alert in infra). Empty = no notification (the queue still fills).
 MATTERMOST_WEBHOOK_URL: str = os.getenv("MATTERMOST_WEBHOOK_URL", "")
 
-# cards-web cache bust after a memory snapshot write. Both empty = no-op.
-WEB_REVALIDATE_URL: str = os.getenv("WEB_REVALIDATE_URL", "")
+# cards-web cache bust after a memory snapshot write. The URL is a fixed
+# constant in prod (the cards-web /api/revalidate route); the env var only
+# exists to override it in local dev (e.g. http://localhost:3002/api/revalidate).
+# The secret must be set to the same value in cards-web; unset = no-op.
+WEB_REVALIDATE_URL: str = os.getenv(
+    "WEB_REVALIDATE_URL", "https://cards.zynd.ai/api/revalidate"
+)
 WEB_REVALIDATE_SECRET: str = os.getenv("WEB_REVALIDATE_SECRET", "")
 
 # ── LLM (OpenRouter) ──

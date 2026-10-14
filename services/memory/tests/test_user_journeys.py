@@ -154,11 +154,12 @@ async def test_user_confirms_a_fact_is_correct():
 
     # when
     with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
-         patch("app.mcp_http.confirm_fact", AsyncMock(return_value=True)) as confirm:
+         patch("app.mcp_http.confirm_fact", AsyncMock(return_value={"predicate": "has_skill", "object": "Rust"})) as confirm:
         result = await m.confirm_fact_tool("has_skill", "Rust", uid="test-uid")
 
-    # then — the tool reports the confirmation succeeded
+    # then — the tool reports the confirmation succeeded with the stored fact
     assert result["confirmed"] is True
+    assert result["predicate"] == "has_skill" and result["object"] == "Rust"
     confirm.assert_awaited_once()
 
 
@@ -168,12 +169,15 @@ async def test_user_forgets_an_outdated_fact():
 
     # when
     with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
-         patch("app.mcp_http.forget_fact", AsyncMock(return_value=True)) as forget:
+         patch("app.mcp_http.forget_fact", AsyncMock(return_value={"predicate": "is_building", "object": "old project"})) as forget, \
+         patch("app.mcp_http.card_sync.notify_cards_refresh", AsyncMock()) as notify:
         result = await m.forget_fact_tool("is_building", "old project", uid="test-uid")
 
-    # then — the fact is soft-deleted from her active graph
+    # then — the fact is soft-deleted and cards-api is notified to refresh the snapshot
     assert result["forgotten"] is True
+    assert result["predicate"] == "is_building" and result["object"] == "old project"
     forget.assert_awaited_once()
+    notify.assert_awaited_once_with(pool, "test-uid")
 
 
 async def test_forgetting_a_fact_that_does_not_exist_reports_false():
@@ -182,11 +186,30 @@ async def test_forgetting_a_fact_that_does_not_exist_reports_false():
 
     # when
     with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
-         patch("app.mcp_http.forget_fact", AsyncMock(return_value=False)):
+         patch("app.mcp_http.forget_fact", AsyncMock(return_value=None)), \
+         patch("app.mcp_http.near_matches", AsyncMock(return_value=[
+             {"predicate": "is_building", "object": "other project", "confidence": 0.5, "is_public": False},
+         ])):
         result = await m.forget_fact_tool("is_building", "never existed", uid="test-uid")
 
-    # then — the tool honestly reports nothing was forgotten
+    # then — the tool honestly reports nothing was forgotten and offers near-matches
     assert result["forgotten"] is False
+    assert result["matches"][0]["predicate"] == "is_building"
+
+
+async def test_confirming_a_fact_that_does_not_exist_reports_false():
+    # given — the predicate/object pair matches nothing in her graph
+    pool = MagicMock()
+
+    # when
+    with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
+         patch("app.mcp_http.confirm_fact", AsyncMock(return_value=None)), \
+         patch("app.mcp_http.near_matches", AsyncMock(return_value=[])):
+        result = await m.confirm_fact_tool("has_skill", "Nope", uid="test-uid")
+
+    # then — the tool honestly reports nothing was confirmed
+    assert result["confirmed"] is False
+    assert result["matches"] == []
 
 
 async def test_user_exports_her_full_context_as_signed_jsonld():

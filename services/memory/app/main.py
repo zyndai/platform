@@ -609,10 +609,12 @@ async def confirm_my_fact(ref: FactRef, user_id: str = Depends(current_user)) ->
 @app.post("/me/forget")
 async def forget_my_fact(ref: FactRef, user_id: str = Depends(current_user)) -> dict:
     """User forgets a fact → soft-deleted (valid_until set, never hard-deleted; §14.1)."""
+    from app.services import card_sync
     from app.services.control import forget_fact
     ok = await forget_fact(get_pool(), user_id, ref.predicate, ref.object)
     if not ok:
         raise HTTPException(status_code=404, detail="no active fact matches that predicate/object")
+    await card_sync.notify_cards_refresh(get_pool(), user_id)
     return {"status": "forgotten", "predicate": ref.predicate, "object": ref.object}
 
 
@@ -649,30 +651,36 @@ async def my_findability_suggestions(user_id: str = Depends(current_user)) -> li
 @app.post("/me/findability/approve")
 async def approve_findability(ref: FactRef, user_id: str = Depends(current_user)) -> dict:
     """Publish an inferred fact onto the card so it becomes matchable."""
+    from app.services import card_sync
     from app.services.findability import approve
     result = await approve(get_pool(), user_id, ref.predicate, ref.object)
     if not result:
         raise HTTPException(status_code=404, detail="no matching private findability fact")
+    await card_sync.notify_cards_refresh(get_pool(), user_id)
     return result
 
 
 @app.post("/me/findability/revoke")
 async def revoke_findability(ref: FactRef, user_id: str = Depends(current_user)) -> dict:
     """Take a fact off the public card (it stays in private memory)."""
+    from app.services import card_sync
     from app.services.findability import revoke
     if not await revoke(get_pool(), user_id, ref.predicate, ref.object):
         raise HTTPException(status_code=404, detail="no matching public fact")
+    await card_sync.notify_cards_refresh(get_pool(), user_id)
     return {"status": "revoked", "predicate": ref.predicate, "object": ref.object}
 
 
 @app.post("/me/findability/declare")
 async def declare_findability(req: DeclareRequest, user_id: str = Depends(current_user)) -> dict:
     """User explicitly adds a public findability fact (building/learning/seeking/…)."""
+    from app.services import card_sync
     from app.services.findability import declare
     try:
         await declare(get_pool(), user_id, req.predicate, req.value)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await card_sync.notify_cards_refresh(get_pool(), user_id)
     return {"status": "declared", "predicate": req.predicate, "value": req.value}
 
 

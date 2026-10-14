@@ -1,3 +1,4 @@
+import asyncio
 import hmac
 from uuid import UUID
 
@@ -50,6 +51,24 @@ async def service_owner_status(body: OwnerStatusRequest, authorization: str | No
     if not body.email.strip():
         raise HTTPException(422, "Email is required")
     return await owner_home.status(body.email.strip().lower(), persist=False)
+
+
+@router.post("/refresh-card-memory")
+async def refresh_card_memory(body: OwnerStatusRequest, authorization: str | None = Header(default=None)):
+    # Only memory can vouch for a memory-side mutation (MCP forget/revoke/approve
+    # via the agent path) that needs the card snapshot refreshed. See
+    # services/memory/app/services/card_sync.py for the caller.
+    secret = config.MEMORY_SERVICE_TOKEN
+    supplied = (authorization or "").removeprefix("Bearer ").strip()
+    if not secret or not hmac.compare_digest(supplied.encode(), secret.encode()):
+        raise HTTPException(401, "Unauthorized")
+    email = body.email.strip().lower()
+    if not email:
+        raise HTTPException(422, "Email is required")
+    from services.zynd_memory import refresh_owner_snapshot
+
+    snapshot = await asyncio.to_thread(refresh_owner_snapshot, email)
+    return {"zynd_memory": snapshot}
 
 
 @router.post("/owner-notifications")

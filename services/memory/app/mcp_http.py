@@ -28,7 +28,8 @@ from app.auth import verify_access_meta
 from app.config import settings
 from app.models import Turn
 from app.services import persona
-from app.services.control import confirm_fact, forget_fact
+from app.services import card_sync
+from app.services.control import confirm_fact, forget_fact, near_matches
 from app.services.export import active_context, build_jsonld_export, context_slice
 from app.services.findability import get_card
 from app.services.ingest import clean_text, ingest_turns
@@ -107,9 +108,9 @@ get_my_card — My PUBLIC card facts (what I approved for discovery).
 
 export_my_context — Use when I ask to export, download, back up, or inspect my full ZYND profile/context graph.
 
-confirm_fact_tool — Use when I confirm that an existing ZYND fact is correct. Pass the exact predicate and object if available from get_my_context.
+confirm_fact_tool — Use when I confirm that an existing ZYND fact is correct. Pass the exact predicate and object if available from get_my_context. If it returns confirmed:false, retry with an exact predicate/object from the returned matches — never claim success on a false result.
 
-forget_fact_tool — Use when I say a remembered fact is wrong, outdated, private, should be removed, or should be forgotten. Pass the exact predicate and object if available from get_my_context.
+forget_fact_tool — Use when I say a remembered fact is wrong, outdated, private, should be removed, or should be forgotten. Pass the exact predicate and object if available from get_my_context. If it returns forgotten:false, retry with an exact predicate/object from the returned matches — never claim a fact was removed on a false result.
 
 find_similar_users — Use when I ask for people like me, similar users, people building/learning/working on similar things, or people with overlapping context.
 
@@ -648,16 +649,37 @@ async def find_linkedin_people_for_me(num_results: int = 10, uid: str = Depends(
 async def confirm_fact_tool(predicate: str, object: str, uid: str = Depends(_uid)) -> dict:
     """Confirm an existing ZYND fact is correct. Use when the user confirms
     something ZYND remembers about them. Pass the exact predicate and object
-    as returned by get_my_context."""
-    return {"confirmed": await confirm_fact(await _get_pool(), uid, predicate, object)}
+    as returned by get_my_context. If the result has confirmed:false, retry
+    with an exact predicate/object from the returned `matches`; never report
+    success on a false result."""
+    pool = await _get_pool()
+    result = await confirm_fact(pool, uid, predicate, object)
+    if result is None:
+        return {
+            "confirmed": False,
+            "reason": f"no active fact matches predicate={predicate!r} object={object!r}",
+            "matches": await near_matches(pool, uid, predicate, object),
+        }
+    return {"confirmed": True, **result}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False})
 async def forget_fact_tool(predicate: str, object: str, uid: str = Depends(_uid)) -> dict:
     """Remove a ZYND fact. Use when the user says something ZYND remembers is
     wrong, outdated, private, should be removed, or should be forgotten.
-    Pass the exact predicate and object as returned by get_my_context."""
-    return {"forgotten": await forget_fact(await _get_pool(), uid, predicate, object)}
+    Pass the exact predicate and object as returned by get_my_context. If the
+    result has forgotten:false, retry with an exact predicate/object from the
+    returned `matches`; never report success on a false result."""
+    pool = await _get_pool()
+    result = await forget_fact(pool, uid, predicate, object)
+    if result is None:
+        return {
+            "forgotten": False,
+            "reason": f"no active fact matches predicate={predicate!r} object={object!r}",
+            "matches": await near_matches(pool, uid, predicate, object),
+        }
+    await card_sync.notify_cards_refresh(pool, uid)
+    return {"forgotten": True, **result}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})

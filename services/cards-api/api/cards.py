@@ -492,4 +492,6 @@ async def get_card(card_id: str):
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
     claimed = cards_service.card_is_claimed(card.handle) if card.handle else True
-    return {**card.model_dump(mode="json"), "claimed": bool(claimed)}
+    from services.signals import derive_public_signals
+
+    return {**derive_public_signals(card).model_dump(mode="json"), "claimed": bool(claimed)}

@@ -3,12 +3,19 @@ ZYND MCP TEST PROMPTS
 
 1. MEMORY READ
    What do you know about me? Use get_my_context
+   Pass = one packet with non-empty identity.name, profile, socials, brief,
+          facts, card, and present. Identity alone is not stored factual context;
+          null optional sections are not proof that no information exists.
 
 2. MEMORY WRITE
    Remember that I prefer TypeScript over JavaScript for all new projects
+   Use report_user_info(text="I prefer TypeScript over JavaScript for all new projects")
+   with no typed fields. Pass = report the actual saved result; facts stay private.
 
 3. VERIFY WRITE
    What are my coding preferences? Use get_my_context
+   Inspect facts, optionally with topic="coding preferences". Extraction may
+   still be pending immediately after a successful free-text save.
 
 4. CALENDAR
    List my calendar events for this week
@@ -23,9 +30,30 @@ ZYND MCP TEST PROMPTS
    Search the Zynd network for product designers
 
 8. BRIEF
-   Read my brief using read_my_brief
+   Read my brief using get_my_context.brief
+   Pass = call get_my_context and report its brief; null may be unset or unavailable.
 
 9. CROSS-SURFACE SYNC (most important)
    Step 1 — in OpenCode:      Remember that I'm currently working on ZYND memory sync
    Step 2 — in Claude Desktop: What am I working on right now?
    Pass = Claude Desktop returns the fact written in OpenCode
+
+10. TYPED SAVE AND MIXED-INPUT REJECTION
+    Save my role as backend engineer and my languages as Python and TypeScript
+    using report_user_info typed fields without text.
+    Then try report_user_info(text="I prefer small teams", role="backend engineer").
+    Pass = mixed call returns saved=false with reason
+           "Use text alone or typed fields, not both", without saving either input.
+
+11. PUBLIC CARD AND OWNER SECTIONS
+    What is public about me, and how has my card performed this week?
+    Use get_my_context.card only for approved public facts, and status/activity
+    for owner metrics. Pass = owner keys are omitted without cards:read or legacy
+    user scope, including cards:approve-only tokens; authorized unavailable
+    sections are null, not zero. Private facts/profile/brief are not public evidence.
+
+12. CORRECTION AND EXPORT
+    Confirm or forget a returned fact using its exact predicate and object from
+    get_my_context.facts. Pass = report the actual correction result.
+    Export only on an explicit backup/download/export request and only when
+    export_my_context is visible in the client's actual tool list.

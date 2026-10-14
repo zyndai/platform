@@ -72,7 +72,9 @@ def build_action_schema() -> dict:
                     "summary": "Get the user's ZYND memory and persona profile in one call.",
                     "description": "Call at conversation start to ground every reply in what ZYND "
                                    "knows. Returns `assertions` (show `statement` values verbatim) "
-                                   "and `profile` (persona name + social links). Never invent facts "
+                                   "plus `identity` (non-empty display name and email), `profile` "
+                                   "(raw persona status), and `brief` (project brief). Profile and "
+                                   "brief may be null when unavailable. Never invent facts "
                                    "about the user — only reference what appears here.",
                     "security": [{"OAuth2": ["ingest"]}],
                     "parameters": [
@@ -252,7 +254,17 @@ def build_action_schema() -> dict:
                 },
                 "ContextPacket": {
                     "type": "object",
+                    "required": ["identity"],
                     "properties": {
+                        "identity": {
+                            "type": "object",
+                            "required": ["name", "email"],
+                            "properties": {
+                                "name": {"type": "string", "minLength": 1,
+                                         "description": "Display label, not necessarily a verified real name."},
+                                "email": {"type": ["string", "null"]},
+                            },
+                        },
                         "assertions": {
                             "type": "array",
                             "items": {"$ref": "#/components/schemas/Fact"},

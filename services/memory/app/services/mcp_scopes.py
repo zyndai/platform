@@ -15,18 +15,13 @@ ALLOWED_SCOPES = (
 DEFAULT_SCOPES = ["memory:write"]
 
 MEMORY_TOOLS = frozenset({
-    "remember",
     "report_user_info",
-    "get_my_card",
     "get_my_context",
-    "get_my_system_prompt",
     "confirm_fact_tool",
     "forget_fact_tool",
 })
 CARDS_READ_TOOLS = frozenset({
-    "get_card_status",
     "list_pending_facts",
-    "get_card_activity",
     "list_intros",
 })
 CARDS_APPROVE_TOOLS = frozenset({

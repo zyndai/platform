@@ -1,13 +1,13 @@
 """Comprehensive tests for the MCP server: auth paths, tool registration, tool logic.
 
 Covers:
-- All 74 registered tools present
+- Consolidated tool registration and removed-tool exclusion
 - Auth matrix: missing / bad / expired / valid token
 - ZyndTokenVerifier: DB unavailable does NOT crash (returns None → 401)
 - check_connection_status: no persona / not connected / connected
 - list_my_connections: resolves user_id → agent_id before querying dm_threads
 - request_connection: no persona / already exists / success paths
-- get_my_socials: persona service down returns graceful error dict
+- Removed self-info wrappers and format helper stay absent
 - brief tools: read / append / replace / clear / add_todo
 - zynd_network: call_zynd_agent / call_zynd_service reject empty payload
 - data: dict | None = None schema on call_zynd_agent / call_zynd_service
@@ -26,13 +26,12 @@ from app.mcp_http import ZyndTokenVerifier, app as mcp_asgi, mcp
 # ── Tool registration ──────────────────────────────────────────────────────────
 
 _EXPECTED_TOOLS = {
-    "remember", "get_my_context", "export_my_context",
+    "report_user_info", "get_my_context", "export_my_context",
     "find_similar_users", "find_people", "confirm_fact_tool", "forget_fact_tool",
     "search_linkedin_profiles", "find_linkedin_people_for_me",
     "publish_page", "list_my_pages", "disconnect",
-    "set_social_links", "get_my_socials",
+    "set_social_links",
     "connect_with", "send_persona_message", "my_connections", "book_meeting",
-    "get_my_system_prompt",
     # Google Calendar
     "create_calendar_event", "list_calendar_events", "delete_calendar_event",
     # Google Docs
@@ -64,12 +63,12 @@ _EXPECTED_TOOLS = {
     # Zynd Services
     "search_zynd_services", "get_zynd_service_card", "call_zynd_service",
     # Brief & Todo
-    "read_my_brief", "append_to_my_brief", "replace_my_brief",
+    "append_to_my_brief", "replace_my_brief",
     "clear_my_brief", "add_todo",
 }
 
 
-def test_all_74_tools_registered():
+def test_consolidated_tools_registered():
     # given
     names = {t.name for t in asyncio.run(mcp.list_tools())}
     # when / then
@@ -78,12 +77,11 @@ def test_all_74_tools_registered():
 
 
 def test_tool_count_includes_s10_s09_and_s12():
-    # 78 on dev (S10 owner reads) plus five S09 tools: inbox, approve,
-    # dismiss, looking-for, headline; S12 adds one read-only intro tool.
+    # Seven self-info wrappers were folded into the retained read/write tools.
     names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert len(names) == 84
+    assert len(names) == 77
     assert {
-        "get_card_status", "get_card_activity", "list_pending_facts",
+        "list_pending_facts",
         "approve_fact", "dismiss_fact", "set_looking_for", "update_headline", "list_intros",
     } <= names
 
@@ -381,38 +379,16 @@ async def test_request_connection_already_exists():
     assert result["current_status"] == "pending"
 
 
-# ── get_my_socials ─────────────────────────────────────────────────────────────
-
-async def test_get_my_socials_persona_service_down_returns_graceful_error():
-    # given — persona service raises PersonaError
-    from app.services.persona import PersonaError
+def test_removed_self_info_tools_and_format_helper_are_absent():
     import app.mcp_http as m
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow.return_value = {"supabase_user_id": "suid-abc"}
 
-    with patch("app.mcp_http._get_pool", AsyncMock(return_value=mock_pool)):
-        with patch("app.mcp_http.persona") as mock_persona:
-            mock_persona.get_status = AsyncMock(side_effect=PersonaError("network down"))
-            # call the raw function with uid injected directly (bypasses FastMCP Depends)
-            result = await m.get_my_socials(uid="uid-abc")
-
-    # then — returns graceful dict, not an exception
-    assert "links" in result
-    assert result["links"] == {}
-    assert "unavailable" in result["note"].lower()
-
-
-async def test_get_my_socials_no_persona_linked():
-    # given — user has no supabase_user_id
-    import app.mcp_http as m
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow.return_value = {"supabase_user_id": None}
-
-    with patch("app.mcp_http._get_pool", AsyncMock(return_value=mock_pool)):
-        result = await m.get_my_socials(uid="uid-abc")
-
-    assert result["links"] == {}
-    assert "note" in result
+    removed = {
+        "remember", "get_my_card", "get_my_socials", "read_my_brief",
+        "get_my_system_prompt", "get_card_status", "get_card_activity",
+    }
+    names = {t.name for t in asyncio.run(mcp.list_tools())}
+    assert names.isdisjoint(removed)
+    assert all(not hasattr(m, name) for name in removed | {"_format_system_prompt"})
 
 
 # ── brief tools ────────────────────────────────────────────────────────────────

@@ -63,7 +63,7 @@ export function SuggestedFactsReview({
   onChanged,
 }: {
   tone?: "light" | "dark";
-  onChanged?: (snapshot: MemorySnapshot) => void;
+  onChanged?: (snapshot: MemorySnapshot) => void | Promise<void>;
 } = {}) {
   const light = tone === "light";
   const [facts, setFacts] = useState<SuggestedFact[] | null>(null);
@@ -116,7 +116,7 @@ export function SuggestedFactsReview({
   );
 
   const approve = useCallback(
-    async (fact: SuggestedFact) => {
+    async (fact: SuggestedFact): Promise<boolean> => {
       setPending({ predicate: fact.predicate, object: fact.object, action: "publish" });
       setError("");
       try {
@@ -129,9 +129,11 @@ export function SuggestedFactsReview({
           asPred !== fact.predicate ? asPred : undefined,
         );
         removeLocal(fact);
-        onChanged?.(snapshot);
+        await onChanged?.(snapshot);
+        return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not publish that fact");
+        return false;
       } finally {
         setPending(null);
       }
@@ -140,15 +142,17 @@ export function SuggestedFactsReview({
   );
 
   const dismissOne = useCallback(
-    async (fact: SuggestedFact) => {
+    async (fact: SuggestedFact): Promise<boolean> => {
       setPending({ predicate: fact.predicate, object: fact.object, action: "dismiss" });
       setError("");
       try {
         const t = await sessionToken();
         await dismissSuggestedFact(t, fact.predicate, fact.object);
         removeLocal(fact);
+        return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not dismiss that fact");
+        return false;
       } finally {
         setPending(null);
       }
@@ -317,7 +321,16 @@ export function SuggestedFactsReview({
                 disabled={pending !== null}
                 onClick={() => {
                   void (async () => {
-                    for (const fact of items) await approve(fact);
+                    const failed: string[] = [];
+                    for (const fact of items) {
+                      if (!(await approve(fact))) failed.push(factLabel(fact));
+                    }
+                    if (failed.length) {
+                      setError(
+                        `Published ${items.length - failed.length} of ${items.length}. ` +
+                          `Could not publish: ${failed.join(", ")}`,
+                      );
+                    }
                   })();
                 }}
                 style={{
@@ -338,7 +351,16 @@ export function SuggestedFactsReview({
               disabled={pending !== null}
               onClick={() => {
                 void (async () => {
-                  for (const fact of items) await dismissOne(fact);
+                  const failed: string[] = [];
+                  for (const fact of items) {
+                    if (!(await dismissOne(fact))) failed.push(factLabel(fact));
+                  }
+                  if (failed.length) {
+                    setError(
+                      `Dismissed ${items.length - failed.length} of ${items.length}. ` +
+                        `Could not dismiss: ${failed.join(", ")}`,
+                    );
+                  }
                 })();
               }}
               style={{

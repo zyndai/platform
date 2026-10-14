@@ -24,8 +24,7 @@ def register(mcp, uid_dep) -> None:
         from app.tools.card_intros import get_owner_intros
         return await get_owner_intros(await _get_pool(), uid)
 
-    # get_card_status and get_card_activity already exist (S10). ScopeGate
-    # hides them unless the token has cards:read or the legacy user scope.
+    # get_my_context includes S10 status/activity only for cards:read or legacy user scope.
     @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
     async def list_pending_facts(uid: str = Depends(uid_dep)) -> dict:
         """Facts waiting for the owner to approve. Do not publish them yourself."""

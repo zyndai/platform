@@ -15,10 +15,27 @@ import hmac
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from fastmcp.server.auth import AccessToken
+
 import app.mcp_http as m
 from app.auth import issue_access_token, verify_access_claims
 from app.config import settings
 from app.connect import connect as connect_route
+
+
+@pytest.fixture
+def packet_dependencies():
+    pool = AsyncMock()
+    pool.fetchrow.return_value = {
+        "display_name": "Alice", "email": "alice@example.com",
+        "supabase_user_id": None, "socials": {},
+    }
+    token = AccessToken(token="test", client_id="test-uid", scopes=["memory:write"])
+    with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
+         patch("app.mcp_http.get_card", AsyncMock(return_value=[])), \
+         patch("app.mcp_http.brief_tools.read_my_brief", AsyncMock(return_value={"success": True, "content": ""})):
+        yield pool, token
 
 
 # ── Journey 1: New user signs up and remembers her first facts ─────────────────
@@ -78,28 +95,28 @@ async def test_user_remembers_her_first_durable_fact():
     uid = "test-uid"
     pool, arq = MagicMock(), MagicMock()
 
-    # when — the assistant calls remember() with a full sentence
+    # when — the assistant saves a full sentence through the unified write tool
     with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
          patch("app.mcp_http._get_arq", AsyncMock(return_value=arq)), \
          patch("app.mcp_http.ingest_turns", AsyncMock(return_value=(1, 0))) as ingest:
-        result = await m.remember("I am building a Rust microservices platform", uid=uid)
+        result = await m.report_user_info(text="I am building a Rust microservices platform", uid=uid)
 
     # then — the fact is accepted and enqueued for background extraction
     assert result["saved"] is True
     ingest.assert_awaited_once()
 
 
-async def test_remember_rejects_text_that_is_too_short():
+async def test_free_text_report_rejects_text_that_is_too_short():
     # given — the assistant tries to save a fragment below the 8-char floor
     # when
-    result = await m.remember("hi", uid="test-uid")
+    result = await m.report_user_info(text="hi", uid="test-uid")
 
     # then — nothing is saved and the reason explains the minimum length
     assert result["saved"] is False
     assert "too short" in result["reason"]
 
 
-async def test_remember_rejects_a_duplicate_fact():
+async def test_free_text_report_rejects_a_duplicate_fact():
     # given — the same fact was already remembered (ingest reports 0 inserted)
     pool, arq = MagicMock(), MagicMock()
 
@@ -107,43 +124,45 @@ async def test_remember_rejects_a_duplicate_fact():
     with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
          patch("app.mcp_http._get_arq", AsyncMock(return_value=arq)), \
          patch("app.mcp_http.ingest_turns", AsyncMock(return_value=(0, 1))):
-        result = await m.remember("I am building a Rust microservices platform", uid="test-uid")
+        result = await m.report_user_info(text="I am building a Rust microservices platform", uid="test-uid")
 
     # then — it is de-duplicated, not double-counted
     assert result["saved"] is False
     assert "already remembered" in result["reason"]
 
 
-async def test_user_reads_back_her_context_after_signing_up():
+async def test_user_reads_back_her_context_after_signing_up(packet_dependencies):
     # given — background processing has not produced any facts yet
-    pool = MagicMock()
+    pool, token = packet_dependencies
 
     # when — she asks the assistant what ZYND knows about her
     with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
          patch("app.mcp_http.active_context", AsyncMock(return_value=[])) as active:
-        result = await m.get_my_context(uid="test-uid")
+        result = await m.get_my_context(uid="test-uid", token=token)
 
-    # then — an (empty) list comes back, never an error
-    assert result == []
+    assert result["facts"] == []
+    assert result["identity"]["name"] == "Alice"
+    assert result["present"] == ["identity"]
     active.assert_awaited_once()
 
 
 # ── Journey 2: User curates her fact graph ─────────────────────────────────────
 
 
-async def test_user_asks_for_context_on_a_specific_topic():
+async def test_user_asks_for_context_on_a_specific_topic(packet_dependencies):
     # given — she has facts and wants only the ones about Rust
-    pool = MagicMock()
+    pool, token = packet_dependencies
     rust_fact = {"statement": "You're building a Rust platform", "predicate": "is_building", "object": "Rust platform"}
 
     # when — a topic is supplied, get_my_context routes through the topic slice
     with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
          patch("app.mcp_http.context_slice", AsyncMock(return_value=[rust_fact])) as slice_fn, \
          patch("app.mcp_http.active_context", AsyncMock(return_value=[])) as active:
-        result = await m.get_my_context(topic="rust", uid="test-uid")
+        result = await m.get_my_context(topic="rust", uid="test-uid", token=token)
 
     # then — the topic-relevant slice is returned, not the whole graph
-    assert result == [rust_fact]
+    assert result["facts"] == [rust_fact]
+    assert result["identity"]["name"] == "Alice"
     slice_fn.assert_awaited_once()
     active.assert_not_awaited()
 
@@ -277,20 +296,14 @@ async def test_user_searches_for_a_target_person_and_gets_no_matches():
 # ── Journey 4: User manages her brief and todos ────────────────────────────────
 
 
-async def test_user_with_no_persona_has_an_empty_brief():
-    # given — she has no persona_agents row, so no brief exists
-    suid = "suid-abc"
-    sb = MagicMock()
-    sb.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
-
-    # when — she reads her brief
-    with patch("app.tools.brief._sb", return_value=sb):
-        result = await m.read_my_brief(suid=suid)
+async def test_user_with_no_persona_has_an_empty_brief(packet_dependencies):
+    # The packet fixture has no linked persona and an empty brief service result.
+    with patch("app.mcp_http.active_context", AsyncMock(return_value=[])):
+        result = await m.get_my_context(uid="test-uid", token=packet_dependencies[1])
 
     # then — the tool reports the brief simply does not exist yet
-    assert result["success"] is True
-    assert result["exists"] is False
-    assert result["content"] == ""
+    assert result["brief"] is None
+    assert "brief" not in result["present"]
 
 
 async def test_user_appends_a_line_to_her_brief():
@@ -449,66 +462,67 @@ async def test_setting_social_links_is_gated_while_persona_is_disabled():
     assert "coming soon" in result["hint"].lower()
 
 
-async def test_viewing_socials_returns_empty_when_no_persona_is_linked():
+async def test_viewing_socials_returns_empty_when_no_persona_is_linked(packet_dependencies):
     # given — her user row has no supabase_user_id, so no persona profile exists
-    pool = MagicMock()
-    pool.fetchrow = AsyncMock(return_value={"supabase_user_id": None})
+    _, token = packet_dependencies
 
     # when — she asks to see her saved social links
-    with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)):
-        result = await m.get_my_socials(uid="test-uid")
+    with patch("app.mcp_http.active_context", AsyncMock(return_value=[])):
+        result = await m.get_my_context(uid="test-uid", token=token)
 
-    # then — an empty link set with an explanatory note, not an error
-    assert result["links"] == {}
-    assert "note" in result
-
-
-# ── Journey 8: System prompt loading (graceful degradation) ────────────────────
+    # An empty section is absent from present, not a failed packet.
+    assert not any(result["socials"].values())
+    assert "socials" not in result["present"]
 
 
-async def test_system_prompt_loads_with_full_persona_context():
+# Journey 8: Startup packet loading and graceful degradation
+
+
+async def test_context_packet_loads_with_full_persona_context(packet_dependencies):
     # given — a user with a persona profile, some facts, and a brief
     uid = "55555555-5555-5555-5555-555555555555"
-    pool = MagicMock()
+    pool, token = packet_dependencies
     pool.fetchrow = AsyncMock(return_value={
-        "display_name": "Alice", "supabase_user_id": "suid-alice", "persona_agent_id": "zns:alice",
+        "display_name": "Alice", "email": "alice@example.com",
+        "supabase_user_id": "suid-alice", "socials": {},
     })
     facts = [{"statement": "You're building a Rust microservices platform"}]
 
     with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
          patch("app.mcp_http.active_context", AsyncMock(return_value=facts)), \
-         patch("app.mcp_http.persona") as persona_mod, \
-         patch("app.mcp_http.brief_tools") as brief_mod:
+         patch("app.services.self_context.persona") as persona_mod, \
+         patch("app.mcp_http.brief_tools.read_my_brief", AsyncMock(return_value={"success": True, "content": "Working on ZYND"})) as brief:
         persona_mod.get_status = AsyncMock(return_value={"name": "Alice", "description": "Founder"})
-        brief_mod.read_my_brief = AsyncMock(return_value={"success": True, "content": "Working on ZYND"})
         # when
-        prompt = await m.get_my_system_prompt(uid=uid)
+        packet = await m.get_my_context(uid=uid, token=token)
 
-    # then — the personalized prompt carries the standard ZYND framing + her data
-    assert isinstance(prompt, str)
-    assert "WHO YOU REPRESENT" in prompt
-    assert "ZYND TOOLKIT" in prompt
-    assert "Rust microservices platform" in prompt
+    assert packet["identity"] == {"name": "Alice", "email": "alice@example.com"}
+    assert packet["facts"] == facts
+    assert packet["profile"]["description"] == "Founder"
+    assert packet["brief"] == "Working on ZYND"
+    persona_mod.get_status.assert_awaited_once_with("suid-alice")
+    brief.assert_awaited_once_with("suid-alice")
 
 
-async def test_system_prompt_still_loads_when_persona_service_is_down():
+async def test_context_packet_still_loads_when_persona_service_is_down(packet_dependencies):
     # given — the persona service raises, but the rest of ZYND is healthy
     uid = "66666666-6666-6666-6666-666666666666"
-    pool = MagicMock()
+    pool, token = packet_dependencies
     pool.fetchrow = AsyncMock(return_value={
-        "display_name": "Bob", "supabase_user_id": "suid-bob", "persona_agent_id": None,
+        "display_name": "  ", "email": " bob@example.com ",
+        "supabase_user_id": "suid-bob", "socials": {},
     })
 
     with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
          patch("app.mcp_http.active_context", AsyncMock(return_value=[])), \
-         patch("app.mcp_http.persona") as persona_mod, \
-         patch("app.mcp_http.brief_tools") as brief_mod:
+         patch("app.services.self_context.persona") as persona_mod, \
+         patch("app.mcp_http.brief_tools.read_my_brief", AsyncMock(return_value={"success": False})):
         persona_mod.get_status = AsyncMock(side_effect=RuntimeError("persona service down"))
-        brief_mod.read_my_brief = AsyncMock(return_value={"success": False})
         # when
-        prompt = await m.get_my_system_prompt(uid=uid)
+        packet = await m.get_my_context(uid=uid, token=token)
 
-    # then — graceful degradation: a usable prompt still comes back
-    assert isinstance(prompt, str)
-    assert "WHO YOU REPRESENT" in prompt
-    assert "ZYND TOOLKIT" in prompt
+    assert packet["identity"]["name"] == "bob"
+    assert packet["profile"] is None
+    assert packet["brief"] is None
+    assert packet["facts"] == []
+    assert packet["present"] == ["identity"]

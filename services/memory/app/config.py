@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     # Off restores the single personal token (minting a new one revokes the old).
     feature_s09_mcp_clients: bool = True
 
+    # S02 — after a memory-side public-card mutation (agent forget, /me/findability
+    # approve/revoke/declare), fire-and-forget a cards-api snapshot refresh so the
+    # public page/data.json update within seconds instead of waiting for the cron.
+    # Off by default (rollback = leave off); enable FEATURE_S02_CARD_SYNC=true.
+    feature_s02_card_sync: bool = False
+
     # S05 — typed MCP capture: tools/skills/projects map to predicates directly
     # instead of English → LLM extraction. Off by default (rollback = leave off).
     feature_s05_typed_capture: bool = False
@@ -79,11 +85,11 @@ class Settings(BaseSettings):
     # S10 owner read tools use the same cards aggregation over service HTTP.
     feature_s10_home: bool = False
     cards_api_url: str = "https://cards.api.zynd.ai"
-    # MCP transport mode. Stateful (default) accepts GET SSE alongside POST so
-    # clients that open a server-to-client stream (Kilo, Antigravity) can connect.
-    # Set false (stateless) only when strict stateless mode is required: FastMCP
-    # then restricts the endpoint to POST+DELETE and drops the GET SSE stream.
-    feature_stateful_mcp: bool = True
+    # MCP transport mode. Stateless (default) keeps the existing POST+DELETE
+    # contract with no session IDs. Set true to re-enable the GET SSE stream for
+    # clients that open a server-to-client connection (Kilo, Antigravity);
+    # stateful mode requires session IDs on POSTs.
+    feature_stateful_mcp: bool = False
     access_token_ttl_seconds: int = 3600
     refresh_token_ttl_seconds: int = 30 * 24 * 3600
     mcp_token_ttl_seconds: int = 90 * 24 * 3600   # long-lived token pasted into MCP clients

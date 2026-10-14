@@ -867,8 +867,14 @@ def claimed_by_handles(handles: list[str]) -> dict[str, bool]:
 
 
 def _public_card_payload(row: dict) -> dict:
-    """JSON card plus claimed/alias. Never includes owner_email."""
-    card = _row_to_card(row)
+    """JSON card plus claimed/alias. Never includes owner_email.
+
+    working_on / can_help_with reflect live memory facts (services/signals.py). Public
+    reads only: the owner's editor loads /cards/mine and so never saves derived items.
+    """
+    from services.signals import derive_public_signals
+
+    card = derive_public_signals(_row_to_card(row))
     return {
         **card.model_dump(mode="json"),
         "claimed": _claimed_from_row(row),

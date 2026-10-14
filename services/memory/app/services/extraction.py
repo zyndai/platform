@@ -30,7 +30,7 @@ Schema:
 
 Allowed predicates (pick the most specific that fits):
   Building: is_building, is_working_on, is_creating, wants_to_preserve
-  Learning: is_learning, has_expertise_in, has_skill
+  Learning: is_learning, has_expertise_in, has_skill, uses_tool
   Intent: intends_to, is_seeking, is_preparing_for, fears
   Beliefs: believes, values, recently_changed_stance_on, has_aesthetic
   Navigation: is_navigating, is_constrained_by, is_frustrated_by, has_been_wronged
@@ -38,6 +38,17 @@ Allowed predicates (pick the most specific that fits):
   People: has_collaborator, is_responsible_for, is_advocating_for, is_in_conflict_with, is_inspired_by
   Place: is_located_in, is_affiliated_with, has_language_context
   Motivation: is_motivated_by
+
+Choosing between building, working on, tools and expertise:
+  is_building = a named venture, product or mission the person is creating
+    (e.g. "Verusa"). Never a tool they use or a process they follow.
+  is_working_on = a current work stream or process (e.g. "LinkedIn outreach",
+    "AI-assisted delivery"). Short-lived.
+  uses_tool = a product or tool the person operates but did not build
+    (e.g. "Codex", "Claude Code", "Postgres"). A tool is never is_building and
+    never has_expertise_in unless the person says they are an expert in it.
+  has_expertise_in = a field the person has depth in, stated or clearly shown.
+    A single mention is not expertise.
 
 object_type is one of the taxonomy entity types, e.g. skill_technical,
   concept_topic, project_venture, belief_opinion, intent_project,

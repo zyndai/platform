@@ -14,13 +14,16 @@ import {
   githubLoginFromUrl,
   refreshCardGithub,
   refreshCardLinkedIn,
+  fetchSummaryDraft,
+  type SummaryDraft,
 } from "@/lib/cards";
 import { createClient } from "@/lib/supabase/client";
-import { factLabel, memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
+import { memoryFactKey, ownerFactCount, ownerFactGroups, type OwnerFactDetail } from "@/lib/memory-facts";
+import { OwnerMemoryList } from "@/components/memory/OwnerMemoryList";
 import { MemoryProviderOnboard } from "@/components/memory/MemoryProviderOnboard";
 import { McpConnectPanel } from "@/components/mcp/McpConnectPanel";
 import { SuggestedFactsReview } from "@/components/mcp/SuggestedFactsReview";
-import type { MemorySnapshot } from "@/lib/mcp-connector";
+import { fetchOwnerCardFacts, type MemorySnapshot } from "@/lib/mcp-connector";
 import { AutoGrowTextArea } from "@/components/AutoGrowTextArea";
 import { ContributionHeatmap } from "../contribution-heatmap";
 import { CountUp } from "../count-up";
@@ -143,6 +146,14 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     (initialCard.zynd_memory ?? []) as Array<Record<string, unknown>>
   );
   const [memorySkipped, setMemorySkipped] = useState(false);
+  // About draft built from the owner's current public memory. A preview only: it replaces
+  // the text only when the owner clicks "Use this draft".
+  const [aboutDraft, setAboutDraft] = useState<
+    { status: "idle" | "loading" | "ready" | "error"; draft?: SummaryDraft; error?: string }
+  >({ status: "idle" });
+  // Owner-only origin and evidence for each public fact, keyed by memoryFactKey. Optional:
+  // if it fails to load the list still renders, from the snapshot's own provenance.
+  const [ownerDetails, setOwnerDetails] = useState<Record<string, OwnerFactDetail>>({});
   const [showProviderImport, setShowProviderImport] = useState(false);
   const [lastSync, setLastSync] = useState<number | null>(null);
   const [now, setNow] = useState<number>(() => Date.now());
@@ -156,6 +167,26 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     const t = setTimeout(() => setToast(null), 3200);
     return () => clearTimeout(t);
   }, [toast]);
+
+  useEffect(() => {
+    if (!token || memoryFacts.length === 0) return;
+    let cancelled = false;
+    fetchOwnerCardFacts(token)
+      .then((facts) => {
+        if (cancelled) return;
+        const next: Record<string, OwnerFactDetail> = {};
+        for (const f of facts) {
+          if (f.predicate && f.object) {
+            next[memoryFactKey(f.predicate, f.object)] = { provenance: f.provenance, evidence: f.evidence };
+          }
+        }
+        setOwnerDetails(next);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [token, memoryFacts]);
 
   useEffect(() => {
     if (memoryConnected !== true) return;
@@ -173,6 +204,15 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
       showToast("Save failed — try again", "err");
     }
     setSaving(false);
+  }
+
+  async function draftAbout() {
+    setAboutDraft({ status: "loading" });
+    try {
+      setAboutDraft({ status: "ready", draft: await fetchSummaryDraft(token) });
+    } catch (err) {
+      setAboutDraft({ status: "error", error: err instanceof Error ? err.message : "Couldn't draft a summary" });
+    }
   }
 
   async function syncMemory() {
@@ -383,28 +423,9 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
   const githubUrl = safeUrl(hLinks.find(([p]) => p.toLowerCase() === "github")?.[1] || draft.identity.links?.github);
   const githubHandle = usernameFromUrl(githubUrl) || handle;
   const contributions = draft.contribution_stats ?? null;
-  const seenFactKeys = new Set<string>();
   const syncedAgo = lastSync ? formatAgo(lastSync, now) : "";
-  const visibleFacts = memoryFacts.map((fact) => {
-    const predicate = typeof fact.predicate === "string" ? fact.predicate : "";
-    const object = typeof fact.object === "string" ? fact.object.trim() : "";
-    if (predicate && object) {
-      const key = memoryFactKey(predicate, object);
-      if (seenFactKeys.has(key)) return null;
-      seenFactKeys.add(key);
-      return factLabel({ predicate: memoryFactFamily(predicate), object });
-    }
-    for (const key of ["content", "value", "text", "description", "fact", "summary"]) {
-      if (typeof fact[key] === "string" && (fact[key] as string).trim()) {
-        const text = (fact[key] as string).trim();
-        const dedupeKey = text.toLowerCase();
-        if (seenFactKeys.has(dedupeKey)) return null;
-        seenFactKeys.add(dedupeKey);
-        return text;
-      }
-    }
-    return null;
-  }).filter((t): t is string => !!t);
+  const memoryGroups = ownerFactGroups(memoryFacts, ownerDetails);
+  const memoryCount = ownerFactCount(memoryGroups);
 
   return (
     <>
@@ -678,6 +699,34 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                 style={{ resize: "none", minHeight: 120 }}
                 placeholder="Write a short professional summary"
               />
+              <div style={{ marginTop: 10 }}>
+                <button type="button" className="pe-ghost" onClick={draftAbout} disabled={aboutDraft.status === "loading"}>
+                  {aboutDraft.status === "loading" ? "Drafting…" : "Draft from my memory"}
+                </button>
+                {aboutDraft.status === "error" && (
+                  <p role="alert" className="pe-help" style={{ marginTop: 6 }}>{aboutDraft.error}</p>
+                )}
+              </div>
+              {aboutDraft.status === "ready" && aboutDraft.draft && (
+                <div data-testid="about-draft" className="pe-mem" style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "#6b6b66", marginBottom: 6 }}>
+                    Proposed summary
+                  </div>
+                  <p style={{ margin: 0, color: "#1d1d1b" }}>{aboutDraft.draft.draft}</p>
+                  {aboutDraft.draft.based_on.length > 0 && (
+                    <p className="pe-help" style={{ marginTop: 8 }}>Based on: {aboutDraft.draft.based_on.join(" · ")}</p>
+                  )}
+                  <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                    <button type="button" className="pe-primary" style={{ padding: "8px 14px", fontSize: 14 }}
+                      onClick={() => { setSText(aboutDraft.draft!.draft); setAboutDraft({ status: "idle" }); }}>
+                      Use this draft
+                    </button>
+                    <button type="button" className="pe-ghost" onClick={() => setAboutDraft({ status: "idle" })}>
+                      Keep mine
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="pe-fields" style={{ marginTop: 16 }}>
                 <div>
                   <label className="pe-lab">Availability</label>
@@ -716,16 +765,14 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                   </button>
                 </div>
                 <p className="pe-help">Facts AI agents read when they work with you.</p>
-                {visibleFacts.length > 0 ? (
+                {memoryCount > 0 ? (
                   <>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
                       <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#15803d", flexShrink: 0 }} />
                       <span style={{ fontSize: 13, fontWeight: 600, color: "#15803d" }}>Live · synced{syncedAgo ? ` ${syncedAgo}` : ""}</span>
-                      <span style={{ fontSize: 12, color: T.muted }}>{visibleFacts.length} fact{visibleFacts.length === 1 ? "" : "s"} on your public card</span>
+                      <span style={{ fontSize: 12, color: T.muted }}>{memoryCount} fact{memoryCount === 1 ? "" : "s"} on your public card</span>
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {visibleFacts.slice(0, 6).map((text, i) => <div key={i} className="pe-mem">{text}</div>)}
-                    </div>
+                    <OwnerMemoryList groups={memoryGroups} />
                     {showProviderImport ? (
                       <div style={{ marginTop: 16 }}>
                         <MemoryProviderOnboard firstName={(hName || "You").split(" ")[0]} handle={handle} tone="light" compact

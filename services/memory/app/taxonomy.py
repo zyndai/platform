@@ -15,6 +15,7 @@ PREDICATE_HALFLIFE_DAYS: dict[str, int | None] = {
     "is_learning": 30,
     "has_expertise_in": 540,         # 18 months
     "has_skill": 730,                # 2 years
+    "uses_tool": 365,                # a product/tool the person operates, not builds or is expert in
     # 3. Goals & intent
     "intends_to": 21,
     "is_seeking": 7,
@@ -66,7 +67,13 @@ INFERRABLE_PREDICATES: frozenset[str] = ALLOWED_PREDICATES - SYSTEM_PREDICATES -
 FINDABILITY_PREDICATES: frozenset[str] = frozenset({
     "is_building", "is_learning", "has_expertise_in",
     "is_seeking", "open_to", "is_affiliated_with", "is_located_in",
+    # Public card sections only. Neither is matched on (see MATCHING_PREDICATES).
+    "is_working_on", "uses_tool",
 })
+
+# The subset that feeds matching embeddings. Card-only sections (current work streams,
+# tools used) are shown to people but must not change who matches whom.
+MATCHING_PREDICATES: frozenset[str] = FINDABILITY_PREDICATES - {"is_working_on", "uses_tool"}
 
 # Entity subtypes by family (brief §2). Flattened to a validation set.
 ENTITY_TYPES: frozenset[str] = frozenset({
@@ -86,7 +93,7 @@ CLUSTER_PREDICATES: dict[str, frozenset[str]] = {
     "intent_cluster": frozenset({"is_building", "is_seeking", "open_to"}),
     "skill_cluster": frozenset({"has_expertise_in", "is_learning"}),
     "place_cluster": frozenset({"is_affiliated_with", "is_located_in"}),
-    "full_context": FINDABILITY_PREDICATES,
+    "full_context": MATCHING_PREDICATES,
 }
 
 # Reliability weight per source, used in the Bayesian update (brief §5.4).
@@ -117,6 +124,7 @@ PREDICATE_PHRASE: dict[str, str] = {
     "is_learning": "You're learning {obj}",
     "has_expertise_in": "You have expertise in {obj}",
     "has_skill": "You're skilled in {obj}",
+    "uses_tool": "You use {obj}",
     "intends_to": "You intend to {obj}",
     "is_seeking": "You're looking for {obj}",
     "is_preparing_for": "You're preparing for {obj}",

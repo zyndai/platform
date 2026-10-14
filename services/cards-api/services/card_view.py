@@ -108,6 +108,12 @@ def cite_as(handle: str) -> str:
 
 
 def build_card_view(card: AgentProfileCard, *, claimed: bool) -> CardView:
+    # Imported here: signals imports this module's fact helpers, so a top-level import
+    # would be circular. Doing it in the builder means no caller (agents, chat, the
+    # public /view route) can serve the stale stored lists by forgetting to derive.
+    from services.signals import derive_public_signals
+
+    card = derive_public_signals(card)
     facts = [shape_fact(f) for f in live_facts(card.zynd_memory)]
     identity = card.identity.model_dump(mode="json")
     view = CardView(

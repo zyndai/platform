@@ -196,6 +196,8 @@ def _ingest_pool_capturing_hashes(existing_hashes: set[str]) -> tuple[AsyncMock,
     pool = AsyncMock()
 
     async def _fetchrow(query, *args):
+        if "FROM trace_chunks c" in query:
+            return None  # "was every fact from this chunk forgotten?" → no, plain duplicate
         # trace_chunks INSERT args: user_id, source, text, conv, turn, hash, ts
         user_id, content_hash = args[0], args[5]
         seen.append((user_id, content_hash))
@@ -463,6 +465,8 @@ async def test_100_concurrent_remembers_same_user_dedup_to_one_insert():
     pool = AsyncMock()
 
     async def _fetchrow(query, *args):
+        if "FROM trace_chunks c" in query:
+            return None  # not a forgotten chunk → stays a dedup skip
         user_id, content_hash = args[0], args[5]
         key = f"{user_id}:{content_hash}"
         # single event loop → no true parallelism, but guard anyway to mirror the

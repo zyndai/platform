@@ -73,6 +73,26 @@ async def mcp_suggestions(
     return {"suggestions": suggestions}
 
 
+@router.get("/mcp/card-facts")
+async def mcp_card_facts(
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """The caller's own public card facts, each with where it came from and the
+    sentence behind it. Owner-only: the evidence is the person's own words."""
+    principal = _principal(authorization)
+    email = _owner_email(principal)
+    if not config.MEMORY_SERVICE_TOKEN:
+        raise HTTPException(status_code=503, detail="MCP connector not configured")
+    try:
+        facts = await zynd_mcp.owner_card_facts(email)
+    except zynd_mcp.MemoryUnavailable as exc:
+        detail = str(exc)
+        if "no ZYND account" in detail:
+            return {"facts": []}
+        raise HTTPException(status_code=502, detail=detail) from exc
+    return {"facts": facts}
+
+
 @router.post("/mcp/approve")
 async def mcp_approve(
     body: ApproveBody,

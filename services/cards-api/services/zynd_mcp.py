@@ -68,6 +68,17 @@ async def suggested_facts(email: str) -> list[dict]:
     return data.get("suggestions") or []
 
 
+async def owner_card_facts(email: str) -> list[dict]:
+    """The owner's public card facts with provenance and the evidence sentence.
+
+    Evidence is the person's own words, so this is only for the signed-in owner's
+    editor, never for the public card view.
+    """
+    path = "/v1/service/card-facts/" + quote(email.strip().lower(), safe="")
+    data = await _request("GET", path)
+    return data.get("facts") or []
+
+
 async def approve_fact(
     email: str,
     predicate: str,

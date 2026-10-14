@@ -9,6 +9,7 @@ import asyncpg
 
 from app.services.entities import resolve_entity
 from app.services.matching import recompute_user_embeddings
+from app.services.provenance import evidence_excerpt, provenance_for
 from app.services.quality import (
     DEFAULT_DAILY_CAP,
     assess,
@@ -21,8 +22,10 @@ from app.taxonomy import FINDABILITY_PREDICATES, PREDICATE_HALFLIFE_DAYS, decay_
 # Declarable predicates -> the entity family a declared value resolves to.
 DECLARE_ENTITY_TYPE: dict[str, str] = {
     "is_building": "project_venture",
+    "is_working_on": "project_venture",
     "is_learning": "skill_domain",
     "has_expertise_in": "skill_domain",
+    "uses_tool": "skill_technical",
     "is_seeking": "collaborator",
     "open_to": "collaborator",
     "is_affiliated_with": "place_institutional",
@@ -50,6 +53,7 @@ PRIVATE_DECLARE_ENTITY_TYPE: dict[str, str] = {
     "is_learning": "skill_domain",
     "has_expertise_in": "skill_domain",
     "has_skill": "skill_technical",
+    "uses_tool": "skill_technical",
     "intends_to": "intent_project",
     "is_preparing_for": "intent_project",
     "fears": "concept_topic",
@@ -88,12 +92,13 @@ _LOOKUP = """SELECT a.id FROM assertions a JOIN entities e ON e.id = a.object_en
               LIMIT 1"""
 
 
-async def get_card(pool: asyncpg.Pool, user_id: str) -> list[dict]:
-    """The user's public findability card — what others can match against."""
+async def _card_rows(pool: asyncpg.Pool, user_id: str, *, with_evidence: bool) -> list[dict]:
     rows = await pool.fetch(
-        """SELECT a.predicate, e.canonical_name AS object, a.source, a.confidence,
-                  a.approved_at, a.observed_at
+        """SELECT a.predicate, e.canonical_name AS object, a.source, a.source_system,
+                  a.confidence, a.approved_at, a.observed_at,
+                  c.source_system AS chunk_source_system, c.raw_text AS chunk_text
              FROM assertions a JOIN entities e ON e.id = a.object_entity_id
+             LEFT JOIN trace_chunks c ON c.id = a.trace_chunk_id
             WHERE a.user_id = $1 AND a.valid_until IS NULL AND a.is_public = true
               AND a.predicate = ANY($2::text[])
             ORDER BY a.predicate""",
@@ -102,7 +107,7 @@ async def get_card(pool: asyncpg.Pool, user_id: str) -> list[dict]:
     card = []
     for r in rows:
         pred = r["predicate"]
-        card.append({
+        fact = {
             "predicate": pred,
             "object": r["object"],
             "source": r["source"],
@@ -110,8 +115,26 @@ async def get_card(pool: asyncpg.Pool, user_id: str) -> list[dict]:
             "approved_at": r["approved_at"].isoformat() if r["approved_at"] else None,
             "observed_at": r["observed_at"].isoformat() if r["observed_at"] else None,
             "half_life_days": PREDICATE_HALFLIFE_DAYS.get(pred),
-        })
+            "provenance": provenance_for(r["source_system"], r["source"], r["chunk_source_system"]),
+        }
+        if with_evidence:
+            # The person's own sentence. Owner-only: never part of the public card.
+            fact["evidence"] = evidence_excerpt(r["chunk_text"])
+        card.append(fact)
     return dedupe_suggestion_rows(card)
+
+
+async def get_card(pool: asyncpg.Pool, user_id: str) -> list[dict]:
+    """The user's public findability card — what others can match against.
+
+    Carries a coarse `provenance` label only; never the evidence text.
+    """
+    return await _card_rows(pool, user_id, with_evidence=False)
+
+
+async def get_card_for_owner(pool: asyncpg.Pool, user_id: str) -> list[dict]:
+    """The same public facts plus the owner's own `evidence` sentence for each."""
+    return await _card_rows(pool, user_id, with_evidence=True)
 
 
 # Predicates coding agents commonly produce that should surface for review.
@@ -126,7 +149,6 @@ _REVIEW_PREDICATES = list(FINDABILITY_PREDICATES | frozenset({
 # (has_collaborator is intentionally omitted — open_to/is_seeking are enums.)
 _APPROVE_AS: dict[str, str] = {
     "has_skill": "has_expertise_in",
-    "is_working_on": "is_building",
     "is_creating": "is_building",
     "intends_to": "is_building",
     "is_responsible_for": "is_building",

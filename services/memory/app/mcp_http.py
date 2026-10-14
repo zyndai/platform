@@ -388,8 +388,9 @@ async def report_user_info(
 ) -> dict:
     """Report durable professional facts at a milestone (not continuously).
 
-    Prefer typed fields: tools/languages/frameworks/skills → skills;
-    projects → building; goals → intends. role and notes stay free text.
+    Prefer typed fields: tools → tools the user operates (not builds);
+    languages/frameworks/skills → skills; projects → named ventures or
+    products only; goals → intends. role and notes stay free text.
     Never pass secrets, API keys, passwords, tokens, .env, repo paths, or
     one-off task details. Facts stay private until the user reviews them."""
     from app.services.findability import (
@@ -409,7 +410,7 @@ async def report_user_info(
     typed_saved = 0
     typed_skipped = 0
     typed_fields: list[tuple[str, list[str] | None, str]] = [
-        ("tools", tools, "has_skill"),
+        ("tools", tools, "uses_tool"),
         ("languages", languages, "has_skill"),
         ("frameworks", frameworks, "has_skill"),
         ("skills", skills, "has_skill"),

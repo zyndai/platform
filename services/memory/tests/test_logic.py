@@ -58,10 +58,12 @@ def test_cluster_predicates_are_all_allowed():
         assert predicates <= ALLOWED_PREDICATES, f"{cluster} has unknown predicates"
 
 
-def test_full_context_covers_findability_predicates():
-    from app.taxonomy import FINDABILITY_PREDICATES
-    # v2: matching's full_context is the findability card, not every predicate.
-    assert CLUSTER_PREDICATES["full_context"] == FINDABILITY_PREDICATES
+def test_full_context_covers_matching_predicates():
+    from app.taxonomy import MATCHING_PREDICATES
+    # v2: matching's full_context is the matchable part of the findability card.
+    # Card-only sections (is_working_on, uses_tool) are shown but never matched on.
+    assert CLUSTER_PREDICATES["full_context"] == MATCHING_PREDICATES
+    assert "uses_tool" not in CLUSTER_PREDICATES["full_context"]
 
 
 def test_inferred_findability_fact_starts_private(monkeypatch):

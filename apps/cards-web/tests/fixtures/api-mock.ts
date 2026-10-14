@@ -167,6 +167,20 @@ export function startFixtureServer(): Promise<void> {
       const handle = path.split("/").pop()!;
       return json(200, cardFixture(handle, { claimed: handle === "claimed" }));
     }
+    if (path === "/cards/by-handle/memorycard") {
+      // Public memory snapshot with one venture, one work stream and one tool, so the
+      // card must put each in its own section (not fold them into "Currently building").
+      const approved_at = new Date().toISOString();
+      return json(200, {
+        ...cardFixture("memorycard"),
+        zynd_memory: [
+          { predicate: "is_building", object: "Verusa", source: "declared", confidence: 0.97, approved_at },
+          { predicate: "is_working_on", object: "LinkedIn outreach", source: "declared", confidence: 0.9, approved_at },
+          { predicate: "uses_tool", object: "Codex", source: "declared", confidence: 0.9, approved_at },
+          { predicate: "has_expertise_in", object: "Compliance engineering", source: "declared", confidence: 0.94, approved_at },
+        ],
+      });
+    }
     if (path === "/cards/by-handle/draft-card") {
       return json(200, { ...cardFixture("draft-card"), status: "draft", claimed: undefined });
     }

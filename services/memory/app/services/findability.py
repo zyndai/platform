@@ -21,8 +21,10 @@ from app.taxonomy import FINDABILITY_PREDICATES, PREDICATE_HALFLIFE_DAYS, decay_
 # Declarable predicates -> the entity family a declared value resolves to.
 DECLARE_ENTITY_TYPE: dict[str, str] = {
     "is_building": "project_venture",
+    "is_working_on": "project_venture",
     "is_learning": "skill_domain",
     "has_expertise_in": "skill_domain",
+    "uses_tool": "skill_technical",
     "is_seeking": "collaborator",
     "open_to": "collaborator",
     "is_affiliated_with": "place_institutional",
@@ -50,6 +52,7 @@ PRIVATE_DECLARE_ENTITY_TYPE: dict[str, str] = {
     "is_learning": "skill_domain",
     "has_expertise_in": "skill_domain",
     "has_skill": "skill_technical",
+    "uses_tool": "skill_technical",
     "intends_to": "intent_project",
     "is_preparing_for": "intent_project",
     "fears": "concept_topic",
@@ -126,7 +129,6 @@ _REVIEW_PREDICATES = list(FINDABILITY_PREDICATES | frozenset({
 # (has_collaborator is intentionally omitted — open_to/is_seeking are enums.)
 _APPROVE_AS: dict[str, str] = {
     "has_skill": "has_expertise_in",
-    "is_working_on": "is_building",
     "is_creating": "is_building",
     "intends_to": "is_building",
     "is_responsible_for": "is_building",

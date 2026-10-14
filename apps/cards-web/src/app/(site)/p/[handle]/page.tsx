@@ -488,14 +488,16 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
   const MEMORY_GROUPS: Record<string, { label: string; icon: string }> = {
     is_building: { label: "Currently building", icon: "⚙️" },
+    is_working_on: { label: "Working on", icon: "⚙️" },
     is_learning: { label: "Learning", icon: "📚" },
     is_seeking: { label: "Seeking", icon: "🤝" },
     open_to: { label: "Open to", icon: "🤝" },
     has_expertise_in: { label: "Expert in", icon: "🧠" },
+    uses_tool: { label: "Tools I use", icon: "🧰" },
     is_affiliated_with: { label: "Works at", icon: "🏢" },
     is_located_in: { label: "Based in", icon: "📍" },
   };
-  const GROUP_ORDER = ["is_building", "is_learning", "is_seeking", "open_to", "has_expertise_in", "is_affiliated_with", "is_located_in"];
+  const GROUP_ORDER = ["is_building", "is_working_on", "is_learning", "is_seeking", "open_to", "has_expertise_in", "uses_tool", "is_affiliated_with", "is_located_in"];
   const ENUM_LABELS: Record<string, string> = {
     co_founder: "a co-founder", technical_feedback: "technical feedback",
     early_users: "early users", mentoring: "mentoring", being_mentored: "being mentored",
@@ -507,6 +509,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
     is_seeking: 7,
     is_working_on: 14,
     is_building: 60,
+    uses_tool: 365,
   };
 
   // Server request timestamp for expiry filtering (not client render purity).

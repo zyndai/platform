@@ -358,6 +358,19 @@ async def service_suggestions(email: str, authorization: str = Header(default=""
     return {"suggestions": await get_suggestions(get_pool(), user_id)}
 
 
+@app.get("/v1/service/card-facts/{email}")
+async def service_card_facts(email: str, authorization: str = Header(default="")) -> dict:
+    """The owner's own view of their public card facts: each fact with where it came
+    from and the sentence behind it.
+
+    Unlike /v1/service/findability this includes `evidence` (the person's own words),
+    so it must only be reached on behalf of the signed-in owner. cards-api vouches for
+    the caller; auth is the shared MEMORY_SERVICE_TOKEN."""
+    user_id = await _service_caller(authorization, email)
+    from app.services.findability import get_card_for_owner
+    return {"facts": await get_card_for_owner(get_pool(), user_id)}
+
+
 @app.post("/v1/service/approve")
 async def service_approve(body: dict, authorization: str = Header(default="")) -> dict:
     """Publish one private findability fact onto the user's public card.

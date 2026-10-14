@@ -247,9 +247,9 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     }
   }
 
-  function applyMemorySnapshot(snapshot: MemorySnapshot) {
+  async function applyMemorySnapshot(snapshot: MemorySnapshot) {
     if (snapshot === null) {
-      void syncMemory();
+      await syncMemory();
       return;
     }
     setMemoryFacts(snapshot);

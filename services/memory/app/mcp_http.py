@@ -65,6 +65,12 @@ _REMEMBER_MIN_CHARS = 8
 _MAX_REPORT_CHARS = 4000
 _CARDS_SOURCE = "cards_mcp"
 
+# Typed-capture flood guards: one report_user_info call may carry at most this
+# many values per field and in total, so an agent inferring a whole stack from
+# a single sentence cannot fill the owner's review inbox in one call.
+MAX_PER_FIELD = 4
+MAX_TYPED_TOTAL = 12
+
 _ZYND_INSTRUCTIONS = """\
 You have access to ZYND — my cross-AI memory, context, people-discovery, and networking layer.
 
@@ -85,6 +91,8 @@ Batch several facts into one report_user_info call when you do report.
 Durable professional facts only: role/title, skills, programming languages, frameworks, tools I use, named projects I am building, goals I am working toward.
 Use the typed fields (skills, languages, frameworks, tools, projects, goals, role). Put free-form extras in notes. Use remember only for a single free-text fact I stated.
 
+Only report facts I EXPLICITLY stated. Never infer a tech stack or skill list from a single mention like "I'm working on X" — if the sentence does not name a language/framework/tool, leave those fields empty. When in doubt, ask: "Want me to save your stack (JavaScript, React, …) to ZYND?" before reporting inferred stack facts.
+
 == What NOT to report ==
 
 - Repo names / paths (owner/repo, *.git, /Users/..., node_modules)
@@ -98,7 +106,7 @@ If unsure whether something is durable or sensitive, ask: "Want me to save this 
 
 == Available ZYND tools ==
 
-report_user_info — Preferred for structured professional facts. Pass typed lists; facts stay private until I review them on my card.
+report_user_info — Preferred for structured professional facts. Pass typed lists; facts stay private until I review them on my card. Only include skills/languages/frameworks/tools the user explicitly stated — never infer a stack from a single project mention.
 
 remember — Use for a single free-text durable fact I stated ("I'm learning Rust"). Do NOT use for casual chatter, temporary task instructions, or secrets.
 
@@ -392,6 +400,8 @@ async def report_user_info(
     Prefer typed fields: tools → tools the user operates (not builds);
     languages/frameworks/skills → skills; projects → named ventures or
     products only; goals → intends. role and notes stay free text.
+    Only include skills/languages/frameworks/tools the user EXPLICITLY
+    stated; never infer a stack from a single "working on X" mention.
     Never pass secrets, API keys, passwords, tokens, .env, repo paths, or
     one-off task details. Facts stay private until the user reviews them."""
     from app.services.findability import (
@@ -424,8 +434,11 @@ async def report_user_info(
                 "saved": False,
                 "reason": "daily report cap reached — try again tomorrow",
             }
+        # One report must not flood the review inbox: cap values per field and
+        # in total, so an agent inferring a whole stack from one sentence
+        # cannot fill the queue in a single call.
         for field, values, predicate in typed_fields:
-            for result in assess_typed_field(field, values, predicate=predicate):
+            for result in assess_typed_field(field, (values or [])[:MAX_PER_FIELD], predicate=predicate):
                 if observe and not typed_on:
                     log_observe(uid, field, result)
                     continue
@@ -435,6 +448,9 @@ async def report_user_info(
                     continue
                 if result.group == "noise":
                     log_observe(uid, field, result)
+                if typed_saved >= MAX_TYPED_TOTAL:
+                    typed_skipped += 1
+                    continue
                 # Soft triage: store look/noise so the owner can dismiss; hard-drop only.
                 ok = await declare_for_review(
                     pool, uid, result.suggested_predicate or predicate, result.value,

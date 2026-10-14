@@ -39,10 +39,28 @@ export function cardFixture(handle: string, opts: { claimed?: boolean; name?: st
     connect_with: [],
     love_talking_about: [],
     github_stats: null,
+    zynd_memory: handle === "owner"
+      ? OWNER_FACTS.map(({ predicate, object, provenance }) => ({
+          predicate, object, provenance, source: "declared", confidence: 0.9, approved_at: "2026-10-10T00:00:00Z",
+        }))
+      : undefined,
     claimed,
     alias: null,
   };
 }
+
+/** Public facts on the owner card: more than the editor shows collapsed, so the count and
+ *  the list can be checked against each other. */
+const OWNER_FACTS: Array<{ predicate: string; object: string; provenance: string; evidence: string | null }> = [
+  { predicate: "is_building", object: "Verusa", provenance: "profile", evidence: null },
+  { predicate: "is_working_on", object: "LinkedIn outreach", provenance: "agent", evidence: "The user works on the project: LinkedIn outreach" },
+  { predicate: "is_learning", object: "Stablecoin regulation", provenance: "you", evidence: null },
+  { predicate: "has_expertise_in", object: "Compliance engineering", provenance: "you", evidence: null },
+  { predicate: "has_expertise_in", object: "AI agent orchestration", provenance: "you", evidence: null },
+  { predicate: "has_expertise_in", object: "Team leadership", provenance: "profile", evidence: null },
+  { predicate: "uses_tool", object: "Codex", provenance: "agent", evidence: "The user has a tool: Codex" },
+  { predicate: "uses_tool", object: "Claude in Chrome", provenance: "agent", evidence: "The user has a tool: Claude in Chrome" },
+];
 
 export function startFixtureServer(): Promise<void> {
   const initialIntro = () => ({
@@ -107,6 +125,7 @@ export function startFixtureServer(): Promise<void> {
     if (path === "/cards/mine/status") return json(200, ownerStatus());
     if (path === "/cards/mine/digest-preview") return json(200, { html: "<h1>Your week on Zynd</h1><p>12 views</p>" });
     if (path === "/cards/mcp/suggestions") return json(200, { suggestions: [] });
+    if (path === "/cards/mcp/card-facts") return json(200, { facts: OWNER_FACTS });
     if (path === "/cards/redirect/old-owner") return json(200, { handle: hasDuplicate ? null : "owner" });
     if (path.startsWith("/cards/redirect/")) return json(200, { handle: null });
     if (path === "/cards/by-handle/owner") return json(200, ownerCard);

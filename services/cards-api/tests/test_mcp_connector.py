@@ -87,6 +87,50 @@ def test_suggestions_no_memory_account_means_empty_list(client, monkeypatch):
     assert r.json() == {"suggestions": []}
 
 
+def test_card_facts_requires_auth(client):
+    assert client.get("/cards/mcp/card-facts").status_code == 401
+
+
+def test_card_facts_proxies_verified_email_and_passes_evidence(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(mcp_module, "verify_supabase_jwt", lambda auth: PRINCIPAL)
+
+    async def fake_facts(email):
+        seen["email"] = email
+        return [{"predicate": "uses_tool", "object": "Codex", "provenance": "agent",
+                 "evidence": "The user has a tool: Codex"}]
+
+    monkeypatch.setattr(zynd_mcp, "owner_card_facts", fake_facts)
+
+    r = client.get("/cards/mcp/card-facts", headers=_auth(monkeypatch=monkeypatch))
+
+    assert r.status_code == 200
+    assert seen["email"] == "alice@example.com"  # the verified email, never a client value
+    assert r.json()["facts"][0]["evidence"] == "The user has a tool: Codex"
+
+
+def test_card_facts_no_memory_account_means_empty_list(client, monkeypatch):
+    monkeypatch.setattr(mcp_module, "verify_supabase_jwt", lambda auth: PRINCIPAL)
+
+    async def raise_no_account(email):
+        raise zynd_mcp.MemoryUnavailable("no ZYND account for this email")
+
+    monkeypatch.setattr(zynd_mcp, "owner_card_facts", raise_no_account)
+    r = client.get("/cards/mcp/card-facts", headers=_auth(monkeypatch=monkeypatch))
+    assert r.status_code == 200 and r.json() == {"facts": []}
+
+
+def test_card_facts_maps_outage_to_502(client, monkeypatch):
+    monkeypatch.setattr(mcp_module, "verify_supabase_jwt", lambda auth: PRINCIPAL)
+
+    async def raise_down(email):
+        raise zynd_mcp.MemoryUnavailable("memory layer unreachable")
+
+    monkeypatch.setattr(zynd_mcp, "owner_card_facts", raise_down)
+    r = client.get("/cards/mcp/card-facts", headers=_auth(monkeypatch=monkeypatch))
+    assert r.status_code == 502
+
+
 def test_suggestions_maps_outage_to_502(client, monkeypatch):
     monkeypatch.setattr(mcp_module, "verify_supabase_jwt", lambda auth: PRINCIPAL)
 

@@ -155,6 +155,24 @@ export async function fetchSuggestedFacts(supabaseToken: string): Promise<Sugges
   return data.suggestions ?? [];
 }
 
+/** One of the owner's public card facts with where it came from and the sentence
+ *  behind it. Owner-only: `evidence` is the person's own words. */
+export interface OwnerCardFact {
+  predicate: string;
+  object: string;
+  provenance?: string;
+  evidence?: string | null;
+}
+
+export async function fetchOwnerCardFacts(supabaseToken: string): Promise<OwnerCardFact[]> {
+  const res = await fetch(`${CARDS_API}/cards/mcp/card-facts`, {
+    headers: { Authorization: `Bearer ${supabaseToken}` },
+  });
+  if (!res.ok) throw new Error(await errDetail(res));
+  const data = (await res.json()) as { facts?: OwnerCardFact[] };
+  return data.facts ?? [];
+}
+
 /** Publish one suggested fact onto the user's public card. Returns the fresh
  *  public memory snapshot (null when the API returned none). */
 export async function approveSuggestedFact(

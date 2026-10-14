@@ -14,6 +14,8 @@ import {
   githubLoginFromUrl,
   refreshCardGithub,
   refreshCardLinkedIn,
+  fetchSummaryDraft,
+  type SummaryDraft,
 } from "@/lib/cards";
 import { createClient } from "@/lib/supabase/client";
 import { memoryFactKey, ownerFactCount, ownerFactGroups, type OwnerFactDetail } from "@/lib/memory-facts";
@@ -144,6 +146,11 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     (initialCard.zynd_memory ?? []) as Array<Record<string, unknown>>
   );
   const [memorySkipped, setMemorySkipped] = useState(false);
+  // About draft built from the owner's current public memory. A preview only: it replaces
+  // the text only when the owner clicks "Use this draft".
+  const [aboutDraft, setAboutDraft] = useState<
+    { status: "idle" | "loading" | "ready" | "error"; draft?: SummaryDraft; error?: string }
+  >({ status: "idle" });
   // Owner-only origin and evidence for each public fact, keyed by memoryFactKey. Optional:
   // if it fails to load the list still renders, from the snapshot's own provenance.
   const [ownerDetails, setOwnerDetails] = useState<Record<string, OwnerFactDetail>>({});
@@ -197,6 +204,15 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
       showToast("Save failed — try again", "err");
     }
     setSaving(false);
+  }
+
+  async function draftAbout() {
+    setAboutDraft({ status: "loading" });
+    try {
+      setAboutDraft({ status: "ready", draft: await fetchSummaryDraft(token) });
+    } catch (err) {
+      setAboutDraft({ status: "error", error: err instanceof Error ? err.message : "Couldn't draft a summary" });
+    }
   }
 
   async function syncMemory() {
@@ -683,6 +699,34 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                 style={{ resize: "none", minHeight: 120 }}
                 placeholder="Write a short professional summary"
               />
+              <div style={{ marginTop: 10 }}>
+                <button type="button" className="pe-ghost" onClick={draftAbout} disabled={aboutDraft.status === "loading"}>
+                  {aboutDraft.status === "loading" ? "Drafting…" : "Draft from my memory"}
+                </button>
+                {aboutDraft.status === "error" && (
+                  <p role="alert" className="pe-help" style={{ marginTop: 6 }}>{aboutDraft.error}</p>
+                )}
+              </div>
+              {aboutDraft.status === "ready" && aboutDraft.draft && (
+                <div data-testid="about-draft" className="pe-mem" style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "#6b6b66", marginBottom: 6 }}>
+                    Proposed summary
+                  </div>
+                  <p style={{ margin: 0, color: "#1d1d1b" }}>{aboutDraft.draft.draft}</p>
+                  {aboutDraft.draft.based_on.length > 0 && (
+                    <p className="pe-help" style={{ marginTop: 8 }}>Based on: {aboutDraft.draft.based_on.join(" · ")}</p>
+                  )}
+                  <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                    <button type="button" className="pe-primary" style={{ padding: "8px 14px", fontSize: 14 }}
+                      onClick={() => { setSText(aboutDraft.draft!.draft); setAboutDraft({ status: "idle" }); }}>
+                      Use this draft
+                    </button>
+                    <button type="button" className="pe-ghost" onClick={() => setAboutDraft({ status: "idle" })}>
+                      Keep mine
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="pe-fields" style={{ marginTop: 16 }}>
                 <div>
                   <label className="pe-lab">Availability</label>

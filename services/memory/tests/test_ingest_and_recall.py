@@ -1,5 +1,5 @@
 """Integration tests for the shared ingest service + topic-less recall (the MCP
-`remember` / `get_my_context` paths)."""
+`report_user_info(text=...)` / `get_my_context.facts` paths)."""
 from datetime import datetime, timezone
 
 import pytest

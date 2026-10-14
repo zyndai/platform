@@ -27,7 +27,6 @@ from urllib.parse import urlsplit
 from app.auth import verify_access_meta
 from app.config import settings
 from app.models import Turn
-from app.services import persona
 from app.services import card_sync
 from app.services.control import confirm_fact, forget_fact, near_matches
 from app.services.export import active_context, build_jsonld_export, context_slice
@@ -35,6 +34,7 @@ from app.services.findability import get_card
 from app.services.ingest import clean_text, ingest_turns
 from app.services.linkedin_search import find_linkedin_people, search_linkedin_profile_urls, enrich_profile_urls
 from app.services.matching import match_users, search_by_query
+from app.services.self_context import load_self_context, normalize_profile, read_brief
 
 # ── Agent-persona ported MCP tools ─────────────────────────────────────────────
 from app.tools import twitter as twitter_tools
@@ -72,108 +72,20 @@ MAX_PER_FIELD = 4
 MAX_TYPED_TOTAL = 12
 
 _ZYND_INSTRUCTIONS = """\
-You have access to ZYND — my cross-AI memory, context, people-discovery, and networking layer.
+ZYND is your private cross-AI memory, profile, people discovery, and networking layer. It works two ways: read useful context from it, and save durable facts the user explicitly shares.
 
-ZYND is a TWO-WAY system:
-1. FEED IT: When I share durable professional facts → call report_user_info (structured) or remember (free text).
-2. READ IT: At the start of every conversation → call get_my_context() so you know who I am and what I'm working on.
+READ - exactly one self-info tool: call get_my_context at conversation start. It returns identity, profile, socials, brief, private facts, and the approved public card in one bounded packet. Pass topic for focused facts. There is no other self-info read tool; identity.name is a display label, not necessarily a verified real name. Identity alone does not establish stored facts; null optional sections can mean unavailable.
 
-If you skip either direction, ZYND cannot help — the graph stays empty and you have no context about me.
+WRITE - exactly one durable-fact tool: use report_user_info with typed fields at milestones, or text alone for one free-text fact. These modes are mutually exclusive. Batch facts and never call on every keystroke. Only save facts explicitly stated by the user; never infer a stack from a project mention. Never save secrets, credentials, casual chatter, repo paths, or one-off task details.
 
-== Milestone reporting (important) ==
+CORRECT: confirm_fact_tool and forget_fact_tool use the exact predicate and object from get_my_context.facts; never claim success on a false result.
+EXPORT: export_my_context only for an explicit backup, download, or export request.
+PEOPLE / NETWORK / PUBLISH: find_*, connect_with, my_connections, send_persona_message, book_meeting, publish_page, and list_my_pages.
+CARD OWNER: list_pending_facts, approve_fact, dismiss_fact, set_looking_for, update_headline, and list_intros when granted by the token.
+INTEGRATIONS: Google calendar/docs/drive/gmail/sheets, Twitter/X, LinkedIn, and Notion only on explicit request.
 
-Report at milestones, not continuously. Good moments: end of a meaningful session, after learning a new durable skill/tool, when a project ships or goals change, when I explicitly ask you to save something.
-Do NOT call report_user_info on every keystroke, every file edit, or every transient task.
-Batch several facts into one report_user_info call when you do report.
-
-== What to report ==
-
-Durable professional facts only: role/title, skills, programming languages, frameworks, tools I use, named projects I am building, goals I am working toward.
-Use the typed fields (skills, languages, frameworks, tools, projects, goals, role). Put free-form extras in notes. Use remember only for a single free-text fact I stated.
-
-Only report facts I EXPLICITLY stated. Never infer a tech stack or skill list from a single mention like "I'm working on X" — if the sentence does not name a language/framework/tool, leave those fields empty. When in doubt, ask: "Want me to save your stack (JavaScript, React, …) to ZYND?" before reporting inferred stack facts.
-
-== What NOT to report ==
-
-- Repo names / paths (owner/repo, *.git, /Users/..., node_modules)
-- Tools as projects (do not put "Claude Code" or "Docker" in projects — use tools/skills)
-- Internal jargon ("worker trees", worktree paths, agent session ids)
-- One-off task details ("rename this variable today")
-- Secrets, API keys, passwords, tokens, .env contents, credentials — never
-- Health, politics, immigration, legal, financial, or highly personal facts unless I explicitly ask you to save them
-
-If unsure whether something is durable or sensitive, ask: "Want me to save this to your Zynd card memory?"
-
-== Available ZYND tools ==
-
-report_user_info — Preferred for structured professional facts. Pass typed lists; facts stay private until I review them on my card. Only include skills/languages/frameworks/tools the user explicitly stated — never infer a stack from a single project mention.
-
-remember — Use for a single free-text durable fact I stated ("I'm learning Rust"). Do NOT use for casual chatter, temporary task instructions, or secrets.
-
-get_my_context — Use when I ask what ZYND knows about me, ask you to recall my context, or when my stored context would help answer the current question. Call this EARLY in every conversation. If I ask about a topic, pass that topic. Show the natural-language statements returned.
-
-get_my_card — My PUBLIC card facts (what I approved for discovery).
-
-export_my_context — Use when I ask to export, download, back up, or inspect my full ZYND profile/context graph.
-
-confirm_fact_tool — Use when I confirm that an existing ZYND fact is correct. Pass the exact predicate and object if available from get_my_context. If it returns confirmed:false, retry with an exact predicate/object from the returned matches — never claim success on a false result.
-
-forget_fact_tool — Use when I say a remembered fact is wrong, outdated, private, should be removed, or should be forgotten. Pass the exact predicate and object if available from get_my_context. If it returns forgotten:false, retry with an exact predicate/object from the returned matches — never claim a fact was removed on a false result.
-
-find_similar_users — Use when I ask for people like me, similar users, people building/learning/working on similar things, or people with overlapping context.
-
-find_people — Use when I ask for a target type of person, complementary person, or someone who could help: investors, cofounders, designers, engineers, marketers, mentors, customers, early users, reviewers, domain experts. Convert my intent into a clear natural-language target description.
-
-search_linkedin_profiles — Use when I ask to find specific people on LinkedIn: "find CTOs in climate tech on LinkedIn", "search LinkedIn for AI researchers". Exa semantic search (Tavily fallback) with Firecrawl profile enrichment. ZYND users are cross-referenced and ranked first.
-
-find_linkedin_people_for_me — Use when I ask to find people like me on LinkedIn: "who should I connect with", "find my tribe on LinkedIn". Reads my ZYND context graph, auto-builds a search query, returns ZYND users first + enriched LinkedIn profiles.
-
-set_social_links — Use when I ask to save or update public social links: LinkedIn, Instagram, X/Twitter, GitHub.
-
-get_my_socials — Use when I ask to see, show, or view my saved social links. Returns the profile URLs.
-
-connect_with — Use when I ask to connect with a person returned by ZYND. Use their user_id from find_similar_users or find_people. If I haven't provided a message, draft a short friendly one and ask for approval unless the intent is clear.
-
-my_connections — Use when I ask who I am connected with, show my connections, or inspect connection status.
-
-send_persona_message — Use when I ask to message an existing ZYND connection. Requires thread_id from my_connections or connect_with. Ask for missing message content.
-
-book_meeting — Use when I ask to schedule, propose, or book a meeting with a ZYND connection. Ask for missing details: thread_id/person, title, start time, end time, timezone, location, description.
-
-publish_page — Use when I ask to turn something into a shareable web page ("make this a page", "publish as HTML"). Pass content as HTML or Markdown.
-
-list_my_pages — Use when I ask to see pages I have published or hosted.
-
-disconnect — Use when I ask to sign out or disconnect ZYND. Revokes all ZYND tokens.
-
-get_my_system_prompt — Use at the START of a conversation. Returns your personalized instructions plus my profile and everything ZYND remembers about me. After loading, if I share anything new, call remember or report_user_info at a milestone.
-
-== General behavior ==
-
-Do not invent ZYND results. Only report what tools actually return.
-Do not claim something was remembered, confirmed, forgotten, connected, messaged, or booked unless the relevant tool succeeded and returned success.
-Use ZYND quietly and naturally when helpful, but don't overuse tools — especially report_user_info.
-If a tool fails, explain briefly and continue helping.
-If you are unsure whether a fact should be saved, ask: "Do you want me to save this to ZYND?"
-
-== Privacy and safety ==
-
-Treat ZYND as my private memory unless the tool explicitly returns public/matching data.
-Never save secrets, API keys, passwords, private tokens, .env contents, or credentials.
-Be cautious with health, politics, immigration, legal, financial, identity, and highly personal topics. Ask before saving these.
-For matching and people discovery, only use public/findability information returned by ZYND.
-Do not reveal raw internal IDs unless needed for a tool call or I ask.
-
-== Preferred flow ==
-
-If I share durable professional facts at a milestone → call report_user_info (batched).
-If I share a single free-text fact → call remember.
-If I ask what you know about me → call get_my_context.
-If I ask who is similar to me → call find_similar_users.
-If I ask who can help me / who I should meet → call find_people.
-If I choose someone to contact → call connect_with.
-If I ask about existing relationships → call my_connections.
-If I ask to message or meet a connection → call send_persona_message or book_meeting.
+Use only tools visible in the client's actual tool list; export, brief, and social tools retain their existing legacy user scope requirement. Do not search for unavailable tools.
+Facts remain private until the user approves them on their card; say so when saving. Only card is public approved context; facts, profile, and brief are private. Ask before saving sensitive topics. Never invent tool results or claim saves, corrections, messages, or bookings succeeded unless their result says so; explain failures briefly.
 """
 
 
@@ -346,38 +258,6 @@ if _SKILLS_ROOT.is_dir():
     mcp.add_provider(SkillsDirectoryProvider(roots=[_SKILLS_ROOT]))
 
 
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def remember(text: str, uid: str = Depends(_uid)) -> dict:
-    """THIS IS HOW ZYND FEEDS. Call whenever the user shares a durable fact about
-    themselves — role, skills, projects, goals, tools, location, affiliations,
-    interests, beliefs, what they are building, learning, seeking, or open to.
-
-    WITHOUT THIS the context graph stays empty and ZYND cannot help. Every durable
-    fact you skip is permanently invisible to future conversations.
-
-    Do NOT use for: casual chatter, temporary task instructions, secrets, API keys,
-    passwords, private tokens, or one-off details.
-
-    If the user explicitly says "remember this", "save this", or "add this to ZYND",
-    call this tool immediately.
-
-    Pass a complete sentence in the user's voice. ZYND extracts structured facts in
-    the background; they then appear in get_my_context and power find_similar_users.
-    """
-    text = clean_text(text or "").strip()
-    if len(text) < _REMEMBER_MIN_CHARS:
-        return {"saved": False, "reason": f"too short — pass a full sentence (min {_REMEMBER_MIN_CHARS} chars)"}
-    turn = Turn(role="user", content=text, timestamp=datetime.now(timezone.utc))
-    inserted, skipped = await ingest_turns(
-        await _get_pool(), await _get_arq(), uid, "claude", [turn],
-        min_chars=_REMEMBER_MIN_CHARS,
-    )
-    if inserted == 0:
-        return {"saved": False, "reason": "already remembered (duplicate)"}
-    return {"saved": True, "note": "Saved. Facts are extracted in the background; "
-            "recall with get_my_context in a few seconds."}
-
-
 def _clip(text: str, limit: int = _MAX_REPORT_CHARS) -> str:
     text = (text or "").strip()
     return text if len(text) <= limit else text[:limit]
@@ -393,9 +273,12 @@ async def report_user_info(
     projects: list[str] | None = None,
     goals: str = "",
     notes: str = "",
+    text: str | None = None,
     uid: str = Depends(_uid),
 ) -> dict:
-    """Report durable professional facts at a milestone (not continuously).
+    """Save durable facts: typed fields at milestones, or ``text`` for one free-text fact.
+
+    Use text alone or typed fields, never both. Do not save secrets or casual chatter.
 
     Prefer typed fields: tools → tools the user operates (not builds);
     languages/frameworks/skills → skills; projects → named ventures or
@@ -404,6 +287,24 @@ async def report_user_info(
     stated; never infer a stack from a single "working on X" mention.
     Never pass secrets, API keys, passwords, tokens, .env, repo paths, or
     one-off task details. Facts stay private until the user reviews them."""
+    text = (text or "").strip()
+    typed_values = [role, *(skills or []), *(languages or []), *(frameworks or []),
+                    *(tools or []), *(projects or []), goals, notes]
+    if text and any(str(value).strip() for value in typed_values):
+        return {"saved": False, "reason": "Use text alone or typed fields, not both"}
+    if text:
+        cleaned = clean_text(text).strip()
+        if len(cleaned) < _REMEMBER_MIN_CHARS:
+            return {"saved": False, "reason": f"too short — pass a full sentence (min {_REMEMBER_MIN_CHARS} chars)"}
+        turn = Turn(role="user", content=cleaned, timestamp=datetime.now(timezone.utc))
+        inserted, _ = await ingest_turns(
+            await _get_pool(), await _get_arq(), uid, "claude", [turn],
+            min_chars=_REMEMBER_MIN_CHARS,
+        )
+        if inserted == 0:
+            return {"saved": False, "reason": "already remembered (duplicate)"}
+        return {"saved": True, "note": "Saved. Facts are extracted in the background; recall with get_my_context in a few seconds."}
+
     from app.services.findability import (
         declare_for_review,
         under_daily_cap,
@@ -536,49 +437,63 @@ async def report_user_info(
     }
 
 
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def get_my_card(uid: str = Depends(_uid)) -> list[dict]:
-    """The user's PUBLIC card facts — what they approved for discovery."""
-    return await get_card(await _get_pool(), uid)
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+async def get_my_context(topic: str | None = None, k: int = 20,
+                         uid: str = Depends(_uid),
+                         token: AccessToken = CurrentAccessToken()) -> dict:
+    """Load identity, profile, socials, brief, private facts, and approved public card.
 
-
-@mcp.tool()
-async def get_card_status(uid: str = Depends(_uid)) -> dict:
-    """Read my card completeness, review count, sources and owner actions. Owner only."""
-    from app.tools.card_status import get_owner_status
-    return await get_owner_status(await _get_pool(), uid)
-
-
-@mcp.tool()
-async def get_card_activity(uid: str = Depends(_uid)) -> dict:
-    """Read my last seven days of recorded card views and agent hits. Owner only."""
-    from app.tools.card_status import get_owner_status
-    result = await get_owner_status(await _get_pool(), uid)
-    if result.get("ok") and result.get("data"):
-        result["data"] = result["data"]["activity"]
-        result["next_actions"] = []
-    return result
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def get_my_context(topic: str | None = None, k: int = 20, uid: str = Depends(_uid)) -> list[dict]:
-    """YOUR WINDOW INTO WHO THE USER IS. Call this at the START of every
-    conversation so you know the user's role, projects, skills, and what
-    they are working on. Without this, you are flying blind.
-
-    With `topic`, returns the K facts most relevant to it; with no topic,
-    returns top active facts overall — use the topic-less form to answer
-    "what do you know about me?". Returns [] if the profile is empty — tell
-    the user to share facts about themselves so you can call `remember`.
-
-    Each fact carries a natural-language `statement` (e.g. "You're building
-    a micro-SaaS"). Show the `statement` text to the user; do NOT surface
-    raw predicate or confidence values."""
+    Call at conversation start; topic filters facts only and k is bounded to 1..50.
+    Present lists substantive sections, not proof of a complete memory graph.
+    Optional unavailable sections are null; owner status/activity require cards:read
+    or legacy user scope. A persona name may self-heal an empty stored display name.
+    Show facts' statement text rather than internal predicates or confidence.
+    """
     pool = await _get_pool()
+    self_context = await load_self_context(pool, uid)
     k = max(1, min(k, 50))
-    if topic and topic.strip():
-        return await context_slice(pool, uid, topic.strip(), k)
-    return await active_context(pool, uid, k)
+    facts = await (context_slice(pool, uid, topic.strip(), k)
+                   if topic and topic.strip() else active_context(pool, uid, k))
+    card = await get_card(pool, uid)
+    brief = await read_brief(self_context["supabase_user_id"] or uid)
+    profile = normalize_profile(self_context["persona_status"]) if self_context["persona_status"] else None
+    packet = {
+        "identity": self_context["identity"],
+        "profile": profile,
+        "socials": self_context["socials"],
+        "brief": brief or None,
+        "facts": facts,
+        "card": card,
+        "present": ["identity"],
+    }
+    def substantive(item) -> bool:
+        if isinstance(item, dict):
+            return any(substantive(v) for v in item.values())
+        if isinstance(item, list):
+            return any(substantive(v) for v in item)
+        return bool(item.strip()) if isinstance(item, str) else bool(item)
+
+    for key in ("profile", "socials", "brief", "facts", "card"):
+        if substantive(packet[key]):
+            packet["present"].append(key)
+    scopes = set(token.scopes or []) if token else set()
+    if "user" in scopes or "cards:read" in scopes:
+        from app.tools.card_status import get_owner_status
+        try:
+            result = await get_owner_status(pool, uid)
+        except Exception:
+            result = {"ok": False}
+        if result.get("ok") and result.get("data"):
+            packet["status"] = result["data"]
+            packet["activity"] = result["data"].get("activity") or {}
+        else:
+            packet["status"] = None
+            packet["activity"] = None
+        if packet["status"]:
+            packet["present"].append("status")
+        if packet["activity"]:
+            packet["present"].append("activity")
+    return packet
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
@@ -761,24 +676,6 @@ async def set_social_links(linkedin: str = "", instagram: str = "", x: str = "",
     return await _social(social.set_social, uid, {"linkedin": linkedin, "instagram": instagram, "twitter": x, "github": github})
 
 
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def get_my_socials(uid: str = Depends(_uid)) -> dict:
-    """Return the user's saved social links (LinkedIn, Instagram, X/Twitter, GitHub, Website).
-    Use when the user asks to see, show, or view their social profile links."""
-    pool = await _get_pool()
-    row = await pool.fetchrow("SELECT supabase_user_id FROM users WHERE id = $1", uid)
-    if not (row and row["supabase_user_id"]):
-        return {"links": {}, "note": "no persona linked — connect your persona first"}
-    try:
-        status = await persona.get_status(row["supabase_user_id"])
-    except Exception:
-        return {"links": {}, "note": "persona service unavailable — try again later"}
-    profile = (status.get("profile") or {}) if status else {}
-    social_keys = ["linkedin", "instagram", "twitter", "github", "website"]
-    links = {k: profile[k] for k in social_keys if profile.get(k, "").strip()}
-    return {"links": links}
-
-
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
 async def connect_with(user_id: str, message: str = "Hi — we matched on ZYND, would love to connect.",
                        uid: str = Depends(_uid)) -> dict:
@@ -816,131 +713,6 @@ async def book_meeting(thread_id: str, title: str, start_time: str, end_time: st
     payload = {"title": title, "start_time": start_time, "end_time": end_time,
                "location": location, "description": description}
     return await _social(social.book_meeting, uid, thread_id, payload)
-
-
-def _format_system_prompt(user: dict | None, persona_status: dict | None, facts: list[dict], brief: str = "") -> str:
-    display_name = (user.get("display_name") or "the user") if user else "the user"
-    persona_name = (persona_status.get("name") or display_name) if persona_status else display_name
-    profile = (persona_status.get("profile") or {}) if persona_status else {}
-
-    lines = [
-        "You are an AI assistant with access to ZYND — the user's cross-AI memory,",
-        "context graph, people-discovery, and networking layer.\n",
-        "== WHO YOU REPRESENT ==",
-        f"Principal: {persona_name}",
-    ]
-
-    description = (persona_status.get("description") or "").strip() if persona_status else ""
-    if description:
-        lines.append(f"About them: {description}")
-
-    title = (profile.get("title") or "").strip()
-    organization = (profile.get("organization") or "").strip()
-    if title and organization:
-        lines.append(f"Role: {title} at {organization}")
-    elif title:
-        lines.append(f"Role: {title}")
-    elif organization:
-        lines.append(f"Organization: {organization}")
-
-    location = (profile.get("location") or "").strip()
-    if location:
-        lines.append(f"Location: {location}")
-
-    capabilities = persona_status.get("capabilities", []) if persona_status else []
-    if capabilities:
-        if isinstance(capabilities, list):
-            lines.append(f"Expertise: {', '.join(str(c) for c in capabilities if str(c).strip())}")
-        elif isinstance(capabilities, str) and capabilities.strip():
-            lines.append(f"Expertise: {capabilities}")
-
-    interests = profile.get("interests", []) if persona_status else []
-    if interests:
-        if isinstance(interests, list):
-            lines.append(f"Interests: {', '.join(str(i) for i in interests if str(i).strip())}")
-        elif isinstance(interests, str) and interests.strip():
-            lines.append(f"Interests: {interests}")
-
-    social_keys = [
-        ("linkedin", "LinkedIn"), ("instagram", "Instagram"),
-        ("twitter", "X/Twitter"), ("github", "GitHub"),
-        ("website", "Website"),
-    ]
-    social_found = []
-    for key, label in social_keys:
-        url = (profile.get(key) or "").strip()
-        if url:
-            social_found.append(f"{label}: {url}")
-    if social_found:
-        lines.append("\n== SOCIAL LINKS ==")
-        lines.extend([f"- {s}" for s in social_found])
-
-    if facts:
-        lines.append("\n== WHAT ZYND REMEMBERS ABOUT YOUR PRINCIPAL ==")
-        for f in facts:
-            stmt = (f.get("statement") or "").strip()
-            if stmt:
-                lines.append(f"- {stmt}")
-
-    if brief:
-        lines.append("\n== PROJECT BRIEF ==")
-        lines.append(brief)
-
-    lines.extend([
-        "\n== YOUR ZYND TOOLKIT ==",
-        "You have ZYND tools available through MCP. Use them proactively.",
-        "CRITICAL TWO-WAY FLOW:",
-        "  1. FEED: When the user shares a new durable fact about themselves → call remember().",
-        "     If you skip this, the context graph stays empty forever for that fact.",
-        "  2. FETCH: Use get_my_context() to know who the user is — without it, you're blind.",
-        "",
-        "Key tools:",
-        "  remember — save durable facts about the user (NOT secrets, passwords, casual chatter)",
-        "  get_my_context — recall what ZYND knows about the user",
-        "  find_similar_users — find people with overlapping context",
-        "  find_people — find people by target profile (investors, cofounders, experts, etc.)",
-        "  connect_with — send a connection request to a matched person",
-        "  publish_page — host/deploy HTML or Markdown and return a live public URL. Use this whenever the user says 'host', 'deploy', 'share a link', or 'publish'. Do NOT write a local file when hosting is the goal.",
-        "",
-        "Rules:",
-        "  - Never claim something was remembered/connected/booked unless the tool returned success.",
-        "  - Never save secrets, API keys, passwords, credentials, or .env contents.",
-        "  - Ask before saving health, political, legal, financial, or highly personal facts.",
-        "  - If unsure whether to save, ask: 'Do you want me to save this to ZYND?'",
-        "  - If the user shares anything new about themselves → call remember.",
-    ])
-
-    return "\n".join(lines)
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def get_my_system_prompt(uid: str = Depends(_uid)) -> str:
-    """Load your personalized ZYND profile so you know exactly who the user is and
-    what ZYND remembers about them. Call this at the START of every conversation.
-
-    Returns your full instructions plus the user's persona profile and all context
-    facts ZYND has stored. After loading, if the user shares ANYTHING new about
-    themselves, call `remember` to feed it back into ZYND."""
-    pool = await _get_pool()
-
-    user = await pool.fetchrow(
-        "SELECT display_name, supabase_user_id, persona_agent_id FROM users WHERE id = $1", uid
-    )
-
-    persona_status = None
-    if user and user["supabase_user_id"]:
-        try:
-            persona_status = await persona.get_status(user["supabase_user_id"])
-        except Exception:
-            persona_status = None
-
-    facts = await active_context(pool, uid, k=20)
-
-    suid_for_brief = str(user["supabase_user_id"]) if (user and user["supabase_user_id"]) else uid
-    brief_result = await brief_tools.read_my_brief(suid_for_brief)
-    brief = brief_result.get("content", "") if brief_result.get("success") else ""
-
-    return _format_system_prompt(dict(user) if user else None, persona_status, facts, brief)
 
 
 # ── Google Calendar Tools ──────────────────────────────────────────────────────
@@ -1236,11 +1008,6 @@ async def call_zynd_service(entity_id: str, text: str = "", data: dict | None = 
 
 
 # ── Brief & Todo Tools ─────────────────────────────────────────────────────────
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def read_my_brief(suid: str = Depends(_suid)) -> dict:
-    return await brief_tools.read_my_brief(suid)
-
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
 async def append_to_my_brief(text: str, suid: str = Depends(_suid)) -> dict:

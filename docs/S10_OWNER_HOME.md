@@ -1,7 +1,8 @@
 # S10 owner home
 
-S10 lives in cards-web and cards-api. Memory exposes the two authenticated MCP
-read tools through the same Cards status aggregation. Persona is unchanged.
+S10 lives in cards-web and cards-api. Memory exposes authenticated owner status
+and activity in `get_my_context` through the same Cards status aggregation.
+Persona is unchanged.
 
 ## What ships
 
@@ -29,8 +30,11 @@ read tools through the same Cards status aggregation. Persona is unchanged.
   keep the draft in the editor. Hard unloads warn while changes are unsaved.
   A session-local backup, scoped to owner and handle, offers restoration after
   browser-back navigation or a reload. It contains editable values, never tokens.
-- MCP `get_card_status` and `get_card_activity` derive the owner from the
-  authenticated memory uid and use a protected service-to-service request.
+- MCP `get_my_context.status` and `get_my_context.activity` derive the owner
+  from the authenticated memory uid and use one protected service-to-service
+  status request. These sections require `cards:read` or legacy `user` scope;
+  `cards:approve` alone does not grant read access. Without read access both keys
+  are omitted; with read access both are null when disabled or unavailable.
 
 ## Gates and external dependencies
 

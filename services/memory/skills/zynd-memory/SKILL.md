@@ -10,13 +10,13 @@ things and skip the wrong ones. This skill is the store/not-store rulebook.
 
 ## The two-way flow
 
-1. **FEED** — when the user shares a durable fact, call `remember` (free text)
-   or `report_user_info` (structured: skills, languages, frameworks, tools,
-   projects, goals, role).
+1. **FEED** — when the user shares a durable fact, call `report_user_info`:
+   `text` for a single free-text fact, or typed fields for structured facts
+   (skills, languages, frameworks, tools, projects, goals, role, notes).
 2. **READ** — at the start of every conversation, call `get_my_context` so you
    know who the user is before answering.
 
-If either direction is skipped, the memory graph stays empty.
+Saving grows the memory graph; reading lets you use its context.
 
 ## STORE — durable professional facts
 
@@ -40,7 +40,11 @@ If either direction is skipped, the memory graph stays empty.
 - Use `report_user_info` for structured facts: put tools/languages/frameworks
   in the typed fields (they map to skills), projects in `projects`, goals in
   `goals`; keep `role` and `notes` free text.
-- Use `remember` for a single free-text fact stated in one sentence.
+- Use `report_user_info(text="...")` for a single free-text fact stated in one
+  sentence. Supply `text` alone, without non-empty typed fields.
+- The two modes are mutually exclusive: non-blank `text` combined with any
+  non-empty typed field is rejected before saving. Blank or whitespace-only
+  `text` uses the typed mode; never rely on a mixed call to discard an input.
 - Report at milestones, not continuously: end of a meaningful session, after
   learning a durable skill, when a project ships or goals change. Never call
   on every keystroke or every file edit.
@@ -48,17 +52,25 @@ If either direction is skipped, the memory graph stays empty.
 - Facts stay private until the user reviews them on their card — say so when
   saving, and never claim something was saved unless the tool returned
   `saved: true`.
+- Free-text extraction is asynchronous; a successful save need not appear in
+  recall immediately. Report too-short or duplicate results honestly.
 
 ## Recall
 
-- `get_my_context` — top facts about the user (pass a `topic` for relevance).
-- `get_my_card` — only the facts the user approved for public discovery.
-- `export_my_context` — full JSON-LD export on request.
+- `get_my_context` — one bounded packet with identity, profile, socials, brief,
+  facts, and card (pass a `topic` to focus facts). An identity-only packet is
+  not evidence of stored facts; null optional sections can be unavailable,
+  rather than empty. See `zynd-context` for packet interpretation.
+- `get_my_context.card` — the only evidence of facts approved for public discovery;
+  `facts`, `profile`, and `brief` remain private context.
+- `export_my_context` — full JSON-LD export only for explicit backup/download/export.
 - If the user says a stored fact is wrong: `forget_fact_tool` with the exact
-  predicate and object from `get_my_context`; if they confirm one:
-  `confirm_fact_tool`.
+  predicate and object from `get_my_context.facts`; if they confirm one:
+  `confirm_fact_tool` with those same exact values. Never claim success on failure.
 
 ## Rules
 
 - Never invent results — only report what the tools actually return.
+- Use only tools visible in the client's actual tool list; export, brief, and
+  social tools retain their existing legacy `user` scope requirement.
 - If unsure whether something is durable, ask: "Want me to save this to ZYND?"

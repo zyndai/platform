@@ -216,6 +216,10 @@ tool descriptions, including the preferred-flow block. Retain the internal
 - `services/memory/skills/zynd-memory/SKILL.md` — one-write flow (`text` vs typed)
 - `services/memory/skills/zynd-card/SKILL.md` — status/activity now in `get_my_context`
 - `services/memory/mcp-test-prompts.txt`
+- `services/memory/openapi/action.prod.json` and `openapi/gpt-system-prompt.txt`
+  - checked-in Action packet schema and identity-label guidance (operation IDs unchanged)
+- `services/memory/app/docs.py` and `app/services/ingest.py`
+  - active connector guidance and ingestion comments must name `report_user_info`
 
 Skills must distinguish identity-only packets from useful stored context and
 null/unavailable sections from empty sections. Card visibility guidance must

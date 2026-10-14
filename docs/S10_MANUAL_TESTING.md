@@ -372,9 +372,13 @@ Cards web when changing `NEXT_PUBLIC_*` settings for a production build.
 Configure web revalidation as described in [S10 owner home](S10_OWNER_HOME.md).
 
 For optional owner MCP reads, memory also needs `FEATURE_S10_HOME=true` and
-`CARDS_API_URL=http://localhost:8002`. An authenticated client can call
-`get_card_status` and `get_card_activity`; results must belong to that client's
-owner. Disabled tools are not a failure of the browser scenarios above.
+`CARDS_API_URL=http://localhost:8002`. An authenticated client with `cards:read`
+or legacy `user` scope can call `get_my_context` and inspect its `status` and
+`activity` sections; results must belong to that client's owner. The activity
+section is a seven-day metrics dict, not an array. Without read access both keys
+are omitted (`cards:approve` alone is insufficient); with read access both are
+null when disabled or unavailable. Null is not a count of zero, and unavailable
+owner sections are not a failure of the browser scenarios above.
 
 For scenario L only, configure `FEATURE_S10_DIGEST=true`, `S10_MAILER=smtp`, and
 the sandbox provider's `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`,

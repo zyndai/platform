@@ -143,7 +143,8 @@ _INSTALL_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
   <section>
     <h2><span class="snum">4</span>Check it works</h2>
     <p class="sub">Ask your AI: <b>&ldquo;what ZYND tools do you have?&rdquo;</b> &mdash; it should list
-     remember, get_my_context, find_similar_users, confirm_fact, forget_fact, and export.</p>
+      report_user_info, get_my_context, confirm_fact_tool, and forget_fact_tool.
+      Additional tools depend on the connection&rsquo;s granted scopes.</p>
   </section>
 
   <section>
@@ -154,7 +155,7 @@ _INSTALL_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
         <div class="exbody">
           <p>Share a durable fact and your AI saves it to ZYND:</p>
           <div class="msg"><b>You:</b> Remember that I&rsquo;m learning Rust and building an AI agent marketplace.</div>
-          <p>It calls <code>remember</code>. Facts are extracted in the background within a few seconds.</p>
+          <p>It calls <code>report_user_info(text=...)</code>. Facts are extracted in the background within a few seconds.</p>
         </div>
       </details>
       <details><summary>Recall what it knows</summary>

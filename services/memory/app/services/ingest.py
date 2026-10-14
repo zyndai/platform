@@ -2,7 +2,7 @@
 trace_chunks and enqueue async embedding/extraction.
 
 Used by both the HTTP /ingest endpoint (ChatGPT plugin, brief §7) and the MCP
-`remember` tool (Claude and other MCP clients) so every source writes to the graph
+`report_user_info` tool (Claude and other MCP clients) so every source writes to the graph
 the same way. Stays fast: auth + dedup + INSERT + enqueue only — no heavy work here.
 """
 import hashlib
@@ -12,8 +12,8 @@ import asyncpg
 
 from app.models import Turn
 
-# brief §7.2 — turns shorter than this carry no extractable signal. The MCP `remember`
-# tool lowers it because those writes are intentional single facts, not chat noise.
+# brief §7.2 — turns shorter than this carry no extractable signal. MCP fact saves
+# lower it because those writes are intentional single facts, not chat noise.
 MIN_CHUNK_CHARS = 40
 
 # C0 control chars except tab/newline/CR. Postgres text columns reject NUL outright

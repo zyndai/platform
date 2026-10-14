@@ -66,7 +66,8 @@ def _assertions():
 
 def test_get_context_uses_me_context_and_ranks_by_relevance():
     fake = _fake_client(_fake_me_context_response(
-        200, {"assertions": _assertions(), "profile": None}
+        200, {"assertions": _assertions(), "profile": None, "brief": "Project context",
+              "identity": {"name": "Ada", "email": "ada@example.com"}}
     ))
 
     async def run():
@@ -85,7 +86,8 @@ def test_get_context_uses_me_context_and_ranks_by_relevance():
 
 def test_get_context_filters_below_min_confidence_and_caps_at_k():
     fake = _fake_client(_fake_me_context_response(
-        200, {"assertions": _assertions(), "profile": None}
+        200, {"assertions": _assertions(), "profile": None, "brief": None,
+              "identity": {"name": "Ada", "email": "ada@example.com"}}
     ))
 
     async def run():

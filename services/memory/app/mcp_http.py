@@ -1242,7 +1242,7 @@ _allowed_hosts = [
 
 _auth_app = mcp.http_app(
     path="/mcp",
-    stateless_http=True,
+    stateless_http=not settings.feature_stateful_mcp,
     allowed_hosts=_allowed_hosts,
 )
 

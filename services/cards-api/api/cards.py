@@ -66,6 +66,49 @@ async def get_my_card(authorization: str | None = Header(default=None)):
     return {"card": {**card.model_dump(mode="json"), "claimed": True}, "handle": handle}
 
 
+_DRAFT_COOLDOWN_SECONDS = 15
+_last_draft_at: dict[str, float] = {}
+
+
+@router.post("/mine/summary-draft")
+async def draft_my_summary(authorization: str | None = Header(default=None)):
+    """Propose a new About paragraph from the caller's current public memory facts.
+
+    Preview only: nothing is saved. The owner accepts it in the editor, which saves it
+    through the normal section save, so a model can never rewrite the About on its own.
+    """
+    import time
+
+    from services import summary_draft
+
+    principal = verify_supabase_jwt(authorization)
+    if not principal:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    now = time.monotonic()
+    if now - _last_draft_at.get(principal.email, -1e9) < _DRAFT_COOLDOWN_SECONDS:
+        raise HTTPException(status_code=429, detail="Give it a few seconds before drafting again")
+    result = await asyncio.to_thread(cards_service.get_card_by_owner, principal.email)
+    if not result:
+        raise HTTPException(status_code=404, detail="no card for this account")
+    card, _handle = result
+    sections = summary_draft.facts_by_section(card)
+    if not sections:
+        raise HTTPException(
+            status_code=422,
+            detail="Nothing approved in your memory yet to base a summary on",
+        )
+    _last_draft_at[principal.email] = now
+    try:
+        draft = await asyncio.to_thread(summary_draft.generate_summary_draft, card, sections)
+    except summary_draft.DraftRejected as exc:
+        logger.warning("summary draft rejected: %s", exc)
+        raise HTTPException(status_code=502, detail="Couldn't draft a summary this time, try again") from exc
+    except Exception as exc:  # noqa: BLE001 — model/network failure must not 500 the editor
+        logger.warning("summary draft failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Couldn't draft a summary this time, try again") from exc
+    return {"draft": draft, "based_on": summary_draft.based_on(sections)}
+
+
 @router.get("/handle-available/{handle}")
 async def check_handle_available(handle: str):
     """Returns {available: bool, slug: str} for a proposed custom handle."""

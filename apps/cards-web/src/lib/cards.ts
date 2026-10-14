@@ -356,6 +356,23 @@ export async function updateCard(
   }
 }
 
+export interface SummaryDraft {
+  draft: string;
+  /** What the draft was written from, e.g. "Building: Verusa". */
+  based_on: string[];
+}
+
+/** Ask for a proposed About paragraph built from the owner's current public memory.
+ *  Preview only: nothing is saved until the owner accepts it and saves. */
+export async function fetchSummaryDraft(token: string): Promise<SummaryDraft> {
+  const res = await fetch(`${API_BASE}/cards/mine/summary-draft`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(await readApiError(res));
+  return (await res.json()) as SummaryDraft;
+}
+
 async function readApiError(res: Response): Promise<string> {
   try {
     const data = (await res.json()) as { detail?: unknown };

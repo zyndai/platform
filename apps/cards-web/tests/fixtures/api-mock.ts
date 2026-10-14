@@ -124,6 +124,12 @@ export function startFixtureServer(): Promise<void> {
     if (path === "/auth/v1/user") return json(200, { id: "11111111-1111-4111-8111-111111111111", aud: "authenticated", role: "authenticated", email: "owner@example.test", user_metadata: { name: "Alice Chen" } });
     if (path === "/cards/mine/status") return json(200, ownerStatus());
     if (path === "/cards/mine/digest-preview") return json(200, { html: "<h1>Your week on Zynd</h1><p>12 views</p>" });
+    if (req.method === "POST" && path === "/cards/mine/summary-draft") {
+      return json(200, {
+        draft: "Alice Chen builds Verusa and is working on LinkedIn outreach. She is an expert in compliance engineering.",
+        based_on: ["Building: Verusa", "Working on right now: LinkedIn outreach", "Expert in: Compliance engineering"],
+      });
+    }
     if (path === "/cards/mcp/suggestions") return json(200, { suggestions: [] });
     if (path === "/cards/mcp/card-facts") return json(200, { facts: OWNER_FACTS });
     if (path === "/cards/redirect/old-owner") return json(200, { handle: hasDuplicate ? null : "owner" });

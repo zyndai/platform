@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     # S10 owner read tools use the same cards aggregation over service HTTP.
     feature_s10_home: bool = False
     cards_api_url: str = "https://cards.api.zynd.ai"
+    # MCP transport mode. Stateful (default) accepts GET SSE alongside POST so
+    # clients that open a server-to-client stream (Kilo, Antigravity) can connect.
+    # Set false (stateless) only when strict stateless mode is required: FastMCP
+    # then restricts the endpoint to POST+DELETE and drops the GET SSE stream.
+    feature_stateful_mcp: bool = True
     access_token_ttl_seconds: int = 3600
     refresh_token_ttl_seconds: int = 30 * 24 * 3600
     mcp_token_ttl_seconds: int = 90 * 24 * 3600   # long-lived token pasted into MCP clients

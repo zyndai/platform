@@ -471,6 +471,6 @@ def build_http_app(*, allowed_hosts: list[str] | None = None):
     ] if h]
     return mcp.http_app(
         path="/cards-public-mcp",
-        stateless_http=True,
+        stateless_http=not settings.feature_stateful_mcp,
         allowed_hosts=hosts,
     )

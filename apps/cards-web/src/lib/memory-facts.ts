@@ -16,6 +16,7 @@ export const MEMORY_GROUPS: Record<string, { label: string; icon: string }> = {
   open_to: { label: "Open to", icon: "🤝" },
   has_expertise_in: { label: "Expert in", icon: "🧠" },
   has_skill: { label: "Skilled in", icon: "🛠️" },
+  uses_tool: { label: "Tools I use", icon: "🧰" },
   is_affiliated_with: { label: "Works at", icon: "🏢" },
   is_located_in: { label: "Based in", icon: "📍" },
 };
@@ -30,6 +31,7 @@ export const MEMORY_GROUP_ORDER = [
   "open_to",
   "has_expertise_in",
   "has_skill",
+  "uses_tool",
   "is_affiliated_with",
   "is_located_in",
 ];
@@ -51,7 +53,6 @@ const ENUM_LABELS: Record<string, string> = {
 
 const PUBLIC_FAMILY: Record<string, string> = {
   has_skill: "has_expertise_in",
-  is_working_on: "is_building",
   is_creating: "is_building",
   intends_to: "is_building",
   is_responsible_for: "is_building",

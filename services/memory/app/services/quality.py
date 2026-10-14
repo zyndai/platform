@@ -17,7 +17,6 @@ Group = Literal["right", "look", "noise"]
 # Default public remap when approving coding-agent predicates (mirrors findability).
 _APPROVE_AS: dict[str, str] = {
     "has_skill": "has_expertise_in",
-    "is_working_on": "is_building",
     "is_creating": "is_building",
     "intends_to": "is_building",
     "is_responsible_for": "is_building",
@@ -33,6 +32,7 @@ _PUBLIC_LABELS: dict[str, str] = {
     "open_to": "Open to",
     "has_expertise_in": "Expert in",
     "has_skill": "Skilled in",
+    "uses_tool": "Uses",
     "is_affiliated_with": "Works at",
     "is_located_in": "Based in",
     "is_responsible_for": "Responsible for",
@@ -50,7 +50,8 @@ _INTERNAL_JARGON = frozenset({
 })
 
 _KNOWN_TOOLS = frozenset({
-    "claude", "claude code", "cursor", "vscode", "vs code", "windsurf", "cline",
+    "claude", "claude code", "claude in chrome", "codex", "opencode",
+    "cursor", "vscode", "vs code", "windsurf", "cline",
     "composio", "copilot", "github copilot", "chatgpt", "openai", "gemini",
     "docker", "kubernetes", "k8s", "npm", "pnpm", "yarn", "pip", "uv",
     "pytest", "jest", "playwright", "selenium", "terraform", "ansible",
@@ -144,14 +145,14 @@ def assess(
         group, reason = "noise", "internal_jargon"
     elif field == "projects" and lower in _KNOWN_TOOLS:
         group, reason = "look", "tool_as_project"
-        suggested = "has_skill"
+        suggested = "uses_tool"
     elif field == "goals" and (
         lower in _KNOWN_TOOLS or _REPO_RE.search(cleaned) or len(cleaned.split()) <= 2
     ):
         # Short goal strings often are product names or tools — ask for a look.
         group, reason = "look", "ambiguous_goal"
         if lower in _KNOWN_TOOLS:
-            suggested = "has_skill"
+            suggested = "uses_tool"
     elif field in ("tools", "languages", "frameworks", "skills") and len(cleaned) > 80:
         group, reason = "look", "overlong_skill"
     elif any(ch in cleaned for ch in ("{", "}", "=", ";")) and field != "notes":

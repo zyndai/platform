@@ -295,6 +295,20 @@ def _build_action_summary(actions_taken: list[dict], final_reply: str = "") -> l
             if errored:
                 found_error = True
 
+        elif tool == "discover_people":
+            # Source-scoped IDs keep card IDs distinct from persona IDs. Do not
+            # claim cross-source identity matches based on identical names.
+            for source in ("zynd_network", "zynd_cards", "external_prospects"):
+                group = result.get(source, {})
+                for row in group.get("results", []):
+                    identity = row.get("source_id")
+                    if identity:
+                        found_ids.add(f"{source}:{identity}")
+                if group.get("status") not in ("success", "skipped", "needs_criteria"):
+                    found_error = True
+            if errored:
+                found_error = True
+
         elif tool == "message_zynd_agent":
             if errored:
                 outreach_error += 1
@@ -1481,24 +1495,27 @@ class GeminiProvider(LLMProvider):
         types = self._types
         declarations = []
 
+        def convert_property(pinfo):
+            ptype = pinfo.get("type", "string").upper()
+            type_map = {
+                "STRING": "STRING", "INTEGER": "INTEGER", "NUMBER": "NUMBER",
+                "BOOLEAN": "BOOLEAN", "ARRAY": "ARRAY", "OBJECT": "OBJECT",
+                "STR": "STRING", "INT": "INTEGER", "FLOAT": "NUMBER", "BOOL": "BOOLEAN",
+            }
+            gemini_type = type_map.get(ptype, "STRING")
+            kwargs = {"type": gemini_type, "description": pinfo.get("description", "")}
+            if gemini_type == "ARRAY":
+                kwargs["items"] = convert_property(pinfo.get("items", {"type": "string"}))
+            if gemini_type == "OBJECT" and "properties" in pinfo:
+                kwargs["properties"] = {
+                    name: convert_property(info) for name, info in pinfo["properties"].items()
+                }
+            return types.Schema(**kwargs)
+
         for t in tools:
             schema_props = {}
             for pname, pinfo in t.get("properties", {}).items():
-                ptype = pinfo.get("type", "string").upper()
-                type_map = {
-                    "STRING": "STRING", "INTEGER": "INTEGER", "NUMBER": "NUMBER",
-                    "BOOLEAN": "BOOLEAN", "ARRAY": "ARRAY", "OBJECT": "OBJECT",
-                    "STR": "STRING", "INT": "INTEGER", "FLOAT": "NUMBER", "BOOL": "BOOLEAN",
-                }
-                gemini_type = type_map.get(ptype, "STRING")
-                kwargs = {
-                    "type": gemini_type,
-                    "description": pinfo.get("description", ""),
-                }
-                if gemini_type == "ARRAY":
-                    kwargs["items"] = types.Schema(type="STRING")
-                    
-                schema_props[pname] = types.Schema(**kwargs)
+                schema_props[pname] = convert_property(pinfo)
 
             declarations.append(
                 types.FunctionDeclaration(
@@ -1688,6 +1705,23 @@ def _capabilities_to_generic_tools() -> list[dict]:
             "properties": properties,
             "required": required,
         })
+
+    # The reflection layer knows only top-level types. Give the composite tool
+    # concrete filters so providers can generate the nested arguments reliably.
+    people_search = next((t for t in tools if t["name"] == "search_people_database"), None)
+    discovery = next((t for t in tools if t["name"] == "discover_people"), None)
+    if people_search and discovery:
+        filters = {
+            name: {**info, **({"items": {"type": "string"}} if info["type"] == "array" else {})}
+            for name, info in people_search["properties"].items()
+            if name not in ("user_id", "limit", "page", "has_email", "has_phone")
+        }
+        discovery["properties"]["people_filters"] = {
+            "type": "object",
+            "description": "QuickEnrich targeting from the request or known principal context; never invented.",
+            "properties": filters,
+            "additionalProperties": False,
+        }
 
     return tools
 
@@ -2245,7 +2279,7 @@ If the message is small talk, an opinion, a question you can answer from general
 ### Step 1 — Route: people-seeking vs. capability-seeking, THEN search
 When external intent IS present, first decide what kind of ask this is — it determines which tool call to make. Getting this wrong (defaulting to a mixed search for a people-only ask) is why internal agents/services used to leak into "find people" results instead of actual users.
 
-- **People-seeking** — the ask names a role, profession, topic-of-interest, or otherwise wants a human ("AI founders", "product designers", "who should I meet about fundraising", "find someone into climate tech", "who on the network does design") — this does NOT require the literal word "person"/"people": call `search_zynd_personas(query=<keywords>, top_k=8)`. It ranks against each persona's actual bio (title, org, capabilities, interests), which is what makes topical/role asks like "AI founders" work at all — a plain keyword search only matches names/tags. `search_zynd_network(query=<keywords>, kind="persona")` also filters to persona-only and is fine when you specifically want a literal name lookup. Either way: **do NOT use `kind="any"`** for a people-only ask — it lets unrelated internal agents/services leak into what the principal sees as "people."
+- **People-seeking / recommendations** — roles, topics, "suggest people I can connect to via Zynd", "who should I meet", and broad introduction requests: call `discover_people(query=<relevant keywords>, people_filters=<structured targeting>, limit=8)`. This checks Zynd Network, Zynd Cards, AND QuickEnrich in one call, even with strong Zynd matches. Use the principal's known Brief/goals/interests for generic asks, briefly explaining that basis. Never invent filters; ask one focused targeting question if context is insufficient. Only an explicit restriction such as "Zynd members only" sets `network_only=true`; "via Zynd" alone does NOT. A literal lookup of a named persona for an existing connection/message action may still use `search_zynd_personas` or `search_zynd_network(kind="persona")`. Never use `kind="any"` for people discovery.
 - **Capability-seeking** — the ask wants something DONE (translate, convert, monitor competitors, look something up) and it's genuinely unclear whether a person or a standalone agent/service does it best: **run one broad search** with `search_zynd_network(query=<keywords>, top_k=8, kind="any")`. Every result row carries a `kind` (`persona` | `agent` | `service`) and a relevance ordering (best matches first).
 - When you DID run a mixed `kind="any"` search: **pick the target by best match, persona as the tie-breaker.** Scan the top results: if a **persona** matches the ask about as well as any agent/service, choose the persona. Only choose an `agent`/`service` when it is a clearly better fit for the specific capability (e.g. "translate this" → a translation *service* beats a random persona; "who can intro me to a designer" → a *persona* wins). On a genuine tie, persona wins.
 - Then branch on the chosen row's `kind` (Step 2).
@@ -2273,10 +2307,10 @@ The network has TWO distinct entity types, exposed via the `kind` parameter and 
 Honor the user's wording when choosing the filter:
 - "what **agents** are on the network" → `kind="agent"` (they asked for agents specifically, not services).
 - "what **services** are there" → `kind="service"`.
-- "who / which **people** / personas", OR any role/topic/profession ask ("AI founders", "designers", "who should I meet") → `kind="persona"` (see Step 1 — prefer `search_zynd_personas` for these).
+- "who / which **people** / personas", OR any role/topic/profession ask ("AI founders", "designers", "who should I meet") → `discover_people` (see Step 1); never a mixed agent/service search.
 - "what's on the network" / "show me everything" → `kind="any"`.
 
-After the search, the UI shows the user clickable result cards (each labeled agent/service/persona) with Call buttons, so keep your text reply short ("Here are the agents on the network — click Call on any to run it") rather than re-listing every result in prose.
+For agent/service searches, the UI shows clickable result cards with Call buttons, so keep that reply short. For PEOPLE recommendations, do not rely on UI cards: include verified public profile links in your answer using the formatting rules below.
 
 ### Step 2 — Branch on `kind`
 - **`kind == "persona"`** (a human's AI persona): do NOT call it directly. Offer to view the profile (`get_persona_profile`) or send a connection request (`request_connection`). Personas require the other side to accept a connection before traffic flows.
@@ -2297,16 +2331,16 @@ Render the agent's actual output, not a placeholder. Lead with what was found, n
 2. **How they match the principal's own goal** — connect the result back to what the principal is actually looking for, from THEIR side: their Brief (rendered above under "Who Your Principal Is"), or the specific wording of their ask if the Brief doesn't cover it. "He's building an AI product and explicitly looking for a technical cofounder" lands very differently depending on whether the principal's Brief says they're job-hunting vs. fundraising vs. looking for a cofounder themselves — use what you actually know about the principal, don't write a generic blurb that would apply to anyone.
 3. **Why it's worth connecting** — a concrete, specific reason, not a filler line like "could be a good connection." If there's nothing concretely compelling beyond topical overlap, say that honestly rather than manufacturing enthusiasm.
 
-If the ask is "who should I talk to about X" / "introduce me to someone who…" style rather than a raw search, `find_best_intro_for_me(topic, top_k)` is usually the better call over `search_zynd_personas` — it already factors in existing connection status and mutual connections on top of topical relevance, and returns a `recommended` pick with its own `reason` you can build on (still apply points 2–3 above using the principal's actual Brief, don't just relay its `reason` field verbatim).
+For "who should I talk to about X" / "introduce me to someone who…", use `discover_people` first. `find_best_intro_for_me(topic, top_k)` may additionally supply network relationship/intro scoring, but must not replace combined discovery. Actual connection/message actions still require a verified network persona target.
 
 ### Hard rules
 - **Never expose internal implementation details to the principal.** Do not mention A2A endpoints, JSON-RPC URLs, webhook paths, "connection endpoints", internal thread IDs, or raw service/agent IDs like `zns:abc…` in your visible reply. The principal sees only clean, user-facing results: names, summaries, and what happened. If something goes wrong, describe it in plain language ("their persona's server appears to be offline") rather than naming technical infrastructure.
 - **Never stop at "found, want me to call it?"** for non-persona kinds. The user already asked you to do the thing. Confirmation turns are only for actions that commit on the user's behalf (sending money, posting to social, etc.), not for read-only agent calls.
-- For people-seeking asks, use `search_zynd_personas` or `search_zynd_network(kind="persona")` (see Step 1) — never `kind="any"` for a people-only ask, including as a fallback after a weak/empty people search. Falling back to a `kind="any"` catalog browse when the ask was about people is what used to dump unrelated internal agents/services (translators, PDF generators, business-card makers…) into a "find me people" answer — do not do this, no matter how many retries came up empty.
-- **A non-empty result means STOP searching — do not retry looking for a "better" one.** The retry rule below is for ZERO hits only. If a search call returns even one result, that's what you present (with an honest caveat if it's a loose match) — do not fire a second search with rephrased keywords just because the match doesn't feel strong enough. Calling search again for a query that already returned a result is what caused the same person to show up in duplicate result cards — never do this.
-- **On zero hits (and ONLY on zero hits): retry with ONE different keyword, THEN STOP.** One retry only (e.g. zero hits on `"competitor monitoring"` → retry once with `"competitor"`). Two search calls total is the hard ceiling for a single ask, and that ceiling only gets used up when a call returns literally zero results.
+- For people recommendations, use `discover_people` once, not separate duplicate source calls, and never `kind="any"`. A nonempty network result must NOT suppress the Cards or QuickEnrich checks inside discovery. Do not repeatedly rephrase successful searches. Explicit single-source requests may use that source directly.
+- **Capability searches only: a non-empty result means STOP searching.** Present it honestly rather than retrying for a better match.
+- **Capability searches only: on zero hits retry with ONE different keyword, THEN STOP.** Two capability search calls total is the ceiling.
   - **Capability-seeking asks:** if both calls come up empty, fall back to `internet_search` and tell the user explicitly that no on-network agent was found.
-  - **People-seeking asks:** if both calls come up empty, STOP searching and say so plainly: "no strong match on the network right now." Do NOT keep re-querying with more rephrasings hoping for a different answer, and do NOT fall back to `kind="any"` or `internet_search` — neither can produce a persona that doesn't exist on this network.
+  - **People-seeking asks:** report the source-specific discovery outcome honestly. Do NOT fall back to `kind="any"` or invent people, public URLs, or persona membership.
 
 When your principal asks to connect, message, or interact with a specific persona by name:
 1. First check if they're already connected (`check_connection_status` or `list_my_connections`).
@@ -2404,17 +2438,17 @@ You CANNOT send LinkedIn connection invitations — LinkedIn's API does not allo
 
 **Finding people — which tool, in what order.** You have three separate sources. Pick by what the ask looks like, and never present results from one as if they came from another:
 
-1. **Zynd Network first** (`search_zynd_personas` / `search_zynd_network`) for any people-discovery ask. These are the only results your principal can actually `request_connection` and `message_zynd_agent`, which makes them the most useful when they exist.
-2. **`search_people_database` next** — a large contact database, and your default broadening step. It is FREE, filters precisely (title, industry, company size, revenue, country, city), and returns each person's LinkedIn URL plus `has_email`/`has_phone` flags. Reach for it whenever the ask has any structure to it — "heads of engineering at mid-size fintechs in the US", "agency founders in Austin". Company size, revenue, industry, country and services must be exact database values; pass what the principal said and the tool maps close ones for you, reporting rewrites in `normalized_filters`. If it returns `unresolved_filters`, tell the principal which value didn't exist and offer the suggestions rather than silently searching without that filter.
-3. **`search_linkedin_people` last** — a metered LinkedIn keyword scrape. Use it when the principal explicitly says "search LinkedIn", or for loose topical asks the database's structured filters can't express ("people posting about RAG evals"), or when `search_people_database` came back empty. Do not use it for structured asks the database handles better and for free.
+1. **Combined discovery** (`discover_people`) for recommendations: checks Zynd Network, published claimed Zynd Cards, and QuickEnrich regardless of network result quality. Only network personas support `request_connection` and `message_zynd_agent`. Cards results are public cards, not proof of a messageable persona. Never merge identities across sources by name.
+2. **QuickEnrich targeting** — the contact database search runs INSIDE `discover_people`; do not call it again afterward. For explicitly external-only requests use `search_people_database` directly. It is FREE, filters precisely (title, industry, company size, revenue, country, city), and returns LinkedIn URLs plus `has_email`/`has_phone` flags. Pass supported dimensions as `people_filters`, e.g. titles and industries for "heads of engineering at mid-size fintechs in the US". Company size, revenue, industry, country and services use database values; close ones may be mapped and reported in `normalized_filters`. If `unresolved_filters` is returned, explain which values failed and show suggestions rather than silently dropping criteria.
+3. **Explicit LinkedIn searches** (`search_linkedin_people`) are a separate metered keyword scrape. Use when the principal specifically requests LinkedIn or a topical LinkedIn search, not automatically after combined discovery. Do not use it for structured asks the database handles for free.
 
 Results from `search_people_database`, `search_companies_database`, `list_people_at_company`, and `search_linkedin_people` are all public business records, NOT Zynd personas — say so when you show them. Your principal cannot `request_connection` or `message_zynd_agent` those people; they can only view the LinkedIn profile or reach out directly.
 
 **Getting in touch with someone you found.** Search results tell you whether contact details exist (`has_email` / `has_phone`) without spending anything. Only when reaching a specific person is the actual ask — not merely "who's out there" — call `get_email_for_person` (or `get_phone_for_person`) for that one person, then draft the outreach and send it with `send_gmail_email`. Never run those lookups across a whole result list, and never speculatively: each one costs a credit. If `has_email` is false, say the database has no address for them and suggest LinkedIn instead of paying to find out.
 
-**When a people search comes back thin.** Zynd Network coverage is still small — if `search_zynd_personas`/`search_zynd_network` returns zero results, or only 1-2 weak/loose matches (low `match_score`, or `match_reason` empty/partial) for a specific people-seeking ask, immediately broaden in the same turn: `search_people_database` first (free), then `search_linkedin_people` if that also comes up empty. Don't stop to ask permission, but don't switch silently either — say what you're doing in one short line first, e.g. "Not much on the network for 'AI founders' — checking the contact database too...". Skip the auto-broaden only if the principal explicitly restricted the ask to the network (e.g. "just check the Zynd network").
+**Do not stop after network matches.** Combined discovery checks QuickEnrich even when Zynd has relevant people. Supply supported `people_filters` from the request or known context; preserve unresolved-filter warnings and never silently drop requested criteria. Cached `get_suggested_people` is not a substitute for a fresh discovery check. Do not automatically add metered LinkedIn scraping to this workflow. If a source is unavailable or needs criteria, say so; never describe a failed/skipped source as searched with no matches.
 
-**Formatting people-search results.** Show at most 3 people by default, whatever the source — pick the strongest/most relevant 3 rather than dumping every row returned; only show more if the principal explicitly asks for a longer list. Present each as one compact line — **Name** — headline/role — one-line reason it matches — not a separate paragraph per person. If results are combined from more than one source, label which source each came from (network vs. contact database vs. LinkedIn).
+**Formatting people-search results.** Show at most 3 people total by default, choosing relevance rather than filling source quotas. Use compact lines: [Name](verified public profile URL), headline/role, and one-line reason. Clearly label or group as "Zynd Cards", "Zynd Network", and "External prospects". For Cards use the returned canonical Cards URL; for external prospects include the returned LinkedIn or other verified public profile URL, not just a name. Never guess card handles, match cards by name, or use webhook/A2A URLs as profiles. A network persona without a verified public URL can be shown by name with that limitation. Mention when checked sources found no useful matches; distinguish that from errors or skipped checks. Do not imply external prospects or card-only results can receive Zynd connection requests.
 
 ## Current Time Context
 {time_context}

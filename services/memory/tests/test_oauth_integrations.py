@@ -6,7 +6,7 @@ Covers the paths a user actually hits:
   - _suid resolution (memory-layer uid → Supabase uid) across all three branches
   - token_store CRUD against the Supabase `api_tokens` table
   - publish_page / list_my_pages for authenticated users
-  - /connect password signup + sign-in flow
+  - /connect URL-only OAuth setup and retired password POST
 
 Design notes / findings:
   - Every "not connected" tool degrades GRACEFULLY: the credential helpers
@@ -389,81 +389,47 @@ async def test_list_my_pages_empty_for_new_user():
     assert result == []
 
 
-# ── Group 8: Connect flow (password auth) ───────────────────────────────────────
+# ── Group 8: Connect flow (URL-only OAuth setup) ────────────────────────────────
 
-def _connect_client(mock_pool):
-    """ASGI client over app.main with app.db.get_pool patched to a mock pool.
-    Group 8 exercises the /connect HTTP surface without a live Postgres."""
-    with patch("app.connect.get_pool", return_value=mock_pool):
-        from app.main import app
-        transport = httpx.ASGITransport(app=app)
-        return httpx.AsyncClient(transport=transport, base_url="http://test")
+def _connect_client():
+    """Exercise public setup without a lifespan or live Postgres."""
+    from app.main import app
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
 
-async def test_connect_creates_new_user_and_issues_token():
-    # given — a brand-new email (no existing user row)
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow.return_value = None  # user does not exist yet
-    mock_pool.fetchval.return_value = "00000000-0000-0000-0000-000000000abc"  # new id
+async def test_connect_get_shows_oauth_setup_without_credential():
+    with patch("app.docs.settings.mcp_public_base_url", "https://preview.example.test"):
+        async with _connect_client() as c:
+            r = await c.get("/connect")
+    assert r.status_code == 200
+    assert "https://preview.example.test/mcp" in r.text
+    assert "existing Zynd account" in r.text
+    assert "Authorization: Bearer" not in r.text
 
-    # when — POST /connect with valid form data
-    async with _connect_client(mock_pool) as c:
+
+async def test_connect_new_user_post_retired():
+    async with _connect_client() as c:
         r = await c.post("/connect", data={"email": "newuser@example.com", "password": "strongpass1"})
-
-    # then — 200 with a ready-to-paste MCP config carrying a bearer token
-    assert r.status_code == 200
-    assert "mcpServers" in r.text
-    assert "Authorization: Bearer" in r.text
-    mock_pool.fetchval.assert_awaited_once()  # a new user was inserted
+    assert r.status_code == 410
+    assert "No account or token was created" in r.text
 
 
-async def test_connect_existing_user_correct_password_issues_token():
-    # given — an existing user with a real password hash
-    from app.passwords import hash_password
-
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow.return_value = {
-        "id": "00000000-0000-0000-0000-000000000def",
-        "password_hash": hash_password("correcthorse"),
-    }
-
-    # when — POST /connect with the correct password
-    async with _connect_client(mock_pool) as c:
+async def test_connect_existing_user_post_retired():
+    async with _connect_client() as c:
         r = await c.post("/connect", data={"email": "known@example.com", "password": "correcthorse"})
-
-    # then — 200, token issued, and NO new user inserted
-    assert r.status_code == 200
-    assert "Authorization: Bearer" in r.text
-    mock_pool.fetchval.assert_not_awaited()
+    assert r.status_code == 410
+    assert "/install" in r.text
 
 
-async def test_connect_existing_user_wrong_password_rejected():
-    # given — an existing user with a known hash
-    from app.passwords import hash_password
-
-    mock_pool = AsyncMock()
-    mock_pool.fetchrow.return_value = {
-        "id": "00000000-0000-0000-0000-000000000fed",
-        "password_hash": hash_password("correcthorse"),
-    }
-
-    # when — POST /connect with the WRONG password
-    async with _connect_client(mock_pool) as c:
+async def test_connect_wrong_password_post_retired():
+    async with _connect_client() as c:
         r = await c.post("/connect", data={"email": "known@example.com", "password": "wrongpass99"})
-
-    # then — 401, and the account is never mutated (no takeover)
-    assert r.status_code == 401
-    mock_pool.fetchval.assert_not_awaited()
+    assert r.status_code == 410
+    assert "No account or token was created" in r.text
 
 
-async def test_connect_short_password_rejected():
-    # given — a password shorter than MIN_PASSWORD_LENGTH (8)
-    mock_pool = AsyncMock()
-
-    # when — POST /connect with a too-short password
-    async with _connect_client(mock_pool) as c:
+async def test_connect_short_password_post_retired():
+    async with _connect_client() as c:
         r = await c.post("/connect", data={"email": "x@example.com", "password": "ab"})
-
-    # then — 400, and the DB is never even touched
-    assert r.status_code == 400
-    mock_pool.fetchrow.assert_not_awaited()
+    assert r.status_code == 410
+    assert "No account or token was created" in r.text

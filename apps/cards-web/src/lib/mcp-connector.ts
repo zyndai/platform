@@ -1,19 +1,7 @@
 import { CARDS_API } from "@/lib/cards";
 import { MEMORY_API } from "@/lib/memory";
 
-export interface McpConnectResult {
-  token: string;
-  mcp_url: string;
-  config_json: string;
-  config_http: { mcpServers: Record<string, { url: string; headers: Record<string, string> }> };
-  instructions: string[];
-  client_id?: string;
-  label?: string;
-  scopes?: string[];
-  cursor?: string;
-  claude_code?: string;
-  server_url?: string;
-}
+export const MCP_URL = (process.env.NEXT_PUBLIC_MCP_URL || `${MEMORY_API.replace(/\/+$/, "")}/mcp`).replace(/\/+$/, "");
 
 export interface McpClientRow {
   id: string;
@@ -22,13 +10,6 @@ export interface McpClientRow {
   created_at: string | null;
   last_used_at: string | null;
 }
-
-export const MCP_SCOPES = [
-  { id: "memory:write", label: "Report facts", defaultOn: true, locked: true },
-  { id: "cards:read", label: "Read card status", defaultOn: false, locked: false },
-  { id: "cards:approve", label: "Publish without asking", defaultOn: false, locked: false },
-  { id: "people:message", label: "Message people", defaultOn: false, locked: false },
-] as const;
 
 export type SuggestionGroup = "right" | "look" | "noise";
 
@@ -48,67 +29,6 @@ export type MemorySnapshot = Array<Record<string, unknown>> | null;
 async function errDetail(res: Response): Promise<string> {
   const data = (await res.json().catch(() => ({}))) as { detail?: string };
   return data.detail || `Request failed (${res.status})`;
-}
-
-/** Build the paste-ready config. The MCP server URL comes from .env
- *  (NEXT_PUBLIC_MCP_URL, the centralized/shared MCP server); it falls back to
- *  the URL the memory layer advertises. */
-function buildConfig(token: string, mcpUrl: string): McpConnectResult {
-  const url = (process.env.NEXT_PUBLIC_MCP_URL || mcpUrl || "").replace(/\/+$/, "");
-  const serverBlock = { url, headers: { Authorization: `Bearer ${token}` } };
-  return {
-    token,
-    mcp_url: url,
-    config_json: JSON.stringify({ mcpServers: { zynd: serverBlock } }, null, 2),
-    config_http: { mcpServers: { zynd: serverBlock } },
-    instructions: [
-      "Claude Code: claude mcp add --transport http zynd " + url +
-        " --header 'Authorization: Bearer <token>'",
-      "Cursor: Settings → MCP → Add HTTP server, paste the URL and header",
-      "VS Code / Windsurf / Cline: add the JSON block to your mcp.json",
-    ],
-  };
-}
-
-/** Exchange the signed-in session for one assistant token. Other assistants stay connected. */
-export async function connectMcp(
-  supabaseToken: string,
-  options?: { label?: string; scopes?: string[] },
-): Promise<McpConnectResult> {
-  const res = await fetch(`${MEMORY_API}/token/exchange`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${supabaseToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      label: options?.label || "Assistant",
-      scopes: options?.scopes?.length ? options.scopes : ["memory:write"],
-    }),
-  });
-  if (!res.ok) throw new Error(await errDetail(res));
-  const data = (await res.json()) as {
-    token: string;
-    mcp_url: string;
-    config_json?: string;
-    client_id?: string;
-    label?: string;
-    scopes?: string[];
-    cursor?: string;
-    claude_code?: string;
-    server_url?: string;
-  };
-  const built = buildConfig(data.token, data.mcp_url);
-  return {
-    ...built,
-    config_json: data.config_json || built.config_json,
-    client_id: data.client_id,
-    label: data.label,
-    scopes: data.scopes,
-    cursor: data.cursor,
-    claude_code: data.claude_code,
-    server_url: data.server_url || built.mcp_url,
-  };
 }
 
 export async function listMcpClients(supabaseToken: string): Promise<McpClientRow[]> {

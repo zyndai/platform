@@ -27,6 +27,8 @@ import { ProfileSignIn, ClaimCardButton, ProfileAccountChip } from "./profile-au
 import { CountUp } from "./count-up";
 import { AutoScroll } from "./auto-scroll";
 import { ContributionHeatmap } from "./contribution-heatmap";
+import { ProfileView } from "@/components/ProfileView";
+import { VisitorPrivacy } from "@/components/VisitorPrivacy";
 import { ProfileChatWidget } from "@/components/ProfileChatWidget";
 import { FallbackAvatar } from "@/components/FallbackAvatar";
 import { WorkExperienceCard } from "./work-experience-card";
@@ -642,6 +644,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
   return (
     <>
+      <ProfileView handle={handle} />
       <link rel="canonical" href={canonical} />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
@@ -779,6 +782,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
       `}</style>
 
       <div className="pf-page" style={{ backgroundColor: "#f5f6f8", minHeight: "100vh" }}>
+        <div style={{ maxWidth: 1100, padding: "0 20px", margin: "auto" }}><VisitorPrivacy /></div>
         <div className="pf-inner" style={{ maxWidth: 1300, margin: "0 auto", padding: "24px 24px 56px" }}>
 
           {/* ── UNCLAIMED BANNER ── */}

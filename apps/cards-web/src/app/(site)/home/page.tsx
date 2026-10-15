@@ -51,8 +51,14 @@ export default async function HomePage() {
     try { intros = (await ownerRequest<{ intros: Intro[] }>("mine/intros", session.access_token)).intros; }
     catch { /* Intro outage must not hide the rest of owner home. */ }
   }
-  return <><OwnerHome initial={data} token={session.access_token} />
-    {introsEnabled && <div style={{ maxWidth: 1100, margin: "auto", padding: 24 }}>
-      <IntroInbox initial={intros} token={session.access_token} />
-    </div>}</>;
+  return (
+    <div className="oh-page">
+      <OwnerHome initial={data} token={session.access_token} />
+      {introsEnabled && (
+        <div className="oh-intro-section">
+          <IntroInbox initial={intros} token={session.access_token} />
+        </div>
+      )}
+    </div>
+  );
 }

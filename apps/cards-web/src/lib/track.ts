@@ -1,15 +1,15 @@
 import { CARDS_API } from "@/lib/cards";
 
-const ENABLED = process.env.NEXT_PUBLIC_S04_EVENTS === "true";
+export const eventsEnabled = (process.env.NEXT_PUBLIC_S04_EVENTS ?? "true") === "true";
 
 /** Fire-and-forget client event. Never throws. */
 export function track(event: string, meta?: Record<string, unknown>, handle?: string): void {
-  if (!ENABLED || typeof window === "undefined") return;
+  if (!eventsEnabled || typeof window === "undefined") return;
   const body = JSON.stringify({
     events: [{ event, handle, meta }],
   });
   try {
-    const url = `${CARDS_API}/events`;
+    const url = "/api/events";
     if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
       const blob = new Blob([body], { type: "application/json" });
       if (navigator.sendBeacon(url, blob)) return;
@@ -31,7 +31,7 @@ export function logAgentFetch(
   userAgent: string | null | undefined,
   handle?: string,
 ): void {
-  if (process.env.NEXT_PUBLIC_S04_EVENTS !== "true") return;
+  if (!eventsEnabled) return;
   const body = JSON.stringify({
     events: [{ event: "agent_fetch", handle, meta: { endpoint } }],
   });

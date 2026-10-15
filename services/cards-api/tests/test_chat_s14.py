@@ -1,4 +1,4 @@
-"""S14 remainder: abuse filter, rate limit, and content-free chat events."""
+"""S14 remainder: abuse filter, rate limit, and owner question history."""
 from unittest.mock import MagicMock
 
 from fastapi import FastAPI
@@ -78,7 +78,7 @@ def test_overlong_and_email_messages_are_refused_without_echo(monkeypatch):
         assert "visitor@example.com" not in body
 
 
-def test_emit_stores_category_not_text(monkeypatch):
+def test_emit_stores_question_and_category(monkeypatch):
     captured = {}
 
     def fake_emit(event, **kwargs):
@@ -90,5 +90,13 @@ def test_emit_stores_category_not_text(monkeypatch):
     text = "Can I book a call?"
     assert _post(client, text, ip="8.8.8.8").status_code == 200
     assert captured["event"] == "chat_message"
-    assert captured["meta"] == {"chars": len(text), "category": "contact"}
-    assert text not in str(captured["meta"])
+    assert captured["meta"] == {"chars": len(text), "category": "contact", "question": text,
+                                "question_truncated": False, "question_source": "profile_chat"}
+
+
+def test_rejected_question_is_not_saved(monkeypatch):
+    emit = MagicMock()
+    monkeypatch.setattr("services.events.emit", emit)
+    client = _app(monkeypatch)
+    assert _post(client, "Contact me at private@example.com").status_code == 400
+    emit.assert_not_called()

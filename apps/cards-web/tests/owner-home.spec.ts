@@ -22,9 +22,14 @@ test.describe("S10 owner home", () => {
       await page
         .getByRole("heading", { name: "Welcome back, Alice." })
         .evaluate((el) => getComputedStyle(el).webkitTextFillColor),
-    ).toBe("rgb(35, 35, 41)");
+    ).toBe("rgb(248, 250, 252)");
     await expect(page.getByText("12", { exact: true })).toBeVisible();
     await expect(page.getByText("4", { exact: true })).toBeVisible();
+    const questionHistory = page.getByRole("region", { name: "Recent assistant questions" });
+    await expect(questionHistory.getByText("What projects is Alice building?", { exact: true })).toBeVisible();
+    await expect(questionHistory.getByText('<img src=x onerror="window.questionHistoryXss=1">', { exact: true })).toBeVisible();
+    await expect(questionHistory.locator("img")).toHaveCount(0);
+    expect(await page.evaluate(() => "questionHistoryXss" in window)).toBe(false);
     await page.getByRole("checkbox", { name: /Weekly digest/ }).uncheck();
     await expect(page.getByRole("status").first()).toHaveText("Saved");
     await page.reload();

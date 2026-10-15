@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import html
+import re
+import smtplib
 from datetime import datetime, timezone
 from urllib.parse import quote
 
 from postgrest.exceptions import APIError
+from fastapi import HTTPException
 
 import config
 from services import owner_home
@@ -18,7 +21,7 @@ def week_key(now: datetime) -> str:
     return f"{year}-W{week:02d}"
 
 
-def render_weekly(data: dict, unsubscribe_url: str | None) -> tuple[str, str]:
+def render_weekly(data: dict, unsubscribe_url: str | None, *, preview_label: str = "Preview only") -> tuple[str, str]:
     base = config.SITE_BASE_URL.rstrip("/")
     inbox = base + "/p/" + quote(data["handle"], safe="") + "/edit#inbox"
     metrics = data["activity"]
@@ -44,9 +47,103 @@ def render_weekly(data: dict, unsubscribe_url: str | None) -> tuple[str, str]:
               '<h2>Questions that found your card</h2><ul>' + "".join(f"<li>{esc(q)}</li>" for q in (questions or ["Matching queries are not recorded yet."])) + '</ul>'
               f'<p><a href="{esc(inbox)}">Review your inbox</a> · <a href="{esc(base + "/home")}">Owner home</a></p>'
               + (f'<p>{intro_waiting} intro requests waiting. <a href="{esc(base + "/intros")}">Review introductions</a></p>' if intro_waiting is not None else '')
-              + (f'<footer>You receive this because you own a Zynd card. <a href="{esc(unsubscribe_url)}">Unsubscribe</a></footer>' if unsubscribe_url else '<footer>Preview only</footer>')
+              + (f'<footer>You receive this because you own a Zynd card. <a href="{esc(unsubscribe_url)}">Unsubscribe</a></footer>' if unsubscribe_url else f'<footer>{esc(preview_label)}</footer>')
               + '</main></body></html>')
     return body, markup
+
+
+def render_reminder(nudges: list[dict], unsubscribe_url: str | None) -> tuple[str, str]:
+    home = config.SITE_BASE_URL.rstrip("/") + "/home"
+    text = "\n".join(n["title"] for n in nudges) + "\n" + home
+    if unsubscribe_url:
+        text += "\nUnsubscribe: " + unsubscribe_url
+    markup = ('<!doctype html><p>' + html.escape(text).replace('\n', '<br>')
+              + '</p><a href="' + html.escape(home, quote=True) + '">Open owner home</a>')
+    if unsubscribe_url:
+        markup += '<p><a href="' + html.escape(unsubscribe_url, quote=True) + '">Unsubscribe</a></p>'
+    return text, markup
+
+
+def _test_mailer():
+    if not owner_home.enabled():
+        raise HTTPException(404, "Owner home is not enabled")
+    adapter = get_mailer()
+    if not adapter.enabled:
+        raise HTTPException(503, "Set S10_MAILER=smtp and restart Cards API")
+    if not config.SMTP_HOST or not config.SMTP_FROM:
+        raise HTTPException(503, "Configure SMTP_HOST and SMTP_FROM and restart Cards API")
+    return adapter
+
+
+async def send_test_notification(*, email: str, kind: str = "weekly") -> dict:
+    """One explicit send. Never changes consent or claims a scheduled delivery."""
+    email = email.strip().lower()
+    if not re.fullmatch(r"[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+", email):
+        raise HTTPException(422, "email must be a single card-owner email address")
+    if kind not in {"weekly", "reminder"}:
+        raise HTTPException(422, "Choose weekly or reminder")
+    adapter = _test_mailer()
+    try:
+        data = await owner_home.status(email, persist=False)
+    except Exception as exc:
+        raise HTTPException(503, "Could not load the test owner's card data") from exc
+    if data is None:
+        raise HTTPException(404, "email must match an existing card owner")
+    notice = "Test email requested manually; email preferences and delivery limits were bypassed."
+    if kind == "weekly":
+        body, markup = render_weekly(data, None, preview_label=notice)
+        subject = "[TEST] Your week on Zynd"
+    else:
+        nudges = data.get("nudges") or [{"title": "Sample reminder: there are no current reminders for this card."}]
+        body, markup = render_reminder(nudges, None)
+        markup += "<footer>" + html.escape(notice) + "</footer>"
+        subject = "[TEST] Your Zynd card needs attention"
+    try:
+        await asyncio.to_thread(adapter.send, to=email, subject=subject, body=notice + "\n\n" + body,
+                                html=markup, unsubscribe_url=None)
+    except smtplib.SMTPAuthenticationError as exc:
+        raise HTTPException(502, "SMTP authentication failed; check SMTP_USER and SMTP_PASSWORD") from exc
+    except smtplib.SMTPRecipientsRefused as exc:
+        raise HTTPException(502, "SMTP rejected the test recipient; check sandbox recipient restrictions") from exc
+    except smtplib.SMTPSenderRefused as exc:
+        raise HTTPException(502, "SMTP rejected the sender; check SMTP_FROM and sender verification") from exc
+    except Exception as exc:
+        raise HTTPException(502, "SMTP test send failed; check host, port, STARTTLS support, and provider settings") from exc
+    return {"sent": 1, "to": email, "kind": kind, "test": True}
+
+
+def _test_owner_emails() -> list[str]:
+    sb = config.get_supabase()
+    emails, offset = set(), 0
+    while True:
+        rows = (sb.table("agent_profile_cards").select("owner_email")
+                .neq("status", "merged").not_.is_("owner_email", "null")
+                .order("id").range(offset, offset + 499).execute().data or [])
+        emails.update(row["owner_email"].strip().lower() for row in rows if (row.get("owner_email") or "").strip())
+        if len(rows) < 500:
+            return sorted(emails)
+        offset += 500
+
+
+async def send_all_test_notifications(*, kind: str = "weekly") -> dict:
+    """Force a test send once per normalized card owner, continuing on per-owner errors."""
+    _test_mailer()
+    try:
+        emails = await asyncio.to_thread(_test_owner_emails)
+    except Exception as exc:
+        raise HTTPException(503, "Could not load card-owner email addresses") from exc
+    result = {"sent": 0, "failed": 0, "kind": kind, "test": True, "errors": []}
+    for email in emails:
+        try:
+            await send_test_notification(email=email, kind=kind)
+            result["sent"] += 1
+        except HTTPException as exc:
+            result["failed"] += 1
+            result["errors"].append({"email": email, "status": exc.status_code, "detail": exc.detail})
+        except Exception:
+            result["failed"] += 1
+            result["errors"].append({"email": email, "status": 503, "detail": "Could not prepare the test notification"})
+    return result
 
 
 def claim_delivery(email: str, kind: str, period: str) -> str | None:
@@ -108,8 +205,7 @@ async def run_notifications(*, dry_run: bool = False, now: datetime | None = Non
                 # remain in-app without generating another email each day.
                 fresh = [n for n in data["nudges"] if str(n.get("created_at", ""))[:10] == now.date().isoformat()]
                 if fresh:
-                    text = "\n".join(n["title"] for n in fresh) + "\n" + config.SITE_BASE_URL.rstrip("/") + "/home\nUnsubscribe: " + unsubscribe
-                    markup = '<!doctype html><p>' + html.escape(text).replace('\n', '<br>') + '</p><a href="' + html.escape(config.SITE_BASE_URL.rstrip('/') + '/home', quote=True) + '">Open owner home</a><p><a href="' + html.escape(unsubscribe, quote=True) + '">Unsubscribe</a></p>'
+                    text, markup = render_reminder(fresh, unsubscribe)
                     messages.append(("nudge", now.date().isoformat(), "Your Zynd card needs attention", text, markup))
             for kind, period, subject, body, markup in messages:
                 delivery = await asyncio.to_thread(claim_delivery, email, kind, period)

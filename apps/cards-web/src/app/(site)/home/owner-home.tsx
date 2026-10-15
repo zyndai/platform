@@ -6,21 +6,17 @@ import {
   ArrowUpRight,
   Bell,
   Check,
-  Eye,
   Inbox,
   Link2,
-  Sparkles,
+  Globe2,
+  LockKeyhole,
+  ShieldCheck,
+  Layers3,
 } from "lucide-react";
 import { ownerRequest, type OwnerStatus } from "@/lib/owner-home";
+import { VisitorPrivacy } from "@/components/VisitorPrivacy";
+import { DiscoveryAnalytics } from "./discovery-analytics";
 import "./owner-home.css";
-
-const CHAT_TOPIC_LABELS: Record<string, string> = {
-  contact: "Contact",
-  work: "Work",
-  skills: "Skills",
-  background: "Background",
-  other: "Other",
-};
 
 export function OwnerHome({
   initial,
@@ -75,6 +71,20 @@ export function OwnerHome({
     };
   }, [modalOpen, busy]);
 
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      if (busy || document.visibilityState !== "visible") return;
+      try {
+        const next = await ownerRequest<OwnerStatus>("mine/status", token);
+        if (active && next) setData(next);
+      } catch { /* Keep the last successful dashboard when refresh is unavailable. */ }
+    };
+    window.addEventListener("focus", refresh);
+    const timer = window.setInterval(refresh, 60_000);
+    return () => { active = false; window.removeEventListener("focus", refresh); window.clearInterval(timer); };
+  }, [token, busy]);
+
   async function change(work: () => Promise<void>) {
     setBusy(true);
     setNotice("");
@@ -128,15 +138,27 @@ export function OwnerHome({
       <div className="oh-shell">
         <header className="oh-header">
           <div>
-            <p className="oh-eyebrow">YOUR CARD, AT A GLANCE</p>
+            <div className="oh-header-context">
+              <span className="oh-workspace-mark">Z</span>
+              <p className="oh-eyebrow">YOUR CARD, AT A GLANCE</p>
+              <span className="oh-handle">@{data.handle}</span>
+            </div>
             <h1>
               Welcome back{data.name ? `, ${data.name.split(" ")[0]}` : ""}.
             </h1>
             <p>Keep your story current. See where it takes you.</p>
           </div>
-          <Link className="oh-button" href={`${profile}/edit`}>
-            Edit your card <ArrowUpRight size={16} />
-          </Link>
+          <div className="oh-header-actions">
+            <span className={`oh-visibility-badge ${data.visibility === "public" ? "is-public" : ""}`}>
+              {data.visibility === "public"
+                ? <Globe2 size={13} aria-hidden="true" />
+                : <LockKeyhole size={13} aria-hidden="true" />}
+              {data.visibility === "public" ? "Public profile" : "Private profile"}
+            </span>
+            <Link className="oh-button" href={`${profile}/edit`}>
+              Edit your card <ArrowUpRight size={16} aria-hidden="true" />
+            </Link>
+          </div>
         </header>
         <div role="status" aria-live="polite" className="oh-notice">
           {notice}
@@ -150,7 +172,7 @@ export function OwnerHome({
                 role="img"
                 aria-label={`Card completeness ${data.completeness.score}%`}
                 style={{
-                  background: `conic-gradient(#7b72e9 ${data.completeness.score}%, #eeedf4 0)`,
+                  background: `conic-gradient(#7B72E9 ${data.completeness.score}%, #263146 0)`,
                 }}
               >
                 <span>
@@ -179,7 +201,7 @@ export function OwnerHome({
               </p>
             )}
           </section>
-          <section className="oh-panel">
+          <section className="oh-panel oh-inbox-panel">
             <p className="oh-eyebrow">YOUR INBOX</p>
             <Inbox className="oh-icon" />
             <h2>
@@ -205,59 +227,8 @@ export function OwnerHome({
               Manage connections →
             </Link>
           </section>
-          <section className="oh-panel oh-wide">
-            <p className="oh-eyebrow">WHO FOUND YOU · LAST 7 DAYS</p>
-            <div className="oh-metrics">
-              <div>
-                <Eye size={20} />
-                <strong>{data.activity.views ?? "—"}</strong>
-                <span>Human views</span>
-              </div>
-              <div>
-                <Sparkles size={20} />
-                <strong>{data.activity.agent_hits ?? "—"}</strong>
-                <span>Agent hits</span>
-              </div>
-              <div>
-                <Inbox size={20} />
-                <strong>{data.activity.intro_requests ?? "—"}</strong>
-                <span>Intro requests · coming soon</span>
-              </div>
-            </div>
-            {!data.activity.available && (
-              <p>
-                Activity measurement is unavailable. Counts will appear when
-                event collection is enabled.
-              </p>
-            )}
-            <h3>Questions that found your card</h3>
-            {data.activity.queries.length ? (
-              <ul>
-                {data.activity.queries.map((q, i) => (
-                  <li key={i}>{q.query}</li>
-                ))}
-              </ul>
-            ) : (
-              <p>Matching queries are not recorded yet.</p>
-            )}
-            <p className="oh-caption">
-              Counts reflect recorded requests, rather than unique people.
-              Requester identities stay private.
-            </p>
-            <h3>What people asked the assistant</h3>
-            {(data.activity.chat_topics ?? []).length ? (
-              <ul>
-                {(data.activity.chat_topics ?? []).map((topic) => (
-                  <li key={topic.category}>
-                    {CHAT_TOPIC_LABELS[topic.category] ?? topic.category} · {topic.count}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>No assistant questions recorded yet.</p>
-            )}
-          </section>
-          <section className="oh-panel">
+          <DiscoveryAnalytics activity={data.activity} profile={profile} visitors={data.visitors} />
+          <section className="oh-panel oh-attention">
             <p className="oh-eyebrow">NEEDS YOUR ATTENTION</p>
             <Bell className="oh-icon" />
             <h2>A small check-in</h2>
@@ -298,8 +269,8 @@ export function OwnerHome({
               <ul className="oh-sources">
                 {data.sources.map((s, i) => (
                   <li key={i}>
-                    <span>{s.platform}</span>
-                    <span>
+                    <span className="oh-source-name">{s.platform}</span>
+                    <span className={`oh-source-state ${s.state === "fresh" ? "is-fresh" : ""}`}>
                       {s.state === "fresh"
                         ? "Up to date"
                         : "Refresh recommended"}
@@ -314,9 +285,10 @@ export function OwnerHome({
               Review sources →
             </Link>
           </section>
-          <section className="oh-panel">
+          <section className="oh-panel oh-controls">
             <p className="oh-eyebrow">YOU ARE IN CONTROL</p>
-            <h2>Visibility &amp; emails</h2>
+            <h2 className="oh-heading-icon"><ShieldCheck size={20} aria-hidden="true" />Visibility &amp; emails</h2>
+            <VisitorPrivacy dark />
             <label className="oh-toggle">
               <span>
                 Public card<small>Visible to people and agents</small>
@@ -356,7 +328,7 @@ export function OwnerHome({
               />
             </label>
             <button
-              className="oh-text-link"
+              className="oh-text-link oh-digest-preview"
               disabled={busy}
               onClick={() =>
                 void change(async () => {
@@ -371,9 +343,9 @@ export function OwnerHome({
               Preview weekly digest →
             </button>
             <p className="oh-caption">
-              The public assistant records the topic of each question, such as
-              contact or work, and how long it was. It does not store the
-              question text.
+              The public assistant saves questions for your review, with common
+              contact details redacted. Visitor identities are not shown in
+              your question history.
             </p>
             <div className="oh-preview-links">
               {data.visibility === "public" ? (
@@ -395,7 +367,7 @@ export function OwnerHome({
           {!!data.duplicates.length && (
             <section className="oh-panel oh-wide">
               <p className="oh-eyebrow">ONE STORY, ONE CARD</p>
-              <h2>You own more than one card</h2>
+              <h2 className="oh-heading-icon"><Layers3 size={20} aria-hidden="true" />You own more than one card</h2>
               <p>
                 Choose the card to keep. Other cards are archived, and their
                 links redirect to it. Their content remains in the archive.

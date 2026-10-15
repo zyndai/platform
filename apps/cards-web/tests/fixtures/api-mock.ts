@@ -76,13 +76,17 @@ export function startFixtureServer(): Promise<void> {
   const retryKeys = new Map<string, ReturnType<typeof initialIntro>>();
   let ownerCard = cardFixture("owner");
   let hasDuplicate = true;
+  let anonymousMode = true;
+  let humanViews = 12;
+  let namedVisits = 0;
   let prefs = { weekly_digest: true, email_nudges: false };
   const ownerStatus = () => ({
     handle: "owner", card_id: "id-owner", name: "Alice Chen", visibility: ownerCard.status === "private" ? "private" : "public",
     completeness: { score: 75, actions: [{ section: "projects", title: "Add a project", href: "/p/owner/edit#projects" }] },
     inbox_count: 3, connection: { memory_connected: true, assistants_available: false },
     sources: [{ platform: "github", scraped_at: "2026-10-10T00:00:00Z", state: "fresh" }],
-    activity: { available: true, views: 12, agent_hits: 4, intro_requests: null, queries: [], query_capture_available: false, chat_topics: [] },
+    activity: { available: true, views: humanViews, agent_hits: 4, intro_requests: null, queries: [], query_capture_available: false, chat_topics: [], chat_questions: [{ question: "What projects is Alice building?", category: "work", asked_at: "2026-10-15T10:00:00Z", truncated: false }, { question: '<img src=x onerror="window.questionHistoryXss=1">', category: "other", asked_at: "2026-10-15T09:00:00Z", truncated: false }] },
+    visitors: { available: true, items: !anonymousMode && namedVisits ? [{ name: "Alice Chen", visited_at: "2026-10-15T10:00:00Z", visits: namedVisits }] : [] },
     notification_prefs: prefs,
     duplicates: hasDuplicate ? [{ id: "id-old-owner", handle: "old-owner", name: "Alice Chen", status: "published" }] : [],
     nudges: [{ id: "n1", kind: "expiring", title: "What you are looking for expires within 3 days", href: "/p/owner/edit#memory" }],
@@ -118,8 +122,32 @@ export function startFixtureServer(): Promise<void> {
       return;
     }
     if (path === "/__s10/reset") {
-      ownerCard = cardFixture("owner"); hasDuplicate = true; prefs = { weekly_digest: true, email_nudges: false };
+      ownerCard = cardFixture("owner"); hasDuplicate = true; anonymousMode = true; humanViews = 12; namedVisits = 0; prefs = { weekly_digest: true, email_nudges: false };
       return json(200, {});
+    }
+    if (path === "/events") {
+      let raw = "";
+      req.on("data", chunk => { raw += chunk; });
+      req.on("end", () => {
+        const events = JSON.parse(raw || "{}").events || [];
+        for (const event of events) if (event.event === "view" && event.handle === "owner" && event.meta?.endpoint === "profile-page" && (req.headers["user-agent"] || "").includes("Mozilla/")) humanViews++;
+        return json(204, {});
+      });
+      return;
+    }
+    if (path === "/cards/mine/visitor-privacy") {
+      if (req.method === "PATCH") {
+        let raw = "";
+        req.on("data", chunk => { raw += chunk; });
+        req.on("end", () => { const next = JSON.parse(raw).anonymous_mode; if (next !== anonymousMode) namedVisits = 0; anonymousMode = next; return json(200, { anonymous_mode: anonymousMode }); });
+        return;
+      }
+      return json(200, { anonymous_mode: anonymousMode });
+    }
+    if (path.endsWith("/visit") && req.method === "POST") {
+      req.resume();
+      if (!anonymousMode) namedVisits++;
+      return json(200, { recorded: !anonymousMode });
     }
     if (path === "/auth/v1/user") return json(200, { id: "11111111-1111-4111-8111-111111111111", aud: "authenticated", role: "authenticated", email: "owner@example.test", user_metadata: { name: "Alice Chen" } });
     if (path === "/cards/mine/status") return json(200, ownerStatus());

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import base64
 import json
+import re
+import uuid
 
 import asyncpg
 
@@ -52,12 +54,17 @@ async def revoke_all_clients(pool: asyncpg.Pool, user_id: str) -> None:
         return
 
 
-async def client_revoked(pool: asyncpg.Pool, jti: str) -> bool:
-    """True when this jti is unknown or already revoked."""
+async def client_revoked(pool: asyncpg.Pool, jti: str, user_id: str | None = None) -> bool:
+    """True when this jti is unknown, revoked, or owned by another subject."""
+    try:
+        uuid.UUID(jti)
+    except (ValueError, TypeError):
+        return True
     row = await pool.fetchrow(
-        "SELECT revoked_at FROM mcp_clients WHERE jti = $1::uuid", jti,
+        "SELECT revoked_at, user_id FROM mcp_clients WHERE jti = $1::uuid", jti,
     )
-    return row is None or row["revoked_at"] is not None
+    return row is None or row["revoked_at"] is not None or (
+        user_id is not None and str(row["user_id"]) != str(user_id))
 
 
 async def touch_client(pool: asyncpg.Pool, jti: str) -> None:
@@ -99,7 +106,8 @@ def connect_links(token: str, mcp_url: str) -> dict:
 
 
 def clean_label(label: str | None) -> str:
-    text = (label or "").strip()[:80]
+    text = re.sub(r"[\x00-\x1f\x7f]", " ", (label or ""))
+    text = " ".join(text.split())[:80]
     return text or "Assistant"
 
 

@@ -6,6 +6,8 @@ binding + resource echo, refresh-token rotation, RFC 9207 iss echo, and the
 skills shipped with the connector.
 """
 import asyncio
+import base64
+import hashlib
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -36,8 +38,14 @@ class FakeRedis:
     async def get(self, key: str) -> bytes | None:
         return self.store.get(key)
 
-    async def set(self, key: str, value: str, ex: int | None = None) -> None:
+    async def set(self, key: str, value: str, ex: int | None = None, nx: bool = False) -> bool:
+        if nx and key in self.store:
+            return False
         self.store[key] = value.encode()
+        return True
+
+    async def getdel(self, key: str) -> bytes | None:
+        return self.store.pop(key, None)
 
     async def delete(self, key: str) -> None:
         self.store.pop(key, None)
@@ -55,7 +63,11 @@ def _pool(rows_by_query: dict[str, list] | None = None) -> AsyncMock:
 
 
 def _sealed(req_jwt: str) -> dict:
-    return jwt.decode(req_jwt, settings.jwt_secret, algorithms=["HS256"])
+    return jwt.decode(req_jwt, settings.jwt_secret, algorithms=["HS256"], audience=RESOURCE)
+
+
+VERIFIER = "v" * 43
+CHALLENGE = base64.urlsafe_b64encode(hashlib.sha256(VERIFIER.encode()).digest()).rstrip(b"=").decode()
 
 
 # ── Authorize: resource validation + connector vs legacy routing ───────────────
@@ -67,7 +79,7 @@ async def test_authorize_connector_client_goes_to_self_hosted_auth_page(pool_moc
     pool_mock.return_value = pool
     resp = await oauth.authorize(
         client_id="dcr-client-1", redirect_uri=CALLBACK, state="s1",
-        code_challenge="ch", code_challenge_method="S256", resource=RESOURCE,
+        code_challenge=CHALLENGE, code_challenge_method="S256", resource=RESOURCE,
     )
     assert resp.status_code == 302
     assert resp.headers["location"].startswith(f"{settings.public_base_url.rstrip('/')}/oauth/login?zynd_oauth=")
@@ -85,7 +97,7 @@ async def test_authorize_cimd_client_goes_to_auth_page(meta_mock):
     resp = await oauth.authorize(
         client_id="https://chatgpt.com/connector-client",
         redirect_uri="https://chatgpt.com/connector_platform_oauth_redirect",
-        code_challenge="ch", code_challenge_method="S256", resource=RESOURCE,
+        code_challenge=CHALLENGE, code_challenge_method="S256", resource=RESOURCE,
     )
     assert resp.status_code == 302
     assert "/oauth/login?" in resp.headers["location"]
@@ -131,7 +143,7 @@ async def test_complete_connector_unknown_user_rejected(identity_mock, find_mock
         CALLBACK, "s1", "ingest", "ch", "S256",
         resource=RESOURCE, create_user=False, iss_supported=True,
     )
-    body = oauth._CompleteRequest(req=req, supabase_token="t")
+    body = oauth._CompleteRequest(req=req, supabase_token="t", decision="approve")
     with pytest.raises(HTTPException) as exc:
         await oauth.complete(_req(FakeRedis()), body)
     assert exc.value.status_code == 401
@@ -149,14 +161,14 @@ async def test_complete_connector_known_user_mints_bound_code_with_iss(identity_
         CALLBACK, "s1", "ingest", "ch", "S256",
         resource=RESOURCE, create_user=False, iss_supported=True,
     )
-    body = oauth._CompleteRequest(req=req, supabase_token="t")
+    body = oauth._CompleteRequest(req=req, supabase_token="t", decision="approve")
     resp = await oauth.complete(_req(redis), body)
     url = json.loads(resp.body)["redirect_url"]
     assert url.startswith(CALLBACK)
     assert "iss=" in url  # RFC 9207 echo (URL-encoded in the query string)
     assert "code=" in url and "state=s1" in url
     code = url.split("code=", 1)[1].split("&", 1)[0]
-    stored = json.loads(redis.store[f"oauth:code:{code}"].decode())
+    stored = json.loads(redis.store[oauth._grant_key("code", code)].decode())
     assert stored["resource"] == RESOURCE
     assert stored["user_id"] == "u-1"
 
@@ -164,8 +176,10 @@ async def test_complete_connector_known_user_mints_bound_code_with_iss(identity_
 # ── Token: resource echo + audience binding + refresh rotation ────────────────
 
 def _store_connector_code(redis: FakeRedis, code: str) -> None:
-    redis.store[f"oauth:code:{code}"] = json.dumps({
+    redis.store[oauth._grant_key("code", code)] = json.dumps({
         "user_id": "u-1", "redirect_uri": CALLBACK, "resource": RESOURCE,
+        "client_id": "dcr-client-1", "client_type": "public", "scope": "user",
+        "challenge": CHALLENGE, "method": "S256", "client_name": "Agent",
     }).encode()
 
 
@@ -175,7 +189,7 @@ async def test_token_connector_code_echoes_resource_and_binds_audience():
     with patch("app.oauth.get_pool", return_value=_pool({})):
         resp = await oauth.token(
             _req(redis), grant_type="authorization_code", client_id="dcr-client-1",
-            client_secret="", code="c1", redirect_uri=CALLBACK, code_verifier="",
+            client_secret="", code="c1", redirect_uri=CALLBACK, code_verifier=VERIFIER,
             resource=RESOURCE, scope="",
         )
     assert resp.body  # JSONResponse
@@ -189,7 +203,7 @@ async def test_token_connector_code_echoes_resource_and_binds_audience():
     assert claims["scp"] == ["user"]
     refresh_jti = jwt.decode(data["refresh_token"], settings.jwt_secret, algorithms=["HS256"],
                              options={"verify_aud": False, "verify_iss": False})["jti"]
-    assert f"oauth:refresh:{refresh_jti}" in redis.store
+    assert oauth._grant_key("refresh", refresh_jti) in redis.store
 
 
 async def test_token_connector_code_rejects_wrong_resource():
@@ -199,22 +213,160 @@ async def test_token_connector_code_rejects_wrong_resource():
         with pytest.raises(HTTPException) as exc:
             await oauth.token(
                 _req(redis), grant_type="authorization_code", client_id="dcr-client-1",
-                client_secret="", code="c1", redirect_uri=CALLBACK, code_verifier="",
+                client_secret="", code="c1", redirect_uri=CALLBACK, code_verifier=VERIFIER,
                 resource="https://other.example/mcp", scope="",
             )
     assert exc.value.status_code == 400
 
 
-@patch("app.services.sessions.tokens_revoked", new_callable=AsyncMock, return_value=False)
-async def test_token_refresh_rotates_and_rejects_replay(revoked_mock):
+@pytest.mark.parametrize("changes", [
+    {"client_id": "dcr-other"}, {"redirect_uri": CALLBACK + "/extra"},
+    {"code_verifier": "x" * 43}, {"scope": "ingest user"},
+])
+async def test_public_code_binding_rejects_substitution(changes):
+    redis = FakeRedis()
+    _store_connector_code(redis, "bound")
+    kwargs = dict(grant_type="authorization_code", client_id="dcr-client-1", client_secret="",
+                  code="bound", redirect_uri=CALLBACK, code_verifier=VERIFIER, resource="", scope="")
+    kwargs.update(changes)
+    with patch("app.oauth.get_pool", return_value=_pool({})):
+        with pytest.raises(HTTPException) as exc:
+            await oauth.token(_req(redis), **kwargs)
+    assert exc.value.detail == "invalid_grant"
+    assert oauth._grant_key("code", "bound") in redis.store
+
+
+async def test_public_code_concurrent_exchange_is_single_use():
+    redis = FakeRedis()
+    _store_connector_code(redis, "bound")
+    kwargs = dict(grant_type="authorization_code", client_id="dcr-client-1", client_secret="",
+                  code="bound", redirect_uri=CALLBACK, code_verifier=VERIFIER, resource="", scope="")
+    with patch("app.oauth.get_pool", return_value=_pool({})):
+        results = await asyncio.gather(*(oauth.token(_req(redis), **kwargs) for _ in range(2)), return_exceptions=True)
+    assert sum(isinstance(r, HTTPException) and r.detail == "invalid_grant" for r in results) == 1
+    assert sum(isinstance(r, httpx.Response) for r in results) == 0
+    assert sum(hasattr(r, "body") for r in results) == 1
+
+
+def test_registered_redirect_matches_only_host_path_query_and_ephemeral_port():
+    registered = ["http://127.0.0.1:3911/callback?mode=oauth"]
+    assert oauth._check_dcr_redirect_uri("http://127.0.0.1:9288/callback?mode=oauth", registered)
+    for uri in ("http://localhost:9288/callback?mode=oauth", "http://127.0.0.1:9288/callback/extra?mode=oauth",
+                "http://127.0.0.1:9288/callback?mode=other", "http://127.0.0.1:9288/callback?mode=oauth#fragment",
+                "http://evil@127.0.0.1:9288/callback?mode=oauth"):
+        assert not oauth._check_dcr_redirect_uri(uri, registered)
+
+
+@patch("app.oauth.get_pool")
+async def test_public_authorize_requires_pkce_and_defaults_resource(pool_mock):
+    pool_mock.return_value = _pool({"SELECT allowed_redirect_uris FROM oauth_clients WHERE client_id = $1": [
+        {"allowed_redirect_uris": [CALLBACK]}]})
+    with pytest.raises(HTTPException):
+        await oauth.authorize(client_id="dcr-client-1", redirect_uri=CALLBACK)
+    resp = await oauth.authorize(client_id="dcr-client-1", redirect_uri=CALLBACK,
+                                 code_challenge=CHALLENGE, code_challenge_method="S256")
+    assert _sealed(resp.headers["location"].split("zynd_oauth=", 1)[1])["resource"] == RESOURCE
+
+
+@patch("app.oauth.get_pool")
+@patch("app.services.users.find_user", new_callable=AsyncMock, return_value="u-1")
+@patch("app.oauth.supabase_identity", new_callable=AsyncMock, return_value=("u@example.com", "U", "sub-1"))
+async def test_consent_preview_and_denial_do_not_mint(identity_mock, find_mock, pool_mock):
+    pool_mock.return_value = AsyncMock()
+    req = oauth._sign_oauth_request(CALLBACK, "original", "user", CHALLENGE, "S256",
+                                    resource=RESOURCE, create_user=False, client_id="dcr-client-1")
+    redis = FakeRedis()
+    preview = await oauth.consent(oauth._CompleteRequest(req=req, supabase_token="t"))
+    assert json.loads(preview.body)["email"] == "u@example.com"
+    assert not redis.store
+    with pytest.raises(HTTPException):
+        await oauth.complete(_req(redis), oauth._CompleteRequest(req=req, supabase_token="t"))
+    denial = await oauth.complete(_req(redis), oauth._CompleteRequest(req=req, supabase_token="t", decision="deny"))
+    assert "error=access_denied" in json.loads(denial.body)["redirect_url"]
+    assert "state=original" in json.loads(denial.body)["redirect_url"]
+    assert not any(":code:" in k for k in redis.store)
+    with pytest.raises(HTTPException):
+        await oauth.complete(_req(redis), oauth._CompleteRequest(req=req, supabase_token="t", decision="approve"))
+
+
+async def test_sealed_request_rejects_foreign_issuer():
+    req = oauth._sign_oauth_request(CALLBACK, "state", "user", CHALLENGE, "S256",
+                                    resource=RESOURCE, create_user=False, client_id="dcr-client-1")
+    with patch.object(settings, "public_base_url", "https://other-environment.example"):
+        with pytest.raises(HTTPException):
+            oauth._verify_oauth_request(req)
+
+
+async def test_old_public_rotating_refresh_cannot_be_redeemed_by_confidential_client():
     redis = FakeRedis()
     refresh_tok, jti = issue_rotating_refresh_token("u-1")
     redis.store[f"oauth:refresh:{jti}"] = RESOURCE.encode()
     with patch("app.oauth.get_pool", return_value=_pool({})):
+        with pytest.raises(HTTPException) as exc:
+            await oauth.token(_req(redis), grant_type="refresh_token",
+                              client_id=settings.oauth_client_id, client_secret=settings.oauth_client_secret,
+                              code="", redirect_uri="", code_verifier="", refresh_token=refresh_tok,
+                              resource="", scope="")
+    assert exc.value.detail == "invalid_grant"
+    assert redis.store[f"oauth:refresh:{jti}"] == RESOURCE.encode()
+
+
+@patch("app.services.sessions.tokens_revoked", new_callable=AsyncMock, return_value=False)
+async def test_confidential_resource_refresh_remains_rotating(revoked_mock):
+    redis = FakeRedis()
+    redis.store["oauth:code:confidential-code"] = json.dumps({
+        "user_id": "u-1", "redirect_uri": CALLBACK, "client_id": settings.oauth_client_id,
+        "client_type": "confidential", "resource": RESOURCE, "scope": "ingest",
+    }).encode()
+    params = dict(client_id=settings.oauth_client_id, client_secret=settings.oauth_client_secret,
+                  code_verifier="", redirect_uri=CALLBACK, resource=RESOURCE, scope="")
+    with patch("app.oauth.get_pool", return_value=_pool({})):
+        code_resp = await oauth.token(_req(redis), grant_type="authorization_code", code="confidential-code",
+                                      refresh_token="", **params)
+        first = json.loads(code_resp.body)
+        assert first["scope"] == "ingest"
+        refresh_resp = await oauth.token(_req(redis), grant_type="refresh_token", code="",
+                                         refresh_token=first["refresh_token"], **params)
+        replacement = json.loads(refresh_resp.body)
+        assert replacement["scope"] == "ingest"
+        assert replacement["refresh_token"] != first["refresh_token"]
+        with pytest.raises(HTTPException) as exc:
+            await oauth.token(_req(redis), grant_type="refresh_token", code="",
+                              refresh_token=first["refresh_token"], **params)
+    assert exc.value.detail == "invalid_grant"
+
+
+@patch("app.oauth.get_pool")
+async def test_authorize_accepts_advertised_scopes_and_registered_ephemeral_loopback(pool_mock):
+    pool_mock.return_value = _pool({"SELECT allowed_redirect_uris FROM oauth_clients WHERE client_id = $1": [
+        {"allowed_redirect_uris": ["http://localhost:3377/callback"]}]})
+    resp = await oauth.authorize(client_id="dcr-client-1", redirect_uri="http://localhost:9922/callback",
+                                 scope="user ingest offline_access", code_challenge=CHALLENGE,
+                                 code_challenge_method="S256")
+    sealed = _sealed(resp.headers["location"].split("zynd_oauth=", 1)[1])
+    assert sealed["scope"] == "user" and sealed["resource"] == RESOURCE
+
+
+async def test_user_lookup_does_not_select_another_subject():
+    from app.services.users import find_user
+    pool = AsyncMock()
+    pool.fetchrow.side_effect = [None, {"id": "victim", "supabase_user_id": "different-sub"}]
+    assert await find_user(pool, "a@example.com", "current-sub") is None
+
+
+@patch("app.services.sessions.tokens_revoked", new_callable=AsyncMock, return_value=False)
+async def test_token_refresh_rotates_and_rejects_replay(revoked_mock):
+    redis = FakeRedis()
+    refresh_tok, jti = issue_rotating_refresh_token("u-1", bound=True)
+    redis.store[oauth._grant_key("refresh", jti)] = json.dumps({
+        "v": 2, "sub": "u-1", "client_id": "dcr-client-1", "scope": "user",
+        "resource": RESOURCE, "connection_jti": "53fdc822-2985-4e23-ad83-e38229822ce1",
+    }).encode()
+    with patch("app.oauth.get_pool", return_value=_pool({})), patch("app.services.mcp_clients.client_revoked", new_callable=AsyncMock, return_value=False):
         resp = await oauth.token(
             _req(redis), grant_type="refresh_token", client_id="dcr-client-1",
             client_secret="", code="", redirect_uri="", code_verifier="",
-            refresh_token=refresh_tok, scope="",
+            refresh_token=refresh_tok, resource="", scope="",
         )
         data = json.loads(resp.body)
         assert data["resource"] == RESOURCE
@@ -223,7 +375,7 @@ async def test_token_refresh_rotates_and_rejects_replay(revoked_mock):
             await oauth.token(
                 _req(redis), grant_type="refresh_token", client_id="dcr-client-1",
                 client_secret="", code="", redirect_uri="", code_verifier="",
-                refresh_token=refresh_tok, scope="",
+                refresh_token=refresh_tok, resource="", scope="",
             )
     assert exc.value.status_code == 400
 

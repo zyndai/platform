@@ -149,6 +149,8 @@ side effect of an unrelated change:
 ## Further reading
 
 - [`AGENTS.md`](./AGENTS.md) — full rules for any AI agent working here.
+- [`docs/MCP_OAUTH_CLIENTS.md`](./docs/MCP_OAUTH_CLIENTS.md) — researched MCP
+  client OAuth contracts, setup candidates, and outstanding real-client tests.
 - [`docs/plans/`](./docs/plans/) — the architecture and migration plans
   behind this repo. Start with `docs/plans/README.md` for reading order and
   which plans are active vs. superseded.

@@ -119,7 +119,7 @@ def issue_access_token(user_id: str) -> tuple[str, int]:
     return _encode(user_id, "access", ttl), ttl
 
 
-def issue_connector_access_token(user_id: str, resource: str) -> tuple[str, int]:
+def issue_connector_access_token(user_id: str, resource: str, connection_jti: str | None = None) -> tuple[str, int]:
     """Access token for MCP connector OAuth flows (Claude/ChatGPT connectors).
 
     Bound to the RFC 8707 resource indicator the client asked for:
@@ -133,6 +133,7 @@ def issue_connector_access_token(user_id: str, resource: str) -> tuple[str, int]
         iss=settings.public_base_url.rstrip("/"),
         aud=resource,
         scopes=["user"],
+        jti=connection_jti,
     )
     return token, ttl
 
@@ -141,11 +142,13 @@ def issue_refresh_token(user_id: str) -> str:
     return _encode(user_id, "refresh", settings.refresh_token_ttl_seconds)
 
 
-def issue_rotating_refresh_token(user_id: str) -> tuple[str, str]:
+def issue_rotating_refresh_token(user_id: str, *, bound: bool = False) -> tuple[str, str]:
     """(token, jti) — refresh tokens for public (PKCE/DCR/CIMD) clients are
     single-use and rotated on every redemption (Claude connector requirement)."""
     jti = secrets.token_urlsafe(24)
-    token = _encode(user_id, "refresh", settings.refresh_token_ttl_seconds, jti=jti)
+    token = _encode(user_id, "refresh", settings.refresh_token_ttl_seconds, jti=jti,
+                    iss=settings.public_base_url.rstrip("/") if bound else None,
+                    aud=settings.mcp_resource_url if bound else None)
     return token, jti
 
 
@@ -244,7 +247,9 @@ def verify_refresh_claims(token: str) -> tuple[str, int]:
     return _decode_full(token, "refresh")
 
 
-def verify_refresh_meta(token: str) -> tuple[str, int, str | None]:
+def verify_refresh_meta(token: str, *, bound: bool = False) -> tuple[str, int, str | None]:
     """(user_id, iat, jti) — jti is None for pre-rotation legacy refresh tokens."""
-    payload = _decode_payload(token, "refresh")
+    payload = _decode_payload(token, "refresh",
+        allowed_audiences=[settings.mcp_resource_url] if bound else None,
+        allowed_issuers=[settings.public_base_url.rstrip("/")] if bound else None)
     return payload["sub"], int(payload.get("iat", 0)), payload.get("jti")

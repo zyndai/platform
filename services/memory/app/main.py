@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from app.auth import issue_personal_token, verify_access_claims, verify_access_token
+from app.auth import issue_personal_token, verify_access_meta
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool
 from app.models import AssertionView, ConnectRequest, ContextRequest, DeclareBatchRequest, DeclareRequest, FactRef, IngestRequest, IngestResponse, PublishPageRequest, SocialLinks, UpdatePageRequest
@@ -39,6 +39,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="ZYND", version="0.1.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def oauth_no_store(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/oauth/"):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -120,14 +130,21 @@ async def current_user(authorization: str = Header(default="")) -> str:
     if not token:
         raise HTTPException(status_code=401, detail="missing bearer token")
     try:
-        user_id, issued_at, ver = verify_access_claims(token)
+        meta = verify_access_meta(token, allowed_audiences=["zynd", settings.mcp_resource_url],
+                                  allowed_issuers=[settings.jwt_issuer, settings.public_base_url.rstrip("/")])
     except ValueError:
         if settings.enable_dev_bearer and hmac.compare_digest(token, settings.dev_bearer_token):
             return app.state.dev_user_id   # dev backdoor: not a JWT, no revocation check
         raise HTTPException(status_code=401, detail="invalid bearer token")
     from app.services.sessions import token_rejected
-    if await token_rejected(get_pool(), user_id, issued_at, ver):
+    user_id = meta["sub"]
+    if await token_rejected(get_pool(), user_id, meta["iat"], meta["ver"]):
         raise HTTPException(status_code=401, detail="session was signed out — please sign in again")
+    if meta["jti"]:
+        from app.services.mcp_clients import client_revoked, touch_client
+        if await client_revoked(get_pool(), meta["jti"], user_id):
+            raise HTTPException(status_code=401, detail="connection revoked")
+        await touch_client(get_pool(), meta["jti"])
     # Persona chat JWTs carry the Supabase UUID; GPT/MCP JWTs carry the internal uid.
     # Resolve Supabase UUID → internal uid so all surfaces share one assertion namespace.
     row = await get_pool().fetchrow(
@@ -194,13 +211,23 @@ class _ExchangeBody(BaseModel):
 
 async def _user_from_bearer(authorization: str) -> str:
     """Supabase session or an existing ZYND access token. Never logs the secret."""
-    raw = authorization.removeprefix("Bearer ").strip()
+    scheme, _, value = authorization.partition(" ")
+    raw = value.strip() if scheme.lower() == "bearer" else ""
     if not raw:
         raise HTTPException(status_code=401, detail="missing token")
     try:
-        return verify_access_token(raw)
-    except ValueError:
-        pass
+        return await current_user(authorization)
+    except HTTPException:
+        # A signed ZYND JWT cannot become a Supabase session merely by expiring.
+        import jwt
+        try:
+            claims = jwt.decode(raw, settings.jwt_secret, algorithms=["HS256"],
+                                options={"verify_exp": False, "verify_aud": False, "verify_iss": False})
+        except jwt.PyJWTError:
+            pass
+        else:
+            if claims.get("iss") in (settings.jwt_issuer, settings.public_base_url.rstrip("/")):
+                raise
     from app.supabase_auth import supabase_identity
     identity = await supabase_identity(raw)
     if not identity:

@@ -1,7 +1,7 @@
 """Real-world user-lifecycle simulation tests for ZYND.
 
 These are SCENARIO tests, not unit tests. Each walks through what a real human
-does — Alice signs up, remembers her first facts, curates her graph, tries to
+does — Alice attempts a retired signup, remembers her first facts, curates her graph, tries to
 connect with people, manages her brief, disconnects, publishes a page. Every
 dependency (Postgres, Redis, Supabase, the persona service) is mocked, so the
 whole file runs with no infrastructure.
@@ -15,13 +15,19 @@ import hmac
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastmcp.server.auth import AccessToken
 
 import app.mcp_http as m
 from app.auth import issue_access_token, verify_access_claims
 from app.config import settings
-from app.connect import connect as connect_route
+
+async def _retired_connect_post(email: str, password: str):
+    from app.main import app
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        return await client.post("/connect", data={"email": email, "password": password})
 
 
 @pytest.fixture
@@ -38,56 +44,26 @@ def packet_dependencies():
         yield pool, token
 
 
-# ── Journey 1: New user signs up and remembers her first facts ─────────────────
+# ── Journey 1: Retired signup and memory capture ───────────────────────────────
 
 
-async def test_new_user_signs_up_and_receives_a_working_token():
-    # given — Alice has never used ZYND; the account does not exist yet
-    new_user_id = "11111111-1111-1111-1111-111111111111"
-    pool = MagicMock()
-    pool.fetchrow = AsyncMock(return_value=None)          # no existing user row
-    pool.fetchval = AsyncMock(side_effect=[new_user_id, 1])  # INSERT id, then token_version
-
-    # when — she submits the /connect signup form with a fresh email + password
-    with patch("app.connect.get_pool", return_value=pool):
-        response = await connect_route(email="Alice@Example.com", password="strongpass1")
-
-    # then — she gets an MCP config carrying a real, decodable ZYND token for her id
-    assert response.status_code == 200
-    assert "mcpServers" in response.body.decode()
-    assert "Authorization: Bearer" in response.body.decode()
-    pool.fetchval.assert_awaited()   # a brand-new account was actually created
+async def test_new_user_cannot_sign_up_or_receive_a_token_via_connect():
+    response = await _retired_connect_post("Alice@Example.com", "strongpass1")
+    assert response.status_code == 410
+    assert "No account or token was created" in response.text
+    assert "Authorization: Bearer" not in response.text
 
 
-async def test_returning_user_signs_in_with_correct_password():
-    # given — Alice already has an account with a known password
-    existing_id = "22222222-2222-2222-2222-222222222222"
-    from app.passwords import hash_password
-    pool = MagicMock()
-    pool.fetchrow = AsyncMock(return_value={"id": existing_id, "password_hash": hash_password("strongpass1")})
-    pool.fetchval = AsyncMock(return_value=1)  # token_version bump during personal-token mint
-
-    # when — she signs back in with the same password
-    with patch("app.connect.get_pool", return_value=pool):
-        response = await connect_route(email="alice@example.com", password="strongpass1")
-
-    # then — she is let in and NO new account is created (one fetchval: the version bump)
-    assert response.status_code == 200
-    assert "Authorization: Bearer" in response.body.decode()
-    assert pool.fetchval.await_count == 1
+async def test_returning_user_cannot_mint_a_token_via_connect():
+    response = await _retired_connect_post("alice@example.com", "strongpass1")
+    assert response.status_code == 410
+    assert "No account or token was created" in response.text
 
 
-async def test_signup_rejects_a_too_short_password():
-    # given — Alice fat-fingers a 2-char password
-    pool = MagicMock()
-    pool.fetchrow = AsyncMock(return_value=None)
-
-    # when
-    with patch("app.connect.get_pool", return_value=pool):
-        response = await connect_route(email="alice@example.com", password="ab")
-
-    # then — the form is rejected before any DB write happens
-    assert response.status_code == 400
+async def test_retired_signup_rejects_even_a_too_short_password():
+    response = await _retired_connect_post("alice@example.com", "ab")
+    assert response.status_code == 410
+    assert "No account or token was created" in response.text
 
 
 async def test_user_remembers_her_first_durable_fact():

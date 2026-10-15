@@ -92,7 +92,7 @@ async def test_scoped_client_can_authenticate_without_legacy_user_scope(
     token, _ = await issue_client_token(db, UID, label="S12 test", scopes=scopes)
     db.fetchval.side_effect = None
     db.fetchval.return_value = 1
-    db.fetchrow.return_value = {"revoked_at": None}
+    db.fetchrow.return_value = {"revoked_at": None, "user_id": UID}
     monkeypatch.setattr(mcp_http, "_get_pool", AsyncMock(return_value=db))
     headers = {
         "Authorization": "Bearer " + token,

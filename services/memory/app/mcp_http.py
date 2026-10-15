@@ -177,7 +177,7 @@ class ZyndTokenVerifier(TokenVerifier):
             jti = meta.get("jti")
             if jti:
                 from app.services.mcp_clients import client_revoked, touch_client
-                if await client_revoked(pool, jti):
+                if await client_revoked(pool, jti, user_id):
                     self._log.warning("JWT rejected: client %s revoked", jti)
                     return None
                 await touch_client(pool, jti)

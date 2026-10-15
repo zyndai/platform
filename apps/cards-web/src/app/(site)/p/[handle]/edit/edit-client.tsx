@@ -606,8 +606,8 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
               <div className="pe-kicker">Coding agents</div>
               <div className="pe-title">Add MCP</div>
               <p className="pe-help">
-                Copy a config with your private key into Claude Code, Cursor, or VS Code.
-                Your agent reports what you work on; you review facts before they go public.
+                 Add the Zynd MCP URL in your client and authorize in your browser.
+                 Your agent can work with your memory and card; review suggested facts before they go public.
               </p>
               <McpConnectPanel tone="light" />
             </section>

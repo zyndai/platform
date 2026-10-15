@@ -1,109 +1,86 @@
 "use client";
 
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { Check, Copy, RefreshCw } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import {
-  MCP_SCOPES,
-  connectMcp,
-  listMcpClients,
-  revokeAllMcpClients,
-  revokeMcpClient,
-  type McpClientRow,
-  type McpConnectResult,
-} from "@/lib/mcp-connector";
+import { MCP_URL, listMcpClients, revokeAllMcpClients, revokeMcpClient, type McpClientRow } from "@/lib/mcp-connector";
 
 const SANS = "var(--zc-sans), system-ui, -apple-system, sans-serif";
 const DISPLAY = "var(--zc-display), system-ui, sans-serif";
 const MONO = "var(--zc-mono), ui-monospace, monospace";
 
-export function McpConnectPanel({
-  tone = "light",
-  onConnected,
-}: {
-  tone?: "light" | "dark";
-  onConnected?: (connected: boolean) => void;
-} = {}) {
-  const light = tone === "light";
-  const [result, setResult] = useState<McpConnectResult | null>(null);
-  const [clients, setClients] = useState<McpClientRow[]>([]);
-  const [scopes, setScopes] = useState<string[]>(["memory:write"]);
-  const [label, setLabel] = useState("Claude");
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  const [showConfig, setShowConfig] = useState(false);
-  const [copied, setCopied] = useState(false);
+const CLIENTS = [
+  { name: "Claude Code", status: "Docs-based native OAuth; Zynd login and refresh not yet verified.", instructions: "Run this command, then type /mcp in Claude Code and authorize zynd in your browser.", config: (url: string) => `claude mcp add --scope user --transport http zynd ${url}` },
+  { name: "Claude Desktop", status: "Docs-based native OAuth; Zynd login and refresh not yet verified.", instructions: "Open Settings → Connectors → Add custom connector. Paste this URL and authorize in your browser.", config: (url: string) => url },
+  { name: "ChatGPT", status: "Docs-based native OAuth; Zynd login and refresh not yet verified. Availability varies by workspace.", instructions: "In ChatGPT web, use Plugins → Add custom MCP server if available. Paste this URL and authorize in your browser.", config: (url: string) => url },
+  { name: "Codex", status: "Docs-based native OAuth; Zynd login and refresh not yet verified.", instructions: "Run this command, then codex mcp login zynd to authorize in your browser.", config: (url: string) => `codex mcp add zynd --url ${url}` },
+  { name: "Kilo CLI", status: "Docs-based native OAuth; Zynd login and refresh not yet verified.", instructions: "Merge this into your Kilo MCP settings, then run kilo mcp auth zynd.", config: (url: string) => JSON.stringify({ mcp: { zynd: { type: "remote", url } } }, null, 2) },
+  { name: "OpenCode v2", status: "Docs-based native OAuth; Zynd login and refresh not yet verified. v1 instead uses mcp.zynd.", instructions: "Merge this into opencode.json, then run opencode mcp auth zynd.", config: (url: string) => JSON.stringify({ mcp: { servers: { zynd: { type: "remote", url } } } }, null, 2) },
+  { name: "Cursor", status: "Docs-based native OAuth; Zynd login and refresh not yet verified.", instructions: "Merge this into ~/.cursor/mcp.json using Settings → MCP, then authorize in your browser. Cursor CLI can run agent mcp login zynd where supported.", config: (url: string) => JSON.stringify({ mcpServers: { zynd: { url } } }, null, 2) },
+  ...["Windsurf", "Cline", "Antigravity", "OpenClaw", "Hermes"].map(name => ({ name, status: "Unverified OAuth callback and refresh; setup not yet supported.", instructions: "Do not paste a bearer credential or install an untested OAuth bridge.", config: undefined as ((url: string) => string) | undefined })),
+];
 
+export function McpConnectPanel({ tone = "light", onConnected }: { tone?: "light" | "dark"; onConnected?: (connected: boolean) => void } = {}) {
+  const light = tone === "light";
+  const [clients, setClients] = useState<McpClientRow[]>([]);
+  const [selected, setSelected] = useState(0);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+  const requestId = useRef(0);
   const ink = light ? "#0B0B0B" : "#f8fafc";
   const muted = light ? "#6E6E68" : "#94a3b8";
   const border = light ? "#DEDED8" : "rgba(255,255,255,0.12)";
   const fieldBg = light ? "#F7F7F4" : "rgba(15,23,42,0.8)";
-  const accent = "#7B72E9";
+  const client = CLIENTS[selected];
+  const config = client.config?.(MCP_URL);
 
-  const token = useCallback(async () => {
+  async function sessionToken() {
     const { data } = await createClient().auth.getSession();
-    const t = data.session?.access_token;
-    if (!t) throw new Error("Sign in first so coding agents can feed your card.");
-    return t;
-  }, []);
+    if (!data.session?.access_token) throw new Error("Sign in first to manage your connections.");
+    return data.session.access_token;
+  }
 
   const refresh = useCallback(async () => {
+    const current = ++requestId.current;
     try {
-      const t = await token();
-      const rows = await listMcpClients(t);
+      const { data } = await createClient().auth.getSession();
+      if (!data.session?.access_token) throw new Error("Sign in first to manage your connections.");
+      const rows = await listMcpClients(data.session.access_token);
+      if (current !== requestId.current) return;
       setClients(rows);
+      setError("");
       onConnected?.(rows.length > 0);
-    } catch {
-      setClients([]);
+    } catch (err) {
+      if (current === requestId.current) setError(err instanceof Error ? err.message : "Could not load connected assistants.");
+    } finally {
+      if (current === requestId.current) setLoading(false);
     }
-  }, [onConnected, token]);
+  }, [onConnected]);
 
   useEffect(() => {
-    void refresh();
+    let active = true;
+    const request = requestId;
+    Promise.resolve().then(() => { if (active) void refresh(); });
+    const onFocus = () => { setLoading(true); void refresh(); };
+    window.addEventListener("focus", onFocus);
+    return () => { active = false; request.current++; window.removeEventListener("focus", onFocus); };
   }, [refresh]);
 
-  function toggleScope(id: string, locked: boolean) {
-    if (locked) return;
-    setScopes((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
+  function refreshInventory() {
+    setLoading(true);
+    void refresh();
   }
 
-  async function generate() {
+  async function disconnect(id?: string) {
+    setBusy(id || "all");
     setError("");
-    setBusy("connect");
     try {
-      const t = await token();
-      const created = await connectMcp(t, { label, scopes });
-      setResult(created);
-      setShowConfig(false);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not connect");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function revokeOne(id: string) {
-    setError("");
-    setBusy(id);
-    try {
-      const t = await token();
-      await revokeMcpClient(t, id);
-      if (result?.client_id === id) setResult(null);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not disconnect that assistant");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function revokeAll() {
-    setError("");
-    setBusy("all");
-    try {
-      const t = await token();
-      await revokeAllMcpClients(t);
-      setResult(null);
+      const token = await sessionToken();
+      if (id) await revokeMcpClient(token, id);
+      else await revokeAllMcpClients(token);
+      setLoading(true);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not disconnect");
@@ -112,138 +89,66 @@ export function McpConnectPanel({
     }
   }
 
-  async function copyText(value: string) {
+  async function copy() {
+    if (!config) return;
     try {
-      await navigator.clipboard.writeText(value);
+      await navigator.clipboard.writeText(config);
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
-    } catch {
-      setError("Clipboard blocked — select and copy the text manually.");
-    }
+    } catch { setError("Clipboard blocked; select and copy the text manually."); }
   }
 
-  const button = (primary: boolean): CSSProperties => ({
-    background: primary ? accent : "transparent",
-    color: primary ? "#fff" : ink,
-    border: primary ? "none" : `1px solid ${border}`,
-    borderRadius: 12,
-    padding: "12px 16px",
-    font: `600 14px/1 ${DISPLAY}`,
-    cursor: busy ? "default" : "pointer",
-    opacity: busy ? 0.7 : 1,
-    textDecoration: "none",
-    display: "inline-flex",
-    alignItems: "center",
+  const button = (primary = false): CSSProperties => ({
+    background: primary ? "#7B72E9" : "transparent", color: primary ? "#fff" : ink,
+    border: primary ? "none" : `1px solid ${border}`, borderRadius: 12, padding: "10px 14px",
+    font: `600 13px/1.2 ${DISPLAY}`, cursor: busy ? "default" : "pointer",
   });
 
-  return (
-    <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 14 }}>
-      <div>
-        <div style={{ font: `700 22px/1.15 ${DISPLAY}`, color: ink, letterSpacing: "-0.03em" }}>
-          Connect an assistant
-        </div>
-        <p style={{ margin: "6px 0 0", font: `400 14px/1.55 ${SANS}`, color: muted, maxWidth: 480 }}>
-          One click adds Cursor or copies a Claude Code command. Each assistant has its own
-          token. Disconnecting one leaves the others signed in.
-        </p>
-      </div>
-
-      <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <span style={{ font: `500 12px/1 ${SANS}`, color: muted }}>Assistant name</span>
-        <input
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          style={{
-            border: `1px solid ${border}`,
-            borderRadius: 10,
-            padding: "10px 12px",
-            font: `400 14px/1 ${SANS}`,
-            color: ink,
-            background: fieldBg,
-          }}
-        />
-      </label>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {MCP_SCOPES.map((scope) => (
-          <label key={scope.id} style={{ display: "flex", gap: 8, alignItems: "center", font: `400 13px/1.4 ${SANS}`, color: ink }}>
-            <input
-              type="checkbox"
-              checked={scopes.includes(scope.id)}
-              disabled={scope.locked}
-              onChange={() => toggleScope(scope.id, scope.locked)}
-            />
-            {scope.label}
-            {scope.id === "cards:approve" || scope.id === "people:message" ? (
-              <span style={{ color: muted }}> · off by default</span>
-            ) : null}
-          </label>
-        ))}
-      </div>
-
-      <button type="button" onClick={generate} disabled={busy !== null} style={{ ...button(true), alignSelf: "flex-start" }}>
-        {busy === "connect" ? "Connecting…" : "Connect assistant"}
-      </button>
-
-      {result && (
-        <div style={{ border: `1px solid ${border}`, borderRadius: 14, padding: "14px 16px", background: fieldBg, display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ font: `600 14px/1.3 ${DISPLAY}`, color: ink }}>{result.label || "Assistant"} connected</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {result.cursor && (
-              <a href={result.cursor} style={button(true)}>Add to Cursor</a>
-            )}
-            {result.claude_code && (
-              <button type="button" onClick={() => copyText(result.claude_code || "")} style={button(false)}>
-                {copied ? "Copied" : "Copy Claude Code command"}
-              </button>
-            )}
-            {result.server_url && (
-              <button type="button" onClick={() => copyText(result.server_url || "")} style={button(false)}>
-                Copy server URL
-              </button>
-            )}
-          </div>
-          <p style={{ margin: 0, font: `400 12px/1.5 ${SANS}`, color: muted }}>
-            Claude and ChatGPT use the server URL as a custom connector. No JSON.
-          </p>
-          <button type="button" onClick={() => setShowConfig((v) => !v)} style={{ ...button(false), alignSelf: "flex-start", padding: "8px 12px" }}>
-            {showConfig ? "Hide config file" : "Use a config file"}
-          </button>
-          {showConfig && (
-            <pre style={{ margin: 0, padding: "12px 14px", borderRadius: 10, background: light ? "#fff" : "rgba(2,6,23,0.6)", border: `1px solid ${border}`, font: `400 12px/1.5 ${MONO}`, color: ink, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-              {result.config_json}
-            </pre>
-          )}
-        </div>
-      )}
-
-      {clients.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ font: `600 14px/1 ${DISPLAY}`, color: ink }}>Connected assistants</div>
-          {clients.map((client) => (
-            <div key={client.id} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", border: `1px solid ${border}`, borderRadius: 12, padding: "10px 12px" }}>
-              <div>
-                <div style={{ font: `600 13px/1.3 ${SANS}`, color: ink }}>{client.label}</div>
-                <div style={{ font: `400 12px/1.4 ${SANS}`, color: muted }}>
-                  {client.last_used_at ? `Last used ${new Date(client.last_used_at).toLocaleString()}` : "No report yet"}
-                  {" · "}
-                  {client.scopes.join(", ")}
-                </div>
-              </div>
-              <button type="button" onClick={() => revokeOne(client.id)} disabled={busy !== null} style={button(false)}>
-                {busy === client.id ? "Disconnecting…" : "Disconnect"}
-              </button>
-            </div>
-          ))}
-          <button type="button" onClick={revokeAll} disabled={busy !== null} style={{ ...button(false), alignSelf: "flex-start" }}>
-            {busy === "all" ? "Disconnecting…" : "Disconnect all"}
-          </button>
-        </div>
-      )}
-
-      {error && (
-        <p style={{ margin: 0, font: `400 13px/1.5 ${SANS}`, color: light ? "#C2401F" : "#fbbf24" }}>{error}</p>
-      )}
+  return <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
+    <div>
+      <h3 style={{ font: `700 22px/1.15 ${DISPLAY}`, color: ink, margin: 0 }}>Connect an assistant</h3>
+      <p style={{ font: `400 14px/1.55 ${SANS}`, color: muted, maxWidth: 500 }}>
+        Add the server URL in your client, then sign in and grant full access to your Zynd memory, card, and connected integrations in your browser. An existing Zynd account is required; each connection can be disconnected separately.
+      </p>
     </div>
-  );
+    <label style={{ display: "flex", flexDirection: "column", gap: 6, font: `500 13px ${SANS}`, color: ink }}>
+      Client
+      <select value={selected} onChange={e => { setSelected(Number(e.target.value)); setCopied(false); }} style={{ padding: "10px 12px", border: `1px solid ${border}`, borderRadius: 10, background: fieldBg, color: ink, font: `400 14px ${SANS}`, maxWidth: 350 }}>
+        {CLIENTS.map((c, i) => <option key={c.name} value={i}>{c.name}</option>)}
+      </select>
+    </label>
+    <div style={{ border: `1px solid ${border}`, background: fieldBg, padding: "16px", borderRadius: 14, minWidth: 0 }}>
+      <strong style={{ font: `600 14px ${DISPLAY}`, color: ink }}>{client.name}</strong>
+      <p style={{ font: `400 13px/1.5 ${SANS}`, color: muted }}>{client.status}</p>
+      <p style={{ font: `400 13px/1.5 ${SANS}`, color: ink }}>{client.instructions}</p>
+      {config && <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: 10 }}>
+        <pre style={{ flex: "1 1 230px", minWidth: 0, padding: "12px 14px", margin: 0, border: `1px solid ${border}`, borderRadius: 10, font: `400 12px/1.5 ${MONO}`, color: ink, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{config}</pre>
+        <button type="button" onClick={() => void copy()} aria-label={copied ? "Copied setup" : "Copy setup"} title={copied ? "Copied setup" : "Copy setup"} style={{ ...button(true), display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}{copied ? "Copied" : "Copy setup"}
+        </button>
+      </div>}
+    </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <strong style={{ font: `600 14px ${DISPLAY}`, color: ink }}>Connected assistants</strong>
+        <button type="button" onClick={refreshInventory} title="Refresh connected assistants" aria-label="Refresh connected assistants" disabled={loading || busy !== null}
+          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 6, border: `1px solid ${border}`, borderRadius: 8, background: "transparent", color: muted, cursor: loading || busy ? "default" : "pointer" }}>
+          <RefreshCw size={15} aria-hidden="true" />
+        </button>
+      </div>
+      {loading && <p role="status" style={{ margin: 0, font: `400 13px ${SANS}`, color: muted }}>Loading connections…</p>}
+      {!loading && !error && clients.length === 0 && <p style={{ margin: 0, font: `400 13px/1.5 ${SANS}`, color: muted }}>No assistants connected yet. After authorizing in your client, return here and refresh to see the connection.</p>}
+      {clients.map(row => <div key={row.id} style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 12, border: `1px solid ${border}`, borderRadius: 12, padding: "10px 12px" }}>
+        <div style={{ minWidth: 0 }}>
+          <strong style={{ font: `600 13px ${SANS}`, color: ink }}>{row.label}</strong>
+          <div style={{ font: `400 12px/1.5 ${SANS}`, color: muted, overflowWrap: "anywhere" }}>
+            {row.last_used_at ? `Last used ${new Date(row.last_used_at).toLocaleString()}` : "No report yet"} · {row.scopes.includes("user") ? "Full access (memory, card, integrations)" : row.scopes.join(", ") || "Legacy permissions not reported"}
+          </div>
+        </div>
+        <button type="button" onClick={() => void disconnect(row.id)} disabled={busy !== null} style={button()}>{busy === row.id ? "Disconnecting…" : "Disconnect"}</button>
+      </div>)}
+      {clients.length > 0 && <button type="button" onClick={() => void disconnect()} disabled={busy !== null} style={{ ...button(), alignSelf: "flex-start" }}>{busy === "all" ? "Disconnecting…" : "Disconnect all"}</button>}
+    </div>
+    {error && <p role="alert" style={{ color: light ? "#C2401F" : "#fbbf24", font: `400 13px ${SANS}` }}>{error}</p>}
+  </div>;
 }

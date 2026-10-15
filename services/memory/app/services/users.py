@@ -34,8 +34,8 @@ async def find_user(
             return str(row["id"])
 
     row = await pool.fetchrow(
-        "SELECT id FROM users WHERE lower(email) = lower($1)", email)
-    if row:
+        "SELECT id, supabase_user_id FROM users WHERE lower(email) = lower($1)", email)
+    if row and (row["supabase_user_id"] is None or row["supabase_user_id"] == sub):
         return str(row["id"])
     return None
 

@@ -1,5 +1,5 @@
 export const ownerHomeEnabled =
-  process.env.NEXT_PUBLIC_FEATURE_S10_HOME === "true";
+  (process.env.NEXT_PUBLIC_FEATURE_S10_HOME ?? "true") === "true";
 
 export interface OwnerStatus {
   handle: string;

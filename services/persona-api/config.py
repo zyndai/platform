@@ -37,6 +37,7 @@ SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
 FEATURE_S12_INTROS: bool = os.getenv("FEATURE_S12_INTROS", "false").lower() in ("1", "true", "yes")
 # Dedicated Cards credential, never accepted as a generic Persona service key.
 CARDS_INTRO_SERVICE_TOKEN: str = os.getenv("CARDS_INTRO_SERVICE_TOKEN", "")
+CARDS_API_BASE_URL: str = os.getenv("CARDS_API_BASE_URL", "https://api.zynd.ai")
 S12_REQUESTER_DAILY_CAP: int = max(1, int(os.getenv("S12_REQUESTER_DAILY_CAP", "10")))
 S12_CARD_DAILY_CAP: int = max(1, int(os.getenv("S12_CARD_DAILY_CAP", "20")))
 

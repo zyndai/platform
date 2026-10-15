@@ -148,8 +148,9 @@ SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM: str = os.getenv("SMTP_FROM", "")
 CRON_SECRET: str = os.getenv("CRON_SECRET", "")
 
-# S10: enable only after migrations 0010/0011, on the cards schema.
-FEATURE_S10_HOME: bool = os.getenv("FEATURE_S10_HOME", "false").lower() in ("1", "true", "yes")
+# S10: enabled by default; requires migrations 0010/0011 on the cards schema.
+# Set FEATURE_S10_HOME=false to disable owner-home operations explicitly.
+FEATURE_S10_HOME: bool = os.getenv("FEATURE_S10_HOME", "true").lower() in ("1", "true", "yes")
 FEATURE_S10_DIGEST: bool = os.getenv("FEATURE_S10_DIGEST", "false").lower() in ("1", "true", "yes")
 S10_MAILER: str = os.getenv("S10_MAILER", "noop")  # noop | smtp
 

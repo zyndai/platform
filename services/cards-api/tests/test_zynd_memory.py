@@ -114,6 +114,8 @@ def _card_json(zynd_memory=None):
 
 
 def _mock_sb(monkeypatch, rows):
+    # Exercise the legacy whole-card write; S10's versioned writes are tested separately.
+    monkeypatch.setattr(cards_service.config, "FEATURE_S10_HOME", False)
     query = _FakeQuery(rows)
     sb = MagicMock()
     sb.table.return_value = query
@@ -209,6 +211,7 @@ def test_refresh_cycle_clears_revoked_facts(monkeypatch):
 
 
 def test_update_card_memory_empty_list_clears_and_reembeds(monkeypatch):
+    monkeypatch.setattr(cards_service.config, "FEATURE_S10_HOME", False)
     stored = {
         "card": {
             "id": "cid",

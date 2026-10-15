@@ -236,6 +236,8 @@ class _Rows:
 
 @pytest.fixture
 def cards_client(monkeypatch):
+    # This fixture covers legacy email ownership; S10 UUID ownership has separate tests.
+    monkeypatch.setattr(config, "FEATURE_S10_HOME", False)
     rows = _Rows([{"owner_email": None, "card": {}}])
     sb = MagicMock()
     sb.table.return_value = rows

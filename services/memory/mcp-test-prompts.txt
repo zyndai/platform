@@ -17,42 +17,36 @@ ZYND MCP TEST PROMPTS
    Inspect facts, optionally with topic="coding preferences". Extraction may
    still be pending immediately after a successful free-text save.
 
-4. CALENDAR
-   List my calendar events for this week
-
-5. GMAIL
-   Show my last 5 emails
-
-6. LINKEDIN SEARCH
+4. LINKEDIN SEARCH
    Search LinkedIn for AI founders in San Francisco
 
-7. ZYND NETWORK SEARCH
-   Search the Zynd network for product designers
+5. PEOPLE MATCHING
+   Find product designers on ZYND using find_people
 
-8. BRIEF
+6. BRIEF
    Read my brief using get_my_context.brief
    Pass = call get_my_context and report its brief; null may be unset or unavailable.
 
-9. CROSS-SURFACE SYNC (most important)
+7. CROSS-SURFACE SYNC (most important)
    Step 1 — in OpenCode:      Remember that I'm currently working on ZYND memory sync
    Step 2 — in Claude Desktop: What am I working on right now?
    Pass = Claude Desktop returns the fact written in OpenCode
 
-10. TYPED SAVE AND MIXED-INPUT REJECTION
+8. TYPED SAVE AND MIXED-INPUT REJECTION
     Save my role as backend engineer and my languages as Python and TypeScript
     using report_user_info typed fields without text.
     Then try report_user_info(text="I prefer small teams", role="backend engineer").
     Pass = mixed call returns saved=false with reason
            "Use text alone or typed fields, not both", without saving either input.
 
-11. PUBLIC CARD AND OWNER SECTIONS
+9. PUBLIC CARD AND OWNER SECTIONS
     What is public about me, and how has my card performed this week?
     Use get_my_context.card only for approved public facts, and status/activity
     for owner metrics. Pass = owner keys are omitted without cards:read or legacy
     user scope, including cards:approve-only tokens; authorized unavailable
     sections are null, not zero. Private facts/profile/brief are not public evidence.
 
-12. CORRECTION AND EXPORT
+10. CORRECTION AND EXPORT
     Confirm or forget a returned fact using its exact predicate and object from
     get_my_context.facts. Pass = report the actual correction result.
     Export only on an explicit backup/download/export request and only when

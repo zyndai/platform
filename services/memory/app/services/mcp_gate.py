@@ -22,7 +22,7 @@ class ScopeGate(Middleware):
                 "until explicitly approved for publication. Review list_pending_facts before "
                 "approve_fact; obtain explicit confirmation of the exact fact to make public. "
                 "Use only available tools and never claim a failed write succeeded. "
-                "update_headline directs users to the card editor; it does not edit the headline."
+                "Headlines are edited in the card editor."
             )
             if isinstance(result, dict):
                 result["instructions"] = instructions

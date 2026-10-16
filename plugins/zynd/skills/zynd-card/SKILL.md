@@ -25,8 +25,7 @@ description: Inspect the user's public ZYND card and pending facts, then approve
 - `list_intros` reads inbound intros; human owners decide in the UI.
   `set_looking_for` may publish a recognized seeking value, otherwise it saves
   a private intent: describe that difference and ask before setting it.
-  `update_headline` is a placeholder that returns `edit_on_card`; refer the
-  user to the card editor and never claim it updated anything.
+  Headlines are edited in the card editor; never claim to change one via MCP.
 - `confirm_fact_tool` and `forget_fact_tool` act on private context with an
   exact predicate/object from `get_my_context.facts`; they do not approve a
   card fact. Use only visible tools and report their actual results.

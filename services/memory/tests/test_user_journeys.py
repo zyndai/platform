@@ -404,14 +404,15 @@ async def test_user_publishes_an_html_page_and_gets_a_live_url():
     pool = MagicMock()
     pool.fetchrow = AsyncMock(return_value={"supabase_user_id": "suid-xyz"})
 
-    fake_pages = MagicMock()
-    fake_pages.create_page = AsyncMock(return_value={
+    from app.services import pages_agent
+
+    create_page = AsyncMock(return_value={
         "success": True, "url": "https://zynd.io/p/abc123", "slug": "abc123", "title": "Test",
     })
 
     # when — she asks to publish some HTML as a shareable page
     with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
-         patch.dict("sys.modules", {"app.services.pages_agent": fake_pages}):
+         patch.object(pages_agent, "create_page", create_page):
         result = await m.publish_page(
             content="<h1>Hello</h1>", title="Test", format="html", uid=uid,
         )
@@ -419,7 +420,7 @@ async def test_user_publishes_an_html_page_and_gets_a_live_url():
     # then — she gets a live public URL back
     assert result["success"] is True
     assert result["url"] == "https://zynd.io/p/abc123"
-    fake_pages.create_page.assert_awaited_once()
+    create_page.assert_awaited_once_with("suid-xyz", "<h1>Hello</h1>", "Test", "html", "unlisted")
 
 
 # ── Journey 7: Social links (persona features gated off) ───────────────────────

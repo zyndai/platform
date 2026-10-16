@@ -350,20 +350,6 @@ async def ask_card_impl(handle: str, question: str) -> dict:
     }
 
 
-def request_intro_impl(
-    from_handle: str = "",
-    to_handle: str = "",
-    message: str = "",
-) -> dict:
-    _require_enabled()
-    return {
-        "enabled": False,
-        "message": "not enabled",
-        "from_handle": from_handle or None,
-        "to_handle": to_handle or None,
-    }
-
-
 def clear_caches() -> None:
     _cache.clear()
     _buckets.clear()
@@ -425,16 +411,6 @@ async def ask_card(handle: str, question: str) -> dict:
     return await ask_card_impl(handle, question)
 
 
-@mcp.tool(annotations={"readOnlyHint": False, "openWorldHint": False})
-async def request_intro(
-    from_handle: str = "",
-    to_handle: str = "",
-    message: str = "",
-) -> dict:
-    """Request an introduction between two people. Not enabled yet (returns stub)."""
-    return request_intro_impl(from_handle, to_handle, message)
-
-
 @mcp.resource("zynd://card/{handle}", mime_type="application/json")
 async def card_resource(handle: str) -> str:
     """Public CardView JSON for a handle."""
@@ -451,8 +427,7 @@ def find_people_prompt(query: str = "") -> str:
         f"1. Call search_people with query={q!r} (claimed only by default).\n"
         "2. For a promising handle, call get_card(handle) for full CardView + cite_as.\n"
         "3. Optional: ask_card(handle, question) for a labelled assistant answer from that card.\n"
-        "4. Cite using cite_as / url. Do not invent profiles.\n"
-        "5. request_intro is not enabled yet."
+        "4. Cite using cite_as / url. Do not invent profiles."
     )
 
 

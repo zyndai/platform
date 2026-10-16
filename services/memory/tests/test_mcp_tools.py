@@ -30,41 +30,7 @@ _EXPECTED_TOOLS = {
     "find_similar_users", "find_people", "confirm_fact_tool", "forget_fact_tool",
     "search_linkedin_profiles", "find_linkedin_people_for_me",
     "publish_page", "list_my_pages", "disconnect",
-    "set_social_links",
-    "connect_with", "send_persona_message", "my_connections", "book_meeting",
-    # Google Calendar
-    "create_calendar_event", "list_calendar_events", "delete_calendar_event",
-    # Google Docs
-    "create_google_doc", "append_to_google_doc", "read_google_doc",
-    "list_google_docs", "search_google_docs",
-    # Google Drive
-    "create_google_drive_folder", "list_google_drive_files",
-    "move_google_drive_file", "list_google_drive_folder_contents",
-    # Gmail
-    "search_gmail_emails", "get_gmail_email_details",
-    "send_gmail_email", "list_recent_gmail_threads",
-    # Google Sheets
-    "create_google_sheet", "append_to_google_sheet",
-    "read_google_sheet_values", "search_google_spreadsheets",
-    # Twitter
-    "post_tweet", "read_timeline", "send_twitter_dm", "read_twitter_dms",
-    # LinkedIn
-    "post_to_linkedin", "send_linkedin_dm", "read_linkedin_dms",
-    # Notion
-    "search_notion", "get_notion_database", "query_notion_database",
-    "create_notion_page", "update_notion_page", "get_notion_page_content",
-    "create_notion_database", "append_notion_blocks",
-    # Scheduling
-    "propose_meeting", "respond_to_meeting", "list_pending_meetings",
-    # Zynd Network
-    "search_zynd_network", "search_zynd_personas", "get_persona_profile",
-    "list_my_connections", "request_connection", "check_connection_status",
-    "message_zynd_agent", "call_zynd_agent", "read_agent_channel",
-    # Zynd Services
-    "search_zynd_services", "get_zynd_service_card", "call_zynd_service",
-    # Brief & Todo
-    "append_to_my_brief", "replace_my_brief",
-    "clear_my_brief", "add_todo",
+    "list_pending_facts", "approve_fact", "dismiss_fact", "set_looking_for", "list_intros",
 }
 
 
@@ -72,18 +38,40 @@ def test_consolidated_tools_registered():
     # given
     names = {t.name for t in asyncio.run(mcp.list_tools())}
     # when / then
-    missing = _EXPECTED_TOOLS - names
-    assert not missing, f"Missing tools: {sorted(missing)}"
+    assert names == _EXPECTED_TOOLS
 
 
-def test_tool_count_includes_s10_s09_and_s12():
-    # Seven self-info wrappers were folded into the retained read/write tools.
+def test_tool_count_includes_cards_owner_and_discovery():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert len(names) == 77
-    assert {
-        "list_pending_facts",
-        "approve_fact", "dismiss_fact", "set_looking_for", "update_headline", "list_intros",
-    } <= names
+    assert len(names) == 17
+
+
+@pytest.mark.parametrize("owner_enabled", [False, True])
+@pytest.mark.parametrize("public_enabled", [False, True])
+def test_catalog_and_routes_respect_feature_flags(owner_enabled, public_enabled):
+    import json
+    import os
+    import subprocess
+    import sys
+
+    code = """
+import asyncio, json
+from app.mcp_http import mcp, app
+print(json.dumps({
+    'tools': sorted(t.name for t in asyncio.run(mcp.list_tools())),
+    'paths': [getattr(r, 'path', '') for r in app.routes],
+}))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=60,
+        env={**os.environ, "FEATURE_S09_MCP_CLIENTS": str(owner_enabled).lower(),
+             "FEATURE_S11_PUBLIC_MCP": str(public_enabled).lower()},
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout.strip().splitlines()[-1])
+    owner = {"list_pending_facts", "approve_fact", "dismiss_fact", "set_looking_for", "list_intros"}
+    assert set(data["tools"]) == (_EXPECTED_TOOLS if owner_enabled else _EXPECTED_TOOLS - owner)
+    assert ("/cards-public-mcp" in data["paths"]) is public_enabled
 
 
 # ── Auth: HTTP-level rejection ─────────────────────────────────────────────────

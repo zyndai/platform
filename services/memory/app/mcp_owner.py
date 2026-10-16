@@ -100,16 +100,6 @@ def register(mcp, uid_dep) -> None:
             "next_actions": [f"Public looking-for must be one of: {', '.join(sorted(allowed))}"],
         }
 
-    @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
-    async def update_headline(text: str, uid: str = Depends(uid_dep)) -> dict:
-        """The public headline lives on the card editor, not in memory."""
-        del text, uid
-        return {
-            "ok": False,
-            "error": "edit_on_card",
-            "next_actions": ["Change the headline on the Zynd card edit page"],
-        }
-
     @mcp.prompt
     def weekly_card_review() -> str:
         """Walk the owner through private facts. Never approve without a yes."""

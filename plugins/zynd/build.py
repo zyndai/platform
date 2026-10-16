@@ -18,7 +18,7 @@ SKILLS = ("zynd-memory", "zynd-context", "zynd-card")
 TOOLS = {
     "report_user_info", "get_my_context", "confirm_fact_tool", "forget_fact_tool",
     "list_pending_facts", "list_intros", "approve_fact", "dismiss_fact",
-    "set_looking_for", "update_headline",
+    "set_looking_for",
 }
 SCOPES = ["memory:write", "cards:read", "cards:approve"]
 PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from fastmcp import Client
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.responses import PlainTextResponse
@@ -20,7 +21,6 @@ from app.cards_public_mcp import (
     coarse_query_category,
     get_card_impl,
     mcp,
-    request_intro_impl,
     search_people_impl,
 )
 
@@ -38,7 +38,7 @@ def _enable_and_clear(monkeypatch):
 
 def test_tools_and_prompt_registered():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert {"search_people", "get_card", "ask_card", "request_intro"} <= names
+    assert names == {"search_people", "get_card", "ask_card"}
     prompts = {p.name for p in asyncio.run(mcp.list_prompts())}
     assert "find-people" in prompts
     templates = asyncio.run(mcp.list_resource_templates())
@@ -266,17 +266,19 @@ def test_ask_card_unclaimed_403():
             asyncio.run(ask_card_impl("bob", "hi"))
 
 
-def test_request_intro_stub():
-    out = request_intro_impl("a", "b", "hey")
-    assert out["enabled"] is False
-    assert out["message"] == "not enabled"
-
-
 def test_find_people_prompt_mentions_tools():
     text = pub.find_people_prompt("AI founders")
     assert "search_people" in text
     assert "get_card" in text
     assert "ask_card" in text
+    assert "request_intro" not in text
+
+
+async def test_removed_public_intro_cannot_be_called():
+    async with Client(mcp) as client:
+        result = await client.call_tool("request_intro", {}, raise_on_error=False)
+    assert result.is_error
+    assert "Unknown tool" in result.content[0].text
 
 
 def test_merged_app_carries_auth_middleware():

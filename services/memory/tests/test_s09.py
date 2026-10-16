@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import jwt
 import pytest
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 from fastmcp.server.auth import AccessToken
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 from mcp.shared.exceptions import MCPError
@@ -37,8 +38,8 @@ def test_default_profile_stays_under_fifteen_tools():
     assert CARDS_READ_TOOLS == {"list_pending_facts", "list_intros"}
 
 
-def test_legacy_user_scope_sees_productivity_tools():
-    assert tool_visible("search_gmail_emails", ["user"]) is True
+def test_legacy_user_scope_still_allows_registered_tools():
+    assert tool_visible("export_my_context", ["user"]) is True
 
 
 def test_approve_needs_scope_and_confirmation():
@@ -94,7 +95,10 @@ async def test_client_token_does_not_bump_version_and_embeds_jti():
     }),
     (["memory:write", "cards:approve"], {
         "get_my_context", "report_user_info", "confirm_fact_tool", "forget_fact_tool",
-        "approve_fact", "dismiss_fact", "set_looking_for", "update_headline",
+        "approve_fact", "dismiss_fact", "set_looking_for",
+    }),
+    (["memory:write", "people:message"], {
+        "get_my_context", "report_user_info", "confirm_fact_tool", "forget_fact_tool", "find_people",
     }),
 ])
 async def test_transport_discovery_hides_removed_tools_and_injected_parameters(scopes, expected):
@@ -158,20 +162,36 @@ async def test_transport_scoped_token_cannot_call_hidden_owner_write():
     approve.assert_not_awaited()
 
 
-async def test_legacy_transport_discovery_retains_special_tools_without_deleted_wrappers():
+async def test_legacy_transport_excludes_unregistered_tools():
     reset = auth_context_var.set(AuthenticatedUser(AccessToken(token="test", client_id="alice", scopes=["user"])))
     try:
         with patch.object(m, "_get_pool", AsyncMock()):
             async with Client(m.mcp) as client:
                 tools = await client.list_tools()
-                result = await client.call_tool("remember", {"text": "I build compilers"}, raise_on_error=False)
+                for removed in ("remember", "update_headline", "request_connection", "search_gmail_emails"):
+                    with pytest.raises((MCPError, ToolError), match="Unknown tool"):
+                        await client.call_tool(removed, {})
     finally:
         auth_context_var.reset(reset)
     names = {tool.name for tool in tools}
-    assert len(names) == 77
-    assert {"export_my_context", "append_to_my_brief", "set_social_links"} <= names
+    assert len(names) == 17
+    assert {"export_my_context", "publish_page", "find_people"} <= names
     assert names.isdisjoint({
         "remember", "get_my_card", "get_my_socials", "read_my_brief",
         "get_my_system_prompt", "get_card_status", "get_card_activity",
+        "update_headline", "request_connection", "search_gmail_emails",
     })
-    assert result.is_error
+
+
+@pytest.mark.parametrize("removed", ["connect_with", "search_gmail_emails", "update_headline"])
+async def test_scoped_clients_cannot_call_removed_tools(removed):
+    reset = auth_context_var.set(AuthenticatedUser(AccessToken(
+        token="test", client_id="alice", scopes=["memory:write", "people:message", "cards:approve"],
+    )))
+    try:
+        with patch.object(m, "_get_pool", AsyncMock()):
+            async with Client(m.mcp) as client:
+                with pytest.raises((PermissionError, ToolError, MCPError)):
+                    await client.call_tool(removed, {})
+    finally:
+        auth_context_var.reset(reset)

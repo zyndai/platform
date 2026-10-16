@@ -10,8 +10,10 @@ approved isolated environment. Do not use a production account for this check.
 Use the environment-specific Zynd memory MCP URL (`<Zynd MCP URL>`, ending in
 `/mcp`), not the separate public Cards MCP. No config below needs an access
 token, `Authorization` header, client secret, or token-exchange call. An
-existing Zynd account is required; OAuth grants full `user` access, not the
-limited scopes of older manually issued tokens. Consent, connection inventory,
+existing Zynd account is required; OAuth grants the legacy `user` scope, which
+now exposes the 17 registered Cards, memory, discovery and hosted-page tools
+(not Persona or external integrations). Existing clients may need to refresh
+their cached tool list after this catalog change. Consent, connection inventory,
 and individual disconnect are implemented server-side with isolated tests, not a
 verified property of these clients. Locally installed CLI versions below were
 checked with **version/help only**; no account, config, callback, token storage,

@@ -22,7 +22,7 @@ test.describe("S10 owner home", () => {
       await page
         .getByRole("heading", { name: "Welcome back, Alice." })
         .evaluate((el) => getComputedStyle(el).webkitTextFillColor),
-    ).toBe("rgb(248, 250, 252)");
+    ).toBe("rgb(23, 32, 51)");
     await expect(page.getByText("12", { exact: true })).toBeVisible();
     await expect(page.getByText("4", { exact: true })).toBeVisible();
     const questionHistory = page.getByRole("region", { name: "Recent assistant questions" });

@@ -9,6 +9,7 @@ import {
 import { OwnerHome } from "./owner-home";
 import { introsEnabled, type Intro } from "@/lib/intros";
 import { IntroInbox } from "@/components/intros/IntroInbox";
+import "./owner-home.css";
 
 export const metadata = {
   title: "Your home · Zynd Cards",
@@ -31,19 +32,23 @@ export default async function HomePage() {
     );
   } catch {
     return (
-      <main style={{ padding: 48 }}>
-        <h1>Your home is temporarily unavailable</h1>
-        <p>Please try again shortly.</p>
-        <Link href="/home">Try again</Link>
+      <main className="oh-page oh oh-fallback">
+        <div className="oh-shell oh-panel">
+          <h1>Your home is temporarily unavailable</h1>
+          <p>Please try again shortly.</p>
+          <Link className="oh-button" href="/home">Try again</Link>
+        </div>
       </main>
     );
   }
   if (!data)
     return (
-      <main style={{ padding: 48 }}>
-        <h1>Welcome home</h1>
-        <p>Create your card to start seeing how people find you.</p>
-        <Link href="/create">Create your card →</Link>
+      <main className="oh-page oh oh-fallback">
+        <div className="oh-shell oh-panel">
+          <h1>Welcome home</h1>
+          <p>Create your card to start seeing how people find you.</p>
+          <Link className="oh-button" href="/create">Create your card →</Link>
+        </div>
       </main>
     );
   let intros: Intro[] | null = null;
@@ -53,6 +58,9 @@ export default async function HomePage() {
   }
   return (
     <div className="oh-page">
+      {/* Match the typography used on public profile cards. */}
+      {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Space+Mono:wght@400;700&display=swap" />
       <OwnerHome initial={data} token={session.access_token} />
       {introsEnabled && (
         <div className="oh-intro-section">

@@ -103,6 +103,36 @@ async def test_authorize_cimd_client_goes_to_auth_page(meta_mock):
     assert "/oauth/login?" in resp.headers["location"]
 
 
+@patch("app.oauth._fetch_metadata_document")
+async def test_authorize_claude_accepts_advertised_scopes(meta_mock):
+    client_id = "https://claude.ai/oauth/mcp-oauth-client-metadata"
+    callback = "https://claude.ai/api/mcp/auth_callback"
+    meta_mock.return_value = {"client_id": client_id, "redirect_uris": [callback]}
+    metadata = await oauth.authorization_server_metadata()
+    resp = await oauth.authorize(
+        client_id=client_id, redirect_uri=callback,
+        scope=" ".join(metadata["scopes_supported"]),
+        code_challenge=CHALLENGE, code_challenge_method="S256", resource=RESOURCE,
+    )
+    assert resp.status_code == 302
+    req = _sealed(resp.headers["location"].split("zynd_oauth=", 1)[1])
+    assert req["scope"] == "user"
+    assert req["create_user"] is False
+    assert req["resource"] == RESOURCE
+    meta_mock.assert_awaited_once_with(client_id)
+
+
+async def test_authorize_connector_rejects_unadvertised_scope():
+    with pytest.raises(HTTPException) as exc:
+        await oauth.authorize(
+            client_id="https://claude.ai/oauth/mcp-oauth-client-metadata",
+            redirect_uri="https://claude.ai/api/mcp/auth_callback",
+            scope="user people:message",
+            code_challenge=CHALLENGE, code_challenge_method="S256", resource=RESOURCE,
+        )
+    assert exc.value.detail == "unsupported scope"
+
+
 @patch("app.oauth.get_pool")
 async def test_authorize_known_client_uses_auth_page_with_create(pool_mock):
     pool_mock.return_value = AsyncMock()

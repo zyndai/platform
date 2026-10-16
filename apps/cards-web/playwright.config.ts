@@ -8,7 +8,9 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests",
   timeout: 60_000,
-  fullyParallel: true,
+  // Suites share one mutable fixture API (including visitor preferences/counts).
+  fullyParallel: false,
+  workers: 1,
   retries: 0,
   reporter: [["list"]],
   use: {

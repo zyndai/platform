@@ -365,6 +365,9 @@ export function ProfileChatWidget({
       )}
 
       {/* Input */}
+      <p id="profile-chat-history-notice" style={{ margin: 0, padding: "8px 12px", background: "#fff", color: "#56565d", fontSize: 11, lineHeight: 1.5 }}>
+        Questions are saved for the profile owner to review. Common contact details are redacted. Avoid sharing private information.
+      </p>
       <div style={{
         padding: "10px 12px", background: "#fff",
         borderTop: "1px solid #E8E8E1", display: "flex", alignItems: "flex-end", gap: "8px",
@@ -382,6 +385,8 @@ export function ProfileChatWidget({
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
           }}
           placeholder="Ask a question…"
+          aria-label="Your question"
+          aria-describedby="profile-chat-history-notice"
           disabled={sending}
           rows={1}
           style={{

@@ -10,11 +10,10 @@ load_dotenv(_env_path)
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "http://127.0.0.1:54321")
 SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
 SUPABASE_JWT_SECRET: str = os.getenv("SUPABASE_JWT_SECRET", "")
-# Postgres schema holding the cards tables and RPC functions. "public" on the
-# dashboard project (xmfj) today; "cards" once cards runs on the shared aafo
-# database (packages/db/cards). The schema must be listed in the project's
-# API "Exposed schemas" setting.
-SUPABASE_DB_SCHEMA: str = os.getenv("SUPABASE_DB_SCHEMA") or "public"
+# Postgres schema holding the cards tables and RPC functions. Defaults to the
+# shared cards schema; legacy databases can explicitly set "public". The schema
+# needs its migrations and must be listed in the API "Exposed schemas" setting.
+SUPABASE_DB_SCHEMA: str = os.getenv("SUPABASE_DB_SCHEMA") or "cards"
 
 # Supabase project(s) whose tokens cards-api trusts for auth (not DB access —
 # SUPABASE_URL above is still the only project queried). Comma-separated
@@ -55,9 +54,9 @@ LEGACY_UNOWNED_CLAIM: bool = os.getenv("LEGACY_UNOWNED_CLAIM", "false").lower() 
 # set to "false" and the old include-everyone behaviour returns.
 FEATURE_S03_UNCLAIMED_TIERING: bool = os.getenv("FEATURE_S03_UNCLAIMED_TIERING", "true").lower() in ("1", "true", "yes")
 
-# S04: card_events + attribution columns. Default off until migration 0008
-# is applied on aafo and SUPABASE_DB_SCHEMA=cards. Rollback: set false.
-FEATURE_S04_EVENTS: bool = os.getenv("FEATURE_S04_EVENTS", "false").lower() in ("1", "true", "yes")
+# S04: enabled by default; requires migration 0008 on the cards schema.
+# Set FEATURE_S04_EVENTS=false to disable collection explicitly.
+FEATURE_S04_EVENTS: bool = os.getenv("FEATURE_S04_EVENTS", "true").lower() in ("1", "true", "yes")
 
 # S06: typed memory match_reasons + freshness boost on /ask. Chat always
 # uses CardView (see api/chat.py). /view + memory-in-embed stay always on.

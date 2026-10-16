@@ -190,7 +190,9 @@ def insert_batch(
             actor_class=actor,
             ref=e.get("ref"),
             session_hash=sh,
-            meta=e.get("meta"),
+            # Only the validated chat handler may populate owner question history.
+            meta={k: v for k, v in (e.get("meta") or {}).items()
+                  if k not in {"question", "question_truncated", "question_source"}} if isinstance(e.get("meta"), dict) else None,
         )
         for e in events
     ]
@@ -255,6 +257,12 @@ def purge_older_than_days(days: int = 180) -> int:
             .lt("ts", cutoff)
             .execute()
         )
+        # Same retention as analytics. Absence of the optional visitor tables
+        # must not prevent the established card-event cleanup.
+        try:
+            config.get_supabase().table("profile_visits").delete().lt("visited_at", cutoff).execute()
+        except Exception:
+            logger.warning("profile_visits purge unavailable")
         return len(resp.data or [])
     except Exception:
         logger.exception("card_events purge failed")

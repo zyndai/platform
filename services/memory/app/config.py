@@ -198,6 +198,12 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     firecrawl_api_key: str = ""
 
+    # QuickEnrich contact-finder used by find_people. Empty disables that source.
+    quickenrich_base_url: str = ""
+    quickenrich_api_key: str = ""
+    quickenrich_auth_header: str = "Authorization"
+    quickenrich_timeout: float = 12.0
+
     # ── Zynd Network ──
     zynd_registry_url: str = "https://zns01.zynd.ai"
     zynd_deployer_url: str = "https://deployer.zynd.ai"

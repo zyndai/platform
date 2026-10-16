@@ -239,7 +239,7 @@ auth = RemoteAuthProvider(
     token_verifier=ZyndTokenVerifier(required_scopes=[]),
     authorization_servers=[AnyHttpUrl(settings.public_base_url)],
     base_url=AnyHttpUrl(settings.mcp_origin),
-    scopes_supported=["user"],
+    scopes_supported=["user", "memory:write", "cards:read", "cards:approve"],
     resource_name="ZYND",
 )
 

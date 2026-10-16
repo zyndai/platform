@@ -13,6 +13,7 @@ ALLOWED_SCOPES = (
     "people:message",
 )
 DEFAULT_SCOPES = ["memory:write"]
+PLUGIN_SCOPES = ("memory:write", "cards:read", "cards:approve")
 
 MEMORY_TOOLS = frozenset({
     "report_user_info",

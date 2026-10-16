@@ -261,11 +261,15 @@ async def test_user_searches_for_a_target_person_and_gets_no_matches():
 
     # when — she looks for a seed-stage investor in dev tools
     with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
-         patch("app.mcp_http.search_by_query", AsyncMock(return_value=[])) as search:
+         patch("app.mcp_http.search_by_query", AsyncMock(return_value=[])) as search, \
+         patch("app.mcp_http.search_cards", AsyncMock(return_value=([], None))), \
+         patch("app.mcp_http.search_quickenrich", AsyncMock(return_value=([], None))):
         result = await m.find_people("seed-stage investor in dev tools", uid="test-uid")
 
-    # then — the search returns [] rather than fabricating people
-    assert result == []
+    # then — every source is empty rather than fabricating people
+    assert result["zynd_users"] == []
+    assert result["cards"] == []
+    assert result["quickenrich"] == []
     search.assert_awaited_once()
 
 

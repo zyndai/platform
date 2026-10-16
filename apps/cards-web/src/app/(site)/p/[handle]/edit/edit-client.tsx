@@ -146,7 +146,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     (initialCard.zynd_memory ?? []) as Array<Record<string, unknown>>
   );
   const [memorySkipped, setMemorySkipped] = useState(false);
-  // About draft built from the owner's current public memory. A preview only: it replaces
+  // About draft built from the owner's latest public memory. A preview only: it replaces
   // the text only when the owner clicks "Use this draft".
   const [aboutDraft, setAboutDraft] = useState<
     { status: "idle" | "loading" | "ready" | "error"; draft?: SummaryDraft; error?: string }
@@ -690,7 +690,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
             <section className="pe-sec">
               <div className="pe-kicker" id="summary">About</div>
               <div className="pe-title">Summary</div>
-              <p className="pe-help">A few sentences on what you do and who you want to meet.</p>
+              <p className="pe-help">A few sentences on what you do and who you want to meet. Refresh from newly approved public facts when your work changes; small private notes stay out.</p>
               <AutoGrowTextArea
                 value={sText}
                 onChange={(v) => setSText(v)}
@@ -700,9 +700,12 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                 placeholder="Write a short professional summary"
               />
               <div style={{ marginTop: 10 }}>
-                <button type="button" className="pe-ghost" onClick={draftAbout} disabled={aboutDraft.status === "loading"}>
-                  {aboutDraft.status === "loading" ? "Drafting…" : "Draft from my memory"}
+                <button type="button" className="pe-ghost" onClick={draftAbout} disabled={aboutDraft.status === "loading"}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+                  {aboutDraft.status === "loading" ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                  {aboutDraft.status === "loading" ? "Refreshing About…" : "Refresh About from memory"}
                 </button>
+                <p className="pe-help" style={{ marginTop: 6, marginBottom: 0 }}>Preview first. Only using the draft updates your About {ownerHomeEnabled ? "(saved automatically)" : "after you save changes"}.</p>
                 {aboutDraft.status === "error" && (
                   <p role="alert" className="pe-help" style={{ marginTop: 6 }}>{aboutDraft.error}</p>
                 )}

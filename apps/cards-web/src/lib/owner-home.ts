@@ -26,7 +26,7 @@ export interface OwnerStatus {
     chat_topics?: { category: string; count: number }[];
     chat_questions?: { question: string; category: string; asked_at: string | null; truncated: boolean }[];
   };
-  visitors?: { available: boolean; items: { name: string; visited_at: string; visits: number }[] };
+  visitors?: { available: boolean; items: { name: string; handle?: string | null; visited_at: string; visits: number }[] };
   notification_prefs: { weekly_digest: boolean; email_nudges: boolean };
   duplicates: { id: string; handle: string; name: string; status: string }[];
   unclaimed_duplicates?: { handle: string; name: string }[];

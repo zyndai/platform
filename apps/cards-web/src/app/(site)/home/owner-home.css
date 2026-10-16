@@ -674,17 +674,22 @@
   color: #37308b;
 }
 .oh-attention {
-  background: var(--oh-yellow);
-  border-color: #e4d66f;
+  background: #fff;
+  border-color: var(--oh-border);
 }
 .oh-attention p, .oh-attention .oh-source-state {
-  color: #713f12;
+  color: var(--oh-muted);
 }
 .oh-attention .oh-sources li {
-  border-color: #d9cc74;
+  border-color: var(--oh-border);
 }
 .oh-source-state.is-fresh {
   color: #166534;
+}
+.oh-controls {
+  --oh-border: #cbd2dc;
+  background: #eef0f4;
+  border: 4px solid #dc2626;
 }
 .oh-controls .oh-heading-icon svg {
   box-sizing: content-box;

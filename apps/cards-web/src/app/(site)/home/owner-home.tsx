@@ -16,6 +16,7 @@ import {
 import { ownerRequest, type OwnerStatus } from "@/lib/owner-home";
 import { VisitorPrivacy } from "@/components/VisitorPrivacy";
 import { DiscoveryAnalytics } from "./discovery-analytics";
+import { CompletionRing } from "./completion-ring";
 
 export function OwnerHome({
   initial,
@@ -171,19 +172,7 @@ export function OwnerHome({
           <section className="oh-panel oh-completeness">
             <p className="oh-eyebrow">A LITTLE MORE YOU</p>
             <div className="oh-score-row">
-              <div
-                className="oh-ring"
-                role="img"
-                aria-label={`Card completeness ${data.completeness.score}%`}
-                style={{
-                  background: `conic-gradient(var(--oh-accent) ${data.completeness.score}%, #ffffff80 0)`,
-                }}
-              >
-                <span>
-                  {data.completeness.score}
-                  <small>%</small>
-                </span>
-              </div>
+              <CompletionRing score={data.completeness.score} />
               <div>
                 <h2>Your card is taking shape</h2>
                 <p>A few details help the right people find you.</p>
@@ -290,7 +279,7 @@ export function OwnerHome({
             </Link>
           </section>
           <section className="oh-panel oh-controls">
-            <p className="oh-eyebrow">YOU ARE IN CONTROL</p>
+            <p className="oh-eyebrow">Setting</p>
             <h2 className="oh-heading-icon"><ShieldCheck size={20} aria-hidden="true" />Visibility &amp; emails</h2>
             <VisitorPrivacy />
             <label className="oh-toggle">

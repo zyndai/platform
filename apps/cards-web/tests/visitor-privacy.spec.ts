@@ -32,7 +32,12 @@ test.describe("Profile views and visitor consent", () => {
     await expect.poll(async () => (await (await page.request.get("http://127.0.0.1:3030/cards/mine/status")).json()).visitors.items.length).toBe(1);
     await page.goto("/home");
     const visitors = page.getByRole("region", { name: "People who visited" });
-    await expect(visitors.getByText("Alice Chen", { exact: true })).toBeVisible();
+    await expect(visitors.getByRole("link", { name: "Alice Chen", exact: true })).toHaveAttribute("href", "/p/owner");
+    await expect(visitors.getByText("@owner", { exact: false })).toBeVisible();
+    await visitors.screenshot({ path: "/tmp/zynd-home-visitors-desktop.png" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await visitors.screenshot({ path: "/tmp/zynd-home-visitors-mobile.png" });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     const revoke = page.waitForResponse(res => res.url().endsWith("/api/visitor-privacy") && res.request().method() === "PATCH");
     await page.getByRole("checkbox", { name: "Anonymous browsing" }).check();
     expect((await revoke).status()).toBe(200);

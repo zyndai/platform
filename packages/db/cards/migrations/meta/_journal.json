@@ -127,6 +127,13 @@
       "when": 1792059115804,
       "tag": "0017_s10_visit_owner_binding",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792145224529,
+      "tag": "0018_named_visitor_profiles",
+      "breakpoints": true
     }
   ]
 }

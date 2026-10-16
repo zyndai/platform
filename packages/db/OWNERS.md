@@ -32,7 +32,8 @@ every service listed as a reader.
 | `search_personas_fts(text, int)` | persona | persona 0000 | persona-api, **memory** |
 | `cards.skill_names(jsonb)` | cards | cards 0000 | generated column `agent_profile_cards.search_tsv` |
 | `cards.match_cards(vector, int, bool)`, `cards.search_cards_fts(text, int, bool)` | cards | cards 0005 (re-created) | cards-api (`services/search.py`) |
-| `cards.s10_set_visitor_privacy`, `cards.s10_record_named_visit`, `cards.s10_named_visitors` | cards | cards 0016 | cards-api only |
+| `cards.s10_set_visitor_privacy`, `cards.s10_record_named_visit` | cards | cards 0016 | cards-api only |
+| `cards.s10_named_visitors` | cards | cards 0018 | cards-api only; consent-bound public profile links |
 | publication `supabase_realtime` (9 persona tables) | persona | persona 0000 | persona-web realtime |
 | extension `vector` (schema `extensions`) | cards | cards 0000 | — |
 | schemas `cards`, `identity` + their grants | cards / shared | cards 0000, identity 0000 | — |

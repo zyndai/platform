@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight, Eye, Inbox, MessageSquare, Search, Sparkles, Zap } from "lucide-react";
+import { ArrowUpRight, Eye, Inbox, MessageSquare, Sparkles, UsersRound, Zap } from "lucide-react";
 import type { OwnerStatus } from "@/lib/owner-home";
 import "./discovery-analytics.css";
 
@@ -13,8 +13,6 @@ export function DiscoveryAnalytics({ activity, profile, visitors }: {
   profile: string;
   visitors?: OwnerStatus["visitors"];
 }) {
-  const topics = activity.chat_topics ?? [];
-  const topicTotal = topics.reduce((total, topic) => total + topic.count, 0);
   const introAvailable = activity.intro_requests !== null;
   const questions = activity.chat_questions ?? [];
 
@@ -61,44 +59,38 @@ export function DiscoveryAnalytics({ activity, profile, visitors }: {
       </div>
       {!activity.available && <p className="oh-discovery-unavailable">Activity measurement is unavailable. Counts will appear when event collection is enabled.</p>}
 
-      <div className="oh-discovery-insights">
-        <section className="oh-discovery-insight" aria-labelledby="discovery-questions">
-          <div className="oh-discovery-insight-title">
-            <h3 id="discovery-questions"><Search size={17} aria-hidden="true" />Questions that found your card</h3>
-            <span className="oh-discovery-count">{activity.query_capture_available ? `${activity.queries.length} questions` : "Unavailable"}</span>
-          </div>
-          <p className="oh-discovery-description">Recorded discovery questions that matched your profile.</p>
-          {activity.queries.length ? (
-            <ol className="oh-discovery-questions">
-              {activity.queries.map((query, index) => (
-                <li key={`${index}-${query.query}`}>
-                  <span className="oh-discovery-index">{String(index + 1).padStart(2, "0")}</span>
-                  <span>{query.query}</span>
-                  {query.count !== undefined && <span className="oh-discovery-query-count">×{query.count}</span>}
-                </li>
-              ))}
-            </ol>
-          ) : <p className="oh-discovery-empty">{activity.query_capture_available ? "No matching questions recorded in the last 7 days." : "Matching queries are not recorded yet."}</p>}
-        </section>
-
-        <section className="oh-discovery-insight" aria-labelledby="discovery-topics">
-          <div className="oh-discovery-insight-title">
-            <h3 id="discovery-topics"><MessageSquare size={17} aria-hidden="true" />What people asked the assistant</h3>
-            <span className="oh-discovery-count">{topicTotal.toLocaleString("en-US")} questions</span>
-          </div>
-          <p className="oh-discovery-description">Topics from questions asked on your card, without the private conversation.</p>
-          {topics.length ? (
-            <ul className="oh-discovery-topics">
-              {topics.map((topic) => (
-                <li key={topic.category}>
-                  <div><span>{TOPIC_LABELS[topic.category] ?? topic.category}</span><span className="oh-discovery-count">{topic.count} {topic.count === 1 ? "question" : "questions"}</span></div>
-                  <div className="oh-discovery-track" aria-hidden="true"><span style={{ width: `${topicTotal ? Math.min(100, topic.count / topicTotal * 100) : 0}%` }} /></div>
-                </li>
-              ))}
-            </ul>
-          ) : <p className="oh-discovery-empty">No assistant questions recorded yet.</p>}
-        </section>
-      </div>
+      <section className="oh-discovery-insight oh-discovery-history oh-visitors-panel" aria-labelledby="recent-visitors">
+        <div className="oh-discovery-insight-title">
+          <h3 id="recent-visitors"><UsersRound size={18} aria-hidden="true" />People who visited</h3>
+          <span className="oh-discovery-count">Last 7 days</span>
+        </div>
+        <p className="oh-discovery-description">Names appear only for signed-in visitors who chose to share them. Anonymous visits still count above.</p>
+        {visitors?.available && visitors.items.length ? (
+          <ul className="oh-visitors">
+            {visitors.items.map((visitor, index) => (
+              <li className="oh-visitor" key={`${visitor.visited_at}-${index}`}>
+                <span className="oh-visitor-avatar" aria-hidden="true">
+                  {visitor.name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "Z"}
+                </span>
+                <div className="oh-visitor-identity">
+                  {visitor.handle ? (
+                    <Link className="oh-visitor-name" href={`/p/${encodeURIComponent(visitor.handle)}`}>
+                      {visitor.name}<ArrowUpRight size={14} aria-hidden="true" />
+                    </Link>
+                  ) : <span className="oh-visitor-name">{visitor.name}</span>}
+                  <span className="oh-visitor-meta">
+                    {visitor.handle ? `@${visitor.handle}` : "Zynd member"}
+                    {visitor.visited_at && !Number.isNaN(Date.parse(visitor.visited_at)) && (
+                      <> · <time dateTime={visitor.visited_at}>{new Date(visitor.visited_at).toLocaleString("en-US", { timeZone: "UTC", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} UTC</time></>
+                    )}
+                  </span>
+                </div>
+                <span className="oh-visitor-count">{visitor.visits} {visitor.visits === 1 ? "visit" : "visits"}</span>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="oh-discovery-empty">{visitors?.available ? "No visitors have chosen to share their name in the last 7 days." : "Visitor names are unavailable. Anonymous view counts are independent."}</p>}
+      </section>
 
       <section className="oh-discovery-insight oh-discovery-history" aria-labelledby="assistant-question-history">
         <div className="oh-discovery-insight-title">
@@ -124,22 +116,6 @@ export function DiscoveryAnalytics({ activity, profile, visitors }: {
             ))}
           </ol>
         ) : <p className="oh-discovery-empty">{activity.available ? "New assistant questions will appear here. Earlier question text was not saved." : "Question history is unavailable while activity collection is disabled or unreachable."}</p>}
-      </section>
-
-      <section className="oh-discovery-insight oh-discovery-history" aria-labelledby="recent-visitors">
-        <div className="oh-discovery-insight-title">
-          <h3 id="recent-visitors"><Eye size={17} aria-hidden="true" />People who visited</h3>
-          <span className="oh-discovery-count">Last 7 days</span>
-        </div>
-        <p className="oh-discovery-description">Names appear only for signed-in visitors who chose to share them. Anonymous visits still count above.</p>
-        {visitors?.available && visitors.items.length ? (
-          <ul className="oh-discovery-topics">
-            {visitors.items.map((visitor, index) => <li key={`${visitor.visited_at}-${index}`}>
-              <div><span>{visitor.name}</span><span className="oh-discovery-count">{visitor.visits} {visitor.visits === 1 ? "visit" : "visits"}</span></div>
-              <time className="oh-discovery-question-meta" dateTime={visitor.visited_at}>{new Date(visitor.visited_at).toLocaleString("en-US", { timeZone: "UTC", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} UTC</time>
-            </li>)}
-          </ul>
-        ) : <p className="oh-discovery-empty">{visitors?.available ? "No visitors have chosen to share their name in the last 7 days." : "Visitor names are unavailable. Anonymous view counts are independent."}</p>}
       </section>
 
       <footer className="oh-discovery-footer">

@@ -1,5 +1,19 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { signIn } from "./fixtures/sign-in";
+
+async function recordCompletion(page: Page) {
+  await page.addInitScript(() => {
+    const frames: { number: number; fill: number }[] = [];
+    (window as Window & { completionFrames?: typeof frames }).completionFrames = frames;
+    new MutationObserver(() => {
+      const ring = document.querySelector<HTMLElement>(".oh-ring");
+      const fill = ring?.style.background.match(/([\d.]+)%/);
+      if (ring && fill && frames.length < 300) {
+        frames.push({ number: Number.parseInt(ring.textContent || "0", 10), fill: Number(fill[1]) });
+      }
+    }).observe(document, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["style"] });
+  });
+}
 
 test.describe("S10 owner home", () => {
   test.describe.configure({ mode: "serial" });
@@ -50,6 +64,29 @@ test.describe("S10 owner home", () => {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
+  });
+
+  test("animates the completion number and ring together", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await recordCompletion(page);
+    await page.goto("/home");
+    await expect(page.getByRole("img", { name: "Card completeness 75%" })).toHaveText("75%");
+    const frames = await page.evaluate(() => (window as Window & { completionFrames?: { number: number; fill: number }[] }).completionFrames || []);
+    expect(frames.some(frame => frame.number > 0 && frame.number < 75)).toBe(true);
+    expect(frames.every(frame => frame.number === Math.round(frame.fill))).toBe(true);
+    expect(frames.every((frame, index) => index === 0 || frame.fill >= frames[index - 1].fill)).toBe(true);
+    await expect(page.getByRole("region", { name: "What people asked the assistant", exact: true })).toHaveCount(0);
+    await expect(page.getByText("Setting", { exact: true })).toBeVisible();
+    await expect(page.locator(".oh-attention")).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  });
+
+  test("shows final completion without counting up when reduced motion is enabled", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await recordCompletion(page);
+    await page.goto("/home");
+    await expect(page.getByRole("img", { name: "Card completeness 75%" })).toHaveText("75%");
+    const frames = await page.evaluate(() => (window as Window & { completionFrames?: { number: number; fill: number }[] }).completionFrames || []);
+    expect(frames.every(frame => frame.number === 0 || frame.number === 75)).toBe(true);
   });
 
   test("merges cards and redirects the archived URL with 301", async ({

@@ -28,14 +28,17 @@ def schema():
     exists = sql("SELECT to_regclass('cards.profile_visits') IS NOT NULL;")
     assert exists.returncode == 0, exists.stderr
     if exists.stdout.strip() == 't':
+        result = sql("ALTER TABLE cards.agent_profile_cards ADD COLUMN IF NOT EXISTS published_at timestamptz;" +
+                     (ROOT / 'packages/db/cards/migrations/0018_named_visitor_profiles.sql').read_text())
+        assert result.returncode == 0, result.stderr
         return
     setup = (ROOT / 'packages/db/test/supabase-stubs.sql').read_text()
     setup += '''
       CREATE SCHEMA cards;
       GRANT USAGE ON SCHEMA cards TO service_role;
-      CREATE TABLE cards.agent_profile_cards(id text PRIMARY KEY,handle text,status text,owner_email text,owner_user_id uuid);
+      CREATE TABLE cards.agent_profile_cards(id text PRIMARY KEY,handle text,status text,owner_email text,owner_user_id uuid,published_at timestamptz);
     '''
-    for name in ['0015_s10_visitor_privacy.sql', '0016_s10_visitor_consent_operations.sql', '0017_s10_visit_owner_binding.sql']:
+    for name in ['0015_s10_visitor_privacy.sql', '0016_s10_visitor_consent_operations.sql', '0017_s10_visit_owner_binding.sql', '0018_named_visitor_profiles.sql']:
         setup += (ROOT / 'packages/db/cards/migrations' / name).read_text()
     result = sql('BEGIN;' + setup + 'COMMIT;')
     assert result.returncode == 0, result.stderr
@@ -45,7 +48,7 @@ SEED = f'''
 BEGIN;
 SET LOCAL request.jwt.claim.role='service_role';
 INSERT INTO auth.users(id) VALUES('{OWNER}'),('{VISITOR}'),('{OTHER}');
-INSERT INTO cards.agent_profile_cards VALUES('c1','alice','published','alice@example.com','{OWNER}');
+INSERT INTO cards.agent_profile_cards(id,handle,status,owner_email,owner_user_id) VALUES('c1','alice','published','alice@example.com','{OWNER}');
 '''
 RECORD = f"SELECT cards.s10_record_named_visit('{VISIT}','{VISITOR}','bob@example.com','alice','Bob');"
 OPTIN = f"SELECT cards.s10_set_visitor_privacy('{VISITOR}',false,'Bob');"
@@ -62,9 +65,10 @@ def test_default_anonymous_is_not_recorded():
     check(RECORD + 'SELECT count(*)=0 FROM cards.profile_visits;')
 
 
-def test_optin_records_once_and_exposes_only_name_time_count():
+def test_optin_records_once_without_exposing_private_identifiers():
     check(OPTIN + RECORD + RECORD + f'''SELECT (SELECT count(*)=1 FROM cards.profile_visits)
       AND {LIST}->0->>'name'='Bob' AND {LIST}->0->>'visits'='1'
+      AND {LIST}->0->'handle'='null'::jsonb
       AND NOT ({LIST}->0 ? 'visitor_id') AND NOT ({LIST}->0 ? 'owner_email');''')
 
 
@@ -119,3 +123,33 @@ def test_authenticated_clients_cannot_read_tables_or_call_privileged_functions()
 def test_account_deletion_cascades_visitor_data():
     check(OPTIN + RECORD + f'''DELETE FROM auth.users WHERE id='{VISITOR}';
       SELECT (SELECT count(*)=0 FROM cards.visitor_preferences) AND (SELECT count(*)=0 FROM cards.profile_visits);''')
+
+
+def test_visitor_link_uses_the_visitors_published_card_not_a_name_match():
+    check(OPTIN + RECORD + f"""
+      INSERT INTO cards.agent_profile_cards(id,handle,status,owner_email,owner_user_id)
+      VALUES('visitor-card','bob-profile','published','bob@example.com','{VISITOR}'),
+            ('other-card','other-bob','published','other@example.com','{OTHER}');
+      SELECT {LIST}->0->>'handle'='bob-profile' AND {LIST}->0->>'visits'='1';
+    """)
+
+
+def test_private_merged_and_unlinked_cards_do_not_supply_profile_links():
+    check(OPTIN + RECORD + f"""
+      INSERT INTO cards.agent_profile_cards(id,handle,status,owner_email,owner_user_id)
+      VALUES('private-card','bob-private','private','bob@example.com','{VISITOR}'),
+            ('merged-card','bob-old','merged','bob@example.com','{VISITOR}'),
+            ('unlinked-card','bob-legacy','published','bob@example.com',NULL);
+      SELECT {LIST}->0->'handle'='null'::jsonb AND {LIST}->0->>'name'='Bob';
+    """)
+
+
+def test_multiple_public_cards_return_one_visitor_and_the_latest_public_profile():
+    check(OPTIN + RECORD + f"""
+      INSERT INTO cards.agent_profile_cards(id,handle,status,owner_email,owner_user_id,published_at)
+      VALUES('old-card','bob-old','published','bob@example.com','{VISITOR}',now()-interval '1 day'),
+            ('current-card','bob-current','published','bob@example.com','{VISITOR}',now()),
+            ('private-card','bob-private','private','bob@example.com','{VISITOR}',now()+interval '1 day');
+      SELECT jsonb_array_length({LIST})=1 AND {LIST}->0->>'handle'='bob-current'
+        AND {LIST}->0->>'visits'='1';
+    """)

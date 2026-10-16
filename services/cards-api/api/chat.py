@@ -243,12 +243,16 @@ async def chat(handle: str, body: ChatRequest, request: Request):
         raise HTTPException(status_code=400, detail=_ABUSE_DETAIL)
 
     from services import events as events_service
+    from services.question_history import stored_question
+
+    question, truncated = stored_question(text)
 
     events_service.emit(
         "chat_message",
         handle=handle,
         request=request,
-        meta={"chars": len(text), "category": _category(text)},
+        meta={"chars": len(text), "category": _category(text), "question": question,
+              "question_truncated": truncated, "question_source": "profile_chat"},
     )
 
     memory_facts, fresh_as_of = memory_context_for_chat(card_obj)

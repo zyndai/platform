@@ -42,7 +42,7 @@ def activity(handle: str, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     empty = {"available": False, "views": None, "agent_hits": None,
              "intro_requests": None, "queries": [], "query_capture_available": False,
-             "chat_topics": []}
+             "chat_topics": [], "chat_questions": []}
     if not events.events_enabled():
         return empty
     try:
@@ -58,7 +58,8 @@ def activity(handle: str, now: datetime | None = None) -> dict:
                 "agent_hits": count("agent_fetch", "ai_agent") + count("view", "ai_agent"),
                 "intro_requests": count("intro_request") if config.FEATURE_S12_INTROS else None,
                 "queries": queries, "query_capture_available": bool(queries),
-                "chat_topics": chat_topics(sb, handle, since)}
+                "chat_topics": chat_topics(sb, handle, since),
+                "chat_questions": chat_questions(sb, handle, since)}
     except Exception:
         # An unavailable event store is not zero traffic.
         return empty
@@ -86,6 +87,26 @@ def query_summaries(sb, handle: str, since: str) -> list[dict]:
 
 
 _CHAT_CATEGORIES = ("contact", "work", "skills", "background", "other")
+
+
+def chat_questions(sb, handle: str, since: str) -> list[dict]:
+    """Latest validated profile-chat questions, only through the owner status route."""
+    from services.question_history import stored_question
+    rows = (sb.table("card_events").select("meta,ts").eq("handle", handle)
+            .eq("event", "chat_message").gte("ts", since)
+            .order("ts", desc=True).limit(100).execute().data or [])
+    questions = []
+    for row in rows:
+        meta = row.get("meta") or {}
+        text = meta.get("question")
+        if meta.get("question_source") != "profile_chat" or not isinstance(text, str) or not text.strip():
+            continue
+        text, shortened = stored_question(text)
+        questions.append({"question": text, "category": meta.get("category") if meta.get("category") in _CHAT_CATEGORIES else "other",
+                          "asked_at": row.get("ts"), "truncated": bool(meta.get("question_truncated")) or shortened})
+        if len(questions) == 20:
+            break
+    return questions
 
 
 def chat_topics(sb, handle: str, since: str) -> list[dict]:
@@ -202,7 +223,9 @@ async def status(email: str, *, persist: bool = True) -> dict | None:
             # An intro outage must not hide fact review/home or imply zero requests.
             pass
     nudges = await asyncio.to_thread(persist_nudges, email, card, pending, matches=matches) if persist else nudge_candidates(card, pending, matches=matches)
-    return {"handle": card.handle, "name": card.identity.name, "card_id": card.id,
+    from services.visitor_privacy import named_visitors
+    visitors = await asyncio.to_thread(named_visitors, card.handle, email)
+    return {"visitors": visitors, "handle": card.handle, "name": card.identity.name, "card_id": card.id,
             "completeness": completeness(card), "inbox_count": pending, "intro_inbox_count": intro_pending,
             "connection": {"memory_connected": connected, "assistants_available": False},
             "sources": [{"platform": s.platform, "scraped_at": s.scraped_at,

@@ -6,3 +6,5 @@ export * from './takedown_requests';
 export * from './events';
 export * from './owner_home';
 export * from './intros';
+
+export * from './visitor_privacy';

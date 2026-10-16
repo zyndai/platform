@@ -1,6 +1,7 @@
 import asyncio
 import hmac
 from uuid import UUID
+from typing import Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict
@@ -76,6 +77,20 @@ async def owner_notifications(authorization: str | None = Header(default=None), 
     _require_cron(authorization)
     from services.owner_notifications import run_notifications
     return await run_notifications(dry_run=dry_run)
+
+
+@router.post("/owner-notifications/test")
+async def test_owner_notification(
+    authorization: str | None = Header(default=None),
+    kind: Literal["weekly", "reminder"] = Query(default="weekly"),
+    email: str | None = Query(default=None),
+):
+    """Explicit repeatable send to one owner, or all owners when email is omitted."""
+    _require_cron(authorization)
+    from services.owner_notifications import send_test_notification, send_all_test_notifications
+    if email is not None:
+        return await send_test_notification(email=email, kind=kind)
+    return await send_all_test_notifications(kind=kind)
 
 
 def _require_cron(authorization: str | None) -> None:

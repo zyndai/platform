@@ -24,7 +24,9 @@ export interface OwnerStatus {
     queries: { query: string; count?: number }[];
     query_capture_available: boolean;
     chat_topics?: { category: string; count: number }[];
+    chat_questions?: { question: string; category: string; asked_at: string | null; truncated: boolean }[];
   };
+  visitors?: { available: boolean; items: { name: string; visited_at: string; visits: number }[] };
   notification_prefs: { weekly_digest: boolean; email_nudges: boolean };
   duplicates: { id: string; handle: string; name: string; status: string }[];
   unclaimed_duplicates?: { handle: string; name: string }[];

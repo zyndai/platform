@@ -56,6 +56,7 @@ from app.auth import (
     verify_refresh_meta,
 )
 from app.config import settings
+from app.services.mcp_scopes import PLUGIN_SCOPES
 from app.db import get_pool
 from app.supabase_auth import supabase_identity
 
@@ -337,6 +338,25 @@ def _is_deployer_client(client_id: str) -> bool:
     return hmac.compare_digest(client_id, settings.deployer_oauth_client_id)
 
 
+def _is_plugin_client(client_id: str) -> bool:
+    return bool(settings.plugin_oauth_client_id and
+                hmac.compare_digest(client_id, settings.plugin_oauth_client_id))
+
+
+def _public_scope(client_id: str) -> str:
+    return " ".join(PLUGIN_SCOPES) if _is_plugin_client(client_id) else "user"
+
+
+def _plugin_callbacks() -> list[str]:
+    callbacks = [uri.strip() for uri in settings.plugin_oauth_redirect_uris.split(",") if uri.strip()]
+    if (not callbacks or not settings.feature_s09_mcp_clients or
+            settings.plugin_oauth_client_id in _oauth_clients() or
+            any(not _valid_redirect_parts(urlsplit(uri)) or urlsplit(uri).scheme != "https"
+                for uri in callbacks)):
+        raise HTTPException(status_code=400, detail="plugin OAuth client is not configured")
+    return callbacks
+
+
 def _code_user_id(stored: str) -> str:
     """Extract the user_id from a stored authorization code. New codes are JSON
     {user_id, redirect_uri}; legacy/pre-rollout codes are a bare user_id string."""
@@ -525,7 +545,7 @@ async def authorization_server_metadata() -> dict:
         "authorization_endpoint": f"{base}/oauth/authorize",
         "token_endpoint": f"{base}/oauth/token",
         "registration_endpoint": f"{base}/oauth/register",
-        "scopes_supported": ["user", "ingest", "offline_access"],
+        "scopes_supported": ["user", "ingest", "offline_access", *PLUGIN_SCOPES],
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
@@ -564,6 +584,8 @@ async def register_client(body: _DCRRequest) -> dict:
             raise HTTPException(status_code=400, detail="invalid redirect_uri")
 
     client_id = secrets.token_urlsafe(24)
+    if _is_plugin_client(client_id):
+        raise HTTPException(status_code=400, detail="reserved client identifier")
     await get_pool().execute(
         """INSERT INTO oauth_clients (client_id, allowed_redirect_uris)
            VALUES ($1, $2)""",
@@ -625,13 +647,18 @@ async def authorize(
     if is_connector_client:
         if code_challenge_method != "S256" or not re.fullmatch(r"[A-Za-z0-9_-]{43}", code_challenge):
             raise HTTPException(status_code=400, detail="S256 PKCE required")
-        if not set(scope.split()).issubset({"user", "ingest", "offline_access"}):
+        allowed_scopes = set(PLUGIN_SCOPES) if _is_plugin_client(client_id) else {"user", "ingest", "offline_access"}
+        if not set(scope.split()).issubset(allowed_scopes):
             raise HTTPException(status_code=400, detail="unsupported scope")
-        scope = "user"
+        scope = _public_scope(client_id)
         resource = resource or settings.mcp_resource_url
 
     client_name = client_id
-    if _is_known_client(client_id):
+    if _is_plugin_client(client_id):
+        if redirect_uri not in _plugin_callbacks():
+            raise HTTPException(status_code=400, detail="redirect_uri not registered")
+        client_name = "ZYND ChatGPT plugin"
+    elif _is_known_client(client_id):
         _check_redirect_uri(redirect_uri)
     elif client_id.startswith("https://"):
         # Client ID Metadata Document (Claude.ai / MCP clients using a URL client_id).
@@ -907,7 +934,9 @@ async def token(
     else:
         if client_secret:
             _invalid_grant()
-        if not client_id.startswith("https://"):
+        if _is_plugin_client(client_id):
+            _plugin_callbacks()
+        elif not client_id.startswith("https://"):
             row = await get_pool().fetchrow("SELECT id FROM oauth_clients WHERE client_id = $1", client_id)
             if not row:
                 raise HTTPException(status_code=401, detail="invalid client")
@@ -924,11 +953,11 @@ async def token(
                 _invalid_grant()
             if (grant.get("client_type") != "public" or grant.get("client_id") != client_id or
                 grant.get("redirect_uri") != redirect_uri or grant.get("resource") != settings.mcp_resource_url or
-                grant.get("scope") != "user" or
+                grant.get("scope") != _public_scope(client_id) or
                 (resource and resource.rstrip("/") not in (settings.mcp_resource_url, settings.mcp_origin.rstrip("/"))) or
                 not _verify_code_challenge(code_verifier, grant.get("challenge", ""), grant.get("method", ""))):
                 _invalid_grant()
-            if scope and scope != "user":
+            if scope and set(scope.split()) != set(grant["scope"].split()):
                 _invalid_grant()
             if not await _consume(redis, _grant_key("code", code)):
                 _invalid_grant()
@@ -937,14 +966,15 @@ async def token(
             connection_jti = str(uuid.uuid4())
             await get_pool().execute(
                 "INSERT INTO mcp_clients (user_id, label, scopes, jti) VALUES ($1, $2, $3, $4::uuid)",
-                user_id, clean_label(grant.get("client_name") or client_id), ["user"], connection_jti)
+                user_id, clean_label(grant.get("client_name") or client_id), grant["scope"].split(), connection_jti)
             refresh_tok, refresh_jti = issue_rotating_refresh_token(user_id, bound=True)
             await redis.set(_grant_key("refresh", refresh_jti), json.dumps({
                 "v": 2, "sub": user_id, "client_id": client_id, "resource": settings.mcp_resource_url,
-                "scope": "user", "connection_jti": connection_jti}), ex=settings.refresh_token_ttl_seconds)
-            access_token, expires_in = issue_connector_access_token(user_id, settings.mcp_resource_url, connection_jti)
+                "scope": grant["scope"], "connection_jti": connection_jti}), ex=settings.refresh_token_ttl_seconds)
+            access_token, expires_in = issue_connector_access_token(
+                user_id, settings.mcp_resource_url, connection_jti, scopes=grant["scope"].split())
             return JSONResponse({"access_token": access_token, "token_type": "Bearer", "expires_in": expires_in,
-                                 "refresh_token": refresh_tok, "resource": settings.mcp_resource_url, "scope": "user"},
+                                 "refresh_token": refresh_tok, "resource": settings.mcp_resource_url, "scope": grant["scope"]},
                                 headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
         key = f"{_CODE_PREFIX}{code}"
         raw = await _consume(redis, key)
@@ -1054,9 +1084,9 @@ async def token(
             except (ValueError, TypeError):
                 _invalid_grant()
             if (grant.get("v") != 2 or grant.get("sub") != user_id or grant.get("client_id") != client_id or
-                grant.get("resource") != settings.mcp_resource_url or grant.get("scope") != "user" or
+                grant.get("resource") != settings.mcp_resource_url or grant.get("scope") != _public_scope(client_id) or
                 (resource and resource.rstrip("/") not in (settings.mcp_resource_url, settings.mcp_origin.rstrip("/"))) or
-                (scope and scope != "user")):
+                (scope and set(scope.split()) != set(grant["scope"].split()))):
                 _invalid_grant()
             connection_jti = grant.get("connection_jti")
             from app.services.mcp_clients import client_revoked
@@ -1065,11 +1095,12 @@ async def token(
                 _invalid_grant()
             if not await _consume(redis, _grant_key("refresh", jti)):
                 _invalid_grant()
-            access_token, expires_in = issue_connector_access_token(user_id, settings.mcp_resource_url, connection_jti)
+            access_token, expires_in = issue_connector_access_token(
+                user_id, settings.mcp_resource_url, connection_jti, scopes=grant["scope"].split())
             refresh_tok, refresh_jti = issue_rotating_refresh_token(user_id, bound=True)
             await redis.set(_grant_key("refresh", refresh_jti), json.dumps(grant), ex=settings.refresh_token_ttl_seconds)
             return JSONResponse({"access_token": access_token, "token_type": "Bearer", "expires_in": expires_in,
-                                 "refresh_token": refresh_tok, "resource": settings.mcp_resource_url, "scope": "user"},
+                                 "refresh_token": refresh_tok, "resource": settings.mcp_resource_url, "scope": grant["scope"]},
                                 headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
         try:
             user_id, issued_at, jti = verify_refresh_meta(refresh_token, bound=True)

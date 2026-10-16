@@ -72,7 +72,7 @@ _last_draft_at: dict[str, float] = {}
 
 @router.post("/mine/summary-draft")
 async def draft_my_summary(authorization: str | None = Header(default=None)):
-    """Propose a new About paragraph from the caller's current public memory facts.
+    """Propose a new About paragraph from the caller's latest public memory facts.
 
     Preview only: nothing is saved. The owner accepts it in the editor, which saves it
     through the normal section save, so a model can never rewrite the About on its own.
@@ -80,6 +80,7 @@ async def draft_my_summary(authorization: str | None = Header(default=None)):
     import time
 
     from services import summary_draft
+    from services.zynd_memory import fetch_findability, snapshot_from_payload
 
     principal = verify_supabase_jwt(authorization)
     if not principal:
@@ -91,6 +92,13 @@ async def draft_my_summary(authorization: str | None = Header(default=None)):
     if not result:
         raise HTTPException(status_code=404, detail="no card for this account")
     card, _handle = result
+    payload = await asyncio.to_thread(fetch_findability, principal.email)
+    if payload is None:
+        raise HTTPException(status_code=503, detail="Couldn't refresh public memory right now; try again later")
+    snapshot = snapshot_from_payload(payload)
+    if snapshot is None:
+        raise HTTPException(status_code=422, detail="Connect your memory before refreshing About")
+    card.zynd_memory = snapshot
     sections = summary_draft.facts_by_section(card)
     if not sections:
         raise HTTPException(

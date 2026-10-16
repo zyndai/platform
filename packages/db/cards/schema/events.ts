@@ -3,7 +3,8 @@ import { bigserial, check, index, jsonb, pgPolicy, text } from 'drizzle-orm/pg-c
 import { serviceRole, tstz } from '../../lib/shared';
 import { cards } from './_schema';
 
-// owner: cards. S04: allow-listed analytics events (no raw IP/email/bodies).
+// owner: cards. S04 analytics: no raw IP/email or conversation bodies.
+// Validated profile-chat events may include a bounded, redacted question excerpt.
 // Retention: DELETE WHERE ts < now() - interval '180 days' via
 // POST /internal/purge-card-events. Rollback: DROP VIEW cards.v_funnel_daily;
 // DROP TABLE cards.card_events;

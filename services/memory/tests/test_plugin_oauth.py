@@ -163,6 +163,8 @@ async def test_plugin_transport_filters_calls_and_requires_fact_confirmation(mod
         with patch("app.mcp_owner.approve", AsyncMock()) as approve:
             async with Client(mcp, mode=mode) as client:
                 assert "never automatically" in client.instructions
+                assert client.server_info.icons[0].src.startswith("data:image/png;base64,")
+                assert client.server_info.icons[0].mime_type == "image/png"
                 tools = await client.list_tools()
                 assert not await client.list_resources()
                 with pytest.raises(MCPError):

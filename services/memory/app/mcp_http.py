@@ -10,9 +10,11 @@ auth. The ZyndTokenVerifier handles both token types transparently.
 Run:  uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
 """
 import asyncio
+import base64
 import logging
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 import asyncpg
 from arq import create_pool
@@ -20,6 +22,7 @@ from arq.connections import RedisSettings
 from fastmcp import FastMCP
 from fastmcp.dependencies import CurrentAccessToken, Depends
 from fastmcp.server.auth import AccessToken, RemoteAuthProvider, TokenVerifier
+from mcp.types import Icon
 from pydantic import AnyHttpUrl
 
 from urllib.parse import urlsplit
@@ -243,7 +246,12 @@ auth = RemoteAuthProvider(
     resource_name="ZYND",
 )
 
-mcp = FastMCP("zynd", auth=auth, instructions=_ZYND_INSTRUCTIONS)
+_logo = Path(__file__).resolve().parent / "assets" / "zynd.png"
+mcp = FastMCP(
+    "zynd", auth=auth, instructions=_ZYND_INSTRUCTIONS,
+    icons=[Icon(src=f"data:image/png;base64,{base64.b64encode(_logo.read_bytes()).decode('ascii')}",
+                mime_type="image/png", sizes=["400x400"])],
+)
 
 # ── Skills ─────────────────────────────────────────────────────────────────────
 # The connector ships basic memory skills (when/what to store) as MCP resources

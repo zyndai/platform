@@ -32,7 +32,9 @@ _SECTIONS: list[tuple[str, tuple[str, ...]]] = [
 
 SYSTEM = (
     "You write the About paragraph for a professional profile card, in the third person, "
-    "from the facts provided. Rules: two or three plain sentences. Use only the facts "
+    "from the facts provided. Focus on substantive work, expertise and current roles; "
+    "omit incidental activity and tool names unless they define the person's work. "
+    "Do not try to mention every fact. Rules: two or three plain sentences. Use only the facts "
     "given; do not add employers, numbers, years or claims that are not there. No hype "
     "or filler words (passionate, seasoned, cutting-edge, leverage, innovative, "
     "world-class). Do not mention that facts were provided. No bullet points, no quotes, "

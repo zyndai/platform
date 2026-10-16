@@ -25,6 +25,12 @@ def client(monkeypatch):
         return principal
     monkeypatch.setattr(visitors, '_principal', verify)
     monkeypatch.setattr(visitors.events, 'rate_limited', lambda key: False)
+    sb = MagicMock()
+    query = sb.table.return_value
+    for method in ('select', 'eq', 'ilike', 'neq', 'order', 'limit'):
+        getattr(query, method).return_value = query
+    query.execute.return_value.data = []
+    monkeypatch.setattr(config, 'get_supabase', lambda: sb)
     app = FastAPI()
     app.include_router(visitors.router, prefix='/cards')
     return TestClient(app), principal
@@ -87,8 +93,43 @@ def test_named_visit_uses_verified_name_and_user(client, monkeypatch):
     assert client.post('/cards/by-handle/bob/visit', json={'visit_id': VID, 'name': 'Impersonated'}, headers=AUTH).status_code == 422
 
 
-def test_email_never_becomes_a_display_name():
-    assert privacy.display_name(SimpleNamespace(user_metadata={'name': 'secret@example.com'})) == 'Zynd member'
+def test_email_never_becomes_a_display_name(client):
+    _, principal = client
+    principal.user_metadata = {'name': 'secret@example.com'}
+    assert privacy.display_name(principal) == 'Zynd member'
+
+
+def test_visit_name_is_visitors_own_card_not_target_or_stale_metadata(client, monkeypatch):
+    client, principal = client
+    principal.user_metadata = {'name': 'Outdated account name'}
+    query = config.get_supabase().table.return_value
+    query.execute.return_value.data = [{'owner_user_id': UID, 'card': {'identity': {'name': 'Alice Visitor'}}}]
+    op = MagicMock(return_value=True)
+    monkeypatch.setattr(privacy, 'rpc', op)
+    response = client.post('/cards/by-handle/bob-owner/visit', json={'visit_id': VID}, headers=AUTH)
+    assert response.status_code == 200
+    assert op.call_args.args[1]['p_name'] == 'Alice Visitor'
+    assert op.call_args.args[1]['p_handle'] == 'bob-owner'
+    query.ilike.assert_called_once_with('owner_email', 'alice@example.com')
+
+
+def test_name_lookup_accepts_email_owned_legacy_card_but_not_another_account(client):
+    _, principal = client
+    query = config.get_supabase().table.return_value
+    query.execute.return_value.data = [{'owner_user_id': VID, 'card': {'identity': {'name': 'Other owner'}}}]
+    assert privacy.display_name(principal) == 'Alice'
+    query.execute.return_value.data = [{'owner_user_id': None, 'card': {'identity': {'name': 'Alice Visitor'}}}]
+    assert privacy.display_name(principal) == 'Alice Visitor'
+
+
+def test_revoke_does_not_depend_on_card_name_lookup(client, monkeypatch):
+    client, _ = client
+    name = MagicMock(side_effect=RuntimeError('Card lookup unavailable'))
+    monkeypatch.setattr(privacy, 'display_name', name)
+    op = MagicMock(return_value={'anonymous_mode': True})
+    monkeypatch.setattr(privacy, 'rpc', op)
+    assert client.patch('/cards/mine/visitor-privacy', json={'anonymous_mode': True}, headers=AUTH).status_code == 200
+    name.assert_not_called()
 
 
 def test_named_visitors_are_owner_bound_and_unavailable_is_not_empty(monkeypatch):

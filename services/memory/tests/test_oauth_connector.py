@@ -387,7 +387,7 @@ async def test_prm_advertises_user_scope():
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
         r = await c.get("/.well-known/oauth-protected-resource/mcp")
     assert r.status_code == 200
-    assert r.json()["scopes_supported"] == ["user"]
+    assert r.json()["scopes_supported"] == ["user", "memory:write", "cards:read", "cards:approve"]
 
 
 @patch("app.services.sessions.token_rejected", new_callable=AsyncMock, return_value=False)

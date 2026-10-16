@@ -21,6 +21,7 @@
     "test:cards-api": "cd services/cards-api && .venv/bin/python -m pytest -q",
     "test:memory": "cd services/memory && .venv/bin/python -m pytest -q -m 'not integration'",
     "check:web": "npm --prefix apps/persona-web run lint && (cd apps/persona-web && npx tsc --noEmit) && npm --prefix apps/cards-web run lint && (cd apps/cards-web && npx tsc --noEmit)",
+    "build:plugin": "python3 plugins/zynd/build.py --output /tmp/zynd-plugin-draft.zip",
 
     "db:check": "npm --prefix packages/db run db:check",
     "db:migrate": "npm --prefix packages/db run db:migrate --",

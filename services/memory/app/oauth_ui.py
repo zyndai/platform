@@ -97,8 +97,8 @@ _LOGIN_BODY = """<div class="wrap">
       <p><strong id="client"></strong> is requesting access to the ZYND MCP resource
         <strong id="resource"></strong>. This client name is supplied by the requesting app,
         not verified by ZYND.</p>
-      <p>Allowing this connection grants full access to your ZYND account. The app can:</p>
-      <ul><li>Read, search, and add to your memory and conversations.</li>
+      <p id="permission-summary">Allowing this connection grants full access to your ZYND account. The app can:</p>
+      <ul id="permissions"><li>Read, search, and add to your memory and conversations.</li>
         <li>Access your profile card and connected account information.</li>
         <li>Use your connected integrations and their available tools on your behalf.</li></ul>
       <p>Only continue if you trust this app. You can disconnect this connection
@@ -151,6 +151,18 @@ _LOGIN_BODY = """<div class="wrap">
       document.getElementById('identity').textContent = r.data.email;
       document.getElementById('client').textContent = r.data.client_name;
       document.getElementById('resource').textContent = r.data.resource;
+      if (r.data.scope !== 'user' && r.data.scope.split(' ').includes('cards:approve')) {
+        document.getElementById('permission-summary').textContent = 'This connection can read and write private memory and manage your card:';
+        var permissions = document.getElementById('permissions');
+        permissions.textContent = '';
+        ['Read private memory, profile context, and card activity when relevant.',
+         'Save, confirm, and forget private facts with your permission.',
+         'Review pending facts and publish or dismiss facts after your explicit confirmation.',
+         'Read intro requests and update what you are looking for. No Google, social, messaging, or other integration tools.'].forEach(function(text) {
+          var item = document.createElement('li'); item.textContent = text; permissions.appendChild(item);
+        });
+        document.getElementById('allow').textContent = 'Allow memory and card access';
+      }
       document.getElementById('signin').hidden = true;
       document.getElementById('consent').hidden = false;
     }).catch(function(){ showError('Unable to verify this connection request.'); });

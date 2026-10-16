@@ -71,6 +71,6 @@ Saving grows the memory graph; reading lets you use its context.
 ## Rules
 
 - Never invent results — only report what the tools actually return.
-- Use only tools visible in the client's actual tool list; export, brief, and
-  social tools retain their existing legacy `user` scope requirement.
+- Use only tools visible in the client's actual tool list; export retains its
+  existing legacy `user` scope requirement.
 - If unsure whether something is durable, ask: "Want me to save this to ZYND?"

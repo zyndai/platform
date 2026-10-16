@@ -289,6 +289,10 @@ class _RenameQuery:
             self._conflict = True
         return self
 
+    def or_(self, *_a):
+        self._conflict = True
+        return self
+
     def neq(self, *_a, **_k):
         return self
 

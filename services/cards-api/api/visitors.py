@@ -37,9 +37,11 @@ async def get_privacy(authorization: str | None = Header(default=None)):
 async def set_privacy(body: PrivacyPreference, authorization: str | None = Header(default=None)):
     require_visitors()
     principal = _principal(authorization)
+    uid = privacy.user_id(principal)
+    name = '' if body.anonymous_mode else await asyncio.to_thread(privacy.display_name, principal)
     return await asyncio.to_thread(privacy.rpc, 's10_set_visitor_privacy', {
-        'p_user': privacy.user_id(principal), 'p_anonymous': body.anonymous_mode,
-        'p_name': privacy.display_name(principal),
+        'p_user': uid, 'p_anonymous': body.anonymous_mode,
+        'p_name': name,
     })
 
 
@@ -53,9 +55,10 @@ async def record_visit(handle: str, body: Visit, request: Request, authorization
     key = 'named-visit:' + uid
     if events.rate_limited(key):
         raise HTTPException(429, 'Too many visit requests')
+    name = await asyncio.to_thread(privacy.display_name, principal)
     # Human counts are recorded separately by the browser's public view event.
     recorded = await asyncio.to_thread(privacy.rpc, 's10_record_named_visit', {
         'p_id': str(body.visit_id), 'p_user': uid, 'p_email': principal.email,
-        'p_handle': handle, 'p_name': privacy.display_name(principal),
+        'p_handle': handle, 'p_name': name,
     })
     return {'recorded': bool(recorded)}

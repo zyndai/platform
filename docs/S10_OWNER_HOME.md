@@ -38,12 +38,15 @@ Persona is unchanged.
 
 ## Gates and external dependencies
 
-Default-off configuration:
+Cards web and Cards API enable S10 owner home by default when their respective
+flags are unset. Set either flag to `false` to disable it explicitly. Changing
+the web flag requires a rebuild. Memory owner tools and email sending remain
+opt-in.
 
 | Service | Setting | Purpose |
 |---|---|---|
-| cards-api | `FEATURE_S10_HOME=true` | Owner endpoints, preferences, autosave, merge, nudge scanner |
-| cards-web | `NEXT_PUBLIC_FEATURE_S10_HOME=true` | Home/nav/editor behavior; rebuild the web app |
+| cards-api | `FEATURE_S10_HOME=true` (default) | Owner endpoints, preferences, autosave, merge, nudge scanner |
+| cards-web | `NEXT_PUBLIC_FEATURE_S10_HOME=true` (default) | Home/nav/editor behavior; rebuild the web app |
 | memory | `FEATURE_S10_HOME=true` | Enable the owner MCP reads |
 | memory | `CARDS_API_URL` | Cards API origin for the service HTTP bridge |
 | cards-api | `FEATURE_S10_DIGEST=true` | Permit weekly/reminder sends |
@@ -119,3 +122,48 @@ validation stays in the existing packages/db CI workflow.
 
 In environments where Turbopack's CSS worker cannot bind its temporary port,
 validate the production build with `npm run build -- --webpack`.
+
+For repeatable notification sends to one selected owner or all owners, see
+[Send a notification test email](S10_TEST_EMAIL.md). This uses the existing cron
+credential, bypasses preferences/limits for those explicit test sends, and leaves
+the scheduled notification path unchanged.
+
+## Profile-assistant question history
+
+New admitted profile-chat questions are saved in existing `cards.card_events`
+metadata alongside their category and length. Cards API now defaults to
+`FEATURE_S04_EVENTS=true` and `SUPABASE_DB_SCHEMA=cards`; explicit environment
+overrides still take precedence. Existing cards migrations must be applied.
+No additional schema migration is needed for question history.
+Question storage remains best-effort analytics: event collection must be on and
+the event insert must succeed; it is not a guaranteed conversation archive.
+
+Owner home shows the latest 20 saved questions from the last seven days under
+**Recent assistant questions**. The existing owner-authenticated status API (and
+its authorized owner reads) returns question text/category/time only, without
+visitor/session identifiers. Public card JSON does not include question history.
+**Questions that found your card** still refers to discovery/search queries and
+is independent from questions asked directly to the profile assistant.
+
+Email/phone-containing questions remain refused by the existing chat filter.
+URLs, common contact patterns, and long token-like strings are redacted before
+storage and again on owner read. Redaction is best-effort; visitors must avoid
+private information. Unicode/long excerpts are shortened to fit the existing
+2 KB event-metadata cap and labelled shortened in the UI. Only the latest user
+question is saved, not earlier conversation messages or assistant replies.
+The public `/events` batch route strips reserved question-history fields; it
+cannot populate this history by submitting arbitrary analytics metadata.
+
+Questions follow the existing card-event retention: the configured purge job
+removes events older than 180 days when it runs. The seven-day dashboard window
+is not a seven-day deletion policy. Historical category-only records have no
+question text to backfill. The chat input notice now explains owner review and
+storage; the owner settings copy no longer promises text is never saved.
+This deliberately extends the original S14 length/category-only event design.
+
+## Browser views and visitor-name consent
+
+See [Profile view counts and visitor names](S10_VISITOR_PRIVACY.md) for the new
+browser tracking path, anonymous-by-default preference, consent revocation,
+owner-only visitor list, and local migrations 0015–0017. Those migrations remain
+unapplied to the shared database; anonymous view collection works independently.

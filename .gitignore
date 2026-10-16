@@ -7,6 +7,9 @@
 /out.txt
 /.claude/
 
+/conventions
+
+S04_MANUAL_TESTING.md
 # Common language/environment files
 __pycache__/
 *.pyc

@@ -15,7 +15,7 @@ test.describe("Profile views and visitor consent", () => {
 
   test("opt-in reveals the name; re-enabling anonymous mode hides old visits", async ({ page, context }) => {
     await signIn(context);
-    await page.goto("/p/claimed");
+    await page.goto("/home");
     expect((await page.request.patch("http://127.0.0.1:3010/api/visitor-privacy", {
       headers: { Origin: "https://foreign.example" }, data: { anonymous_mode: false },
     })).status()).toBe(403);
@@ -25,6 +25,10 @@ test.describe("Profile views and visitor consent", () => {
     const save = page.waitForResponse(res => res.url().endsWith("/api/visitor-privacy") && res.request().method() === "PATCH");
     await setting.uncheck();
     expect((await save).status()).toBe(200);
+    const visit = page.waitForResponse(res => res.url().endsWith("/api/profile-visit") && res.request().method() === "POST");
+    await page.goto("/p/claimed");
+    expect((await visit).status()).toBe(200);
+    await expect(page.getByRole("checkbox", { name: "Anonymous browsing" })).toHaveCount(0);
     await expect.poll(async () => (await (await page.request.get("http://127.0.0.1:3030/cards/mine/status")).json()).visitors.items.length).toBe(1);
     await page.goto("/home");
     const visitors = page.getByRole("region", { name: "People who visited" });

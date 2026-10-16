@@ -362,7 +362,7 @@ export interface SummaryDraft {
   based_on: string[];
 }
 
-/** Ask for a proposed About paragraph built from the owner's current public memory.
+/** Ask for a proposed About paragraph built from the owner's latest public memory.
  *  Preview only: nothing is saved until the owner accepts it and saves. */
 export async function fetchSummaryDraft(token: string): Promise<SummaryDraft> {
   const res = await fetch(`${API_BASE}/cards/mine/summary-draft`, {

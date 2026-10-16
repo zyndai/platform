@@ -12,6 +12,7 @@ from main import app
 from models.card import AgentProfileCard
 from services import cards as cards_service
 from services import summary_draft as sd
+from services import zynd_memory
 
 
 def _fresh(predicate, obj, **extra):
@@ -45,6 +46,7 @@ def test_prompt_uses_only_public_facts_grouped_and_deduped():
         "Tools they use": ["Codex"],
     }
     user = sd.build_messages(_card(), sections)[1]["content"]
+    assert "omit incidental activity and tool names" in sd.build_messages(_card(), sections)[0]["content"]
     assert "Current role: Co-Founder at Verusa" in user
     assert "OldCo" not in user  # past roles are not current
     assert "private opinion" not in user  # non-card predicates never reach the model
@@ -105,6 +107,9 @@ def client(monkeypatch):
     monkeypatch.setattr(cards_api, "verify_supabase_jwt", lambda auth: PRINCIPAL)
     saved = []
     monkeypatch.setattr(cards_service, "update_card", lambda *a, **k: saved.append(a) or None)
+    monkeypatch.setattr(zynd_memory, "fetch_findability", lambda email: {
+        "connected": True, "facts": _card().zynd_memory,
+    })
     c = TestClient(app)
     c.saved = saved
     return c
@@ -120,7 +125,7 @@ def test_requires_auth(monkeypatch):
 
 
 def test_returns_a_preview_and_saves_nothing(client, monkeypatch):
-    _owner(monkeypatch, _card())
+    _owner(monkeypatch, _card(zynd_memory=[]))  # stored snapshot may lag behind approval
     llm = _Client("Alice Chen builds Verusa and works on LinkedIn outreach.")
     monkeypatch.setattr(config, "get_llm_client", lambda: llm)
 
@@ -132,8 +137,44 @@ def test_returns_a_preview_and_saves_nothing(client, monkeypatch):
     assert client.saved == []  # a draft is never written to the card
 
 
+def test_refresh_only_uses_latest_public_facts_not_stale_snapshot(client, monkeypatch):
+    _owner(monkeypatch, _card(zynd_memory=[_fresh("is_building", "Old project")]))
+    monkeypatch.setattr(zynd_memory, "fetch_findability", lambda email: {
+        "connected": True, "facts": [_fresh("is_building", "New project")],
+    })
+    llm = _Client("Alice builds New project.")
+    monkeypatch.setattr(config, "get_llm_client", lambda: llm)
+
+    r = client.post("/cards/mine/summary-draft", headers={"Authorization": "Bearer x"})
+
+    assert r.status_code == 200
+    assert r.json()["based_on"] == ["Building: New project"]
+    assert client.saved == []
+
+
+def test_memory_outage_does_not_draft_from_stale_snapshot(client, monkeypatch):
+    _owner(monkeypatch, _card())
+    monkeypatch.setattr(zynd_memory, "fetch_findability", lambda email: None)
+    llm = _Client("should not be used")
+    monkeypatch.setattr(config, "get_llm_client", lambda: llm)
+
+    r = client.post("/cards/mine/summary-draft", headers={"Authorization": "Bearer x"})
+
+    assert r.status_code == 503 and llm.calls == 0
+
+
+def test_disconnected_memory_does_not_draft_from_snapshot(client, monkeypatch):
+    _owner(monkeypatch, _card())
+    monkeypatch.setattr(zynd_memory, "fetch_findability", lambda email: {"connected": False, "facts": []})
+
+    r = client.post("/cards/mine/summary-draft", headers={"Authorization": "Bearer x"})
+
+    assert r.status_code == 422
+
+
 def test_no_approved_memory_is_a_clear_422_and_never_calls_the_model(client, monkeypatch):
     _owner(monkeypatch, _card(zynd_memory=[]))
+    monkeypatch.setattr(zynd_memory, "fetch_findability", lambda email: {"connected": True, "facts": []})
     llm = _Client("should not be used")
     monkeypatch.setattr(config, "get_llm_client", lambda: llm)
     r = client.post("/cards/mine/summary-draft", headers={"Authorization": "Bearer x"})

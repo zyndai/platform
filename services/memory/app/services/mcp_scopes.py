@@ -13,6 +13,7 @@ ALLOWED_SCOPES = (
     "people:message",
 )
 DEFAULT_SCOPES = ["memory:write"]
+PLUGIN_SCOPES = ("memory:write", "cards:read", "cards:approve")
 
 MEMORY_TOOLS = frozenset({
     "report_user_info",
@@ -28,7 +29,6 @@ CARDS_APPROVE_TOOLS = frozenset({
     "approve_fact",
     "dismiss_fact",
     "set_looking_for",
-    "update_headline",
 })
 PEOPLE_TOOLS = frozenset({
     "find_people",
@@ -83,8 +83,6 @@ def select_tool(prompt: str) -> str:
         return "set_looking_for"
     if "pending" in text or "inbox" in text:
         return "list_pending_facts"
-    if "headline" in text:
-        return "update_headline"
     if "find people" in text or "who should i" in text:
         return "find_people"
     if "remember" in text or "i am building" in text or "i'm building" in text:

@@ -119,7 +119,8 @@ def issue_access_token(user_id: str) -> tuple[str, int]:
     return _encode(user_id, "access", ttl), ttl
 
 
-def issue_connector_access_token(user_id: str, resource: str, connection_jti: str | None = None) -> tuple[str, int]:
+def issue_connector_access_token(user_id: str, resource: str, connection_jti: str | None = None,
+                                 *, scopes: list[str] | None = None) -> tuple[str, int]:
     """Access token for MCP connector OAuth flows (Claude/ChatGPT connectors).
 
     Bound to the RFC 8707 resource indicator the client asked for:
@@ -132,7 +133,7 @@ def issue_connector_access_token(user_id: str, resource: str, connection_jti: st
         user_id, "access", ttl,
         iss=settings.public_base_url.rstrip("/"),
         aud=resource,
-        scopes=["user"],
+        scopes=["user"] if scopes is None else scopes,
         jti=connection_jti,
     )
     return token, ttl

@@ -53,8 +53,6 @@ the client's actual tool list; do not look for another self-info read tool.
 
 - `find_similar_users` — people with overlapping context ("people like me").
 - `find_people` — a target profile ("seed-stage investors in dev tools").
-- `connect_with` — send a connection request to a returned `user_id`.
-- `my_connections` / `send_persona_message` — existing connections and DMs.
 - `search_linkedin_profiles` / `find_linkedin_people_for_me` — LinkedIn search
   enriched with profiles; ZYND users rank first.
 

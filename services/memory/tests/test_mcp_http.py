@@ -141,7 +141,9 @@ async def test_authenticated_http_discovery_call_and_injection(monkeypatch, scop
 def test_tools_registered():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
     assert {"get_my_context", "export_my_context", "find_similar_users", "find_people",
-            "confirm_fact_tool", "forget_fact_tool", "report_user_info"} <= names
+             "confirm_fact_tool", "forget_fact_tool", "report_user_info",
+             "request_card_intro", "create_group", "invite_to_group",
+             "send_persona_message", "message_zynd_agent"} <= names
     assert names.isdisjoint({
         "remember", "get_my_card", "get_my_socials", "read_my_brief",
         "get_my_system_prompt", "get_card_status", "get_card_activity",

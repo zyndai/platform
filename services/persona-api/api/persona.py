@@ -190,6 +190,9 @@ class ThreadCreateRequest(BaseModel):
 class AgentChannelSend(BaseModel):
     thread_id: str
     content: str
+    # Pending threads are reserved for the explicit first-contact handshake.
+    # All normal agent-channel sends must target an accepted connection.
+    connection_request: bool = False
 
 class ThreadPermissionsUpdate(BaseModel):
     # Any subset of CONNECTION_PERMISSION_KEYS — only the keys you pass
@@ -528,6 +531,9 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend, caller: Caller
         raise HTTPException(status_code=404, detail="Thread not found.")
     t = thread.data[0]
 
+    if (t.get("status") or "pending") == "pending" and not req.connection_request:
+        raise HTTPException(409, "Wait for the receiving owner to accept the connection")
+
     if config.FEATURE_S12_INTROS:
         intro = sb.table("persona_intro_requests").select("status").eq("thread_id", req.thread_id).limit(1).execute().data or []
         if intro and (intro[0]["status"] != "accepted" or t["status"] != "accepted"):
@@ -672,6 +678,37 @@ async def agent_channel_send(user_id: str, req: AgentChannelSend, caller: Caller
     }
 
 # ── Threads (create + mode toggle) ───────────────────────────────────
+
+@router.get("/{user_id}/threads/{thread_id}/messageable")
+async def thread_messageable(
+    user_id: str,
+    thread_id: str,
+    caller: Caller = Depends(self_or_service()),
+):
+    """Confirm that an MCP/user agent may send a normal DM on this thread."""
+    persona = get_persona_status(user_id)
+    my_agent_id = persona.get("agent_id") if persona.get("deployed") else None
+    sb = _supabase()
+    result = (
+        sb.table("dm_threads")
+        .select("id,initiator_id,receiver_id,status")
+        .eq("id", thread_id)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(404, "Thread not found")
+    thread = result.data[0]
+    identities = {value for value in (user_id, my_agent_id) if value}
+    if not identities.intersection({thread.get("initiator_id"), thread.get("receiver_id")}):
+        raise HTTPException(403, "You are not a participant of this thread")
+    if thread.get("status") != "accepted":
+        raise HTTPException(409, "Wait for the receiving owner to accept the connection")
+    if config.FEATURE_S12_INTROS:
+        intro = sb.table("persona_intro_requests").select("status").eq("thread_id", thread_id).limit(1).execute().data or []
+        if intro and intro[0].get("status") != "accepted":
+            raise HTTPException(409, "Wait for the receiving owner to accept the intro")
+    return {"messageable": True, "thread_id": thread_id}
 
 @router.post("/{user_id}/threads")
 async def create_thread(user_id: str, req: ThreadCreateRequest, caller: Caller = Depends(self_or_service())):
@@ -950,4 +987,3 @@ async def personas_avatars(ids: str = ""):
         elif i in user_to_agent and user_to_agent[i] in agent_avatar_map:
             result[i] = agent_avatar_map[user_to_agent[i]]
     return result
-

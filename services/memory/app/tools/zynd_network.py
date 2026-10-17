@@ -488,6 +488,40 @@ async def message_zynd_agent(user_id: str, target_webhook_url: str, target_agent
     import uuid as _uuid
     msg_id = str(_uuid.uuid4())
     try:
+        # Do not let a caller use the raw A2A URL as a bypass around the
+        # connection FSM. The recipient agent id must have an accepted local
+        # thread with this MCP principal before any message leaves the server.
+        sb = _get_supabase()
+        me = sb.table("persona_agents").select("agent_id").eq("user_id", user_id).eq("active", True).limit(1).execute()
+        if not me.data:
+            return {"status": "error", "error": "You need an active persona before sending a message."}
+        my_agent_id = me.data[0]["agent_id"]
+        threads = (
+            sb.table("dm_threads")
+            .select("id,status")
+            .or_(
+                f"and(initiator_id.eq.{my_agent_id},receiver_id.eq.{target_agent_id}),"
+                f"and(initiator_id.eq.{target_agent_id},receiver_id.eq.{my_agent_id})"
+            )
+            .eq("status", "accepted")
+            .limit(1)
+            .execute()
+        )
+        if not threads.data:
+            return {
+                "status": "error",
+                "error": "You can only message an accepted connection.",
+                "connection_status": "pending_or_missing",
+            }
+        target = sb.table("persona_agents").select("webhook_url").eq("agent_id", target_agent_id).eq("active", True).limit(1).execute()
+        authoritative_url = (target.data or [{}])[0].get("webhook_url")
+        if not authoritative_url:
+            return {"status": "error", "error": "That connection has no reachable persona endpoint."}
+        # Do not let a model-supplied URL turn an accepted connection into an
+        # arbitrary outbound HTTP primitive. The stored persona endpoint is
+        # authoritative; the argument remains for backwards-compatible tool
+        # schemas and old clients.
+        target_webhook_url = authoritative_url
         payload = {"jsonrpc": "2.0", "id": msg_id, "method": "message/send", "params": {"message": {"messageId": msg_id, "role": "user", "parts": [{"kind": "text", "text": message}]}}}
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(target_webhook_url, json=payload)
@@ -549,7 +583,24 @@ async def call_zynd_agent(entity_id: str, text: str = "", data: dict | None = No
 async def read_agent_channel(user_id: str, thread_id: str, limit: int = 20) -> dict:
     sb = _get_supabase()
     try:
-        r = sb.table("dm_messages").select("*").eq("thread_id", thread_id).order("created_at", desc=True).limit(limit).execute()
+        me = sb.table("persona_agents").select("agent_id").eq("user_id", user_id).eq("active", True).limit(1).execute()
+        if not me.data:
+            return {"status": "error", "error": "No active persona found."}
+        agent_id = me.data[0]["agent_id"]
+        thread = sb.table("dm_threads").select("id,initiator_id,receiver_id").eq("id", thread_id).limit(1).execute()
+        if not thread.data or agent_id not in {
+            thread.data[0].get("initiator_id"), thread.data[0].get("receiver_id")
+        }:
+            return {"status": "error", "error": "You are not a participant in this thread."}
+        r = (
+            sb.table("dm_messages")
+            .select("*")
+            .eq("thread_id", thread_id)
+            .eq("channel", "agent")
+            .order("created_at", desc=True)
+            .limit(max(1, min(int(limit), 100)))
+            .execute()
+        )
         return {"status": "success", "messages": r.data or [], "count": len(r.data or [])}
     except Exception as e:
         return {"status": "error", "error": str(e)}

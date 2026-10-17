@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     # Empty keeps the bridge disabled; legacy email links are never used here.
     s12_identity_issuer: str = ""
     feature_s12_intros: bool = False
+    # Agent-initiated verified-card requests are a separate opt-in from the
+    # human Cards form. Keep this off until the MCP client scope and identity
+    # linkage have been reviewed in the target environment.
+    feature_s12_mcp_actions: bool = False
     # S10 owner read tools use the same cards aggregation over service HTTP.
     feature_s10_home: bool = False
     cards_api_url: str = "https://cards.api.zynd.ai"

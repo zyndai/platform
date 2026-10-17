@@ -29,8 +29,28 @@ use mocked services and a disposable Postgres, not production accounts.
 - Real `intro_request` and `intro_accepted` events when S04 collection is on.
   S10 digests include the pending intro count and an authenticated review link.
 - Authenticated MCP `list_intros`, requiring `cards:read` or the legacy owner
-  scope. This is read-only. Public MCP does not offer `request_intro`, and no
-  assistant approval action is enabled in this human-only release.
+  scope. By default MCP is still read-only for S12. A separate reviewed
+  `FEATURE_S12_MCP_ACTIONS` flag adds `request_card_intro` under the
+  `people:message` scope; it submits a request as the authenticated account but
+  never accepts one for the owner. The receiving owner still decides in Cards
+  or Persona.
+
+## MCP networking and Persona Groups extension
+
+When the MCP action flag is enabled in a reviewed shared-identity deployment,
+an assistant with the `people:message` scope can:
+
+- submit a verified-card intro by handle, with a reason, requested actions,
+  and an idempotency key;
+- read sent intro status;
+- create/list Persona Groups and read their members/messages;
+- invite people to a group, with acceptance required before membership exists;
+- accept or decline an incoming group invitation after explicit confirmation;
+- send a DM only on an accepted Persona connection.
+
+The MCP server never treats a public/unclaimed Card as a verified identity,
+never directly inserts a group member for an invitee, and never uses a pending
+connection as a messageable DM.
 
 This release proposes the time the owner selects. It does not automatically
 search both calendars for free slots or introduce a new email-sharing permission.
@@ -81,6 +101,7 @@ Configure these only in a reviewed test deployment with linked test accounts:
 | Cards API | `SUPABASE_DB_SCHEMA=cards` |
 | Cards API | `AAFO_ISSUER=<shared SUPABASE_URL>/auth/v1`; must match the database project |
 | Cards API | `FEATURE_S12_INTROS=true` |
+| Cards API | `FEATURE_S12_MCP_ACTIONS=true` only for the reviewed MCP extension |
 | Cards API | `PERSONA_API_URL=http://localhost:8000` |
 | Cards API | `PERSONA_SITE_URL=http://localhost:3000` |
 | Cards API and Persona API | Matching, dedicated `CARDS_INTRO_SERVICE_TOKEN` |
@@ -88,6 +109,7 @@ Configure these only in a reviewed test deployment with linked test accounts:
 | Persona API | `S12_REQUESTER_DAILY_CAP=10`, `S12_CARD_DAILY_CAP=20` by default |
 | Memory | `S12_IDENTITY_ISSUER=<shared SUPABASE_URL>/auth/v1` |
 | Memory, optional owner MCP reads | `FEATURE_S12_INTROS=true`, `CARDS_API_URL=http://localhost:8002` |
+| Memory, MCP actions | `FEATURE_S12_MCP_ACTIONS=true` and a token with `people:message` |
 | Both web apps | `NEXT_PUBLIC_FEATURE_S12_INTROS=true`; rebuild for production |
 
 The existing `MEMORY_SERVICE_TOKEN` must match between Cards and Memory.
@@ -123,6 +145,8 @@ shared database apply/cutover is a separate human-approved action.
 | `/api/intros/internal/*` | Dedicated Cards-to-Persona bridge. |
 | `GET /v1/service/identity/{uid}` | Memory service-only UUID linkage check. |
 | `POST /internal/owner-intros` | Memory-to-Cards read bridge for authenticated owner MCP. |
+| `POST /internal/mcp-intro` | Authenticated Memory-to-Cards bridge for an MCP request. |
+| `POST /internal/mcp-intros` | Authenticated Memory-to-Cards bridge for sent/received MCP status. |
 
 The first supported asks are `message` and `meeting`. New requests start with
 all four Persona permission flags off. The owner may grant only meeting

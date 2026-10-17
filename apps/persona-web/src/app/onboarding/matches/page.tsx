@@ -106,7 +106,7 @@ export default function MatchesStep() {
     const sRes = await authFetch(`${API}/api/persona/${user.id}/agent-send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ thread_id: tid, content: message }),
+      body: JSON.stringify({ thread_id: tid, content: message, connection_request: true }),
     });
     if (!sRes.ok) throw new Error(await sRes.text());
     return tid;

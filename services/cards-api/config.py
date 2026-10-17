@@ -38,6 +38,9 @@ MAINTENANCE_READONLY: bool = os.getenv("MAINTENANCE_READONLY", "false").lower() 
 # Cards written before then get owner_user_id from the cutover backfill (by email).
 WRITES_OWNER_USER_ID: bool = SUPABASE_DB_SCHEMA == "cards"
 FEATURE_S12_INTROS: bool = os.getenv("FEATURE_S12_INTROS", "false").lower() in ("1", "true", "yes")
+# Separate opt-in for authenticated MCP agents to submit verified-card intro
+# requests. Human Cards requests remain controlled by FEATURE_S12_INTROS.
+FEATURE_S12_MCP_ACTIONS: bool = os.getenv("FEATURE_S12_MCP_ACTIONS", "false").lower() in ("1", "true", "yes")
 PERSONA_API_URL: str = os.getenv("PERSONA_API_URL", "http://127.0.0.1:8000")
 PERSONA_SITE_URL: str = os.getenv("PERSONA_SITE_URL", "https://persona.zynd.ai")
 CARDS_INTRO_SERVICE_TOKEN: str = os.getenv("CARDS_INTRO_SERVICE_TOKEN", "")

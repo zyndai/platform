@@ -44,10 +44,29 @@ CARDS_APPROVE_TOOLS = frozenset({
     "set_looking_for",
 })
 PEOPLE_TOOLS = frozenset({
+    "search_zynd_network",
+    "search_zynd_personas",
+    "get_persona_profile",
     "find_people",
     "connect_with",
+    "list_my_connections",
+    "request_connection",
+    "check_connection_status",
+    "request_card_intro",
+    "list_card_intro_requests",
     "send_persona_message",
     "message_zynd_agent",
+    "read_agent_channel",
+    "call_zynd_agent",
+    "create_group",
+    "list_groups",
+    "invite_to_group",
+    "list_group_invitations",
+    "list_incoming_group_invitations",
+    "respond_to_group_invitation",
+    "list_group_members",
+    "read_group_messages",
+    "send_group_message",
 })
 
 

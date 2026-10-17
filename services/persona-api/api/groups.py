@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from api.guards import public
+from api.guards import Caller, public, self_or_service
 from postgrest.exceptions import APIError
 from pydantic import BaseModel, Field
 import config
@@ -467,6 +467,109 @@ async def auto_join_candidates(user: dict = Depends(get_current_user)):
 
     out = [g for g in (rows.data or []) if g["id"] not in my_group_ids]
     return {"groups": out, "domain": domain}
+
+def _service_user(caller: Caller) -> dict:
+    if not caller.user_id:
+        raise HTTPException(status_code=400, detail="A user identity is required.")
+    return {"id": caller.user_id}
+
+
+# These routes are used by the authenticated hosted MCP service. They reuse
+# the same authorization functions as the browser routes, but accept the
+# trusted Persona service credential through self_or_service(). The user id is
+# path-bound so the memory service cannot accidentally act for a different MCP
+# principal than the one it resolved.
+@router.post("/service/{user_id}")
+async def service_create_group(
+    user_id: str,
+    body: GroupCreate,
+    caller: Caller = Depends(self_or_service("user_id")),
+):
+    return await create_group(body, _service_user(caller))
+
+
+@router.get("/service/{user_id}")
+async def service_list_groups(
+    user_id: str,
+    caller: Caller = Depends(self_or_service("user_id")),
+):
+    return await list_my_groups(_service_user(caller))
+
+
+@router.get("/service/{user_id}/{group_id}")
+async def service_get_group(
+    user_id: str,
+    group_id: str,
+    caller: Caller = Depends(self_or_service("user_id")),
+):
+    return await get_group(group_id, _service_user(caller))
+
+
+@router.get("/service/{user_id}/{group_id}/members")
+async def service_list_members(
+    user_id: str,
+    group_id: str,
+    caller: Caller = Depends(self_or_service("user_id")),
+):
+    return await list_members(group_id, _service_user(caller))
+
+
+@router.get("/service/{user_id}/{group_id}/messages")
+async def service_list_messages(
+    user_id: str,
+    group_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    caller: Caller = Depends(self_or_service("user_id")),
+):
+    return await list_messages(group_id, limit, None, _service_user(caller))
+
+
+@router.post("/service/{user_id}/{group_id}/messages")
+async def service_post_message(
+    user_id: str,
+    group_id: str,
+    body: MessagePost,
+    caller: Caller = Depends(self_or_service("user_id")),
+):
+    return await post_message(group_id, body, _service_user(caller))
+
+
+@router.post("/service/{user_id}/{group_id}/invitations")
+async def service_create_invitation(
+    user_id: str,
+    group_id: str,
+    body: InvitationCreate,
+    caller: Caller = Depends(self_or_service("user_id")),
+):
+    return await create_invitation(group_id, body, _service_user(caller))
+
+
+@router.get("/service/{user_id}/{group_id}/invitations")
+async def service_list_group_invitations(
+    user_id: str,
+    group_id: str,
+    caller: Caller = Depends(self_or_service("user_id")),
+):
+    return await list_group_invitations(group_id, _service_user(caller))
+
+
+@router.get("/service/{user_id}/invitations/incoming")
+async def service_list_incoming_invitations(
+    user_id: str,
+    caller: Caller = Depends(self_or_service("user_id")),
+):
+    return await list_incoming_invitations(_service_user(caller))
+
+
+@router.post("/service/{user_id}/invitations/{invitation_id}/respond")
+async def service_respond_to_invitation(
+    user_id: str,
+    invitation_id: str,
+    body: InvitationDecide,
+    caller: Caller = Depends(self_or_service("user_id")),
+):
+    return await respond_to_invitation(invitation_id, body, _service_user(caller))
+
 
 @router.get("/{group_id}")
 async def get_group(group_id: str, user: dict = Depends(get_current_user)):

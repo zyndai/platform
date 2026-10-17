@@ -4,8 +4,9 @@ S12 lets Bob ask to connect with Alice after finding her card. Alice decides
 whether to accept and whether to arrange a call. A request does not book a
 meeting or share private information automatically.
 
-This guide tests the **human-only implementation**. AI assistants may read
-their owner's intro inbox with permission, but cannot send or approve S12 intros.
+This guide tests the human request/decision flow. By default AI assistants may
+only read their owner's intro inbox with permission. The separately gated MCP
+extension can submit requests, but cannot approve them.
 For setup and implementation details, see [S12 intros](S12_INTROS.md).
 
 ## Prepare the example
@@ -185,16 +186,21 @@ Pending requests cannot bypass approval through another messaging/meeting path.
 Revocation blocks a later proposal. Full-profile and account-posting permissions
 remain outside the intro grant.
 
-## K. Optional: an assistant reads the owner's inbox
+## K. Optional: an assistant reads the owner's inbox or submits a request
 
 1. Connect an owner assistant through S09 with the `cards:read` scope.
-2. Enable the read-only S12 MCP integration in the test deployment.
+2. Enable the S12 MCP integration in the test deployment. Set
+   `FEATURE_S12_MCP_ACTIONS=true` only when testing agent-initiated requests.
 3. Call `list_intros` and compare it with that owner's received requests.
-4. Try the same tool from an assistant without `cards:read`.
+4. With a token carrying `people:message`, call `request_card_intro` for a
+   claimed, published, linked card, then call `list_card_intro_requests` with
+   `outgoing=true`.
+5. Try the same tools from an assistant without the required scope.
 
 **Expected:** Authorized reads show only that owner's data. The unscoped assistant
-cannot use the tool. Intro initiation through public MCP remains disabled, and
-the assistant is directed to human review rather than approving requests itself.
+cannot use the tool. The request appears as pending and still needs the
+receiving owner to approve it in Cards or Persona; MCP cannot approve the
+request for that owner. Invalid/unclaimed cards are refused.
 
 ## Record results
 

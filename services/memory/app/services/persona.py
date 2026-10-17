@@ -121,7 +121,7 @@ async def introduce(user_id: str, target_agent_id: str, target_name: str, messag
     try:
         send_resp = await _persona(
             "POST", f"/api/persona/{user_id}/agent-send",
-            json={"thread_id": thread_id, "content": message}, timeout=30)
+            json={"thread_id": thread_id, "content": message, "connection_request": True}, timeout=30)
         delivered = send_resp.status_code in (200, 201)
         if not delivered:
             logger.warning("agent-send -> %s: %s (thread %s created)",
@@ -133,11 +133,42 @@ async def introduce(user_id: str, target_agent_id: str, target_name: str, messag
 
 
 async def send_message(user_id: str, thread_id: str, content: str) -> dict:
+    # The regular agent-send endpoint also carries the initial pending
+    # connection handshake. MCP DMs must never use that path while a request
+    # is waiting for approval, so ask Persona for the authoritative state
+    # before sending.
+    status = await _persona(
+        "GET",
+        f"/api/persona/{user_id}/threads/{thread_id}/messageable",
+    )
+    if status.status_code != 200:
+        try:
+            detail = (status.json() or {}).get("detail")
+        except (AttributeError, ValueError):
+            detail = None
+        raise PersonaError(detail or f"connection is not messageable ({status.status_code})")
     resp = await _persona("POST", f"/api/persona/{user_id}/agent-send",
                           json={"thread_id": thread_id, "content": content})
     if resp.status_code not in (200, 201):
         raise PersonaError(f"agent-send -> {resp.status_code}: {resp.text[:200]}")
     return resp.json()
+
+
+async def group_request(method: str, user_id: str, path: str, **kwargs) -> dict:
+    """Call a user-scoped Persona group service route."""
+    if not settings.persona_enabled:
+        raise PersonaError("persona features are not enabled yet")
+    resp = await _persona(method, f"/api/groups/service/{user_id}{path}", **kwargs)
+    if resp.status_code >= 400:
+        try:
+            detail = (resp.json() or {}).get("detail")
+        except ValueError:
+            detail = None
+        raise PersonaError(detail or f"persona group request failed ({resp.status_code})")
+    try:
+        return resp.json()
+    except ValueError as exc:
+        raise PersonaError("persona group returned invalid JSON") from exc
 
 
 # ---- connections + meetings (point 5) ------------------------------------

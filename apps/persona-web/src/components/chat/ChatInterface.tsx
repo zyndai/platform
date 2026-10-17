@@ -1314,7 +1314,7 @@ export default function ChatInterface() {
     const sendRes = await authFetch(`${API}/api/persona/${user.id}/agent-send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ thread_id: threadId, content: message }),
+      body: JSON.stringify({ thread_id: threadId, content: message, connection_request: true }),
     });
     if (!sendRes.ok) throw new Error(await sendRes.text());
     // The backend returns 200 even when the receiver rejects (so the

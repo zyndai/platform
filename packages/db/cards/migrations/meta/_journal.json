@@ -148,6 +148,20 @@
       "when": 1792241047864,
       "tag": "0020_network_atomic_operations",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792244063617,
+      "tag": "0021_reconcile_owner_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792244068900,
+      "tag": "0022_reconcile_cards_live_contracts",
+      "breakpoints": true
     }
   ]
 }

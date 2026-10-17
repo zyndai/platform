@@ -26,14 +26,17 @@ test('Cards network migrations preserve invitation and membership invariants', {
   };
   try {
     await client.connect();
-    await client.query(readFileSync(new URL('supabase-stubs.sql', import.meta.url), 'utf8'));
+    await admin.query('select pg_advisory_lock(7934021)');
+    try {
+      await client.query(readFileSync(new URL('supabase-stubs.sql', import.meta.url), 'utf8'));
+    } finally { await admin.query('select pg_advisory_unlock(7934021)'); }
     await client.query('set search_path=public,extensions');
     const apply = () => migrate(drizzle(client), {
       migrationsFolder: migrationsFolder('cards'), migrationsSchema: 'drizzle', migrationsTable: '__cards_migrations',
     });
     await apply();
     await apply();
-    assert.equal((await client.query('select count(*)::int as n from drizzle.__cards_migrations')).rows[0].n, 21);
+    assert.equal((await client.query('select count(*)::int as n from drizzle.__cards_migrations')).rows[0].n, 23);
     assert.equal((await client.query("select to_regclass('drizzle.__persona_migrations') as table")).rows[0].table, null);
     await client.query("set request.jwt.claim.role='service_role'");
 

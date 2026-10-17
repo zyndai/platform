@@ -35,7 +35,10 @@ the authenticated MCP at `/mcp` and require the `people:message` scope.
 Cards schema migration `0019_cards_network` owns the connection, DM, group,
 membership, invitation, and group-message tables. `0020_network_atomic_operations`
 adds service-only functions for atomic group creation and invitation decisions.
-Both migrations are expand-only and must be applied before deploying this API.
+`0021_reconcile_owner_metadata` tracks the existing owner-digest columns without
+resetting their values. `0022_reconcile_cards_live_contracts` reconciles the
+reviewed older drift while preserving the live analytics view. These migrations
+must be applied before deploying this API.
 
 Test the full Cards migration history and concurrent invitation decisions on a
 disposable local Postgres with pgvector (never set this to Supabase):
@@ -81,8 +84,32 @@ Additional local verification on PostgreSQL 17:
 - Group creation, owner membership, invitation acceptance, and expiry rejection
   work against that live-schema copy using synthetic accounts.
 
-This verifies migration compatibility, **not** a clean global drift gate or a
-production migration approval. No shared migration was applied. Review and
-resolve the older drift before applying `0020` or deploying this API; do not
-delete extra columns, silently replace the analytics view, or rewrite old
-migrations as part of the networking rollout.
+### Authorized reconciliation
+
+The owner subsequently approved applying the Cards migrations. The reconciliation
+is explicit and preserves existing records:
+
+- `0021` adopts all four live owner-metadata columns with `ADD COLUMN IF NOT EXISTS`.
+- `0022` restores the intended event default, non-null rule, and allowed-value
+  constraint. The read-only preflight found all 1,484 existing events valid; the
+  migration aborts rather than coercing unexpected classifications.
+- The live `v_funnel_daily(day,event,actor_class,n)` is not replaced or renamed.
+  The historical wide totals contract is available as `v_funnel_daily_totals`.
+  Renaming the historical wide view occurs only on old-shape local/fresh replays,
+  not against the differently shaped deployed view. Its dependencies are retained.
+- Existing search and retention function definitions are recorded in a new
+  migration. The retention function is **not called** and its live grants are
+  preserved; browser database roles still have no Cards schema usage.
+- ACL serialization is sorted with C collation for accurate comparisons across
+  database locales. Actual permission changes still fail the comparison.
+- All 20 tracked applied migration hashes match. Two older unmatched migration
+  history records from October 9 are preserved unchanged, not deleted or rebased.
+
+The actual live schema-only copy, including its existing migration history,
+successfully applies all three pending migrations and converges with a clean
+PostgreSQL 17 replay. Existing rows, owner preferences, daily-view OID/definition,
+and dependent reads are preserved in the rehearsal. The authorized drift repair
+preflight rejects any difference outside the exact reviewed Cards object list;
+the rehearsal passes the unfiltered drift check. Live application must also pass
+that full check. Live application and its result are recorded below after
+verification.

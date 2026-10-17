@@ -62,12 +62,12 @@ CARDS_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5559/postgres n
 
 ### Shared database preflight — 2026-10-17
 
-The read-only check found `0019_cards_network` already applied and `0020` pending.
+The initial read-only check found `0019_cards_network` already applied and `0020` pending.
 The comparison was repeated against **PostgreSQL 17**, matching the shared
 database. The earlier default-permission differences disappeared: those were
 PostgreSQL 16/17 comparison noise, not live permission changes.
 
-The full drift gate still reports **9 entries only in the live database and 5
+Before reconciliation, the full drift gate reported **9 entries only in the live database and 5
 only in the migrations**. These describe older Cards objects: four owner-digest
 columns, `card_events.actor_class` nullability/default/check, two people-search
 function definitions, `purge_card_events`, and `v_funnel_daily`. No networking
@@ -111,5 +111,32 @@ PostgreSQL 17 replay. Existing rows, owner preferences, daily-view OID/definitio
 and dependent reads are preserved in the rehearsal. The authorized drift repair
 preflight rejects any difference outside the exact reviewed Cards object list;
 the rehearsal passes the unfiltered drift check. Live application must also pass
-that full check. Live application and its result are recorded below after
-verification.
+that full check.
+
+### Live application — 2026-10-17
+
+Applied `0020_network_atomic_operations`, `0021_reconcile_owner_metadata`, and
+`0022_reconcile_cards_live_contracts` in one Cards-only Drizzle transaction, using
+the owner's exported connection without printing credentials. Lock timeout was
+five seconds and statement timeout was thirty seconds.
+
+Post-application verification:
+
+- **No drift: 1,164 catalog entries match** a full clean PostgreSQL 17 replay.
+- Cards is applied through `0022`; no Cards migrations remain pending.
+- All **20/20 Cards table row counts are identical** before and after application.
+- All earlier Cards history entries, including the two legacy entries, remain
+  unchanged. Only the three new migration records were appended.
+- Identity and Persona migration histories are unchanged.
+- The deployed analytics view's OID and definition are unchanged.
+- Both new network RPCs are visible through Supabase/PostgREST, remain service-only,
+  and browser roles still have no Cards schema usage.
+- Existing dev and production Cards API health endpoints both return HTTP 200.
+- All 19 database tests pass; Cards API remains at its known two X-bot failures,
+  with 390 tests passing and no new failures.
+
+The shared database is now ready for this feature. No application was merged or
+deployed by the migration task. PR #68 targets `dev` and remains unmerged; the
+next step is squash-merge and dev deployment when authorized. Production app code
+was not deployed, but the database changes are live for both environments because
+they share the same Cards schema.

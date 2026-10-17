@@ -60,8 +60,29 @@ CARDS_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5559/postgres n
 ### Shared database preflight — 2026-10-17
 
 The read-only check found `0019_cards_network` already applied and `0020` pending.
-The drift gate did **not** pass: older Cards objects differ from their tracked
-migrations (owner-digest columns, `card_events.actor_class`, the people-search
-functions, and `v_funnel_daily`). No shared migration was applied in this fix pass.
-Review that drift before applying `0020` or deploying this API; do not delete the
-extra columns or rewrite old migrations as part of the networking rollout.
+The comparison was repeated against **PostgreSQL 17**, matching the shared
+database. The earlier default-permission differences disappeared: those were
+PostgreSQL 16/17 comparison noise, not live permission changes.
+
+The full drift gate still reports **9 entries only in the live database and 5
+only in the migrations**. These describe older Cards objects: four owner-digest
+columns, `card_events.actor_class` nullability/default/check, two people-search
+function definitions, `purge_card_events`, and `v_funnel_daily`. No networking
+table differences were reported.
+
+Additional local verification on PostgreSQL 17:
+
+- All 15 database tests pass, including concurrent invitation decisions and
+  group-capacity checks.
+- A schema-only copy of the actual live Cards schema restores locally. No user
+  rows were copied.
+- Applying `0020` to that copy adds exactly the two expected networking
+  functions; no existing schema object changes.
+- Group creation, owner membership, invitation acceptance, and expiry rejection
+  work against that live-schema copy using synthetic accounts.
+
+This verifies migration compatibility, **not** a clean global drift gate or a
+production migration approval. No shared migration was applied. Review and
+resolve the older drift before applying `0020` or deploying this API; do not
+delete extra columns, silently replace the analytics view, or rewrite old
+migrations as part of the networking rollout.

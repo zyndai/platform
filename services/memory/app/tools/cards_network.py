@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import httpx
 
 from app.config import settings
@@ -9,12 +11,16 @@ from app.config import settings
 
 async def _canonical(pool, uid: str) -> str:
     row = await pool.fetchrow("SELECT supabase_user_id FROM users WHERE id = $1", uid)
-    value = row["supabase_user_id"] if row and row["supabase_user_id"] else uid
-    return str(value)
+    if not row or not row["supabase_user_id"]:
+        raise ValueError("Sign in with your shared Zynd account before using Cards networking")
+    return str(UUID(str(row["supabase_user_id"])))
 
 
 async def _call(pool, uid: str, method: str, path: str, **kwargs) -> dict:
-    canonical = await _canonical(pool, uid)
+    try:
+        canonical = await _canonical(pool, uid)
+    except ValueError:
+        return {"ok": False, "error": "Sign in with your shared Zynd account before using Cards networking"}
     headers = {
         "Authorization": "Bearer " + settings.memory_service_token,
         "X-Zynd-User": canonical,
@@ -31,7 +37,7 @@ async def _call(pool, uid: str, method: str, path: str, **kwargs) -> dict:
     except (httpx.HTTPError, ValueError) as exc:
         return {"ok": False, "error": f"Cards network unavailable: {exc}"}
     if response.status_code >= 400:
-        return {"ok": False, "error": data.get("detail") or "Cards network request failed"}
+        return {"ok": False, "error": (data.get("detail") if isinstance(data, dict) else None) or "Cards network request failed"}
     return {"ok": True, **(data if isinstance(data, dict) else {"data": data})}
 
 
@@ -64,7 +70,7 @@ async def create_group(pool, uid: str, name: str, description: str = "", visibil
 
 
 async def group_people(pool, uid: str, group_id: str, query: str = "") -> dict:
-    return await _call(pool, uid, "GET", f"/groups/{group_id}/people?query={query}")
+    return await _call(pool, uid, "GET", f"/groups/{group_id}/people", params={"query": query})
 
 
 async def invite_group(pool, uid: str, group_id: str, target_handle: str, message: str = "") -> dict:

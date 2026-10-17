@@ -19,6 +19,7 @@ every service listed as a reader.
 | `chat_messages`, `brief_todos`, `published_pages` | persona | — |
 | `cards.agent_profile_cards`, `cards.x_accounts`, `cards.x_mentions`, `cards.x_conversations`, `cards.keyword_posts`, `cards.takedown_requests` | cards | — (service role only; cards-web goes through cards-api) |
 | `cards.visitor_preferences`, `cards.profile_visits` | cards | cards-api only; consent-bound owner reads |
+| `cards.connections`, `cards.dm_threads`, `cards.dm_messages`, `cards.groups`, `cards.group_members`, `cards.group_invitations`, `cards.group_messages` | cards | cards-api only; Cards web/MCP use Cards HTTP |
 | `identity.*` (empty today; Zynd Account tables in Stage 2) | shared | persona, cards |
 | `persona_intro_requests`, `persona_intro_rules`, `persona_intro_audit` | persona | cards-api via Persona HTTP; persona-web (requests only, participant RLS) |
 | `cards.intro_requests` | cards | cards-api; minimal Persona status projection and activity events |
@@ -34,6 +35,7 @@ every service listed as a reader.
 | `cards.match_cards(vector, int, bool)`, `cards.search_cards_fts(text, int, bool)` | cards | cards 0005 (re-created) | cards-api (`services/search.py`) |
 | `cards.s10_set_visitor_privacy`, `cards.s10_record_named_visit` | cards | cards 0016 | cards-api only |
 | `cards.s10_named_visitors` | cards | cards 0018 | cards-api only; consent-bound public profile links |
+| `cards.network_create_group`, `cards.network_respond_invitation` | cards | cards 0020 | cards-api only; transactional membership checks |
 | publication `supabase_realtime` (9 persona tables) | persona | persona 0000 | persona-web realtime |
 | extension `vector` (schema `extensions`) | cards | cards 0000 | — |
 | schemas `cards`, `identity` + their grants | cards / shared | cards 0000, identity 0000 | — |

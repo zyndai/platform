@@ -141,6 +141,13 @@
       "when": 1792232665725,
       "tag": "0019_cards_network",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792241047864,
+      "tag": "0020_network_atomic_operations",
+      "breakpoints": true
     }
   ]
 }

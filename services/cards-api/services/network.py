@@ -8,15 +8,12 @@ before writing the Cards schema.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
 
 import config
-
-
-MAX_GROUP_MEMBERS = 50
 
 
 def _sb():
@@ -110,6 +107,7 @@ def _serialize_connection(row: dict, user_id: str) -> dict:
         "created_at": row.get("created_at"),
         "decided_at": row.get("decided_at"),
         "updated_at": row.get("updated_at"),
+        "request_message": row.get("request_message"),
         "partner": _partner_card(row, user_id),
     }
 
@@ -197,7 +195,11 @@ def _accepted_connection(user_id: str, connection_id: str) -> dict:
 def _thread_for_connection(connection_id: str) -> dict:
     rows = _sb().table("dm_threads").select("*").eq("connection_id", connection_id).limit(1).execute().data or []
     if not rows:
-        created = _sb().table("dm_threads").insert({"connection_id": connection_id}).execute().data or []
+        created = _sb().table("dm_threads").upsert(
+            {"connection_id": connection_id}, on_conflict="connection_id", ignore_duplicates=True,
+        ).execute().data or []
+        if not created:
+            created = _sb().table("dm_threads").select("*").eq("connection_id", connection_id).limit(1).execute().data or []
         if not created:
             raise HTTPException(500, "Could not open the conversation")
         return created[0]
@@ -208,8 +210,9 @@ def list_messages(user_id: str, connection_id: str, limit: int = 100) -> dict:
     _accepted_connection(user_id, connection_id)
     thread = _thread_for_connection(connection_id)
     rows = (_sb().table("dm_messages").select("id,thread_id,sender_user_id,content,created_at")
-            .eq("thread_id", thread["id"]).order("created_at").limit(max(1, min(limit, 500))).execute().data or [])
-    return {"thread_id": thread["id"], "messages": rows}
+            .eq("thread_id", thread["id"]).order("created_at", desc=True).order("id", desc=True)
+            .limit(max(1, min(limit, 500))).execute().data or [])
+    return {"thread_id": thread["id"], "messages": list(reversed(rows))}
 
 
 def send_message(user_id: str, connection_id: str, content: str) -> dict:
@@ -240,6 +243,7 @@ def _member(group_id: str, user_id: str) -> dict | None:
 
 
 def _require_member(group_id: str, user_id: str) -> dict:
+    _group(group_id)
     member = _member(group_id, user_id)
     if not member:
         raise HTTPException(404, "Group not found")
@@ -253,16 +257,11 @@ def create_group(user_id: str, name: str, description: str | None, visibility: s
         raise HTTPException(400, "Group name cannot be empty")
     if visibility not in {"private", "open"}:
         raise HTTPException(400, "visibility must be private or open")
-    group = _sb().table("groups").insert({
-        "name": clean_name[:80],
-        "description": (description or "").strip()[:500] or None,
-        "owner_user_id": user_id,
-        "visibility": visibility,
-    }).execute().data or []
-    if not group:
-        raise HTTPException(500, "Could not create group")
-    _sb().table("group_members").insert({"group_id": group[0]["id"], "user_id": user_id, "role": "owner"}).execute()
-    return {"group": group[0]}
+    return _rpc_result("network_create_group", {
+        "p_user": user_id, "p_name": clean_name[:80],
+        "p_description": (description or "").strip()[:500] or None,
+        "p_visibility": visibility,
+    })
 
 
 def list_groups(user_id: str) -> dict:
@@ -298,21 +297,34 @@ def search_invitable(user_id: str, group_id: str, query: str) -> dict:
         raise HTTPException(403, "Only the group owner can invite people")
     existing = _sb().table("group_members").select("user_id").eq("group_id", group_id).execute().data or []
     excluded = {row["user_id"] for row in existing}
-    pattern = f"%{query.strip()}%"
+    pending = (_sb().table("group_invitations").select("invitee_user_id")
+               .eq("group_id", group_id).eq("status", "pending").gt("expires_at", _now()).execute().data or [])
+    excluded.update(row["invitee_user_id"] for row in pending)
+    connections = (_sb().table("connections").select("requester_user_id,recipient_user_id")
+                   .eq("status", "accepted").or_(f"requester_user_id.eq.{user_id},recipient_user_id.eq.{user_id}")
+                   .execute().data or [])
+    targets = sorted({
+        row["recipient_user_id"] if row["requester_user_id"] == user_id else row["requester_user_id"]
+        for row in connections
+    } - excluded - {user_id})
+    if not targets:
+        return {"people": []}
     cards = (_sb().table("agent_profile_cards").select("id,owner_user_id,handle,card")
-             .eq("status", "published").not_.is_("owner_user_id", "null")
-             .limit(100).execute().data or [])
+             .in_("owner_user_id", targets).eq("status", "published").not_.is_("owner_email", "null")
+             .execute().data or [])
     results = []
+    seen = set()
     for card in cards:
         target = card.get("owner_user_id")
-        if not target or target in excluded or target == user_id or not _connected(user_id, target):
+        if not target or target in seen:
             continue
         payload = _card_payload(card)
         haystack = f"{payload.get('handle') or ''} {payload.get('name') or ''} {payload.get('headline') or ''}".lower()
         if query.strip() and query.strip().lower() not in haystack:
             continue
         results.append({**payload, "user_id": target})
-    return {"people": results}
+        seen.add(target)
+    return {"people": results[:100]}
 
 
 def invite_to_group(user_id: str, group_id: str, invitee_user_id: str, message: str | None) -> dict:
@@ -324,6 +336,10 @@ def invite_to_group(user_id: str, group_id: str, invitee_user_id: str, message: 
         raise HTTPException(409, "Invitees must be an accepted Card connection")
     if _member(group_id, invitee_user_id):
         raise HTTPException(409, "That Card is already in the group")
+    # Expired pending rows must not permanently block a fresh invitation.
+    (_sb().table("group_invitations").update({"status": "expired", "decided_at": _now()})
+     .eq("group_id", group_id).eq("invitee_user_id", invitee_user_id)
+     .eq("status", "pending").lte("expires_at", _now()).execute())
     try:
         invitation = _sb().table("group_invitations").insert({
             "group_id": group_id,
@@ -344,42 +360,37 @@ def list_invitations(user_id: str, group_id: str) -> dict:
     member = _require_member(group_id, user_id)
     if member.get("role") != "owner":
         raise HTTPException(403, "Only the group owner can view invitations")
-    rows = _sb().table("group_invitations").select("*").eq("group_id", group_id).eq("status", "pending").order("created_at", desc=True).execute().data or []
+    rows = (_sb().table("group_invitations").select("*").eq("group_id", group_id)
+            .eq("status", "pending").gt("expires_at", _now()).order("created_at", desc=True).execute().data or [])
     return {"invitations": rows}
 
 
 def list_incoming_invitations(user_id: str) -> dict:
-    rows = _sb().table("group_invitations").select("*").eq("invitee_user_id", user_id).eq("status", "pending").order("created_at", desc=True).execute().data or []
-    now = datetime.now(timezone.utc)
-    live = []
-    for row in rows:
-        if row.get("expires_at") and datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00")) <= now:
-            _sb().table("group_invitations").update({"status": "expired", "decided_at": _now()}).eq("id", row["id"]).execute()
-            continue
-        live.append(row)
-    return {"invitations": live}
+    rows = (_sb().table("group_invitations").select("*").eq("invitee_user_id", user_id)
+            .eq("status", "pending").gt("expires_at", _now()).order("created_at", desc=True).execute().data or [])
+    if not rows:
+        return {"invitations": []}
+    groups = (_sb().table("groups").select("id,name,description")
+              .in_("id", list({row["group_id"] for row in rows})).is_("archived_at", "null").execute().data or [])
+    by_id = {group["id"]: group for group in groups}
+    return {"invitations": [{**row, "group": by_id[row["group_id"]]} for row in rows if row["group_id"] in by_id]}
+
+
+def _rpc_result(name: str, params: dict) -> dict:
+    result = _sb().rpc(name, params).execute().data
+    if not isinstance(result, dict):
+        raise HTTPException(500, "Cards network operation failed")
+    if result.get("error"):
+        raise HTTPException(result.get("status_code", 409), result["error"])
+    return result
 
 
 def respond_invitation(user_id: str, invitation_id: str, decision: str) -> dict:
     if decision not in {"accept", "decline"}:
         raise HTTPException(400, "decision must be accept or decline")
-    rows = _sb().table("group_invitations").select("*").eq("id", invitation_id).limit(1).execute().data or []
-    if not rows or rows[0]["invitee_user_id"] != user_id:
-        raise HTTPException(404, "Invitation not found")
-    invitation = rows[0]
-    if invitation["status"] != "pending":
-        raise HTTPException(409, "Invitation already resolved")
-    if decision == "decline":
-        _sb().table("group_invitations").update({"status": "declined", "decided_at": _now()}).eq("id", invitation_id).execute()
-        return {"status": "declined", "group_id": invitation["group_id"]}
-    if _member(invitation["group_id"], user_id):
-        raise HTTPException(409, "You are already a group member")
-    count = _sb().table("group_members").select("id", count="exact").eq("group_id", invitation["group_id"]).execute()
-    if (getattr(count, "count", None) or len(count.data or [])) >= MAX_GROUP_MEMBERS:
-        raise HTTPException(409, "This group is full")
-    _sb().table("group_members").insert({"group_id": invitation["group_id"], "user_id": user_id, "role": "member", "invited_by": invitation["inviter_user_id"]}).execute()
-    _sb().table("group_invitations").update({"status": "accepted", "decided_at": _now()}).eq("id", invitation_id).execute()
-    return {"status": "accepted", "group_id": invitation["group_id"]}
+    return _rpc_result("network_respond_invitation", {
+        "p_user": user_id, "p_invitation": invitation_id, "p_decision": decision,
+    })
 
 
 def list_group_messages(user_id: str, group_id: str, limit: int = 100) -> dict:

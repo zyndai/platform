@@ -48,7 +48,7 @@ def test_consolidated_tools_registered():
 
 def test_tool_count_includes_cards_owner_and_discovery():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert len(names) == 30
+    assert len(names) == 35
 
 
 @pytest.mark.parametrize("owner_enabled", [False, True])

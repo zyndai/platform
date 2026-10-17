@@ -14,12 +14,14 @@ export interface CardConnection {
   incoming: boolean;
   created_at: string;
   decided_at?: string | null;
+  request_message?: string | null;
   partner: CardSummary;
 }
 
 export interface CardMessage {
   id: string;
-  thread_id: string;
+  thread_id?: string;
+  group_id?: string;
   sender_user_id: string;
   content: string;
   created_at: string;
@@ -52,6 +54,7 @@ export interface CardGroupInvitation {
   message?: string | null;
   created_at: string;
   expires_at: string;
+  group?: { id: string; name: string; description?: string | null };
 }
 
 const API = (process.env.NEXT_PUBLIC_API_URL || "https://api.zynd.ai").replace(/\/$/, "");
@@ -61,10 +64,12 @@ export async function cardsNetworkRequest<T>(
   token: string,
   method = "GET",
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(`${API}/cards/network${path}`, {
     method,
     cache: "no-store",
+    signal,
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
@@ -77,4 +82,14 @@ export async function cardsNetworkRequest<T>(
     throw new Error(detail);
   }
   return response.json() as Promise<T>;
+}
+
+export function connectionRequestNotice(result: { connection: CardConnection; existing: boolean }): string {
+  if (!result.existing) return "Connection request sent";
+  const connection = result.connection;
+  if (connection.status === "accepted") return "You are already connected";
+  if (connection.status === "pending") return connection.incoming
+    ? "This Card has already sent you a request. Accept it in your network."
+    : "Your connection request is already pending";
+  return `This connection is ${connection.status}. No new request was sent.`;
 }

@@ -2,9 +2,11 @@ import json
 import shutil
 import tempfile
 import unittest
+import zipfile
+from unittest.mock import patch
 from pathlib import Path
 
-from build import ROOT, build, validate
+from build import ROOT, MCP_URL, REVIEW_ORIGIN, SCOPES, TOOLS, build, validate
 
 
 class PackageTests(unittest.TestCase):
@@ -14,6 +16,110 @@ class PackageTests(unittest.TestCase):
             first = build(Path(directory) / "first.zip")
             second = build(Path(directory) / "second.zip")
             self.assertEqual(first.read_bytes(), second.read_bytes())
+            with zipfile.ZipFile(first) as archive:
+                self.assertEqual(sorted(archive.namelist()), validate())
+                self.assertFalse(any("__pycache__" in name for name in archive.namelist()))
+
+    def test_least_privilege_contract(self):
+        data = json.loads((ROOT / "mcp.json").read_text())
+        self.assertEqual(data["mcpServers"]["zynd"]["extensions"]["com.openai"]["auth"]["baseScopes"],
+                         ["memory:recall", "memory:propose", "cards:review"])
+        self.assertEqual(TOOLS, {"recall_memories", "propose_memory", "get_proposal_status",
+                                 "list_pending_facts", "propose_card_fact", "get_public_card"})
+
+    def test_legacy_or_extra_scopes_rejected(self):
+        for scopes in (["user"], ["memory:write", "cards:read", "cards:approve"],
+                       SCOPES + ["cards:approve"]):
+            with self.subTest(scopes=scopes), self.fixture() as root:
+                path = root / "mcp.json"
+                data = json.loads(path.read_text())
+                data["mcpServers"]["zynd"]["extensions"]["com.openai"]["auth"]["baseScopes"] = scopes
+                path.write_text(json.dumps(data))
+                with self.assertRaisesRegex(ValueError, "OAuth"):
+                    validate(root)
+
+    def test_isolated_targets_are_reproducible_and_do_not_change_source(self):
+        with self.fixture() as root, tempfile.TemporaryDirectory() as directory:
+            original = {name: (root / name).read_bytes() for name in validate(root)}
+            options = dict(root=root, mcp_url="https://memory.test.example/mcp",
+                           review_origin="https://review.test.example")
+            first = build(Path(directory) / "test.zip", **options)
+            second = build(Path(directory) / "test-again.zip", **options)
+            self.assertEqual(first.read_bytes(), second.read_bytes())
+            self.assertEqual(original, {name: (root / name).read_bytes() for name in validate(root)})
+            with zipfile.ZipFile(first) as archive:
+                mcp = json.loads(archive.read("mcp.json"))
+                server = mcp["mcpServers"]["zynd"]
+                self.assertEqual(server["url"], options["mcp_url"])
+                self.assertEqual(server["extensions"]["com.openai"]["auth"]["resource"], options["mcp_url"])
+                for name in archive.namelist():
+                    if name.endswith((".json", ".md", ".yaml")):
+                        text = archive.read(name).decode()
+                        self.assertNotIn(MCP_URL, text)
+                        self.assertNotIn(REVIEW_ORIGIN, text)
+                self.assertIn(options["review_origin"], archive.read("skills/zynd-card/SKILL.md").decode())
+
+    def test_unsafe_test_targets_rejected_before_output(self):
+        for target in ("http://localhost/mcp", "https://user:pass@example.com/mcp",
+                       "https://example.com/mcp?token=secret", "https://example.com/mcp#frag",
+                       "https://example.com/other"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "invalid.zip"
+                with self.assertRaisesRegex(ValueError, "MCP URL"):
+                    build(output, mcp_url=target)
+                self.assertFalse(output.exists())
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "review origin"):
+                build(Path(directory) / "invalid.zip", review_origin="https://example.com/path")
+            with self.assertRaisesRegex(ValueError, "test targets"):
+                build(Path(directory) / "invalid.zip", submission=True, mcp_url="https://test.example/mcp")
+
+    def test_hooks_and_extra_dependencies_rejected(self):
+        with self.fixture() as root:
+            path = root / "plugin.json"
+            data = json.loads(path.read_text())
+            data["extensions"]["com.openai"]["hooks"] = "./hooks.json"
+            path.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, "lifecycle hook"):
+                validate(root)
+        with self.fixture() as root:
+            path = root / "skills/zynd-memory/agents/openai.yaml"
+            path.write_text(path.read_text() + '    - type: "mcp"\n      value: "other"\n')
+            with self.assertRaisesRegex(ValueError, "MCP dependency"):
+                validate(root)
+
+    def test_submission_still_blocked_with_listing_urls(self):
+        with self.fixture() as root:
+            path = root / "plugin.json"
+            data = json.loads(path.read_text())
+            extension = data["extensions"]["com.openai"]
+            for key in ("supportURL", "privacyPolicyURL", "termsOfServiceURL"):
+                extension["interface"][key] = "https://zynd.ai/verified-example"
+            extension["review"]["demo_recording_url"] = "https://zynd.ai/example-recording"
+            extension["publication"]["countries"] = ["US"]
+            path.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, "external reviewer account"):
+                validate(root, submission=True)
+
+    def test_official_schemas_validate_projection_independently(self):
+        from build import validate_official_schemas
+
+        try:
+            import jsonschema
+        except ImportError:
+            self.skipTest("optional jsonschema dependency not installed")
+        # Synthetic strict schemas verify the validator invokes the library and
+        # removes only the documented OAuth extension from the MCP projection.
+        schema = {"type": "object", "properties": {"mcpServers": {"type": "object",
+                  "properties": {"zynd": {"type": "object", "properties": {
+                      "type": {"const": "streamable-http"}, "url": {"const": MCP_URL}},
+                      "additionalProperties": False}}}}}
+        import io
+        responses = [io.BytesIO(b'{"type":"object","required":["name","version"]}'),
+                     io.BytesIO(json.dumps(schema).encode())]
+        with patch("build.urlopen", side_effect=responses) as fetch:
+            validate_official_schemas()
+            self.assertEqual(fetch.call_count, 2)
 
     def test_submission_needs_real_metadata(self):
         with self.assertRaisesRegex(ValueError, "supportURL"):
@@ -42,11 +148,13 @@ class PackageTests(unittest.TestCase):
                 validate(root)
 
     def test_unavailable_tool_rejected(self):
-        with self.fixture() as root:
-            path = root / "skills/zynd-context/SKILL.md"
-            path.write_text(path.read_text() + "\nCall `find_people` for everyone.\n")
-            with self.assertRaisesRegex(ValueError, "unavailable tool"):
-                validate(root)
+        for tool in ("find_people", "get_my_context", "report_user_info", "approve_fact",
+                     "unknown_future_tool"):
+            with self.subTest(tool=tool), self.fixture() as root:
+                path = root / "skills/zynd-context/SKILL.md"
+                path.write_text(path.read_text() + f"\nCall `{tool}`.\n")
+                with self.assertRaisesRegex(ValueError, "unavailable tool"):
+                    validate(root)
 
     def test_unexpected_file_rejected(self):
         with self.fixture() as root:

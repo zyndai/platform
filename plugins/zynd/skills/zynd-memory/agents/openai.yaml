@@ -2,6 +2,6 @@ dependencies:
   tools:
     - type: "mcp"
       value: "zynd"
-      description: "Access the connected ZYND memory tools"
+      description: "Propose one exact private fact for signed-in Zynd web review; MCP cannot save it"
       transport: "streamable_http"
       url: "https://api.zynd.ai/mcp"

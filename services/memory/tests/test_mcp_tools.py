@@ -31,6 +31,7 @@ _EXPECTED_TOOLS = {
     "search_linkedin_profiles", "find_linkedin_people_for_me",
     "publish_page", "list_my_pages", "disconnect",
     "list_pending_facts", "approve_fact", "dismiss_fact", "set_looking_for", "list_intros",
+    "recall_memories", "propose_memory", "get_proposal_status", "propose_card_fact", "get_public_card",
 }
 
 
@@ -43,7 +44,7 @@ def test_consolidated_tools_registered():
 
 def test_tool_count_includes_cards_owner_and_discovery():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert len(names) == 17
+    assert len(names) == 22
 
 
 @pytest.mark.parametrize("owner_enabled", [False, True])

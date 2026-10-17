@@ -174,7 +174,7 @@ async def test_legacy_transport_excludes_unregistered_tools():
     finally:
         auth_context_var.reset(reset)
     names = {tool.name for tool in tools}
-    assert len(names) == 17
+    assert len(names) == 22  # Five consent-safe plugin tools; existing legacy tools remain.
     assert {"export_my_context", "publish_page", "find_people"} <= names
     assert names.isdisjoint({
         "remember", "get_my_card", "get_my_socials", "read_my_brief",

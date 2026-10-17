@@ -1,0 +1,15 @@
+.page { min-height: 100vh; padding: 64px 20px; background: #f7f7f4; color: #0b0b0b; font-family: var(--zc-sans), system-ui, sans-serif; }
+.panel { max-width: 680px; margin: 0 auto; background: #fff; border: 1px solid #deded8; border-radius: 20px; padding: clamp(20px, 5vw, 40px); }
+.panel h1 { font-size: clamp(28px, 5vw, 38px); letter-spacing: -.04em; line-height: 1.15; margin: 12px 0 24px; }
+.panel h2 { font-size: 18px; margin: 24px 0 12px; }
+.panel p { line-height: 1.6; }
+.eyebrow { font-size: 11px; letter-spacing: .12em; color: #6e6e68; font-weight: 600; }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid #deded8; border-radius: 12px; padding: 16px; background: #f7f7f4; line-height: 1.65; margin-bottom: 24px; }
+.panel button, .primary { display: inline-block; padding: 12px 16px; border: 1px solid #deded8; border-radius: 10px; color: #0b0b0b; background: #fff; font: inherit; font-size: 14px; cursor: pointer; text-decoration: none; }
+.panel .primary { background: #6356cf; color: #fff; border-color: #6356cf; font-weight: 600; }
+.panel button:disabled { opacity: .5; cursor: default; }
+.panel button:focus-visible, .panel a:focus-visible { outline: 3px solid #7b72e9; outline-offset: 3px; }
+.actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 20px; }
+.expiry { font-size: 12px; color: #6e6e68; }
+.error { color: #aa3218; border-left: 3px solid #aa3218; padding-left: 12px; }
+.confirmation { border-top: 1px solid #deded8; margin-top: 24px; }

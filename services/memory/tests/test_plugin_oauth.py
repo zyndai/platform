@@ -12,7 +12,7 @@ from mcp.shared.exceptions import MCPError
 
 from app import oauth
 from app.config import settings
-from app.services.mcp_scopes import PLUGIN_SCOPES, MEMORY_TOOLS, CARDS_READ_TOOLS, CARDS_APPROVE_TOOLS
+from app.services.mcp_scopes import PLUGIN_SCOPES, PLUGIN_TOOLS
 from test_oauth_grants import grants, request, response_data, exchange, refresh, CHALLENGE, RESOURCE
 
 CLIENT = "zynd-chatgpt-plugin"
@@ -24,6 +24,7 @@ SCOPES = " ".join(PLUGIN_SCOPES)
 def configured(monkeypatch):
     monkeypatch.setattr(settings, "plugin_oauth_client_id", CLIENT)
     monkeypatch.setattr(settings, "plugin_oauth_redirect_uris", CALLBACK)
+    monkeypatch.setattr(settings, "feature_plugin_consent", True)
 
 
 async def authorize(**changes):
@@ -66,6 +67,7 @@ async def test_scope_bound_pair_refresh_and_revocation(grants):
         assert result["scope"] == SCOPES
         claims = jwt.decode(result["access_token"], settings.jwt_secret, algorithms=["HS256"], audience=RESOURCE)
         assert claims["scp"] == list(PLUGIN_SCOPES)
+        assert claims["cid"] == CLIENT
         assert pool.connections[claims["jti"]]["scopes"] == list(PLUGIN_SCOPES)
     with pytest.raises(HTTPException):
         await refresh(redis, original["refresh_token"], client_id=CLIENT)
@@ -112,12 +114,11 @@ async def test_plugin_initialization_overrides_automatic_context_policy():
     from app.services.mcp_gate import ScopeGate
     result = SimpleNamespace(instructions="call get_my_context at conversation start")
     with patch("app.services.mcp_gate.get_access_token", return_value=AccessToken(
-            token="test", client_id="owner", scopes=list(PLUGIN_SCOPES))):
+            token="test", client_id="owner", scopes=list(PLUGIN_SCOPES), claims={"oauth_client_id": CLIENT})):
         updated = await ScopeGate().on_initialize(None, AsyncMock(return_value=result))
-    assert "only after" in updated.instructions
     assert "never automatically" in updated.instructions
     with patch("app.services.mcp_gate.get_access_token", return_value=AccessToken(
-            token="test", client_id="owner", scopes=list(PLUGIN_SCOPES))):
+            token="test", client_id="owner", scopes=list(PLUGIN_SCOPES), claims={"oauth_client_id": CLIENT})):
         modern = await ScopeGate().on_discover(None, AsyncMock(return_value={"instructions": "legacy"}))
     assert "never automatically" in modern["instructions"]
     with patch("app.services.mcp_gate.get_access_token", return_value=AccessToken(
@@ -158,7 +159,8 @@ async def test_plugin_revoke_blocks_access_and_refresh(grants):
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
 async def test_plugin_transport_filters_calls_and_requires_fact_confirmation(mode):
     from app.mcp_http import mcp
-    reset = auth_context_var.set(AuthenticatedUser(AccessToken(token="test", client_id="owner", scopes=list(PLUGIN_SCOPES))))
+    reset = auth_context_var.set(AuthenticatedUser(AccessToken(
+        token="test", client_id="owner", scopes=list(PLUGIN_SCOPES), claims={"oauth_client_id": CLIENT})))
     try:
         with patch("app.mcp_owner.approve", AsyncMock()) as approve:
             async with Client(mcp, mode=mode) as client:
@@ -169,11 +171,11 @@ async def test_plugin_transport_filters_calls_and_requires_fact_confirmation(mod
                 assert not await client.list_resources()
                 with pytest.raises(MCPError):
                     await client.read_resource("skill://zynd-context/SKILL.md")
-                assert {t.name for t in tools} == MEMORY_TOOLS | CARDS_READ_TOOLS | CARDS_APPROVE_TOOLS
+                assert {t.name for t in tools} == set(PLUGIN_TOOLS)
                 with pytest.raises(MCPError):
                     await client.call_tool("publish_page", {"content": "private"})
-                unconfirmed = await client.call_tool("approve_fact", {"predicate": "has_skill", "object": "Rust"})
-                assert unconfirmed.data["error"] == "confirmation_required"
+                with pytest.raises(MCPError):
+                    await client.call_tool("approve_fact", {"predicate": "has_skill", "object": "Rust", "confirm": True})
                 approve.assert_not_awaited()
     finally:
         auth_context_var.reset(reset)

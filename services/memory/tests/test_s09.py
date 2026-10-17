@@ -173,8 +173,8 @@ async def test_legacy_transport_excludes_unregistered_tools():
     finally:
         auth_context_var.reset(reset)
     names = {tool.name for tool in tools}
-    assert len(names) == 22  # Five consent-safe plugin tools; existing legacy tools remain.
-    assert {"export_my_context", "publish_page", "find_people"} <= names
+    assert len(names) == 30  # Cards-native network tools plus the consent-safe plugin tools.
+    assert {"export_my_context", "publish_page", "find_people", "request_card_connection", "create_card_group"} <= names
     assert names.isdisjoint({
         "remember", "get_my_card", "get_my_socials", "read_my_brief",
         "get_my_system_prompt", "get_card_status", "get_card_activity",

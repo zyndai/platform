@@ -134,6 +134,13 @@
       "when": 1792145224529,
       "tag": "0018_named_visitor_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792232665725,
+      "tag": "0019_cards_network",
+      "breakpoints": true
     }
   ]
 }

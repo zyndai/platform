@@ -100,7 +100,7 @@ async def test_agent_send_marks_pending_intro_as_connection_request(monkeypatch)
 
     result = await persona.agent_channel_send(
         "sender-user",
-        persona.AgentChannelSend(thread_id="thread-1", content="Hello from the intro flow", connection_request=True),
+        persona.AgentChannelSend(thread_id="thread-1", content="Hello from the intro flow"),
     )
 
     assert result["delivery"]["delivered"] is True
@@ -109,32 +109,6 @@ async def test_agent_send_marks_pending_intro_as_connection_request(monkeypatch)
     assert captured["data"]["kind"] == persona.CONNECTION_REQUEST_DATA_KIND
     assert captured["data"]["sender_agent_id"] == "zns:sender"
     assert captured["data"]["text"] == "Hello from the intro flow"
-
-
-@pytest.mark.asyncio
-async def test_agent_send_rejects_pending_thread_without_handshake_flag(monkeypatch):
-    from api import persona
-    from fastapi import HTTPException
-
-    thread = {
-        "id": "thread-1",
-        "initiator_id": "zns:sender",
-        "receiver_id": "zns:receiver",
-        "status": "pending",
-    }
-    monkeypatch.setattr(persona, "_supabase", lambda: _FakeSupabase(thread))
-    monkeypatch.setattr(
-        persona,
-        "get_persona_status",
-        lambda _user_id: {"deployed": True, "agent_id": "zns:sender", "name": "Sender Persona"},
-    )
-
-    with pytest.raises(HTTPException) as error:
-        await persona.agent_channel_send(
-            "sender-user",
-            persona.AgentChannelSend(thread_id="thread-1", content="This is not a handshake"),
-        )
-    assert error.value.status_code == 409
 
 
 @pytest.mark.asyncio

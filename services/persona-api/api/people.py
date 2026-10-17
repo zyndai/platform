@@ -142,7 +142,7 @@ async def create_people_introduction(
 
     send_result = await agent_channel_send(
         user_id,
-        AgentChannelSend(thread_id=thread_id, content=message, connection_request=True),
+        AgentChannelSend(thread_id=thread_id, content=message),
     )
 
     return {

@@ -30,14 +30,10 @@ _EXPECTED_TOOLS = {
     "find_similar_users", "find_people", "confirm_fact_tool", "forget_fact_tool",
     "search_linkedin_profiles", "find_linkedin_people_for_me",
     "publish_page", "list_my_pages", "disconnect",
-    "search_zynd_network", "search_zynd_personas", "get_persona_profile",
-    "list_my_connections", "request_connection", "check_connection_status",
-    "message_zynd_agent", "call_zynd_agent", "read_agent_channel",
-    "connect_with", "my_connections", "send_persona_message",
-    "request_card_intro", "list_card_intro_requests",
-    "create_group", "list_groups", "invite_to_group", "list_group_invitations",
-    "list_incoming_group_invitations", "respond_to_group_invitation",
-    "list_group_members", "read_group_messages", "send_group_message",
+    "list_card_connections", "request_card_connection", "respond_card_connection",
+    "read_card_dm", "send_card_dm", "list_card_groups", "create_card_group",
+    "find_card_group_people", "invite_card_group_member", "list_card_group_invitations",
+    "respond_card_group_invitation", "read_card_group_messages", "send_card_group_message",
     "list_pending_facts", "approve_fact", "dismiss_fact", "set_looking_for", "list_intros",
     "recall_memories", "propose_memory", "get_proposal_status", "propose_card_fact", "get_public_card",
 }
@@ -52,7 +48,7 @@ def test_consolidated_tools_registered():
 
 def test_tool_count_includes_cards_owner_and_discovery():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert len(names) == 22
+    assert len(names) == 30
 
 
 @pytest.mark.parametrize("owner_enabled", [False, True])

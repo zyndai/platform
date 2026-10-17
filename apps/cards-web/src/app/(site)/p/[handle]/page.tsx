@@ -35,8 +35,7 @@ import { HeroAskPanel } from "./hero-agent-bar";
 import { ProjectsCard } from "./projects-card";
 import { MemoryCard } from "./memory-card";
 import { ClaimBanner } from "./claim-banner";
-import { RequestIntro } from "@/components/intros/RequestIntro";
-import { introsEnabled } from "@/lib/intros";
+import { RequestConnection } from "@/components/network/RequestConnection";
 import { memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
 
 interface PageProps {
@@ -788,7 +787,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             <ClaimBanner handle={card.handle ?? handle} name={identity.name} />
           )}
 
-          {introsEnabled && claimed && !isOwner && <RequestIntro handle={card.handle ?? handle} />}
+          {claimed && !isOwner && <RequestConnection handle={card.handle ?? handle} />}
           {/* ── HEADER ── */}
           <header className="pf-header flex justify-between items-center pb-5">
             <div className="pf-mono text-[0.75rem] text-slate-500">

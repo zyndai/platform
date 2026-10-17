@@ -4,11 +4,10 @@ from uuid import UUID
 from typing import Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict
 
 import config
 from services.digest import clear_suggested_posts, run_digest
-from services import intros
 
 router = APIRouter()
 
@@ -21,46 +20,6 @@ class OwnerIntrosRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     zynd_uid: UUID
     issuer: str
-
-
-class McpIntroRequest(BaseModel):
-    """Identity-bound request from the authenticated ZYND MCP service."""
-
-    model_config = ConfigDict(extra="forbid")
-    handle: str = Field(min_length=1, max_length=128)
-    requester_uid: UUID
-    why: str = Field(min_length=10, max_length=2000)
-    asks: list[Literal["message", "meeting"]] = Field(min_length=1, max_length=2)
-    idempotency_key: UUID
-
-    @field_validator("why")
-    @classmethod
-    def reason(cls, value: str) -> str:
-        value = value.strip()
-        if len(value) < 10:
-            raise ValueError("Explain why you want to connect")
-        return value
-
-    @field_validator("asks")
-    @classmethod
-    def unique_asks(cls, value: list[str]) -> list[str]:
-        return sorted(set(value))
-
-
-class McpIntroList(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    zynd_uid: UUID
-    issuer: str
-    outgoing: bool = False
-
-
-def _require_memory_mcp(authorization: str | None) -> None:
-    if not config.FEATURE_S12_MCP_ACTIONS:
-        raise HTTPException(404, "MCP introductions are not enabled")
-    secret = config.MEMORY_SERVICE_TOKEN
-    supplied = (authorization or "").removeprefix("Bearer ").strip()
-    if not secret or not hmac.compare_digest(supplied.encode(), secret.encode()):
-        raise HTTPException(401, "Unauthorized")
 
 
 @router.post("/owner-intros")
@@ -76,63 +35,6 @@ async def service_owner_intros(body: OwnerIntrosRequest, authorization: str | No
     await intros.memory_identity(str(body.zynd_uid))
     result = await intros.persona("/users/" + str(body.zynd_uid))
     intros.require_scope(result["intros"],str(body.zynd_uid))
-    await intros.sync(result["intros"])
-    return {"intros": [intros.public_record(row) for row in result["intros"]]}
-
-
-@router.post("/mcp-intro")
-async def service_mcp_intro(
-    body: McpIntroRequest,
-    authorization: str | None = Header(default=None),
-):
-    """Submit a verified-card intro on behalf of one authenticated MCP user.
-
-    The memory service supplies the canonical shared-account UUID after it has
-    authenticated the MCP token. Cards still performs the card eligibility,
-    active-Persona, and Memory identity checks before asking Persona to create
-    the atomic request.
-    """
-    _require_memory_mcp(authorization)
-    intros.enabled()
-    await intros.eligibility(body.handle)
-    row = await asyncio.to_thread(intros.card_row, body.handle)
-    if str(body.requester_uid) == row["owner_user_id"]:
-        raise HTTPException(422, "You cannot request an intro to yourself")
-    await intros.memory_identity(str(body.requester_uid))
-    result = await intros.persona(
-        "",
-        "POST",
-        {
-            "card_id": row["id"],
-            "handle": row["handle"],
-            "owner_uid": row["owner_user_id"],
-            "requester_uid": str(body.requester_uid),
-            "why": body.why,
-            "asks": body.asks,
-            "idempotency_key": str(body.idempotency_key),
-        },
-    )
-    intros.require_scope([result], str(body.requester_uid), outgoing=True)
-    if result.get("owner_uid") != row["owner_user_id"] or result.get("card_id") != row["id"]:
-        raise HTTPException(503, "Could not verify intro target")
-    await intros.sync([result])
-    return intros.public_record(result)
-
-
-@router.post("/mcp-intros")
-async def service_mcp_intros(
-    body: McpIntroList,
-    authorization: str | None = Header(default=None),
-):
-    """Read MCP user's sent or received verified-card intro requests."""
-    _require_memory_mcp(authorization)
-    intros.enabled()
-    if body.issuer != config.AAFO_ISSUER:
-        raise HTTPException(403, "Shared identity issuer does not match")
-    await intros.memory_identity(str(body.zynd_uid))
-    query = "?outgoing=true" if body.outgoing else ""
-    result = await intros.persona("/users/" + str(body.zynd_uid) + query)
-    intros.require_scope(result["intros"], str(body.zynd_uid), body.outgoing)
     await intros.sync(result["intros"])
     return {"intros": [intros.public_record(row) for row in result["intros"]]}
 

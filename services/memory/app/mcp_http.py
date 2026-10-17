@@ -42,10 +42,8 @@ from app.services.self_context import load_self_context, normalize_profile, read
 from app.services.mcp_scopes import PLUGIN_SCOPES
 
 # ── Agent-persona ported MCP tools ─────────────────────────────────────────────
-from app.tools import scheduling as scheduling_tools
 from app.tools import brief as brief_tools
-from app.tools import groups as group_tools
-from app.tools import zynd_network as zynd_network_tools
+from app.tools import cards_network as cards_network_tools
 from app.tools import zynd_services as zynd_services_tools
 
 # Process-lifetime pools, independent of the MCP session lifespan (which cycles).
@@ -76,8 +74,8 @@ WRITE - exactly one durable-fact tool: use report_user_info with typed fields at
 
 CORRECT: confirm_fact_tool and forget_fact_tool use the exact predicate and object from get_my_context.facts; never claim success on a false result.
 EXPORT: export_my_context only for an explicit backup, download, or export request.
-PEOPLE / NETWORK: find_people searches findable Zynd users, claimed and unclaimed Cards, and QuickEnrich prospects. Use search_zynd_network for personas/services/agents. A people:message token can request a verified-card intro, create/list Persona Groups, invite people (invitees must accept), and message accepted Persona connections. Never claim a request, invitation, or message succeeded unless the tool says so.
-CARD OWNER: list_pending_facts, approve_fact, dismiss_fact, set_looking_for, and list_intros when granted by the token. Change headlines in the card editor. Verified-card intro acceptance remains an owner decision; MCP request_card_intro only submits a request.
+PEOPLE / CARDS NETWORK: find_people searches claimed and unclaimed Cards. A people:message token can send and decide Cards-native connection requests, DM accepted Cards connections, create groups, invite connected Cards (invitees must accept), and message groups. Never claim a request, invitation, or message succeeded unless the tool says so.
+CARD OWNER: list_pending_facts, approve_fact, dismiss_fact, set_looking_for, and list_intros when granted by the token. Change headlines in the card editor.
 
 Use only tools visible in the client's actual tool list; export and hosted-page tools retain their existing legacy user scope requirement. Do not search for unavailable tools.
 Facts remain private until the user approves them on their card; say so when saving. Only card is public approved context; facts, profile, and brief are private. Ask before saving sensitive topics. Never invent tool results or claim saves, corrections, messages, or bookings succeeded unless their result says so; explain failures briefly.
@@ -776,13 +774,8 @@ async def disconnect(uid: str = Depends(_uid)) -> dict:
     return {"status": "signed_out", "note": "Reconnect ZYND to sign back in."}
 
 
-# ---- persona network: connect / message / meet (gated by persona_enabled) ----
-# Persona wrappers below are registered only for the authenticated
-# people:message scope; they are not part of the public Cards MCP.
-
 async def _social(op, uid: str, *args) -> dict:
-    """Run a social/persona op, turning the gate + identity + network errors into a
-    friendly result instead of a tool exception. uid is injected by the tool."""
+    """Legacy social-link helper retained for non-MCP Python callers."""
     from app.services.social import SocialDisabled
     from app.services.persona import PersonaError
     try:
@@ -796,209 +789,98 @@ async def _social(op, uid: str, *args) -> dict:
 
 async def set_social_links(linkedin: str = "", instagram: str = "", x: str = "", github: str = "",
                            uid: str = Depends(_uid)) -> dict:
-    """Save or update public social links: LinkedIn, Instagram, X/Twitter, GitHub.
-    Use when the user asks to save, update, or add their social profile links."""
     from app.services import social
     return await _social(social.set_social, uid, {"linkedin": linkedin, "instagram": instagram, "twitter": x, "github": github})
 
 
+# ── Cards-native Network Tools ───────────────────────────────────────────────
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+async def list_card_connections(uid: str = Depends(_uid)) -> dict:
+    """List Cards-native pending and accepted connections."""
+    return await cards_network_tools.connections(await _get_pool(), uid)
+
+
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def connect_with(user_id: str, message: str = "Hi — we matched on ZYND, would love to connect.",
+async def request_card_connection(target_handle: str, message: str = "",
+                                  uid: str = Depends(_uid)) -> dict:
+    """Send a connection request to a claimed, published Card by handle."""
+    return await cards_network_tools.request_connection(await _get_pool(), uid, target_handle, message)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+async def respond_card_connection(connection_id: str, action: str,
+                                  uid: str = Depends(_uid)) -> dict:
+    """Accept, decline, block, or revoke a Cards-native connection."""
+    return await cards_network_tools.respond_connection(await _get_pool(), uid, connection_id, action)
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+async def read_card_dm(connection_id: str, limit: int = 100,
                        uid: str = Depends(_uid)) -> dict:
-    """Send a connection request to a matched person by their user_id from
-    find_similar_users or find_people. If the user hasn't provided a message,
-    draft a short friendly one and ask for approval unless the intent is clear.
-    Routed through the persona network (works even if the target is offline)."""
-    from app.services import social
-    return await _social(social.connect, uid, user_id, message)
-
-
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def send_persona_message(thread_id: str, content: str, uid: str = Depends(_uid)) -> dict:
-    """Send a message to an existing connection. Requires thread_id from
-    my_connections or connect_with. Ask for missing message content if needed."""
-    from app.services import social
-    return await _social(social.send_message, uid, thread_id, content)
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def my_connections(uid: str = Depends(_uid)) -> dict:
-    """List the user's ZYND connections on the persona network. Use when the
-    user asks who they are connected with or to inspect connection status."""
-    from app.services import social
-    return await _social(social.connections, uid)
-
-
-async def book_meeting(thread_id: str, title: str, start_time: str, end_time: str,
-                       location: str = "", description: str = "", uid: str = Depends(_uid)) -> dict:
-    """Propose a meeting with a connection (thread_id from my_connections).
-    Times are ISO-8601. Accepting auto-books on both Google Calendars via persona.
-    Ask for missing details: title, start time, end time, timezone, location."""
-    from app.services import social
-    payload = {"title": title, "start_time": start_time, "end_time": end_time,
-               "location": location, "description": description}
-    return await _social(social.book_meeting, uid, thread_id, payload)
-
-
-# ── Scheduling Tools ───────────────────────────────────────────────────────────
-
-async def propose_meeting(thread_id: str, title: str, start_time: str, end_time: str,
-                           location: str = "", description: str = "", suid: str = Depends(_suid)) -> dict:
-    return await scheduling_tools.propose_meeting(suid, thread_id, title, start_time, end_time, location, description)
-
-
-async def respond_to_meeting(task_id: str, action: str, title: str = "",
-                              start_time: str = "", end_time: str = "",
-                              location: str = "", description: str = "",
-                              suid: str = Depends(_suid)) -> dict:
-    return await scheduling_tools.respond_to_meeting(suid, task_id, action, title, start_time, end_time, location, description)
-
-
-async def list_pending_meetings(suid: str = Depends(_suid)) -> dict:
-    return await scheduling_tools.list_pending_meetings(suid)
-
-
-# ── Zynd Network Tools ─────────────────────────────────────────────────────────
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
-async def search_zynd_network(query: str, top_k: int = 8, kind: str = "any",
-                               uid: str = Depends(_uid)) -> dict:
-    return await zynd_network_tools.search_zynd_network(query, top_k, kind, uid)
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
-async def search_zynd_personas(query: str, top_k: int = 5, uid: str = Depends(_uid)) -> dict:
-    return await zynd_network_tools.search_zynd_personas(query, top_k, uid)
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
-async def get_persona_profile(agent_id: str) -> dict:
-    return await zynd_network_tools.get_persona_profile(agent_id)
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_my_connections(suid: str = Depends(_suid)) -> dict:
-    return await zynd_network_tools.list_my_connections(suid)
-
-
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def request_connection(target_agent_id: str, target_name: str = "Network Agent",
-                              suid: str = Depends(_suid)) -> dict:
-    return await zynd_network_tools.request_connection(suid, target_agent_id, target_name)
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def check_connection_status(target_agent_id: str, suid: str = Depends(_suid)) -> dict:
-    return await zynd_network_tools.check_connection_status(suid, target_agent_id)
-
-
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def message_zynd_agent(target_webhook_url: str, target_agent_id: str, message: str,
-                               suid: str = Depends(_suid)) -> dict:
-    return await zynd_network_tools.message_zynd_agent(suid, target_webhook_url, target_agent_id, message)
-
-
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def call_zynd_agent(entity_id: str, text: str = "", data: dict | None = None,
-                           uid: str = Depends(_uid), conversation_id: str = "") -> dict:
-    return await zynd_network_tools.call_zynd_agent(entity_id, text, data, uid, conversation_id)
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def read_agent_channel(thread_id: str, limit: int = 20, suid: str = Depends(_suid)) -> dict:
-    return await zynd_network_tools.read_agent_channel(suid, thread_id, limit)
-
-
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
-async def request_card_intro(
-    handle: str,
-    why: str,
-    asks: list[str] | None = None,
-    idempotency_key: str = "",
-    uid: str = Depends(_uid),
-) -> dict:
-    """Ask to connect with the owner of a claimed, published, linked Zynd Card.
-
-    The card owner still decides whether to accept. Use a UUID idempotency_key
-    when retrying a request after a network failure; the same key is safe to
-    submit again.
-    """
-    from app.tools.card_intros import request_intro
-    return await request_intro(await _get_pool(), uid, handle, why, asks, idempotency_key or None)
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_card_intro_requests(
-    outgoing: bool = False,
-    uid: str = Depends(_uid),
-) -> dict:
-    """List the authenticated user's received or sent verified-card requests."""
-    from app.tools.card_intros import list_intros
-    return await list_intros(await _get_pool(), uid, outgoing)
-
-
-# ── Persona Group Tools ───────────────────────────────────────────────────────
-
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
-async def create_group(name: str, description: str = "", visibility: str = "private",
-                       suid: str = Depends(_suid)) -> dict:
-    """Create a Persona Group. The authenticated user becomes its owner."""
-    return await group_tools.create_group(suid, name, description, visibility)
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_groups(suid: str = Depends(_suid)) -> dict:
-    """List Persona Groups the authenticated user belongs to."""
-    return await group_tools.list_groups(suid)
+    """Read messages on an accepted Cards connection."""
+    return await cards_network_tools.read_dm(await _get_pool(), uid, connection_id, limit)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
-async def invite_to_group(group_id: str, invitee_user_id: str, role: str = "member",
-                          message: str = "", suid: str = Depends(_suid)) -> dict:
-    """Invite a ZYND user to a group; they must accept before becoming a member."""
-    return await group_tools.invite_to_group(suid, group_id, invitee_user_id, role, message)
+async def send_card_dm(connection_id: str, content: str,
+                       uid: str = Depends(_uid)) -> dict:
+    """Send a DM on an accepted Cards connection."""
+    return await cards_network_tools.send_dm(await _get_pool(), uid, connection_id, content)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_group_invitations(group_id: str, suid: str = Depends(_suid)) -> dict:
-    """List pending invitations sent for one group."""
-    return await group_tools.list_group_invitations(suid, group_id)
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_incoming_group_invitations(suid: str = Depends(_suid)) -> dict:
-    """List group invitations awaiting the authenticated user's decision."""
-    return await group_tools.list_incoming_invitations(suid)
+async def list_card_groups(uid: str = Depends(_uid)) -> dict:
+    """List Cards-native groups the authenticated user belongs to."""
+    return await cards_network_tools.groups(await _get_pool(), uid)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
-async def respond_to_group_invitation(invitation_id: str, decision: str,
-                                      confirm: bool = False,
-                                      suid: str = Depends(_suid)) -> dict:
-    """Accept or decline a group invitation after explicit user confirmation."""
-    if decision not in {"accept", "decline"}:
-        return {"ok": False, "error": "decision must be accept or decline"}
-    return await group_tools.respond_to_invitation(suid, invitation_id, decision, confirm)
+async def create_card_group(name: str, description: str = "", visibility: str = "private",
+                            uid: str = Depends(_uid)) -> dict:
+    """Create a Cards-native group."""
+    return await cards_network_tools.create_group(await _get_pool(), uid, name, description, visibility)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def list_group_members(group_id: str, suid: str = Depends(_suid)) -> dict:
-    """List members of a group the authenticated user belongs to."""
-    return await group_tools.list_members(suid, group_id)
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def read_group_messages(group_id: str, limit: int = 100,
-                              suid: str = Depends(_suid)) -> dict:
-    """Read recent messages from a group the authenticated user belongs to."""
-    return await group_tools.read_messages(suid, group_id, limit)
+async def find_card_group_people(group_id: str, query: str = "",
+                                 uid: str = Depends(_uid)) -> dict:
+    """Find accepted Card connections eligible for a group invitation."""
+    return await cards_network_tools.group_people(await _get_pool(), uid, group_id, query)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
-async def send_group_message(group_id: str, content: str,
-                             suid: str = Depends(_suid)) -> dict:
-    """Post a message to a group the authenticated user belongs to."""
-    return await group_tools.send_message(suid, group_id, content)
+async def invite_card_group_member(group_id: str, target_handle: str, message: str = "",
+                                   uid: str = Depends(_uid)) -> dict:
+    """Invite a connected Card to a group; the invitee must accept."""
+    return await cards_network_tools.invite_group(await _get_pool(), uid, group_id, target_handle, message)
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+async def list_card_group_invitations(uid: str = Depends(_uid)) -> dict:
+    """List incoming Cards-native group invitations."""
+    return await cards_network_tools.incoming_invites(await _get_pool(), uid)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+async def respond_card_group_invitation(invitation_id: str, decision: str,
+                                        uid: str = Depends(_uid)) -> dict:
+    """Accept or decline a Cards-native group invitation."""
+    return await cards_network_tools.respond_invite(await _get_pool(), uid, invitation_id, decision)
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+async def read_card_group_messages(group_id: str, limit: int = 100,
+                                   uid: str = Depends(_uid)) -> dict:
+    """Read messages from a Cards-native group."""
+    return await cards_network_tools.group_messages(await _get_pool(), uid, group_id, limit)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+async def send_card_group_message(group_id: str, content: str,
+                                  uid: str = Depends(_uid)) -> dict:
+    """Post a message to a Cards-native group."""
+    return await cards_network_tools.send_group_message(await _get_pool(), uid, group_id, content)
 
 
 # ── Zynd Services Tools ────────────────────────────────────────────────────────

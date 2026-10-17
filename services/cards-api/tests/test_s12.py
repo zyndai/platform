@@ -83,69 +83,6 @@ def test_disabled_feature_never_calls_upstream(client, monkeypatch):
     upstream.assert_not_called()
 
 
-def test_mcp_intro_action_is_separately_disabled(client, monkeypatch):
-    monkeypatch.setattr(config, "FEATURE_S12_MCP_ACTIONS", False)
-    response = client.post(
-        "/internal/mcp-intro",
-        json={
-            "handle": "alice",
-            "requester_uid": REQUESTER,
-            "why": "I would like to compare API design notes.",
-            "asks": ["message"],
-            "idempotency_key": KEY,
-        },
-        headers={"Authorization": "Bearer memory-test"},
-    )
-    assert response.status_code == 404
-
-
-def test_mcp_intro_derives_identity_and_reuses_persona_workflow(client, monkeypatch):
-    monkeypatch.setattr(config, "FEATURE_S12_MCP_ACTIONS", True)
-    monkeypatch.setattr(config, "MEMORY_SERVICE_TOKEN", "memory-test")
-    monkeypatch.setattr(
-        service,
-        "eligibility",
-        AsyncMock(return_value={"available": True, "agent_id": "zns:alice"}),
-    )
-    monkeypatch.setattr(
-        service,
-        "card_row",
-        lambda _: {"id": "card-1", "handle": "alice", "owner_user_id": OWNER},
-    )
-    identity = AsyncMock()
-    monkeypatch.setattr(service, "memory_identity", identity)
-    result = {
-        "id": INTRO,
-        "card_id": "card-1",
-        "handle": "alice",
-        "requester_uid": REQUESTER,
-        "owner_uid": OWNER,
-        "status": "pending",
-        "thread_id": "thread-1",
-    }
-    upstream = AsyncMock(return_value=result)
-    monkeypatch.setattr(service, "persona", upstream)
-    sync = AsyncMock()
-    monkeypatch.setattr(service, "sync", sync)
-
-    response = client.post(
-        "/internal/mcp-intro",
-        json={
-            "handle": "alice",
-            "requester_uid": REQUESTER,
-            "why": "I would like to compare API design notes.",
-            "asks": ["message"],
-            "idempotency_key": KEY,
-        },
-        headers={"Authorization": "Bearer memory-test"},
-    )
-    assert response.status_code == 200
-    assert upstream.await_args.args[2]["requester_uid"] == REQUESTER
-    assert upstream.await_args.args[2]["owner_uid"] == OWNER
-    identity.assert_awaited_once_with(REQUESTER)
-    sync.assert_awaited_once()
-
-
 def test_spoofed_requester_fields_are_rejected(client):
     assert (
         client.post(

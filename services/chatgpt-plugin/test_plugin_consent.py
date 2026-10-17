@@ -8,9 +8,9 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-from app import plugin_review
+import plugin_review
 from app.config import settings
-from app.services import plugin_consent as consent
+import plugin_consent as consent
 
 OWNER = str(uuid.uuid4())
 OTHER = str(uuid.uuid4())

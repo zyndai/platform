@@ -6,8 +6,10 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.db import get_pool
-from app.services import plugin_consent
 from app.supabase_auth import supabase_identity
+
+from plugin_consent import ConsentError
+import plugin_consent
 
 router = APIRouter(prefix="/me/plugin/proposals", tags=["plugin-review"])
 
@@ -42,7 +44,7 @@ async def _owner(authorization: str) -> str:
 async def _run(awaitable):
     try:
         return await awaitable
-    except plugin_consent.ConsentError as exc:
+    except ConsentError as exc:
         raise HTTPException(exc.status_code, exc.detail) from exc
 
 

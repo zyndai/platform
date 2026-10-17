@@ -4,4 +4,4 @@ dependencies:
       value: "zynd"
       description: "Propose one exact private fact for signed-in Zynd web review; MCP cannot save it"
       transport: "streamable_http"
-      url: "https://api.zynd.ai/mcp"
+      url: "https://api.zynd.ai/chatgpt/mcp"

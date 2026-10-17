@@ -103,6 +103,7 @@ class Settings(BaseSettings):
     plugin_oauth_client_id: str = "zynd-chatgpt-plugin"
     plugin_oauth_redirect_uris: str = ""
     feature_plugin_consent: bool = False
+    plugin_mcp_public_base_url: str = "http://localhost:8091/chatgpt"
     # Second confidential client: the Hermes Deployer. It runs the same
     # authorize-code flow as ChatGPT but, at /oauth/token, receives a long-lived
     # personal token (mcp_token_ttl_seconds) so a deployed agent container can
@@ -232,6 +233,16 @@ class Settings(BaseSettings):
         the URL Claude/ChatGPT register and the audience connector tokens are
         bound to."""
         return f"{self.mcp_origin}/mcp"
+
+    @property
+    def plugin_mcp_origin(self) -> str:
+        parts = urlsplit(self.plugin_mcp_public_base_url)
+        return f"{parts.scheme}://{parts.netloc}"
+
+    @property
+    def plugin_resource_url(self) -> str:
+        path = urlsplit(self.plugin_mcp_public_base_url).path.rstrip("/")
+        return f"{self.plugin_mcp_origin}{path}/mcp"
 
     @model_validator(mode="after")
     def _refuse_default_secrets_in_production(self) -> "Settings":

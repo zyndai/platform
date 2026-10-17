@@ -8,7 +8,8 @@ has completed the real-client checks below against the updated server in an
 approved isolated environment. Do not use a production account for this check.
 
 Use the environment-specific Zynd memory MCP URL (`<Zynd MCP URL>`, ending in
-`/mcp`), not the separate public Cards MCP. No config below needs an access
+`/mcp`), not the separate public Cards MCP. The ChatGPT plugin uses
+`<origin>/chatgpt/mcp`, served by `services/chatgpt-plugin`, not this URL. No config below needs an access
 token, `Authorization` header, client secret, or token-exchange call. An
 existing Zynd account is required; general clients use the legacy `user` scope, which
 now exposes the 17 registered Cards, memory, discovery and hosted-page tools
@@ -21,7 +22,7 @@ refresh, or disconnect was exercised.
 
 ### Zynd Plugin Consent Draft (2026-10-16)
 
-`plugins/zynd` version `0.2.0`, display name **Zynd**, targets a separate
+`services/chatgpt-plugin/package` version `0.2.0`, display name **Zynd**, targets a separate
 reserved public OAuth client, `zynd-chatgpt-plugin`, with
 `memory:recall memory:propose cards:review`. These are anticipated server
 contracts, not evidence of deployed availability. None authorizes direct save
@@ -45,10 +46,10 @@ verified card visibility. Never claim card visibility from proposal success.
 Local package checks and draft packaging (from the repository root):
 
 ```bash
-python3 -m unittest discover -s plugins/zynd -p 'test_*.py'
-python3 plugins/zynd/build.py
-python3 plugins/zynd/build.py --output /tmp/zynd-draft.zip
-python3 plugins/zynd/build.py --output /tmp/zynd-isolated.zip \
+python3 -m unittest discover -s services/chatgpt-plugin/package -p 'test_*.py'
+python3 services/chatgpt-plugin/package/build.py
+python3 services/chatgpt-plugin/package/build.py --output /tmp/zynd-draft.zip
+python3 services/chatgpt-plugin/package/build.py --output /tmp/zynd-isolated.zip \
   --mcp-url https://memory.test.example/mcp \
   --review-origin https://cards.test.example
 ```
@@ -61,7 +62,7 @@ connect or test production. No credentials or review-account secrets belong in
 the package. The MCP URL must use `/mcp`; the review origin has no path.
 
 For independent current-schema checks, install `jsonschema` in a disposable
-environment and run `python3 plugins/zynd/build.py --official-schemas`. This
+environment and run `python3 services/chatgpt-plugin/package/build.py --official-schemas`. This
 fetches the official Agent Plugins 1.0.0 schemas and validates `plugin.json`
 and the portable MCP projection. As checked on 2026-10-16, the official MCP
 schema rejects server `extensions` (`additionalProperties: false`), while

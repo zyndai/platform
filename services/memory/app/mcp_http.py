@@ -39,7 +39,7 @@ from app.services.linkedin_search import find_linkedin_people, search_linkedin_p
 from app.services.matching import match_users, search_by_query
 from app.services.people_discovery import search_cards, search_quickenrich
 from app.services.self_context import load_self_context, normalize_profile, read_brief
-from app.services.mcp_scopes import PLUGIN_SCOPES
+
 
 # ── Agent-persona ported MCP tools ─────────────────────────────────────────────
 from app.tools import scheduling as scheduling_tools
@@ -153,7 +153,7 @@ class ZyndTokenVerifier(TokenVerifier):
         try:
             meta = verify_access_meta(
                 token,
-                allowed_audiences=["zynd", settings.mcp_resource_url],
+                allowed_audiences=["zynd", settings.mcp_resource_url, settings.plugin_resource_url],
                 allowed_issuers=[settings.jwt_issuer, settings.public_base_url.rstrip("/")],
             )
         except ValueError as exc:
@@ -179,10 +179,12 @@ class ZyndTokenVerifier(TokenVerifier):
                     if label == "ZYND ChatGPT plugin":
                         return None  # Old plugin grants require reconnection under reduced scopes.
                 await touch_client(pool, jti)
+            from plugin_mcp import PLUGIN_SCOPES
             scopes = meta.get("scopes") or ["user"]
             oauth_client_id = meta.get("oauth_client_id")
             if oauth_client_id == settings.plugin_oauth_client_id and (
                 not settings.feature_plugin_consent or set(scopes) != set(PLUGIN_SCOPES)
+                or meta.get("aud") != settings.plugin_resource_url
             ):
                 return None
             self._log.debug("accepted token: user=%s iss-scopes=%s", user_id, scopes)
@@ -243,7 +245,7 @@ auth = RemoteAuthProvider(
     token_verifier=ZyndTokenVerifier(required_scopes=[]),
     authorization_servers=[AnyHttpUrl(settings.public_base_url)],
     base_url=AnyHttpUrl(settings.mcp_origin),
-    scopes_supported=["user", "memory:write", "cards:read", "cards:approve", *PLUGIN_SCOPES],
+    scopes_supported=["user", "memory:write", "cards:read", "cards:approve"],
     resource_name="ZYND",
 )
 
@@ -265,61 +267,6 @@ from fastmcp.server.providers.skills import SkillsDirectoryProvider
 _SKILLS_ROOT = Path(__file__).resolve().parent.parent / "skills"
 if _SKILLS_ROOT.is_dir():
     mcp.add_provider(SkillsDirectoryProvider(roots=[_SKILLS_ROOT]))
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def recall_memories(query: str, limit: int = 5, uid: str = Depends(_uid)) -> dict:
-    """Recall relevant private ZYND facts only when the owner asks about them."""
-    query = query.strip()
-    if not query or len(query) > 500:
-        raise ValueError("query must contain 1 to 500 characters")
-    pool = await _get_pool()
-    from app.services.plugin_consent import recall_facts
-    if not settings.feature_plugin_consent:
-        raise PermissionError("ZYND plugin consent flow is unavailable")
-    facts = await recall_facts(pool, uid, query, max(1, min(limit, 10)))
-    return {"facts": facts, "private": True}
-
-
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
-async def propose_memory(text: str, uid: str = Depends(_uid),
-                         token: AccessToken = CurrentAccessToken()) -> dict:
-    """Draft one private fact for separate owner review on ZYND; this does not save it."""
-    from app.services.plugin_consent import create_proposal
-    if not settings.feature_plugin_consent:
-        raise PermissionError("ZYND plugin consent flow is unavailable")
-    return await create_proposal(await _get_pool(), await _get_arq(), uid, "save_memory", text,
-                                 source_connection_id=(token.claims or {}).get("jti"),
-                                 source_client_id=(token.claims or {}).get("oauth_client_id"))
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def get_proposal_status(proposal_id: str, uid: str = Depends(_uid)) -> dict:
-    """Read the status of your pending private or public fact proposal."""
-    from app.services.plugin_consent import get_status
-    if not settings.feature_plugin_consent:
-        raise PermissionError("ZYND plugin consent flow is unavailable")
-    return await get_status(await _get_pool(), await _get_arq(), uid, proposal_id)
-
-
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
-async def propose_card_fact(fact_id: str, version: int, uid: str = Depends(_uid),
-                            token: AccessToken = CurrentAccessToken()) -> dict:
-    """Queue one existing private card fact for exact-wording review; never publish it."""
-    from app.services.plugin_consent import create_card_proposal
-    if not settings.feature_plugin_consent:
-        raise PermissionError("ZYND plugin consent flow is unavailable")
-    return await create_card_proposal(await _get_pool(), await _get_arq(), uid, fact_id, version,
-                                      source_connection_id=(token.claims or {}).get("jti"),
-                                      source_client_id=(token.claims or {}).get("oauth_client_id"))
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def get_public_card(uid: str = Depends(_uid)) -> dict:
-    """Return only facts already approved for the public findability card."""
-    if not settings.feature_plugin_consent:
-        raise PermissionError("ZYND plugin consent flow is unavailable")
-    return {"facts": await get_card(await _get_pool(), uid)}
 
 
 def _clip(text: str, limit: int = _MAX_REPORT_CHARS) -> str:

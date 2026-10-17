@@ -41,7 +41,7 @@ class PackageTests(unittest.TestCase):
     def test_isolated_targets_are_reproducible_and_do_not_change_source(self):
         with self.fixture() as root, tempfile.TemporaryDirectory() as directory:
             original = {name: (root / name).read_bytes() for name in validate(root)}
-            options = dict(root=root, mcp_url="https://memory.test.example/mcp",
+            options = dict(root=root, mcp_url="https://memory.test.example/chatgpt/mcp",
                            review_origin="https://review.test.example")
             first = build(Path(directory) / "test.zip", **options)
             second = build(Path(directory) / "test-again.zip", **options)
@@ -60,9 +60,9 @@ class PackageTests(unittest.TestCase):
                 self.assertIn(options["review_origin"], archive.read("skills/zynd-card/SKILL.md").decode())
 
     def test_unsafe_test_targets_rejected_before_output(self):
-        for target in ("http://localhost/mcp", "https://user:pass@example.com/mcp",
-                       "https://example.com/mcp?token=secret", "https://example.com/mcp#frag",
-                       "https://example.com/other"):
+        for target in ("http://localhost/chatgpt/mcp", "https://user:pass@example.com/chatgpt/mcp",
+                       "https://example.com/chatgpt/mcp?token=secret", "https://example.com/chatgpt/mcp#frag",
+                       "https://example.com/mcp"):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / "invalid.zip"
                 with self.assertRaisesRegex(ValueError, "MCP URL"):
@@ -72,7 +72,7 @@ class PackageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "review origin"):
                 build(Path(directory) / "invalid.zip", review_origin="https://example.com/path")
             with self.assertRaisesRegex(ValueError, "test targets"):
-                build(Path(directory) / "invalid.zip", submission=True, mcp_url="https://test.example/mcp")
+                build(Path(directory) / "invalid.zip", submission=True, mcp_url="https://test.example/chatgpt/mcp")
 
     def test_hooks_and_extra_dependencies_rejected(self):
         with self.fixture() as root:

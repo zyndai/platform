@@ -12,10 +12,11 @@ from mcp.shared.exceptions import MCPError
 
 from app import oauth
 from app.config import settings
-from app.services.mcp_scopes import PLUGIN_SCOPES, PLUGIN_TOOLS
-from test_oauth_grants import grants, request, response_data, exchange, refresh, CHALLENGE, RESOURCE
+from plugin_mcp import PLUGIN_SCOPES, PLUGIN_TOOLS
+from test_oauth_grants import grants, request, response_data, exchange, refresh, CHALLENGE
 
 CLIENT = "zynd-chatgpt-plugin"
+RESOURCE = settings.plugin_resource_url
 CALLBACK = "https://chatgpt.com/connector_platform_oauth_redirect"
 SCOPES = " ".join(PLUGIN_SCOPES)
 
@@ -40,7 +41,7 @@ async def pair(redis):
     result = await oauth.complete(request(redis), oauth._CompleteRequest(
         req=signed, supabase_token="mock-session", decision="approve"))
     code = parse_qs(urlsplit(response_data(result)["redirect_url"]).query)["code"][0]
-    return response_data(await exchange(redis, code, client_id=CLIENT, redirect_uri=CALLBACK, scope=SCOPES))
+    return response_data(await exchange(redis, code, client_id=CLIENT, redirect_uri=CALLBACK, scope=SCOPES, resource=RESOURCE))
 
 
 @pytest.mark.parametrize("changes", [
@@ -111,17 +112,17 @@ async def test_plugin_requires_owner_tools_feature(monkeypatch):
 
 async def test_plugin_initialization_overrides_automatic_context_policy():
     from types import SimpleNamespace
-    from app.services.mcp_gate import ScopeGate
+    from server import PluginOnly as ScopeGate
     result = SimpleNamespace(instructions="call get_my_context at conversation start")
-    with patch("app.services.mcp_gate.get_access_token", return_value=AccessToken(
+    with patch("server.get_access_token", return_value=AccessToken(
             token="test", client_id="owner", scopes=list(PLUGIN_SCOPES), claims={"oauth_client_id": CLIENT})):
         updated = await ScopeGate().on_initialize(None, AsyncMock(return_value=result))
     assert "never automatically" in updated.instructions
-    with patch("app.services.mcp_gate.get_access_token", return_value=AccessToken(
+    with patch("server.get_access_token", return_value=AccessToken(
             token="test", client_id="owner", scopes=list(PLUGIN_SCOPES), claims={"oauth_client_id": CLIENT})):
         modern = await ScopeGate().on_discover(None, AsyncMock(return_value={"instructions": "legacy"}))
     assert "never automatically" in modern["instructions"]
-    with patch("app.services.mcp_gate.get_access_token", return_value=AccessToken(
+    with patch("server.get_access_token", return_value=AccessToken(
             token="test", client_id="owner", scopes=["user"])):
         original = SimpleNamespace(instructions="legacy instructions")
         assert (await ScopeGate().on_initialize(None, AsyncMock(return_value=original))).instructions == "legacy instructions"
@@ -158,7 +159,7 @@ async def test_plugin_revoke_blocks_access_and_refresh(grants):
 
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
 async def test_plugin_transport_filters_calls_and_requires_fact_confirmation(mode):
-    from app.mcp_http import mcp
+    from server import mcp
     reset = auth_context_var.set(AuthenticatedUser(AccessToken(
         token="test", client_id="owner", scopes=list(PLUGIN_SCOPES), claims={"oauth_client_id": CLIENT})))
     try:

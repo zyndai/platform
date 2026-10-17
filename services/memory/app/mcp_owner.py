@@ -28,15 +28,7 @@ def register(mcp, uid_dep) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
     async def list_pending_facts(uid: str = Depends(uid_dep)) -> dict:
         """Facts waiting for the owner to approve. Do not publish them yourself."""
-        from app.mcp_http import _get_arq, _get_pool
-        from fastmcp.server.dependencies import get_access_token
-        from app.config import settings
-        token = get_access_token()
-        if token and (token.claims or {}).get("oauth_client_id") == settings.plugin_oauth_client_id:
-            if not settings.feature_plugin_consent:
-                raise PermissionError("ZYND plugin consent flow is unavailable")
-            from app.services.plugin_consent import list_pending
-            return await list_pending(await _get_pool(), await _get_arq(), uid)
+        from app.mcp_http import _get_pool
         rows = await get_suggestions(await _get_pool(), uid)
         data = [
             {"predicate": r.get("predicate"), "object": r.get("object"), "group": r.get("group")}

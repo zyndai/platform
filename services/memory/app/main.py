@@ -21,7 +21,7 @@ from app.docs import router as docs_router
 from app.oauth import router as oauth_router
 from app.oauth import _well_known_router as oauth_well_known_router
 from app.oauth_ui import router as oauth_ui_router
-from app.plugin_review import router as plugin_review_router
+from plugin_review import router as plugin_review_router
 
 
 def _valid_service_token(token: str) -> bool:

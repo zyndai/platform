@@ -118,7 +118,7 @@ async def on_shutdown(ctx: dict) -> None:
 
 
 async def plugin_outbox_cron(ctx: dict) -> dict:
-    from app.services.plugin_consent import process_outbox
+    from plugin_consent import process_outbox
     processed = await process_outbox(get_pool())
     logger.info("plugin_outbox: processed=%d", processed)
     return {"processed": processed}

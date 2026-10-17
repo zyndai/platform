@@ -419,7 +419,6 @@ async def test_prm_advertises_user_scope():
     assert r.status_code == 200
     assert r.json()["scopes_supported"] == [
         "user", "memory:write", "cards:read", "cards:approve",
-        "memory:recall", "memory:propose", "cards:review",
     ]
 
 

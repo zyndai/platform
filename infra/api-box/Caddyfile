@@ -3,6 +3,9 @@
 # server's IP, and ports 80/443 open.
 api.zynd.ai {
 	# Remote MCP endpoint (streamable-HTTP) for Claude/Cursor/any MCP client.
+	handle /chatgpt/mcp* {
+		reverse_proxy chatgpt-plugin:8091
+	}
 	handle /mcp* {
 		reverse_proxy mcp:8090
 	}

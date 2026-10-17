@@ -4,8 +4,9 @@ S12 lets Bob ask to connect with Alice after finding her card. Alice decides
 whether to accept and whether to arrange a call. A request does not book a
 meeting or share private information automatically.
 
-This guide tests the **human-only implementation**. AI assistants may read
-their owner's intro inbox with permission, but cannot send or approve S12 intros.
+This guide tests the human request/decision flow. AI assistants may read their
+owner's intro inbox with permission; Cards-native networking is covered by the
+Cards network UI and authenticated Cards MCP tools.
 For setup and implementation details, see [S12 intros](S12_INTROS.md).
 
 ## Prepare the example
@@ -193,8 +194,7 @@ remain outside the intro grant.
 4. Try the same tool from an assistant without `cards:read`.
 
 **Expected:** Authorized reads show only that owner's data. The unscoped assistant
-cannot use the tool. Intro initiation through public MCP remains disabled, and
-the assistant is directed to human review rather than approving requests itself.
+cannot use the tool. Intro initiation remains a human Cards flow.
 
 ## Record results
 

@@ -108,7 +108,7 @@ export function McpConnectPanel({ tone = "light", onConnected }: { tone?: "light
     <div>
       <h3 style={{ font: `700 22px/1.15 ${DISPLAY}`, color: ink, margin: 0 }}>Connect an assistant</h3>
       <p style={{ font: `400 14px/1.55 ${SANS}`, color: muted, maxWidth: 500 }}>
-        Add the server URL in your client, then sign in and grant full access to your Zynd memory, card, and connected integrations in your browser. An existing Zynd account is required; each connection can be disconnected separately.
+         Add the server URL in your client, then sign in and grant the scopes you want in your browser. The authenticated Cards MCP can find Cards, manage connection requests, DM accepted connections, and create groups with invitation acceptance. An existing Zynd account is required; each assistant connection can be disconnected separately.
       </p>
     </div>
     <label style={{ display: "flex", flexDirection: "column", gap: 6, font: `500 13px ${SANS}`, color: ink }}>

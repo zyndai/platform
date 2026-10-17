@@ -31,9 +31,19 @@ CARDS_APPROVE_TOOLS = frozenset({
 })
 PEOPLE_TOOLS = frozenset({
     "find_people",
-    "connect_with",
-    "send_persona_message",
-    "message_zynd_agent",
+    "list_card_connections",
+    "request_card_connection",
+    "respond_card_connection",
+    "read_card_dm",
+    "send_card_dm",
+    "list_card_groups",
+    "create_card_group",
+    "find_card_group_people",
+    "invite_card_group_member",
+    "list_card_group_invitations",
+    "respond_card_group_invitation",
+    "read_card_group_messages",
+    "send_card_group_message",
 })
 
 

@@ -134,6 +134,34 @@
       "when": 1792145224529,
       "tag": "0018_named_visitor_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792232665725,
+      "tag": "0019_cards_network",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792241047864,
+      "tag": "0020_network_atomic_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792244063617,
+      "tag": "0021_reconcile_owner_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792244068900,
+      "tag": "0022_reconcile_cards_live_contracts",
+      "breakpoints": true
     }
   ]
 }

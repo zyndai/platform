@@ -14,7 +14,7 @@
               "tokenEndpointAuthMethod": "none"
             },
             "resource": "https://api.zynd.ai/mcp",
-            "baseScopes": ["memory:write", "cards:read", "cards:approve"]
+            "baseScopes": ["memory:recall", "memory:propose", "cards:review"]
           }
         }
       }

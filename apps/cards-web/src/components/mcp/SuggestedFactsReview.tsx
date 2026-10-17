@@ -315,37 +315,6 @@ export function SuggestedFactsReview({
                 {openNoise ? "Collapse" : "Expand"}
               </button>
             )}
-            {key !== "noise" && (
-              <button
-                type="button"
-                disabled={pending !== null}
-                onClick={() => {
-                  void (async () => {
-                    const failed: string[] = [];
-                    for (const fact of items) {
-                      if (!(await approve(fact))) failed.push(factLabel(fact));
-                    }
-                    if (failed.length) {
-                      setError(
-                        `Published ${items.length - failed.length} of ${items.length}. ` +
-                          `Could not publish: ${failed.join(", ")}`,
-                      );
-                    }
-                  })();
-                }}
-                style={{
-                  background: accent,
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: 10,
-                  padding: "6px 12px",
-                  font: `600 12px/1 ${SANS}`,
-                  cursor: pending ? "default" : "pointer",
-                }}
-              >
-                Publish all
-              </button>
-            )}
             <button
               type="button"
               disabled={pending !== null}

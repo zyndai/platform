@@ -33,6 +33,38 @@ The plan and its reasoning: [`docs/plans/ZYND_DB_UNIFY_PLAN.md`](../../docs/plan
 
 ## Layout
 
+### Separate Memory Database
+
+Memory has an independent history in `memory/`, tracked in
+`drizzle.__memory_migrations` in its own Postgres database. It is deliberately
+excluded from `db:migrate`, `db:drift`, and the shared `HISTORIES` list.
+The first migration adds plugin consent, private facts, publication records,
+and a publication outbox. It requires memory's existing `public.users` and
+`public.assertions` tables; it does not baseline or recreate those tables.
+
+From `packages/db`:
+
+```bash
+MEMORY_DATABASE_URL=postgresql://postgres@127.0.0.1:5544/memory_rehearsal npm run memory:migrate
+MEMORY_DATABASE_URL=postgresql://postgres@127.0.0.1:5544/memory_rehearsal npm run memory:migrate -- --yes
+npm run memory:check
+npm test
+```
+
+`memory:migrate` is a dry run by default and never falls back to `DATABASE_URL`.
+It rejects known aafo/dashboard project addresses, a target matching
+`DATABASE_URL`, connection parameters that override the validated endpoint,
+and databases containing shared migration histories or product tables.
+The migration runs transactionally through Drizzle. These guards supplement
+human review; production application still requires explicit approval.
+
+Use `memory:generate:custom -- --name <change>` for new SQL migrations and
+start them with `-- owner: memory`. The memory schema entrypoint is intentionally
+empty until existing memory tables are baselined; do not generate table diffs
+from it. `db:lint` checks all four histories; shared `db:check` is unchanged.
+To run the SQL integration test, provide `MEMORY_TEST_DATABASE_URL` pointing to
+a disposable local database with permission to create/drop scratch databases.
+
 | Path | What |
 |---|---|
 | `<history>/schema/*.ts` | Tables, columns, constraints, indexes, RLS policies: everything Drizzle can express |

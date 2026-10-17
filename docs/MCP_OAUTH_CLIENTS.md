@@ -10,7 +10,7 @@ approved isolated environment. Do not use a production account for this check.
 Use the environment-specific Zynd memory MCP URL (`<Zynd MCP URL>`, ending in
 `/mcp`), not the separate public Cards MCP. No config below needs an access
 token, `Authorization` header, client secret, or token-exchange call. An
-existing Zynd account is required; OAuth grants the legacy `user` scope, which
+existing Zynd account is required; general clients use the legacy `user` scope, which
 now exposes the 17 registered Cards, memory, discovery and hosted-page tools
 (not Persona or external integrations). Existing clients may need to refresh
 their cached tool list after this catalog change. Consent, connection inventory,
@@ -18,6 +18,86 @@ and individual disconnect are implemented server-side with isolated tests, not a
 verified property of these clients. Locally installed CLI versions below were
 checked with **version/help only**; no account, config, callback, token storage,
 refresh, or disconnect was exercised.
+
+### Zynd Plugin Consent Draft (2026-10-16)
+
+`plugins/zynd` version `0.2.0`, display name **Zynd**, targets a separate
+reserved public OAuth client, `zynd-chatgpt-plugin`, with
+`memory:recall memory:propose cards:review`. These are anticipated server
+contracts, not evidence of deployed availability. None authorizes direct save
+or publication. Existing broad ChatGPT grants must reconnect to the reduced
+grant once the server policy is ready; never substitute `user` or legacy
+direct-write scopes when a tool is unavailable.
+
+The packaged allowlist is `recall_memories`, `propose_memory`,
+`get_proposal_status`, `list_pending_facts`, `propose_card_fact`, and
+`get_public_card`. Recall needs an explicit request and returns relevant
+private facts only. Creating a temporary exact proposal also needs an explicit
+request/agreement. A proposal is not durable memory or public content. Its
+returned review link carries only an opaque ID and requires signed-in owner
+web review. **Save privately** saves one exact private fact. Queueing private
+card review does not publish. A separate web confirmation publishes one final
+public fact; editing requires fresh confirmation. Chat yes, model booleans and
+tokens do not perform either web decision. Status must distinguish pending,
+rejected, expired, saved privately, publication committed, sync pending and
+verified card visibility. Never claim card visibility from proposal success.
+
+Local package checks and draft packaging (from the repository root):
+
+```bash
+python3 -m unittest discover -s plugins/zynd -p 'test_*.py'
+python3 plugins/zynd/build.py
+python3 plugins/zynd/build.py --output /tmp/zynd-draft.zip
+python3 plugins/zynd/build.py --output /tmp/zynd-isolated.zip \
+  --mcp-url https://memory.test.example/mcp \
+  --review-origin https://cards.test.example
+```
+
+Replace both example targets with approved isolated HTTPS origins. The builder
+rewrites only the generated ZIP, including OAuth resource, skill dependency
+URLs and trusted review origins; it does not modify source manifests or deploy
+anything. The source defaults are production URLs and are not permission to
+connect or test production. No credentials or review-account secrets belong in
+the package. The MCP URL must use `/mcp`; the review origin has no path.
+
+For independent current-schema checks, install `jsonschema` in a disposable
+environment and run `python3 plugins/zynd/build.py --official-schemas`. This
+fetches the official Agent Plugins 1.0.0 schemas and validates `plugin.json`
+and the portable MCP projection. As checked on 2026-10-16, the official MCP
+schema rejects server `extensions` (`additionalProperties: false`), while
+[OpenAI's packaging documentation](https://developers.openai.com/plugins/build/plugins.md#configure-mcp-authentication)
+requires `extensions.com.openai.auth`. The builder validates that OAuth
+extension separately, using a provided public client, no secret, resource
+binding and the exact reduced scopes. **The full MCP document is not claimed
+to pass the portable schema.** Resolve this vendor mismatch and validate the
+installed host before submission. The schema check needs network access;
+ordinary package tests and builds do not.
+
+For isolated client validation, configure the actual callback displayed by
+ChatGPT's MCP management UI on the isolated server, with PKCE S256 and the
+reserved client. In ChatGPT Plugins, add the isolated HTTPS MCP URL, configure
+the provided public OAuth client, create the plugin and authorize a test
+account. Install the three packaged skills using the host's supported
+local/workspace distribution, refresh metadata and start a new chat. Do not
+invent a registered OpenAI mapping ID. Use two isolated test accounts; record
+actual tool discovery, scope disclosures, recall/no-auto-recall, injection
+handling, proposal then web save, separate exact-wording publication, expiry,
+cross-account denial, reconnect/revocation and card sync visibility. This is
+still **not tested in a real client**; package tests do not establish server
+consent enforcement or transaction atomicity. The manifest's review prompts
+are planned cases, not executed client evidence.
+
+Local evidence on 2026-10-16: package tests passed (14, including the schema
+validator test in a disposable Python 3.12 environment with `jsonschema`);
+default and isolated draft ZIP builds succeeded; the live official plugin
+schema and portable MCP projection checks passed. No real-client OAuth,
+web confirmation or production behavior was exercised by these checks.
+
+`--submission` remains fail-closed: verified support/privacy/terms URLs,
+walkthrough, country availability, private reviewer-account details, domain
+verification and actual OAuth/tool evidence are outstanding. Test-target ZIPs
+cannot be submitted. Production deployment, provider configuration changes
+and public submission require human approval.
 
 ## Client matrix
 

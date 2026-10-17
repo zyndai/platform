@@ -350,6 +350,7 @@ def _public_scope(client_id: str) -> str:
 def _plugin_callbacks() -> list[str]:
     callbacks = [uri.strip() for uri in settings.plugin_oauth_redirect_uris.split(",") if uri.strip()]
     if (not callbacks or not settings.feature_s09_mcp_clients or
+            not settings.feature_plugin_consent or
             settings.plugin_oauth_client_id in _oauth_clients() or
             any(not _valid_redirect_parts(urlsplit(uri)) or urlsplit(uri).scheme != "https"
                 for uri in callbacks)):
@@ -972,7 +973,8 @@ async def token(
                 "v": 2, "sub": user_id, "client_id": client_id, "resource": settings.mcp_resource_url,
                 "scope": grant["scope"], "connection_jti": connection_jti}), ex=settings.refresh_token_ttl_seconds)
             access_token, expires_in = issue_connector_access_token(
-                user_id, settings.mcp_resource_url, connection_jti, scopes=grant["scope"].split())
+                user_id, settings.mcp_resource_url, connection_jti, scopes=grant["scope"].split(),
+                oauth_client_id=client_id)
             return JSONResponse({"access_token": access_token, "token_type": "Bearer", "expires_in": expires_in,
                                  "refresh_token": refresh_tok, "resource": settings.mcp_resource_url, "scope": grant["scope"]},
                                 headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
@@ -1096,7 +1098,8 @@ async def token(
             if not await _consume(redis, _grant_key("refresh", jti)):
                 _invalid_grant()
             access_token, expires_in = issue_connector_access_token(
-                user_id, settings.mcp_resource_url, connection_jti, scopes=grant["scope"].split())
+                user_id, settings.mcp_resource_url, connection_jti, scopes=grant["scope"].split(),
+                oauth_client_id=client_id)
             refresh_tok, refresh_jti = issue_rotating_refresh_token(user_id, bound=True)
             await redis.set(_grant_key("refresh", refresh_jti), json.dumps(grant), ex=settings.refresh_token_ttl_seconds)
             return JSONResponse({"access_token": access_token, "token_type": "Bearer", "expires_in": expires_in,

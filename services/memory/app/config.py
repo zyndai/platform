@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     # Reserved public PKCE client. Empty callbacks keep it disabled until review setup.
     plugin_oauth_client_id: str = "zynd-chatgpt-plugin"
     plugin_oauth_redirect_uris: str = ""
+    feature_plugin_consent: bool = False
     # Second confidential client: the Hermes Deployer. It runs the same
     # authorize-code flow as ChatGPT but, at /oauth/token, receives a long-lived
     # personal token (mcp_token_ttl_seconds) so a deployed agent container can

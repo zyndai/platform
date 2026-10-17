@@ -13,7 +13,20 @@ ALLOWED_SCOPES = (
     "people:message",
 )
 DEFAULT_SCOPES = ["memory:write"]
-PLUGIN_SCOPES = ("memory:write", "cards:read", "cards:approve")
+PLUGIN_SCOPES = ("memory:recall", "memory:propose", "cards:review")
+
+PLUGIN_TOOLS = {
+    "recall_memories": "memory:recall",
+    "propose_memory": "memory:propose",
+    "get_proposal_status": "memory:propose",
+    "list_pending_facts": "cards:review",
+    "propose_card_fact": "cards:review",
+    "get_public_card": "cards:review",
+}
+
+
+def plugin_tool_visible(name: str, scopes: list[str]) -> bool:
+    return name in PLUGIN_TOOLS and PLUGIN_TOOLS[name] in scopes
 
 MEMORY_TOOLS = frozenset({
     "report_user_info",

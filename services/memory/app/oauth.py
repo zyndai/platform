@@ -546,7 +546,7 @@ async def authorization_server_metadata() -> dict:
         "authorization_endpoint": f"{base}/oauth/authorize",
         "token_endpoint": f"{base}/oauth/token",
         "registration_endpoint": f"{base}/oauth/register",
-        "scopes_supported": ["user", "ingest", "offline_access", *PLUGIN_SCOPES],
+        "scopes_supported": ["user", "ingest", "offline_access", *PLUGIN_SCOPES, "people:message"],
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
@@ -648,7 +648,7 @@ async def authorize(
     if is_connector_client:
         if code_challenge_method != "S256" or not re.fullmatch(r"[A-Za-z0-9_-]{43}", code_challenge):
             raise HTTPException(status_code=400, detail="S256 PKCE required")
-        allowed_scopes = set(PLUGIN_SCOPES) if _is_plugin_client(client_id) else {"user", "ingest", "offline_access", *PLUGIN_SCOPES}
+        allowed_scopes = set(PLUGIN_SCOPES) if _is_plugin_client(client_id) else {"user", "ingest", "offline_access", *PLUGIN_SCOPES, "people:message"}
         if not set(scope.split()).issubset(allowed_scopes):
             raise HTTPException(status_code=400, detail="unsupported scope")
         scope = _public_scope(client_id)

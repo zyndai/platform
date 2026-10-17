@@ -34,6 +34,10 @@ contact data.
 
 Answers from ask_card are labelled assistant — they are generated from the card,
 not statements by the person. Cite profiles with cite_as / url.
+
+This public MCP is read-only. To send Cards connection requests, DM accepted
+connections, or create groups, use the authenticated ZYND MCP at /mcp with the
+people:message scope.
 """
 
 _CONTACT_KEYS = frozenset({

@@ -43,6 +43,11 @@ jobs:
           cache-dependency-path: packages/db/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - name: Database regression tests (disposable local databases only)
+        run: npm test
+        env:
+          CARDS_TEST_DATABASE_URL: ${{ env.SCRATCH_URL }}
+          MEMORY_TEST_DATABASE_URL: ${{ env.SCRATCH_URL }}
       - name: Snapshot/journal consistency (all histories)
         run: npm run db:check
       - name: Migration hygiene

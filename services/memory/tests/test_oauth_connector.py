@@ -127,7 +127,7 @@ async def test_authorize_connector_rejects_unadvertised_scope():
         await oauth.authorize(
             client_id="https://claude.ai/oauth/mcp-oauth-client-metadata",
             redirect_uri="https://claude.ai/api/mcp/auth_callback",
-            scope="user people:message",
+            scope="user scope-that-does-not-exist",
             code_challenge=CHALLENGE, code_challenge_method="S256", resource=RESOURCE,
         )
     assert exc.value.detail == "unsupported scope"

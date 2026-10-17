@@ -17,6 +17,7 @@ from app.services.mcp_scopes import (
     DEFAULT_SCOPES,
     CARDS_READ_TOOLS,
     MEMORY_TOOLS,
+    PEOPLE_TOOLS,
     approve_gate,
     normalize_scopes,
     select_tool,
@@ -97,9 +98,7 @@ async def test_client_token_does_not_bump_version_and_embeds_jti():
         "get_my_context", "report_user_info", "confirm_fact_tool", "forget_fact_tool",
         "approve_fact", "dismiss_fact", "set_looking_for",
     }),
-    (["memory:write", "people:message"], {
-        "get_my_context", "report_user_info", "confirm_fact_tool", "forget_fact_tool", "find_people",
-    }),
+    (["memory:write", "people:message"], { *MEMORY_TOOLS, *PEOPLE_TOOLS }),
 ])
 async def test_transport_discovery_hides_removed_tools_and_injected_parameters(scopes, expected):
     access = AccessToken(token="test", client_id="alice", subject="alice", scopes=scopes)
@@ -168,22 +167,22 @@ async def test_legacy_transport_excludes_unregistered_tools():
         with patch.object(m, "_get_pool", AsyncMock()):
             async with Client(m.mcp) as client:
                 tools = await client.list_tools()
-                for removed in ("remember", "update_headline", "request_connection", "search_gmail_emails"):
+                for removed in ("remember", "update_headline", "search_gmail_emails"):
                     with pytest.raises((MCPError, ToolError), match="Unknown tool"):
                         await client.call_tool(removed, {})
     finally:
         auth_context_var.reset(reset)
     names = {tool.name for tool in tools}
-    assert len(names) == 22  # Five consent-safe plugin tools; existing legacy tools remain.
-    assert {"export_my_context", "publish_page", "find_people"} <= names
+    assert len(names) == 35  # Cards-native network tools plus the consent-safe plugin tools.
+    assert {"export_my_context", "publish_page", "find_people", "request_card_connection", "create_card_group"} <= names
     assert names.isdisjoint({
         "remember", "get_my_card", "get_my_socials", "read_my_brief",
         "get_my_system_prompt", "get_card_status", "get_card_activity",
-        "update_headline", "request_connection", "search_gmail_emails",
+        "update_headline", "search_gmail_emails",
     })
 
 
-@pytest.mark.parametrize("removed", ["connect_with", "search_gmail_emails", "update_headline"])
+@pytest.mark.parametrize("removed", ["search_gmail_emails", "update_headline"])
 async def test_scoped_clients_cannot_call_removed_tools(removed):
     reset = auth_context_var.set(AuthenticatedUser(AccessToken(
         token="test", client_id="alice", scopes=["memory:write", "people:message", "cards:approve"],

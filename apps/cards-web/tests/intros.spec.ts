@@ -17,18 +17,7 @@ test.describe("S12 human introductions", () => {
     await signIn(context);
   });
 
-  test("submits an intro and lets the requester see pending status", async ({ page }) => {
-    await page.goto("/p/claimed");
-    await page.getByRole("button", { name: "Request intro", exact: true }).click();
-    await page.getByLabel("Reason for connecting").fill("Could we discuss the Python API for my developer tool?");
-    await page.getByLabel("I would also like to arrange a call").check();
-    await page.getByRole("button", { name: "Send intro request" }).click();
-    await expect(page.getByRole("heading", { name: "Your intro request is pending" })).toBeVisible();
-    await page.getByRole("link", { name: "View your sent requests" }).click();
-    await expect(page.getByRole("heading", { name: "Sent intro requests", exact: true })).toBeVisible();
-    await expect(page.getByText("Could we discuss the Python API for my developer tool?")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Accept intro" })).toHaveCount(0);
-  });
+  // New profile requests are Cards-native; send/retry coverage lives in network.spec.ts.
 
   test("accepting without a meeting grant does not offer a call proposal", async ({ page }) => {
     await page.goto("/intros");
@@ -50,28 +39,8 @@ test.describe("S12 human introductions", () => {
     await page.screenshot({ path: "/tmp/zynd-s12-intro-inbox.png", fullPage: true });
   });
 
-  test("a failed send keeps the reason and reuses the submission key", async ({ page }) => {
-    const keys: string[] = [];
-    await page.route("**/cards/by-handle/claimed/intro", async route => {
-      keys.push(route.request().postDataJSON().idempotency_key);
-      if (keys.length === 1) await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "Temporarily unavailable" }) });
-      else await route.continue();
-    });
-    await page.goto("/p/claimed");
-    await page.getByRole("button", { name: "Request intro", exact: true }).click();
-    const reason = "Could we discuss the Python API for my developer tool?";
-    await page.getByLabel("Reason for connecting").fill(reason);
-    await page.getByRole("button", { name: "Send intro request" }).click();
-    await expect(page.locator(".intro-request").getByRole("alert")).toHaveText("Temporarily unavailable");
-    await expect(page.getByLabel("Reason for connecting")).toHaveValue(reason);
-    await page.getByRole("button", { name: "Send intro request" }).click();
-    await expect(page.getByRole("heading", { name: "Your intro request is pending" })).toBeVisible();
-    expect(keys).toHaveLength(2);
-    expect(keys[0]).toBe(keys[1]);
-  });
-
-  test("unclaimed cards have no intro action", async ({ page }) => {
+  test("unclaimed cards have no connection action", async ({ page }) => {
     await page.goto("/p/unclaimed");
-    await expect(page.getByRole("button", { name: "Request intro", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Request connection", exact: true })).toHaveCount(0);
   });
 });

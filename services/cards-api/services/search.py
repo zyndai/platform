@@ -5,6 +5,7 @@ import config
 from models.card import AgentProfileCard
 from services import cards as cards_service
 from services.embed import card_search_text, embed_text
+from services.two_way import TWO_WAY_BOOST, kinds_of, two_way_match
 from services.search_text import (
     contains_all,
     location_terms,
@@ -99,6 +100,7 @@ def search_agents(
     experience_min: int | None = None,
     limit: int = 10,
     include_unclaimed: bool = False,
+    searcher: AgentProfileCard | None = None,
 ) -> list[dict]:
     # Stopwords out, whole words only: "in", "who" and "ai" used to substring-match nearly
     # every card ("ai" is inside "maintain").
@@ -112,6 +114,7 @@ def search_agents(
     role_norm = _norm(role)
     availability_norm = _norm(availability)
     location_want = location_terms(location)
+    searcher_kinds = kinds_of(searcher) if searcher is not None else set()
 
     results = []
     for row in rows:
@@ -193,6 +196,12 @@ def search_agents(
         if availability_norm and contains_all(token_set(card.availability), availability):
             score += 0.2
             reasons.append(f"Available for {card.availability}")
+
+        if searcher_kinds and searcher is not None and card.handle != searcher.handle:
+            fits = two_way_match(searcher_kinds, card)
+            if fits:
+                score += TWO_WAY_BOOST
+                reasons.append("Wants to meet people like you: " + ", ".join(fits[:2]))
 
         if experience_min is not None and card.experience_years and card.experience_years >= experience_min:
             score += 0.15

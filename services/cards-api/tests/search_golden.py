@@ -11,6 +11,7 @@ Run `python tests/search_golden.py` for the per-query table while tuning scoring
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import math
@@ -61,6 +62,7 @@ def build_rows(doc: dict) -> list[dict]:
             identity={"name": c["handle"], "headline": c["headline"], "location": c["location"],
                       "avatar_url": "", "links": {}},
             summary=c["summary"], skills=[{"name": s} for s in c["skills"]], industries=c["industries"],
+            connect_with=c.get("connect_with", []),
             zynd_memory=[{"predicate": "is_building", "object": o, "source": "declared",
                           "approved_at": datetime.now(timezone.utc).isoformat(), "confidence": 0.9}
                          for o in c["memory"]],
@@ -80,6 +82,10 @@ def evaluate(doc: dict | None = None, search_service=None) -> list[QueryResult]:
     logging.getLogger("services.search").setLevel(logging.ERROR)   # one 'falling back' warning per query
     doc = doc or load()
     rows = build_rows(doc)
+    from models.card import AgentProfileCard
+    cards_by_handle = {r["handle"]: AgentProfileCard.model_validate(r["card"]) for r in rows}
+    for handle, card in cards_by_handle.items():
+        card.handle = handle
     sb = MagicMock()
     sb.rpc.side_effect = RuntimeError("no rpc: score the whole corpus")
     out: list[QueryResult] = []
@@ -87,9 +93,12 @@ def evaluate(doc: dict | None = None, search_service=None) -> list[QueryResult]:
          patch.object(search_service, "embed_text", hash_embed), \
          patch.object(search_service.cards_service, "list_published_rows", lambda **kw: rows):
         for query in doc["queries"]:
+            extra = {}
+            if "searcher" in inspect.signature(search_service.search_agents).parameters:   # older scorers lack it
+                extra["searcher"] = cards_by_handle.get(query.get("as_handle") or "")
             found = search_service.search_agents(
                 q=query["q"], role=query["role"], location=query["location"],
-                skills=query["skills"], limit=5, include_unclaimed=True)
+                skills=query["skills"], limit=5, include_unclaimed=True, **extra)
             top = [r["handle"] for r in found]
             relevant = query["relevant"]
             if relevant:

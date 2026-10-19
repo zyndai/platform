@@ -214,3 +214,18 @@ def test_merge_orders_by_score_then_claimed_and_keeps_external_below_cards():
 def test_merge_never_invents_a_handle_for_external_people():
     (p,) = pr.merge_people([pr.person_from_external({"name": "X", "linkedin_url": "https://linkedin.com/in/x"}, 0)])
     assert p["handle"] is None and p["next_action"] == "view_profile" and p["url"].endswith("/in/x")
+
+
+# ── two-way match (A1) ────────────────────────────────────────────────────────────
+
+async def test_the_searchers_own_handle_goes_to_cards_so_two_way_matches_rank_higher(world):
+    world["own"] = {"handle": "me", "name": "Me", "headline": "Founder", "location": "", "claimed": True}
+    world["cards"] = ([card("investor", 0.7)], None)
+    await run()
+    assert world["mocks"]["cards_search"].await_args.kwargs["as_handle"] == "me"
+
+
+async def test_a_searcher_without_a_card_searches_one_way(world):
+    world["cards"] = ([card("investor", 0.7)], None)
+    await run()
+    assert world["mocks"]["cards_search"].await_args.kwargs["as_handle"] == ""

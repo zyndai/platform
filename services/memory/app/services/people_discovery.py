@@ -128,9 +128,12 @@ def _why(reasons: object) -> list[str]:
     return out[:4]
 
 
-def cards_search_params(target: str, limit: int, query: TargetQuery) -> dict:
-    """/v1/agents/search params: the free text plus the parsed filters Cards can score on."""
+def cards_search_params(target: str, limit: int, query: TargetQuery, as_handle: str = "") -> dict:
+    """/v1/agents/search params: the free text plus the parsed filters Cards can score on, and
+    the searcher's own handle so people who want to meet someone like them rank higher."""
     params: dict = {"q": (target or "").strip(), "limit": limit, "include_unclaimed": "true"}
+    if as_handle:
+        params["as_handle"] = as_handle
     if query.role:
         params["role"] = query.role_noun
     if query.locality or query.location:
@@ -141,7 +144,7 @@ def cards_search_params(target: str, limit: int, query: TargetQuery) -> dict:
 
 
 async def search_cards(
-    target: str, limit: int, *, query: TargetQuery | None = None,
+    target: str, limit: int, *, query: TargetQuery | None = None, as_handle: str = "",
 ) -> tuple[list[dict], str | None]:
     """Claimed and unclaimed published cards. Unclaimed rows carry no contact fields."""
     q = (target or "").strip()
@@ -151,7 +154,7 @@ async def search_cards(
     url = f"{settings.cards_api_base_url.rstrip('/')}/v1/agents/search"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
-            resp = await client.get(url, params=cards_search_params(q, limit, query))
+            resp = await client.get(url, params=cards_search_params(q, limit, query, as_handle))
             resp.raise_for_status()
             payload = resp.json()
     except Exception as exc:

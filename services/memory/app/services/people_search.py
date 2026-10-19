@@ -99,9 +99,10 @@ async def find(
 
     # Ask for more than `limit` from each source so merging and ranking have something to choose from.
     pool_size = min(limit * 2, 30)
+    own = await _own_handle(pool, uid)       # the searcher's Card: never a result, and what two-way matching reads
     coros: dict[str, object] = {}
     if "cards" in wanted:
-        coros["cards"] = people_discovery.search_cards(text, pool_size, query=query)
+        coros["cards"] = people_discovery.search_cards(text, pool_size, query=query, as_handle=own or "")
     if "zynd" in wanted:
         coros["zynd"] = _zynd_people(pool, uid, text, like_me, pool_size, warnings, query)
     results = dict(zip(coros, await asyncio.gather(*coros.values(), return_exceptions=True)))
@@ -121,7 +122,6 @@ async def find(
             people.extend(outcome)
 
     people = people_results.merge_people(people)
-    own = await _own_handle(pool, uid) if people else None
     if own:
         people = [p for p in people if (p["handle"] or "").lower() != own.lower()]
 

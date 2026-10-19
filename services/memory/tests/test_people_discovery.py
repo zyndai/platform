@@ -134,6 +134,8 @@ def test_cards_search_params_carry_the_parsed_filters():
     assert params["q"].startswith("seed-stage investor")
     assert params["role"] == "investor" and params["location"] == "India"
     assert params["skills"] == "AI dev tools" and params["include_unclaimed"] == "true"
+    assert "as_handle" not in params
+    assert discovery.cards_search_params("investor", 10, q, "me")["as_handle"] == "me"
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,16 @@
-# ZYND Memory Layer — Fact Quality & Context Retrieval Plan
+# ZYND Memory Quality & Cards Networking Plan
+
+This doc has two parts that share code and should be sequenced together:
+
+- **Part A: Memory fact quality and context retrieval** (§1–§8). What memory
+  stores and what `get_my_context` returns.
+- **Part B: Cards networking, fix and improve** (§9–§15). People search,
+  results, and connecting on Cards.
+- **§16** gives the combined order, since some Part B items build on Part A.
+
+---
+
+# Part A — Memory fact quality and context retrieval
 
 > **Status:** proposed, 2026-10-20 — not implemented.
 >
@@ -468,3 +480,125 @@ Coordinate the memory deploy with a maintainer.
   "Interested in" reads better.
 - **Open:** does `decay_cron` run in prod today? Check before Phase 4 so the
   before/after comparison is honest.
+- **Open (from Part B):** Part B says persona is paused. Part A has
+  persona-api steps: Phase 1 step 5 (`memory_client.get_context` passes
+  `topic`), Phase 2 step 6 (sync double-writes and out-of-taxonomy
+  predicates), and Phase 3 step 1 (GitHub thresholds). If the GitHub,
+  LinkedIn and Twitter syncs still run while persona is paused, those steps
+  stay in scope because they write into the memory that Cards reads.
+  Otherwise defer them and let Phase 5 cleanup handle what's already stored.
+
+---
+
+# Part B — Cards networking: fix and improve
+
+> **Status:** proposed, 2026-10-20 — not implemented.
+>
+> **Scope:** Cards only: `services/cards-api`, the people-search and MCP code
+> in `services/memory`, and `apps/cards-web`. Persona is paused, so nothing
+> in Part B depends on `persona-api`. Intros are out of scope.
+>
+> All files and functions named below exist in the repo as of 2026-10-20.
+
+## 9. Goal
+
+A search for **"seed-stage investor who backs AI dev tools in India"** returns
+real investors, explains why each one matched, and gives every result one
+clear next step.
+
+## 10. Fix: search quality
+
+| # | Problem | Where | Fix |
+|---|---|---|---|
+| F1 | The LinkedIn fallback searches **company About text**, not people. It sends the first 4 raw words as `bio_li` and drops "AI" and "India" (under the 3-char rule), so it returns empty. | `services/memory/app/services/people_discovery.py` → `search_quickenrich` | Map the query to `title` + `country_code` (+ `locality`) filters. Keep `bio_li` only for company keywords. |
+| F2 | Stopwords inflate scores. `"in"`, `"who"` and `"ai"` substring-match almost every card ("ai" is inside "maintain"). The memory-fact bonus has the same bug. | `services/cards-api/services/search.py` → `search_agents` | Drop stopwords and match whole words, not substrings. |
+| F3 | Memory passes only `q` to Cards. It ignores the `role` / `location` / `skills` filters and drops `match_reasons`. | `people_discovery.py` → `search_cards` | Pass the parsed filters; return `match_reasons` as `why`. |
+| F4 | Zynd-user search ranks by topic, not role: the query is compared with one averaged vector built from up to 50 facts. | `services/memory/app/services/matching.py` → `search_by_query` | Match the query against individual public facts (`entities.embedding`). Score a user by their top 3 facts, weighting current-state predicates (role, `is_working_on`, `is_seeking`). |
+| F5 | The same person comes back twice (Zynd user + Card) with different scores. | `services/memory/app/mcp_http.py` → `find_people` | Merge results per person (card handle / LinkedIn URL). |
+| F6 | Zynd users get `connection_eligible: true`, but no MCP tool connects by `user_id`, so it's a dead end. | `mcp_http.py`, `services/memory/app/services/social.py` | Resolve every result to a card handle and connect through `request_card_connection`. |
+| F7 | Zynd-user results expose LinkedIn / Telegram / X before any opt-in. | `matching.py` → `_results_with_socials` | Hide contact fields in search; show them only after an accepted connection. |
+| F8 | Zynd-user display names are read from `persona_agents` (paused product). | `matching.py` → `_persona_names` | Take names from the user's card. |
+| F9 | QuickEnrich silently returns `[]`, and the fallback only adds results. It never kicks in when matches are weak. | `find_people` | Run the fallback when fewer than *k* results score above a threshold; always report source failures in `warnings`. |
+
+## 11. Simplify: workflow
+
+- **Cards is the one people index:** claimed cards (synced through
+  `services/memory/app/services/card_sync.py`) plus unclaimed cards. External
+  LinkedIn people become unclaimed cards.
+- **One search tool:** `find_people(target | "like_me")` → Cards search →
+  external fallback. Remove `search_linkedin_profiles`,
+  `find_linkedin_people_for_me`, and the `zynd_users` source.
+- **One result shape:**
+  `{handle, name, headline, why, sources, claimed, next_action: connect | invite_to_claim}`.
+- **One QuickEnrich client,** shared by memory's `people_discovery.py` and
+  `services/cards-api/services/suggested_people.py`. Remove the hardcoded
+  India-only request bodies.
+- **One query parser:** a small LLM call turns the target into
+  `{role, stage, topics, location}`, which every source uses.
+
+## 12. Add: features
+
+| # | Feature | Builds on |
+|---|---|---|
+| A1 | **Two-way match:** rank higher when the other person's `connect_with` / looking-for also fits the searcher. | card `connect_with`, `set_looking_for` |
+| A2 | **Invite to claim:** a LinkedIn-only result becomes a pre-filled unclaimed card, the searcher sends an invite, and the connection request is delivered when the card is claimed. A growth loop. | unclaimed cards, claim token |
+| A3 | **Saved searches:** "notify me when a matching card is published or updated". | `card_sync`, `services/cards-api/services/owner_notifications.py` |
+| A4 | **Better weekly digest:** two-way matches, changes in connections' cards ("X started fundraising"), and saved-search hits. | `services/cards-api/services/digest.py`, `signals.py` |
+| A5 | **Connection brief:** on an accepted connection, show what each person is working on now, shared ground, and suggested topics, drawn from approved facts. | `card_view.live_facts`, freshness (Part A Phase 4) |
+| A6 | **Trust:** verified LinkedIn / GitHub / work-email badges, fact source and age, block/report, a rate limit on connection requests, and capacity ("max N requests/week"). | `services/memory/app/services/provenance.py`, `services/cards-api/services/network.py` |
+| A7 | **Event mode / private pools:** search scoped to one event's or community's cards. | card groups, `find_card_group_people` |
+| A8 | **Match controls:** "less like this", hide a person, mute a topic. | search ranking |
+
+## 13. Quality and measurement
+
+- **Eval set:** about 50 golden queries with expected people; track
+  precision@5 on every search change. Shares tooling with Part A's context
+  eval set (Phase 1 step 6).
+- **Funnel:** search → shown → connection requested → accepted → messaged
+  (extend `docs/cards/s04-funnel.sql`).
+
+## 14. Order within Part B
+
+1. **F1–F3, F9:** small, code-only, biggest visible gain.
+2. **F5–F8 + Simplify:** single index, single tool, single result shape.
+3. **F4:** per-fact matching (memory owner in the loop).
+4. **A1, A2:** better matches and growth.
+5. **A3, A4, A5:** retention.
+6. **A6, A7, A8:** trust, scale, paid tiers.
+7. **Eval + funnel:** set up alongside step 1 so every step is measured.
+
+## 15. Notes
+
+- Shared-DB changes (A2, A3, A6) go through `packages/db` migrations and are
+  applied only on a human's say-so (AGENTS.md §4, §6). These are Cards
+  tables in aafo, unlike Part A's schema change, which is in memory's own DB
+  (`services/memory/sql/schema.sql`).
+- Changing the `find_people` response shape is safe for Cards: no code in
+  `cards-web` or `cards-api` reads its `zynd_users` / `quickenrich` keys
+  (checked). Only MCP clients see it.
+
+---
+
+# 16. Combined order (Part A + Part B)
+
+Some Part B items depend on Part A, mostly on clean, de-duplicated, fresh
+facts:
+
+| Part B item | Depends on | Why |
+|---|---|---|
+| F4 per-fact matching | Part A Phase 2 (one fact per thing) | Matching against individual facts double-counts a person who has JavaScript stored three times, and rewards dependency noise |
+| F2 whole-word matching, memory-fact bonus | Part A Phase 2 canonical names | The bonus reads memory facts. Canonical names make whole-word matching reliable ("Next.js" vs "nextjs") |
+| A5 connection brief, A4 digest "what changed" | Part A Phase 4 (`last_seen_at`, stale state) | "What they're working on now" needs a real notion of now |
+| §13 eval sets | Part A Phase 1 step 6 | Build one eval harness and use it for both |
+
+Suggested sequence. Rows that share a step can run in parallel because they
+touch different files:
+
+| Step | Part A | Part B |
+|---|---|---|
+| 1 | Phase 1: ranked context + eval harness | F1–F3, F9 + search eval set + funnel |
+| 2 | Phase 2: one fact per thing | F5–F8 + Simplify |
+| 3 | Phase 3: dependency noise | F4: per-fact matching (after A2) |
+| 4 | Phase 4: freshness (memory DB schema, **human OK**) | A1, A2 (A2 needs a `packages/db` migration, **human OK**) |
+| 5 | Phase 5: cleanup of existing data (**human OK**) | A3, A4, A5 |
+| 6 | — | A6, A7, A8 |

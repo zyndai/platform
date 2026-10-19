@@ -113,3 +113,77 @@ def test_get_context_403_is_visible_not_silent():
     ctx = asyncio.run(run())
     assert ctx.error == "forbidden"
     assert ctx.assertions == []
+
+
+def _get_params(fake: MagicMock) -> dict:
+    return fake.get.call_args.kwargs["params"]
+
+
+def test_get_context_sends_the_topic_to_the_memory_layer():
+    fake = _fake_client(_fake_me_context_response(200, {"assertions": _assertions()}))
+
+    async def run():
+        with patch("agent.memory_client.is_enabled", return_value=True), \
+             patch("agent.memory_client._make_jwt", return_value="jwt"), \
+             patch("agent.memory_client._client", return_value=fake):
+            return await get_context("u1", topic="  BookCab launch  ", k=5, min_confidence=0.0)
+
+    asyncio.run(run())
+    assert _get_params(fake)["topic"] == "BookCab launch"
+
+
+def test_get_context_trusts_the_servers_ranking_when_it_returns_sections():
+    # The server ordered these by relevance x confidence x freshness; the client must not
+    # re-sort them by keyword overlap.
+    ranked = [
+        {"statement": "You use Docker", "predicate": "uses_tool", "object": "Docker",
+         "object_type": "skill", "confidence": 0.9, "relevance": 0.8, "section": "now", "stale": False},
+        {"statement": "You are working on BookCab", "predicate": "is_working_on", "object": "BookCab",
+         "object_type": "project", "confidence": 0.9, "relevance": 0.6, "section": "related", "stale": True},
+    ]
+    fake = _fake_client(_fake_me_context_response(200, {"assertions": ranked}))
+
+    async def run():
+        with patch("agent.memory_client.is_enabled", return_value=True), \
+             patch("agent.memory_client._make_jwt", return_value="jwt"), \
+             patch("agent.memory_client._client", return_value=fake):
+            return await get_context("u1", topic="BookCab", k=5, min_confidence=0.0)
+
+    ctx = asyncio.run(run())
+    assert [a.object for a in ctx.assertions] == ["Docker", "BookCab"]
+    assert [a.stale for a in ctx.assertions] == [False, True]
+    assert ctx.assertions[0].relevance == 0.8
+
+
+def test_get_context_orders_by_server_relevance_when_unranked_by_freshness():
+    items = [
+        {"statement": "a", "predicate": "is_building", "object": "Bakery", "object_type": "p",
+         "confidence": 0.9, "relevance": 0.3},
+        {"statement": "b", "predicate": "is_learning", "object": "Rust", "object_type": "s",
+         "confidence": 0.9, "relevance": 0.9},
+    ]
+    fake = _fake_client(_fake_me_context_response(200, {"assertions": items}))
+
+    async def run():
+        with patch("agent.memory_client.is_enabled", return_value=True), \
+             patch("agent.memory_client._make_jwt", return_value="jwt"), \
+             patch("agent.memory_client._client", return_value=fake):
+            return await get_context("u1", topic="Rust", k=5, min_confidence=0.0)
+
+    ctx = asyncio.run(run())
+    assert [a.object for a in ctx.assertions] == ["Rust", "Bakery"]
+
+
+def test_prompt_marks_stale_facts_as_earlier_context():
+    from agent.memory_client import MemoryContext
+    from agent.memory_context import format_context_for_prompt
+
+    ctx = MemoryContext(assertions=[
+        MemoryAssertion(statement="s", predicate="is_working_on", object="Launch", object_type="p",
+                        confidence=0.9),
+        MemoryAssertion(statement="s", predicate="is_working_on", object="Old migration", object_type="p",
+                        confidence=0.9, stale=True),
+    ])
+    text = format_context_for_prompt(ctx)
+    assert "Launch" in text and "Launch (earlier)" not in text
+    assert "Old migration (earlier)" in text

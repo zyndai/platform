@@ -453,7 +453,11 @@ async def get_my_context(topic: str | None = None, k: int = 20,
                          token: AccessToken = CurrentAccessToken()) -> dict:
     """Load identity, profile, socials, brief, private facts, and approved public card.
 
-    Call at conversation start; topic filters facts only and k is bounded to 1..50.
+    Call at conversation start, then again with ``topic`` whenever the conversation has
+    a subject (a project, a technology, a person, a goal): without a topic you get what
+    is true now; with one you also get older facts that relate to it. Facts with
+    ``stale: true`` are past context, not current. topic filters facts only and k is
+    bounded to 1..50.
     Present lists substantive sections, not proof of a complete memory graph.
     Optional unavailable sections are null; owner status/activity require cards:read
     or legacy user scope. A persona name may self-heal an empty stored display name.

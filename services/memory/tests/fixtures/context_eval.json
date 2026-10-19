@@ -1,0 +1,380 @@
+{
+ "_about": "Synthetic users with hand-labelled expectations for rank_context. expect = names that must come back; forbid = names that must not. topic null = default (no-topic) context. Used by tests/test_context_eval.py and scripts/eval_context.py; tune RELATED_MIN and the predicate weights against this.",
+ "targets": {
+  "recall": 0.9,
+  "precision": 0.95
+ },
+ "users": [
+  {
+   "id": "backend_dev",
+   "k": 12,
+   "facts": [["is_located_in", "Bengaluru", "place_physical", 0.9, 0],
+    ["is_affiliated_with", "Acme Payments", "place_institutional", 0.9, 0],
+    ["is_building", "Zynd Cards", "project_venture", 0.9, 0],
+    ["is_working_on", "invoice parser", "project_assignment", 0.85, 4],
+    ["is_learning", "Rust async runtimes", "skill_technical", 0.8, 9],
+    ["has_skill", "Python", "skill_technical", 0.92, 0],
+    ["has_skill", "FastAPI", "skill_technical", 0.9, 0],
+    ["has_skill", "PostgreSQL", "skill_technical", 0.9, 0],
+    ["uses_tool", "Postgres", "skill_technical", 0.8, 0],
+    ["uses_tool", "Docker", "skill_technical", 0.85, 0],
+    ["has_expertise_in", "backend systems", "skill_domain", 0.9, 0],
+    ["is_working_on", "payment gateway migration", "project_assignment", 0.88, 62],
+    ["believes", "small teams ship faster", "belief_opinion", 0.7, 3]
+   ],
+   "queries": [
+    {
+     "topic": null,
+     "expect": ["Bengaluru", "Acme Payments", "Zynd Cards", "invoice parser"],
+     "forbid": ["payment gateway migration"]
+    },
+    {
+     "topic": "Rust async",
+     "expect": ["Rust async runtimes"],
+     "forbid": ["Docker", "Zynd Cards"]
+    },
+    {
+     "topic": "payment gateway",
+     "expect": ["payment gateway migration"],
+     "forbid": ["Bengaluru", "Rust async runtimes"]
+    },
+    {
+     "topic": "invoice parser",
+     "expect": ["invoice parser"],
+     "forbid": ["payment gateway migration", "Docker"]
+    }
+   ]
+  },
+  {
+   "id": "designer",
+   "k": 12,
+   "facts": [["is_located_in", "Mumbai", "place_physical", 0.9, 0],
+    ["is_affiliated_with", "Studio Nine", "place_institutional", 0.9, 0],
+    ["is_building", "portfolio website redesign", "project_venture", 0.88, 6],
+    ["is_working_on", "design system tokens", "project_assignment", 0.85, 10],
+    ["is_learning", "Framer motion", "skill_technical", 0.8, 5],
+    ["has_expertise_in", "product design", "skill_domain", 0.93, 0],
+    ["has_skill", "Figma", "skill_technical", 0.9, 0],
+    ["uses_tool", "Figma", "skill_technical", 0.8, 0],
+    ["is_seeking", "freelance clients", "collaborator", 0.85, 40],
+    ["is_working_on", "logo for bakery", "project_assignment", 0.8, 80],
+    ["values", "accessible interfaces", "belief_value", 0.8, 2]
+   ],
+   "queries": [
+    {
+     "topic": null,
+     "expect": ["Mumbai", "Studio Nine", "portfolio website redesign", "design system tokens"],
+     "forbid": ["freelance clients", "logo for bakery"]
+    },
+    {
+     "topic": "design system",
+     "expect": ["design system tokens"],
+     "forbid": ["Mumbai", "logo for bakery"]
+    },
+    {
+     "topic": "freelance clients",
+     "expect": ["freelance clients"],
+     "forbid": ["Framer motion", "Studio Nine"]
+    },
+    {
+     "topic": "bakery logo",
+     "expect": ["logo for bakery"],
+     "forbid": ["design system tokens"]
+    }
+   ]
+  },
+  {
+   "id": "founder",
+   "k": 12,
+   "facts": [["is_located_in", "San Francisco", "place_physical", 0.9, 0],
+    ["is_affiliated_with", "Copilot Labs", "place_institutional", 0.9, 0],
+    ["is_building", "AI sales copilot", "project_venture", 0.95, 2],
+    ["is_seeking", "seed investors", "collaborator", 0.9, 3],
+    ["has_expertise_in", "enterprise sales", "skill_domain", 0.9, 0],
+    ["is_working_on", "pitch deck", "project_assignment", 0.85, 10],
+    ["intends_to", "close first ten customers", "intent_project", 0.8, 20],
+    ["is_learning", "fundraising", "skill_domain", 0.8, 15],
+    ["is_working_on", "SOC2 audit", "project_assignment", 0.8, 70],
+    ["uses_tool", "Notion", "skill_technical", 0.7, 0],
+    ["has_skill", "SQL", "skill_technical", 0.6, 0]
+   ],
+   "queries": [
+    {
+     "topic": null,
+     "expect": ["San Francisco", "Copilot Labs", "AI sales copilot", "seed investors", "pitch deck"],
+     "forbid": ["SOC2 audit"]
+    },
+    {
+     "topic": "seed investors",
+     "expect": ["seed investors"],
+     "forbid": ["SOC2 audit", "Notion"]
+    },
+    {
+     "topic": "enterprise sales",
+     "expect": ["enterprise sales"],
+     "forbid": ["pitch deck", "SOC2 audit"]
+    },
+    {
+     "topic": "SOC2 audit",
+     "expect": ["SOC2 audit"],
+     "forbid": ["San Francisco", "fundraising"]
+    }
+   ]
+  },
+  {
+   "id": "ml_engineer",
+   "k": 12,
+   "facts": [["is_located_in", "Berlin", "place_physical", 0.9, 0],
+    ["is_affiliated_with", "DeepNorth", "place_institutional", 0.9, 0],
+    ["has_expertise_in", "computer vision", "skill_domain", 0.93, 0],
+    ["is_building", "defect detection pipeline", "project_venture", 0.9, 5],
+    ["is_working_on", "model quantization", "project_assignment", 0.85, 12],
+    ["is_learning", "diffusion models", "skill_technical", 0.8, 50],
+    ["has_skill", "PyTorch", "skill_technical", 0.9, 0],
+    ["has_skill", "Python", "skill_technical", 0.9, 0],
+    ["uses_tool", "Weights and Biases", "skill_technical", 0.75, 0],
+    ["is_working_on", "kaggle competition", "project_assignment", 0.8, 100]
+   ],
+   "queries": [
+    {
+     "topic": null,
+     "expect": ["Berlin", "DeepNorth", "defect detection pipeline", "model quantization"],
+     "forbid": ["kaggle competition"]
+    },
+    {
+     "topic": "computer vision",
+     "expect": ["computer vision"],
+     "forbid": ["kaggle competition", "Berlin"]
+    },
+    {
+     "topic": "model quantization",
+     "expect": ["model quantization"],
+     "forbid": ["Berlin", "DeepNorth"]
+    },
+    {
+     "topic": "kaggle",
+     "expect": ["kaggle competition"],
+     "forbid": ["model quantization", "DeepNorth"]
+    }
+   ]
+  },
+  {
+   "id": "student",
+   "k": 12,
+   "facts": [["is_located_in", "Pune", "place_physical", 0.9, 0],
+    ["is_affiliated_with", "State Engineering College", "place_institutional", 0.9, 0],
+    ["is_learning", "data structures", "skill_domain", 0.85, 5],
+    ["is_learning", "system design", "skill_domain", 0.8, 20],
+    ["is_seeking", "summer internship", "collaborator", 0.9, 7],
+    ["is_working_on", "campus placement prep", "project_assignment", 0.85, 15],
+    ["has_skill", "C++", "skill_technical", 0.85, 0],
+    ["has_skill", "Python", "skill_technical", 0.8, 0],
+    ["is_working_on", "college fest website", "project_assignment", 0.8, 120]
+   ],
+   "queries": [
+    {
+     "topic": null,
+     "expect": ["Pune", "State Engineering College", "summer internship", "campus placement prep"],
+     "forbid": ["college fest website"]
+    },
+    {
+     "topic": "internship",
+     "expect": ["summer internship"],
+     "forbid": ["college fest website", "Pune"]
+    },
+    {
+     "topic": "college fest",
+     "expect": ["college fest website"],
+     "forbid": ["summer internship"]
+    },
+    {
+     "topic": "system design",
+     "expect": ["system design"],
+     "forbid": ["Pune", "college fest website"]
+    }
+   ]
+  },
+  {
+   "id": "pm",
+   "k": 12,
+   "facts": [["is_located_in", "London", "place_physical", 0.9, 0],
+    ["is_affiliated_with", "Brightpay", "place_institutional", 0.9, 0],
+    ["is_building", "onboarding revamp", "project_venture", 0.9, 8],
+    ["is_working_on", "pricing experiments", "project_assignment", 0.85, 6],
+    ["has_expertise_in", "product strategy", "skill_domain", 0.92, 0],
+    ["is_learning", "SQL analytics", "skill_technical", 0.75, 14],
+    ["uses_tool", "Linear", "skill_technical", 0.8, 0],
+    ["uses_tool", "Amplitude", "skill_technical", 0.75, 0],
+    ["is_working_on", "vendor evaluation", "project_assignment", 0.8, 55],
+    ["is_seeking", "design lead", "collaborator", 0.85, 45]
+   ],
+   "queries": [
+    {
+     "topic": null,
+     "expect": ["London", "Brightpay", "onboarding revamp", "pricing experiments"],
+     "forbid": ["vendor evaluation", "design lead"]
+    },
+    {
+     "topic": "pricing experiments",
+     "expect": ["pricing experiments"],
+     "forbid": ["vendor evaluation"]
+    },
+    {
+     "topic": "design lead",
+     "expect": ["design lead"],
+     "forbid": ["pricing experiments", "London"]
+    },
+    {
+     "topic": "vendor evaluation",
+     "expect": ["vendor evaluation"],
+     "forbid": ["onboarding revamp"]
+    }
+   ]
+  },
+  {
+   "id": "devops",
+   "k": 12,
+   "facts": [["is_located_in", "Toronto", "place_physical", 0.9, 0],
+    ["is_affiliated_with", "Northwind Cloud", "place_institutional", 0.9, 0],
+    ["is_building", "internal developer platform", "project_venture", 0.92, 4],
+    ["is_working_on", "cluster cost optimization", "project_assignment", 0.85, 9],
+    ["has_expertise_in", "site reliability", "skill_domain", 0.93, 0],
+    ["has_skill", "Terraform", "skill_technical", 0.9, 0],
+    ["has_skill", "Kubernetes", "skill_technical", 0.9, 0],
+    ["uses_tool", "Grafana", "skill_technical", 0.75, 0],
+    ["is_learning", "eBPF observability", "skill_technical", 0.75, 30],
+    ["is_working_on", "datacenter exit", "project_assignment", 0.85, 200]
+   ],
+   "queries": [
+    {
+     "topic": null,
+     "expect": ["Toronto", "Northwind Cloud", "internal developer platform", "cluster cost optimization"],
+     "forbid": ["datacenter exit"]
+    },
+    {
+     "topic": "cost optimization",
+     "expect": ["cluster cost optimization"],
+     "forbid": ["datacenter exit"]
+    },
+    {
+     "topic": "datacenter exit",
+     "expect": ["datacenter exit"],
+     "forbid": ["Toronto", "Grafana"]
+    },
+    {
+     "topic": "observability",
+     "expect": ["eBPF observability"],
+     "forbid": ["datacenter exit"]
+    }
+   ]
+  },
+  {
+   "id": "writer",
+   "k": 12,
+   "facts": [["is_located_in", "Lisbon", "place_physical", 0.9, 0],
+    ["has_expertise_in", "content marketing", "skill_domain", 0.9, 0],
+    ["is_building", "weekly newsletter", "project_venture", 0.9, 3],
+    ["is_working_on", "launch thread", "project_assignment", 0.85, 5],
+    ["is_seeking", "podcast guests", "collaborator", 0.9, 2],
+    ["is_learning", "video editing", "skill_technical", 0.75, 25],
+    ["uses_tool", "Substack", "skill_technical", 0.8, 0],
+    ["is_working_on", "book proposal", "project_assignment", 0.8, 150],
+    ["intends_to", "interview ten founders", "intent_project", 0.75, 60]
+   ],
+   "queries": [
+    {
+     "topic": null,
+     "expect": ["Lisbon", "weekly newsletter", "launch thread", "podcast guests"],
+     "forbid": ["book proposal", "interview ten founders"]
+    },
+    {
+     "topic": "book proposal",
+     "expect": ["book proposal"],
+     "forbid": ["launch thread", "Lisbon"]
+    },
+    {
+     "topic": "newsletter",
+     "expect": ["weekly newsletter"],
+     "forbid": ["book proposal"]
+    },
+    {
+     "topic": "interview founders",
+     "expect": ["interview ten founders"],
+     "forbid": ["podcast guests"]
+    }
+   ]
+  },
+  {
+   "id": "robotics",
+   "k": 12,
+   "facts": [["is_located_in", "Austin", "place_physical", 0.9, 0],
+    ["is_affiliated_with", "Rivet Robotics", "place_institutional", 0.9, 0],
+    ["is_building", "warehouse robot arm", "project_venture", 0.93, 3],
+    ["has_expertise_in", "embedded systems", "skill_domain", 0.92, 0],
+    ["is_working_on", "motor driver board", "project_assignment", 0.85, 8],
+    ["is_learning", "ROS 2", "skill_technical", 0.8, 18],
+    ["uses_tool", "KiCad", "skill_technical", 0.8, 0],
+    ["has_skill", "C", "skill_technical", 0.85, 0],
+    ["is_working_on", "drone prototype", "project_assignment", 0.8, 95]
+   ],
+   "queries": [
+    {
+     "topic": null,
+     "expect": ["Austin", "Rivet Robotics", "warehouse robot arm", "motor driver board"],
+     "forbid": ["drone prototype"]
+    },
+    {
+     "topic": "robot arm",
+     "expect": ["warehouse robot arm"],
+     "forbid": ["drone prototype"]
+    },
+    {
+     "topic": "drone",
+     "expect": ["drone prototype"],
+     "forbid": ["motor driver board", "Austin"]
+    },
+    {
+     "topic": "ROS 2",
+     "expect": ["ROS 2"],
+     "forbid": ["drone prototype", "KiCad"]
+    }
+   ]
+  },
+  {
+   "id": "researcher",
+   "k": 12,
+   "facts": [["is_located_in", "Hyderabad", "place_physical", 0.9, 0],
+    ["is_affiliated_with", "National Genomics Institute", "place_institutional", 0.9, 0],
+    ["has_expertise_in", "computational biology", "skill_domain", 0.94, 0],
+    ["is_building", "open genomics toolkit", "project_venture", 0.88, 10],
+    ["is_working_on", "protein folding benchmark", "project_assignment", 0.85, 6],
+    ["is_learning", "JAX", "skill_technical", 0.8, 25],
+    ["is_working_on", "grant application", "project_assignment", 0.8, 40],
+    ["intends_to", "publish preprint", "intent_project", 0.8, 70],
+    ["has_skill", "Python", "skill_technical", 0.9, 0]
+   ],
+   "queries": [
+    {
+     "topic": null,
+     "expect": ["Hyderabad", "National Genomics Institute", "open genomics toolkit", "protein folding benchmark"],
+     "forbid": ["grant application", "publish preprint"]
+    },
+    {
+     "topic": "grant application",
+     "expect": ["grant application"],
+     "forbid": ["Hyderabad", "JAX"]
+    },
+    {
+     "topic": "protein folding",
+     "expect": ["protein folding benchmark"],
+     "forbid": ["grant application", "publish preprint"]
+    },
+    {
+     "topic": "publish preprint",
+     "expect": ["publish preprint"],
+     "forbid": ["protein folding benchmark"]
+    }
+   ]
+  }
+ ]
+}

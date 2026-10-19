@@ -68,3 +68,16 @@ async def client(_test_db):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
+
+
+@pytest_asyncio.fixture
+async def pg(_test_db):
+    """Postgres-only fixture (no Redis/arq, no ASGI app): the shared pool with derived
+    tables truncated. For service-level integration tests that never enqueue jobs."""
+    from app.db import close_pool, get_pool, init_pool
+
+    await init_pool()
+    pool = get_pool()
+    await pool.execute(f"TRUNCATE {_DERIVED_TABLES} RESTART IDENTITY CASCADE")
+    yield pool
+    await close_pool()

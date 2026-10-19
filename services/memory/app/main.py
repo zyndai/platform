@@ -537,18 +537,26 @@ async def my_graph(user_id: str = Depends(current_user)) -> list[AssertionView]:
 
 
 @app.get("/me/context")
-async def my_context(k: int = 20, user_id: str = Depends(current_user)) -> dict:
+async def my_context(
+    k: int = 20, topic: str | None = None, user_id: str = Depends(current_user)
+) -> dict:
     """Combined context packet: identity, ZYND facts, persona profile, and brief.
 
     Single endpoint for ChatGPT to call at conversation start so every reply is
     grounded. Persona fetch is best-effort: network failures return profile=null
     but local assertions are preserved. Existing response fields stay additive.
+
+    Without `topic` the facts are what is true now (stale ones left out). With `topic`
+    they are the facts related to it, older ones included and marked `stale: true`.
     """
-    from app.services.export import active_context
+    from app.services.export import active_context, context_slice
     from app.services.self_context import load_self_context, read_brief
 
     pool = get_pool()
-    assertions = await active_context(pool, user_id, k)
+    k = max(1, min(k, 50))
+    topic = (topic or "").strip()
+    assertions = await (context_slice(pool, user_id, topic, k) if topic
+                        else active_context(pool, user_id, k))
 
     context = await load_self_context(pool, user_id)
     brief = await read_brief(context["supabase_user_id"] or user_id)

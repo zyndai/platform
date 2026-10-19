@@ -60,6 +60,18 @@ class Settings(BaseSettings):
     # (quality then always runs and enforces soft triage).
     feature_s05_observe: bool = True
 
+    # Memory quality (docs/plans/ZYND_MEMORY_QUALITY_PLAN.md). All off by default so a deploy
+    # changes nothing until an operator opts in; dev enables them in its compose file.
+    # Phase 1: /me/context + get_my_context rank by relevance and freshness and take a topic.
+    feature_ranked_context: bool = False
+    # Phase 2: every fact write goes through facts.write_fact (one fact per thing).
+    feature_fact_families: bool = False
+    # Phase 3: stricter extraction prompt and the second-sighting rule for inferred tech.
+    feature_strict_tech: bool = False
+    # Phase 4: last_seen_at / mention_count / base_confidence. Turn on ONLY after
+    # sql/schema.sql has been applied to the database (the columns must exist).
+    feature_freshness_v2: bool = False
+
     # S11 — public Cards MCP (no auth) at /cards-public-mcp. Off by default;
     # mount + Caddy route when ready. Rollback: leave false / remove Caddy handle.
     feature_s11_public_mcp: bool = False

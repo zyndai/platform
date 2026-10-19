@@ -40,6 +40,7 @@ class MemoryAssertion:
     relevance: float = 1.0  # cosine similarity to the query topic (if topic-scoped)
     source_system: str = ""       # provenance tag: twitter/linkedin/github/mcp/…
     observed_at: str | None = None  # when the fact was recorded (ISO)
+    stale: bool = False           # older context the memory layer returned only because it matched the topic
 
 
 @dataclass
@@ -135,12 +136,12 @@ async def get_context(
 ) -> MemoryContext:
     """Fetch topic-relevant assertions from the user's memory graph.
 
-    Reads GET /me/context (the combined context packet) and ranks
-    client-side with `_keyword_relevance`, because the semantic
-    topic-scoped endpoint (/context/{user_id}) rejects the persona JWT
-    ("can only query your own context") and every chat turn was silently
-    getting zero memory. When the memory layer exposes a topic-scoped
-    endpoint for this token, swap the call back to server-side ranking.
+    Reads GET /me/context (the combined context packet) with the topic, and uses the
+    memory layer's own ranking when it returns one (facts carry a `section`, or a
+    `relevance`). Older memory deploys ignore the topic and return an unranked slice;
+    for those we fall back to ranking client-side with `_keyword_relevance`. The
+    semantic /context/{user_id} endpoint rejects the persona JWT ("can only query your
+    own context"), which is why this goes through /me/context.
 
     Args:
         user_id: The Supabase user UUID (same in both agent-persona and memory-layer).
@@ -162,12 +163,15 @@ async def get_context(
         min_confidence = config.MEMORY_LAYER_MIN_CONFIDENCE
 
     token = _make_jwt(user_id)
+    params: dict[str, Any] = {"k": min(k * 3, 50)}
+    if (topic or "").strip():
+        params["topic"] = topic.strip()[:500]
 
     try:
         async with _client() as client:
             resp = await client.get(
                 "/me/context",
-                params={"k": min(k * 3, 50)},
+                params=params,
                 headers={"Authorization": f"Bearer {token}"},
             )
             if resp.status_code == 403:
@@ -181,6 +185,7 @@ async def get_context(
             resp.raise_for_status()
 
             raw: list[dict[str, Any]] = resp.json().get("assertions", [])
+            kept = [item for item in raw if float(item.get("confidence", 0)) >= min_confidence]
             assertions = [
                 MemoryAssertion(
                     statement=item.get("statement", ""),
@@ -188,17 +193,24 @@ async def get_context(
                     object=item.get("object") or "",
                     object_type=item.get("object_type") or "unknown",
                     confidence=float(item.get("confidence", 0.0)),
-                    relevance=0.0,
+                    relevance=float(item["relevance"]) if item.get("relevance") is not None else 0.0,
                     source_system=item.get("source_system") or "",
                     observed_at=item.get("observed_at"),
+                    stale=bool(item.get("stale")),
                 )
-                for item in raw
-                if float(item.get("confidence", 0)) >= min_confidence
+                for item in kept
             ]
-            for a in assertions:
-                a.relevance = _keyword_relevance(topic, a)
-            # Relevant facts first; within a tier, higher confidence wins.
-            assertions.sort(key=lambda a: (a.relevance, a.confidence), reverse=True)
+            if any("section" in item for item in kept):
+                # Ranked by the memory layer (relevance x confidence x freshness): keep its order.
+                pass
+            elif any(item.get("relevance") is not None for item in kept):
+                # Topic-scoped but unranked by freshness: closest facts first.
+                assertions.sort(key=lambda a: (a.relevance, a.confidence), reverse=True)
+            else:
+                # Older memory deploy: no topic support, so rank here.
+                for a in assertions:
+                    a.relevance = _keyword_relevance(topic, a)
+                assertions.sort(key=lambda a: (a.relevance, a.confidence), reverse=True)
             assertions = assertions[:k]
 
             logger.debug(

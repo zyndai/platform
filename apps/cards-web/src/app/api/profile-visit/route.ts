@@ -8,9 +8,9 @@ export async function POST(req: NextRequest) {
       if (new URL(origin).host !== req.headers.get("host")) return new Response(null, { status: 403 });
     } catch { return new Response(null, { status: 403 }); }
   }
-  const { data: { session } } = await (await createClient()).auth.getSession();
-  if (!session) return new Response(null, { status: 204 });
   try {
+    const { data: { session } } = await (await createClient()).auth.getSession();
+    if (!session) return new Response(null, { status: 204 });
     const { handle, visit_id } = await req.json();
     if (typeof handle !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(handle) || typeof visit_id !== "string") {
       return new Response(null, { status: 400 });
@@ -21,7 +21,10 @@ export async function POST(req: NextRequest) {
       headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ visit_id }),
     });
-    return new Response(null, { status: upstream.status });
+    return new Response(await upstream.text() || null, {
+      status: upstream.status,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
   } catch {
     return NextResponse.json({ detail: "Visit recording unavailable" }, { status: 503 });
   }

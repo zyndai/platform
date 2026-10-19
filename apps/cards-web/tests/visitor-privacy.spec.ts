@@ -45,4 +45,57 @@ test.describe("Profile views and visitor consent", () => {
     await expect(visitors.getByText("Alice Chen", { exact: true })).toHaveCount(0);
     await expect(visitors.getByText("No visitors have chosen to share their name in the last 7 days.")).toBeVisible();
   });
+
+  test("retries a temporary failure with the same visit ID", async ({ page, context, request }) => {
+    await signIn(context);
+    await request.patch("http://127.0.0.1:3030/cards/mine/visitor-privacy", { data: { anonymous_mode: false } });
+    const ids: string[] = [];
+    await page.route("**/api/profile-visit", route => {
+      ids.push(route.request().postDataJSON().visit_id);
+      return ids.length === 1
+        ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "Temporary outage" }) })
+        : route.continue();
+    });
+    await page.goto("/p/claimed");
+    await expect.poll(async () => (await (await request.get("http://127.0.0.1:3030/cards/mine/status")).json()).visitors.items[0]?.visits).toBe(1);
+    expect(ids.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(ids).size).toBe(1);
+  });
+
+  test("records a visitor who signs in while the profile is open without another view", async ({ page, context, request }) => {
+    await request.patch("http://127.0.0.1:3030/cards/mine/visitor-privacy", { data: { anonymous_mode: false } });
+    let views = 0;
+    page.on("request", req => {
+      if (req.url().endsWith("/api/events") && req.method() === "POST") {
+        // Chromium does not expose sendBeacon's Blob body through postDataJSON.
+        views++;
+      }
+    });
+    await page.goto("/p/claimed");
+    await expect.poll(() => views).toBe(1);
+    const session = await signIn(context);
+    // Supabase notifies already-open tabs through this browser channel.
+    await page.evaluate(session => {
+      const channel = new BroadcastChannel("sb-127-auth-token");
+      channel.postMessage({ event: "SIGNED_IN", session });
+      channel.close();
+    }, session);
+    await expect.poll(async () => (await (await request.get("http://127.0.0.1:3030/cards/mine/status")).json()).visitors.items[0]?.visits).toBe(1);
+    expect(views).toBe(1);
+  });
+
+  test("picks up sharing enabled in another tab without counting focus twice", async ({ page, context, request }) => {
+    await signIn(context);
+    const initialVisit = page.waitForResponse(res => res.url().endsWith("/api/profile-visit"));
+    await page.goto("/p/claimed");
+    expect(await (await initialVisit).json()).toEqual({ recorded: false });
+    await request.patch("http://127.0.0.1:3030/cards/mine/visitor-privacy", { data: { anonymous_mode: false } });
+    const recorded = page.waitForResponse(res => res.url().endsWith("/api/profile-visit"));
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    expect(await (await recorded).json()).toEqual({ recorded: true });
+    const repeated = page.waitForResponse(res => res.url().endsWith("/api/profile-visit"));
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    expect(await (await repeated).json()).toEqual({ recorded: false });
+    expect((await (await request.get("http://127.0.0.1:3030/cards/mine/status")).json()).visitors.items[0].visits).toBe(1);
+  });
 });

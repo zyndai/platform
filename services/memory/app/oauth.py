@@ -58,6 +58,7 @@ from app.auth import (
 from app.config import settings
 from plugin_mcp import PLUGIN_SCOPES
 from app.db import get_pool
+from app.services.mcp_scopes import ALLOWED_SCOPES as MCP_SCOPES
 from app.supabase_auth import supabase_identity
 
 logger = logging.getLogger("zynd.oauth")
@@ -347,6 +348,12 @@ def _public_scope(client_id: str) -> str:
     return " ".join(PLUGIN_SCOPES) if _is_plugin_client(client_id) else "user"
 
 
+# Every scope a connector may ask for. Includes the granular MCP scopes the
+# resource metadata advertises (app/mcp_http.py): Claude Code requests exactly
+# those, so leaving them out rejected its login with "unsupported scope".
+CONNECTOR_SCOPES = ("user", "ingest", "offline_access", *PLUGIN_SCOPES, *MCP_SCOPES)
+
+
 def _plugin_callbacks() -> list[str]:
     callbacks = [uri.strip() for uri in settings.plugin_oauth_redirect_uris.split(",") if uri.strip()]
     if (not callbacks or not settings.feature_s09_mcp_clients or
@@ -546,7 +553,7 @@ async def authorization_server_metadata() -> dict:
         "authorization_endpoint": f"{base}/oauth/authorize",
         "token_endpoint": f"{base}/oauth/token",
         "registration_endpoint": f"{base}/oauth/register",
-        "scopes_supported": ["user", "ingest", "offline_access", *PLUGIN_SCOPES, "people:message"],
+        "scopes_supported": list(CONNECTOR_SCOPES),
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
@@ -651,7 +658,7 @@ async def authorize(
     if is_connector_client:
         if code_challenge_method != "S256" or not re.fullmatch(r"[A-Za-z0-9_-]{43}", code_challenge):
             raise HTTPException(status_code=400, detail="S256 PKCE required")
-        allowed_scopes = set(PLUGIN_SCOPES) if _is_plugin_client(client_id) else {"user", "ingest", "offline_access", *PLUGIN_SCOPES, "people:message"}
+        allowed_scopes = set(PLUGIN_SCOPES) if _is_plugin_client(client_id) else set(CONNECTOR_SCOPES)
         if not set(scope.split()).issubset(allowed_scopes):
             raise HTTPException(status_code=400, detail="unsupported scope")
         scope = _public_scope(client_id)

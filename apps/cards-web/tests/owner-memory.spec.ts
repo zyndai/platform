@@ -12,8 +12,8 @@ test.describe("owner memory panel", () => {
   });
 
   test("count matches the list, with origin and evidence per fact", async ({ page }) => {
-    await page.goto("/p/owner/edit");
-    const panel = page.locator("section", { hasText: "ZYND Memory" });
+    await page.goto("/p/owner/edit#memory");
+    const panel = page.locator("#memory");
 
     await expect(panel.getByText("8 facts on your public card")).toBeVisible();
 

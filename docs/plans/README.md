@@ -35,6 +35,7 @@ current *how*.
 |---|---|
 | [`ZYND_DB_UNIFY_PLAN.md`](./ZYND_DB_UNIFY_PLAN.md) | **Current plan** for moving cards' data and login off the dashboard's Supabase project (xmfj) onto persona's (aafo), with Drizzle-managed migrations in `packages/db`. Supersedes §3/P1/P3/P4 of the cards-move plan below |
 | [`ZYND_CARDS_MOVE_PLAN.md`](./ZYND_CARDS_MOVE_PLAN.md) | The broader cards-move plan (P0–P5). P0, P2, and P5 still apply; P1/P3/P4 are replaced by `ZYND_DB_UNIFY_PLAN.md` above |
+| [`ZYND_MEMORY_QUALITY_PLAN.md`](./ZYND_MEMORY_QUALITY_PLAN.md) | Memory fact quality: stop dependency noise and duplicates (skill vs tool, working on vs interested), hide stale facts, and make `get_my_context` return what's current plus topic-related facts. Proposed, not started |
 
 **4. Paused**
 

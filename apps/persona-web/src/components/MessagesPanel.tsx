@@ -30,6 +30,7 @@ interface Thread {
   receiver_mode?: "human" | "agent";
   mode?: "human" | "agent";
   created_at: string;
+  updated_at?: string;
 }
 
 // Friendly per-state copy + tag color for the lifecycle pill at the top
@@ -117,11 +118,37 @@ interface Message {
   channel: "human" | "agent";
   content: string;
   created_at: string;
+  optimistic?: boolean;
 }
 
 type ChatChannel = "human" | "agent";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const INBOX_PAGE_SIZE = 50;
+const MESSAGE_PAGE_SIZE = 50;
+
+function mergeMessages(existing: Message[], incoming: Message[]): Message[] {
+  const next = [...existing];
+  for (const message of incoming) {
+    if (next.some((row) => row.id === message.id)) continue;
+
+    // Realtime can win the race with the POST response. Replace the local
+    // optimistic row instead of rendering the same message twice.
+    const optimisticIndex = next.findIndex(
+      (row) =>
+        row.optimistic &&
+        row.sender_id === message.sender_id &&
+        row.content === message.content &&
+        Math.abs(Date.parse(row.created_at) - Date.parse(message.created_at)) < 30_000,
+    );
+    if (optimisticIndex >= 0) {
+      next[optimisticIndex] = message;
+    } else {
+      next.push(message);
+    }
+  }
+  return next.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+}
 
 export default function MessagesPanel({ initialThreadId }: { initialThreadId?: string | null }) {
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -131,7 +158,10 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
   const [draft, setDraft] = useState("");
   const [sessionUser, setSessionUser] = useState<any>(null);
   const [sessionAgentId, setSessionAgentId] = useState<string | null>(null);
-  const [sessionName, setSessionName] = useState<string>("Zynd Agent");
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -142,97 +172,85 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
 
   useEffect(() => {
     if (!sessionUser) return;
+    let cancelled = false;
 
-    let isMounted = true;
-
-    const initializeNetwork = async () => {
-      let activeAgentId = sessionAgentId;
+    (async () => {
       try {
-        const res = await authFetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/persona/${sessionUser.id}/status`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          if (data.deployed && data.agent_id) {
-            activeAgentId = data.agent_id;
-            if (isMounted) {
-              setSessionAgentId(data.agent_id);
-              if (data.name) setSessionName(data.name);
+        const res = await authFetch(`${API}/api/persona/threads?limit=${INBOX_PAGE_SIZE}`);
+        if (!res.ok) throw new Error(await res.text());
+        const data = (await res.json()) as {
+          threads?: Thread[];
+          agent_id?: string | null;
+        };
+        if (cancelled) return;
+        let nextThreads = data.threads || [];
+        setSessionAgentId(data.agent_id || null);
+        let target = initialThreadId ? nextThreads.find((t) => t.id === initialThreadId) || null : null;
+        if (initialThreadId && !target) {
+          if (cancelled) return;
+          const detail = await authFetch(
+            `${API}/api/persona/threads/${encodeURIComponent(initialThreadId)}`,
+          );
+          if (detail.ok) {
+            const detailData = (await detail.json()) as { thread?: Thread };
+            if (detailData.thread) {
+              target = detailData.thread;
+              nextThreads = [detailData.thread, ...nextThreads];
             }
           }
         }
+        if (cancelled) return;
+        setThreads(nextThreads);
+        setActiveThread((current) => current || target);
       } catch (e) {
-        console.error("Failed agent_id sync:", e);
+        if (!cancelled) console.error("Failed to load network inbox:", e);
       }
-
-      const sb = getSupabase();
-      let queryStr = `initiator_id.eq.${sessionUser.id},receiver_id.eq.${sessionUser.id}`;
-      if (activeAgentId) {
-        queryStr = `${queryStr},initiator_id.eq.${activeAgentId},receiver_id.eq.${activeAgentId}`;
-      }
-
-      const { data } = await sb
-        .from("dm_threads")
-        .select("*")
-        .or(queryStr)
-        .order("updated_at", { ascending: false });
-
-      if (data && isMounted) {
-        setThreads(data);
-
-        // Keep the currently-open thread fresh — if it's in the list,
-        // patch in the latest row so columns updated by the backend
-        // (lifecycle, status, mode flips) propagate to the header pill
-        // and message styling without needing a full page reload.
-        setActiveThread((current) => {
-          if (current) {
-            const fresh = data.find((t: Thread) => t.id === current.id);
-            if (fresh) return fresh;
-            return current;
-          }
-          // First-load: if the page was opened with ?thread=<id>, auto-
-          // select that thread once it's in the list.
-          if (initialThreadId) {
-            const target = data.find((t: Thread) => t.id === initialThreadId);
-            return target ?? null;
-          }
-          return current;
-        });
-      }
-    };
-
-    initializeNetwork();
-
-    const channel = getSupabase()
-      .channel("system_pings")
-      .on("broadcast", { event: "new_thread" }, (payload) => {
-        if (
-          payload.payload?.receiver_id === sessionUser.id ||
-          payload.payload?.receiver_id === sessionAgentId ||
-          payload.payload?.initiator_id === sessionUser.id
-        ) {
-          initializeNetwork();
-        }
-      })
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "dm_threads" },
-        () => {
-          initializeNetwork();
-        }
-      )
-      .subscribe();
-
-    const pollId = setInterval(() => {
-      if (isMounted) initializeNetwork();
-    }, 10000);
+    })();
 
     return () => {
-      isMounted = false;
-      clearInterval(pollId);
-      getSupabase().removeChannel(channel);
+      cancelled = true;
     };
-  }, [sessionUser]);
+  }, [sessionUser, initialThreadId]);
+
+  // Subscribe only to rows that can belong to this user. The previous
+  // subscription received every dm_threads update in the project and then
+  // refetched the whole inbox on a ten-second timer.
+  useEffect(() => {
+    if (!sessionUser) return;
+    const identities = Array.from(new Set([sessionUser.id, sessionAgentId].filter(Boolean))) as string[];
+    const sb = getSupabase();
+    const channel = sb.channel(`dm-inbox-${sessionUser.id}`);
+    const handleThreadChange = (payload: { eventType: string; new: unknown; old: unknown }) => {
+      const row = (payload.new || payload.old) as Thread;
+      if (!row?.id) return;
+      setThreads((prev) => {
+        if (payload.eventType === "DELETE") return prev.filter((thread) => thread.id !== row.id);
+        const merged = prev.some((thread) => thread.id === row.id)
+          ? prev.map((thread) => (thread.id === row.id ? { ...thread, ...row } : thread))
+          : [...prev, row];
+        return merged
+          .sort((a, b) => Date.parse(b.updated_at || b.created_at) - Date.parse(a.updated_at || a.created_at))
+          .slice(0, INBOX_PAGE_SIZE);
+      });
+      setActiveThread((current) =>
+        current?.id === row.id && payload.eventType !== "DELETE" ? { ...current, ...row } : current,
+      );
+    };
+
+    for (const identity of identities) {
+      for (const column of ["initiator_id", "receiver_id"] as const) {
+        channel.on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "dm_threads", filter: `${column}=eq.${identity}` },
+          handleThreadChange,
+        );
+      }
+    }
+    channel.subscribe();
+    return () => {
+      sb.removeChannel(channel);
+    };
+  }, [sessionUser, sessionAgentId]);
 
   // Depend on the thread *id*, not the thread object reference. Mode flips
   // and other state changes that build a new object via {...prev, mode: x}
@@ -244,19 +262,11 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     // Each thread switch lands on the Conversation tab by default; users
     // explicitly switch to Agent Activity if they want to inspect.
     setActiveChannel("human");
+    setMessages([]);
+    setHasMoreMessages(false);
+    setMessagesError(null);
     const sb = getSupabase();
-
-    sb.from("dm_messages")
-      .select("*")
-      .eq("thread_id", activeThreadId)
-      .order("created_at", { ascending: true })
-      .then(({ data }) => {
-        if (data) setMessages(data);
-        setTimeout(
-          () => scrollRef.current?.scrollIntoView({ behavior: "smooth" }),
-          100
-        );
-      });
+    let cancelled = false;
 
     const channel = sb
       .channel(`thread-${activeThreadId}`)
@@ -269,7 +279,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
           filter: `thread_id=eq.${activeThreadId}`,
         },
         (payload) => {
-          setMessages((prev) => [...prev, payload.new as Message]);
+          setMessages((prev) => mergeMessages(prev, [payload.new as Message]));
           setTimeout(
             () => scrollRef.current?.scrollIntoView({ behavior: "smooth" }),
             100
@@ -278,22 +288,84 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
       )
       .subscribe();
 
+    (async () => {
+      try {
+        const res = await authFetch(
+          `${API}/api/persona/threads/${encodeURIComponent(activeThreadId)}/messages?limit=${MESSAGE_PAGE_SIZE}`,
+        );
+        if (!res.ok) throw new Error(await res.text());
+        const data = (await res.json()) as { messages?: Message[]; has_more?: boolean };
+        if (cancelled) return;
+        setMessages((prev) => mergeMessages(prev, data.messages || []));
+        setHasMoreMessages(data.has_more === true);
+        setTimeout(
+          () => scrollRef.current?.scrollIntoView({ behavior: "smooth" }),
+          100,
+        );
+      } catch (e) {
+        if (!cancelled) setMessagesError(e instanceof Error ? e.message : "Couldn't load messages.");
+      }
+    })();
+
     return () => {
+      cancelled = true;
       sb.removeChannel(channel);
     };
   }, [activeThreadId]);
 
-  const handleSend = async () => {
-    if (!draft.trim() || !activeThread || !sessionUser) return;
-    const content = draft;
-    setDraft("");
+  const loadOlderMessages = async () => {
+    if (!activeThreadId || !hasMoreMessages || loadingOlderMessages || messages.length === 0) return;
+    setLoadingOlderMessages(true);
+    try {
+      const before = encodeURIComponent(messages[0].created_at);
+      const res = await authFetch(
+        `${API}/api/persona/threads/${encodeURIComponent(activeThreadId)}/messages?limit=${MESSAGE_PAGE_SIZE}&before=${before}`,
+      );
+      if (!res.ok) throw new Error(await res.text());
+      const data = (await res.json()) as { messages?: Message[]; has_more?: boolean };
+      setMessages((prev) => mergeMessages(prev, data.messages || []));
+      setHasMoreMessages(data.has_more === true);
+    } catch (e) {
+      setMessagesError(e instanceof Error ? e.message : "Couldn't load older messages.");
+    } finally {
+      setLoadingOlderMessages(false);
+    }
+  };
 
-    await getSupabase().from("dm_messages").insert({
+  const handleSend = async () => {
+    if (!draft.trim() || !activeThread || !sessionUser || sending) return;
+    const content = draft.trim();
+    const tempId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const optimistic: Message = {
+      id: tempId,
       thread_id: activeThread.id,
       sender_id: sessionAgentId || sessionUser.id,
-      content: content,
-      channel: "human", // explicit so this can never accidentally land in the agent log
-    });
+      sender_type: "human",
+      channel: "human",
+      content,
+      created_at: new Date().toISOString(),
+      optimistic: true,
+    };
+    setDraft("");
+    setMessages((prev) => mergeMessages(prev, [optimistic]));
+    setSending(true);
+    setMessagesError(null);
+    try {
+      const res = await authFetch(`${API}/api/persona/threads/${encodeURIComponent(activeThread.id)}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = (await res.json()) as { message?: Message };
+      if (data.message) setMessages((prev) => mergeMessages(prev, [data.message!]));
+    } catch (e) {
+      setMessages((prev) => prev.filter((message) => message.id !== tempId));
+      setDraft(content);
+      setMessagesError(e instanceof Error ? e.message : "Couldn't send the message.");
+    } finally {
+      setSending(false);
+    }
   };
 
   const updateThreadStatus = async (status: string, thread?: Thread) => {
@@ -461,7 +533,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     setAgentDraft("");
     setAgentSending(true);
     try {
-      await authFetch(`${API}/api/persona/${sessionUser.id}/agent-send`, {
+      const response = await authFetch(`${API}/api/persona/${sessionUser.id}/agent-send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -469,6 +541,9 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
           content,
         }),
       });
+      if (!response.ok) throw new Error(await response.text());
+      const result = (await response.json()) as { message?: Message | null };
+      if (result.message) setMessages((prev) => mergeMessages(prev, [result.message!]));
       if (agentManualReply) {
         setAgentManualReply(false);
         // Hand the thread back to the AI agent automatically.
@@ -713,31 +788,26 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
       return;
     }
 
-    const { data } = await getSupabase()
-      .from("dm_threads")
-      .insert({
-        initiator_id: sessionAgentId || sessionUser.id,
-        receiver_id: targetAgentId.trim(),
-        initiator_name: sessionName,
-        receiver_name: targetAgent.name || "Network Agent",
-        status: "pending",
-      })
-      .select()
-      .single();
-
-    if (data) {
-      setActiveThread(data);
+    try {
+      const response = await authFetch(`${API}/api/persona/${sessionUser.id}/threads`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target_agent_id: targetAgentId.trim(),
+          target_name: targetAgent.name || "Network Agent",
+          mode: "agent",
+        }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      const result = (await response.json()) as { thread?: Thread };
+      if (result.thread) {
+        setThreads((prev) => [result.thread!, ...prev.filter((t) => t.id !== result.thread!.id)]);
+        setActiveThread(result.thread);
+      }
       setNewChatQuery("");
       setSearchResults([]);
-
-      getSupabase().channel("system_pings").send({
-        type: "broadcast",
-        event: "new_thread",
-        payload: {
-          receiver_id: targetAgentId.trim(),
-          initiator_id: sessionAgentId || sessionUser.id,
-        },
-      });
+    } catch (e) {
+      console.error("Failed to start thread:", e);
     }
   };
 
@@ -1066,6 +1136,11 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
 
             {/* Messages area */}
             <div className="messages-scroll">
+              {messagesError && (
+                <div className="messages-history-empty" role="alert">
+                  {messagesError}
+                </div>
+              )}
               {/* ── Meeting ticket cards ── */}
               {meetings
                 .filter((m) =>
@@ -1468,6 +1543,18 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                   </div>
                 )}
 
+              {hasMoreMessages && (
+                <button
+                  type="button"
+                  className="messages-pill-btn"
+                  onClick={() => void loadOlderMessages()}
+                  disabled={loadingOlderMessages}
+                  style={{ alignSelf: "center" }}
+                >
+                  {loadingOlderMessages ? "Loading older messages…" : "Load older messages"}
+                </button>
+              )}
+
               {messages
                 .filter((m) => (m.channel || "human") === activeChannel)
                 .map((m) => {
@@ -1799,7 +1886,10 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                         value={draft}
                         onChange={(e) => setDraft(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter") handleSend();
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleSend();
+                          }
                         }}
                         placeholder={
                           activeThread.status === "accepted"
@@ -1812,14 +1902,12 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                                   ? "Blocked."
                                   : "Awaiting approval..."
                         }
-                        disabled={
-                          activeThread.status !== "accepted"
-                        }
+                        disabled={activeThread.status !== "accepted" || sending}
                       />
                       <button
                         onClick={handleSend}
                         disabled={
-                          !draft.trim() || activeThread.status !== "accepted"
+                          !draft.trim() || activeThread.status !== "accepted" || sending
                         }
                         className="btn-primary"
                         aria-label="Send"

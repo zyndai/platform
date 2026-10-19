@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getMyCard } from "@/lib/cards";
 import { EditProfileClient } from "./edit-client";
+import "./edit.css";
 
 interface PageProps {
   params: Promise<{ handle: string }>;

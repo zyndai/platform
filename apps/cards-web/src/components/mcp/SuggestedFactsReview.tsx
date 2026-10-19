@@ -12,9 +12,7 @@ import {
 } from "@/lib/mcp-connector";
 import { factLabel, MEMORY_GROUPS } from "@/lib/memory-facts";
 
-const SANS = "var(--zc-sans), system-ui, -apple-system, sans-serif";
-const DISPLAY = "var(--zc-display), system-ui, sans-serif";
-const MONO = "var(--zc-mono), ui-monospace, monospace";
+// Styled by the card editor's edit.css (pe-* classes).
 
 const GROUP_META: Record<SuggestionGroup, { title: string; hint: string }> = {
   right: { title: "Looks right", hint: "Ready to publish as shown." },
@@ -59,24 +57,18 @@ function showsAs(fact: SuggestedFact, asPredicate: string): string {
 }
 
 export function SuggestedFactsReview({
-  tone = "light",
   onChanged,
+  onCount,
 }: {
-  tone?: "light" | "dark";
   onChanged?: (snapshot: MemorySnapshot) => void | Promise<void>;
+  /** How many facts are still waiting, whenever that changes. */
+  onCount?: (count: number) => void;
 } = {}) {
-  const light = tone === "light";
   const [facts, setFacts] = useState<SuggestedFact[] | null>(null);
   const [pending, setPending] = useState<Pending>(null);
   const [error, setError] = useState("");
   const [retype, setRetype] = useState<Record<string, string>>({});
   const [openNoise, setOpenNoise] = useState(false);
-
-  const ink = light ? "#0B0B0B" : "#f8fafc";
-  const muted = light ? "#6E6E68" : "#94a3b8";
-  const border = light ? "#DEDED8" : "rgba(255,255,255,0.12)";
-  const fieldBg = light ? "#F7F7F4" : "rgba(15,23,42,0.8)";
-  const accent = "#7B72E9";
 
   useEffect(() => {
     let cancelled = false;
@@ -96,6 +88,10 @@ export function SuggestedFactsReview({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (facts) onCount?.(facts.length);
+  }, [facts, onCount]);
 
   const removeLocal = useCallback((fact: SuggestedFact) => {
     setFacts((prev) =>
@@ -176,52 +172,29 @@ export function SuggestedFactsReview({
     (action ? pending.action === action : true);
 
   if (facts === null) {
-    return <p style={{ margin: 0, font: `400 13px/1.5 ${SANS}`, color: muted }}>Loading…</p>;
+    return <p className="pe-note">Loading…</p>;
   }
 
   const renderRow = (fact: SuggestedFact) => {
     const asPred = chosenPredicate(fact);
+    const label = factLabel(fact);
+    const shown = showsAs(fact, asPred);
     return (
-      <li
-        key={factKey(fact)}
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          border: `1px solid ${border}`,
-          borderRadius: 14,
-          padding: "12px 16px",
-          background: fieldBg,
-        }}
-      >
-        <div style={{ minWidth: 0, flex: "1 1 180px" }}>
-          <div style={{ font: `500 14px/1.3 ${SANS}`, color: ink }}>{factLabel(fact)}</div>
-          <div style={{ font: `400 12px/1.4 ${SANS}`, color: muted, marginTop: 4 }}>
-            Shows as: <span style={{ color: ink }}>{showsAs(fact, asPred)}</span>
-          </div>
-          <div style={{ font: `400 11px/1.2 ${MONO}`, color: muted, marginTop: 4 }}>
-            {fact.predicate}
-          </div>
+      <li key={factKey(fact)} className="pe-review-row">
+        <div className="pe-review-text">
+          <div className="pe-review-label" title={fact.predicate}>{label}</div>
+          {shown !== label && <div className="pe-review-shows">Shows as: {shown}</div>}
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <div className="pe-review-actions">
           <select
             aria-label="Retype before publish"
+            className="pe-select pe-select-sm"
             value={asPred}
             disabled={pending !== null}
             onChange={(e) =>
               setRetype((prev) => ({ ...prev, [factKey(fact)]: e.target.value }))
             }
-            style={{
-              border: `1px solid ${border}`,
-              borderRadius: 10,
-              padding: "8px 10px",
-              font: `400 12px/1 ${SANS}`,
-              background: light ? "#fff" : "rgba(15,23,42,0.9)",
-              color: ink,
-              maxWidth: 160,
-            }}
+            style={{ maxWidth: 170 }}
           >
             {RETYPE_OPTIONS.map((pred) => (
               <option key={pred} value={pred}>
@@ -234,35 +207,17 @@ export function SuggestedFactsReview({
           </select>
           <button
             type="button"
+            className="pe-btn pe-btn-primary pe-btn-sm"
             onClick={() => void approve(fact)}
             disabled={pending !== null}
-            style={{
-              background: accent,
-              color: "#fff",
-              border: "none",
-              borderRadius: 10,
-              padding: "8px 14px",
-              font: `600 13px/1 ${SANS}`,
-              cursor: pending ? "default" : "pointer",
-              opacity: isPending(fact, "publish") ? 0.6 : 1,
-            }}
           >
             {isPending(fact, "publish") ? "Publishing…" : "Publish"}
           </button>
           <button
             type="button"
+            className="pe-btn pe-btn-danger pe-btn-sm"
             onClick={() => void dismissOne(fact)}
             disabled={pending !== null}
-            style={{
-              background: "transparent",
-              color: light ? "#C2401F" : "#fbbf24",
-              border: `1px solid ${light ? "#E8B4A3" : "rgba(251,191,36,0.35)"}`,
-              borderRadius: 10,
-              padding: "8px 14px",
-              font: `500 13px/1 ${SANS}`,
-              cursor: pending ? "default" : "pointer",
-              opacity: isPending(fact, "dismiss") ? 0.6 : 1,
-            }}
             title="Keep private and hide from this inbox permanently"
           >
             {isPending(fact, "dismiss") ? "Dismissing…" : "Dismiss"}
@@ -278,45 +233,23 @@ export function SuggestedFactsReview({
     const meta = GROUP_META[key];
     const collapsed = key === "noise" && !openNoise;
     return (
-      <section key={key} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-          }}
-        >
+      <section key={key} className="pe-review-group">
+        <div className="pe-review-group-head">
           <div>
-            <div style={{ font: `600 15px/1.3 ${SANS}`, color: ink }}>
-              {meta.title}
-              <span style={{ font: `400 12px/1 ${SANS}`, color: muted, marginLeft: 8 }}>
-                {items.length}
-              </span>
-            </div>
-            <div style={{ font: `400 12px/1.4 ${SANS}`, color: muted }}>{meta.hint}</div>
+            <h3 className="pe-review-group-title">
+              {meta.title} <span className="pe-count">{items.length}</span>
+            </h3>
+            <p className="pe-note">{meta.hint}</p>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div className="pe-row">
             {key === "noise" && (
-              <button
-                type="button"
-                onClick={() => setOpenNoise((v) => !v)}
-                style={{
-                  background: "transparent",
-                  border: `1px solid ${border}`,
-                  borderRadius: 10,
-                  padding: "6px 10px",
-                  font: `500 12px/1 ${SANS}`,
-                  color: muted,
-                  cursor: "pointer",
-                }}
-              >
+              <button type="button" className="pe-btn pe-btn-secondary pe-btn-sm" onClick={() => setOpenNoise((v) => !v)}>
                 {openNoise ? "Collapse" : "Expand"}
               </button>
             )}
             <button
               type="button"
+              className="pe-btn pe-btn-secondary pe-btn-sm"
               disabled={pending !== null}
               onClick={() => {
                 void (async () => {
@@ -332,64 +265,22 @@ export function SuggestedFactsReview({
                   }
                 })();
               }}
-              style={{
-                background: "transparent",
-                border: `1px solid ${border}`,
-                borderRadius: 10,
-                padding: "6px 12px",
-                font: `500 12px/1 ${SANS}`,
-                color: muted,
-                cursor: pending ? "default" : "pointer",
-              }}
             >
               Dismiss all
             </button>
           </div>
         </div>
-        {!collapsed && (
-          <ul
-            style={{
-              margin: 0,
-              padding: 0,
-              listStyle: "none",
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-            }}
-          >
-            {items.map(renderRow)}
-          </ul>
-        )}
+        {!collapsed && <ul className="pe-mem-items">{items.map(renderRow)}</ul>}
       </section>
     );
   };
 
   return (
-    <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 16 }}>
-      <div>
-        <div style={{ font: `700 22px/1.15 ${DISPLAY}`, color: ink, letterSpacing: "-0.03em" }}>
-          Facts waiting for review
-        </div>
-        <p style={{ margin: "6px 0 0", font: `400 14px/1.55 ${SANS}`, color: muted, maxWidth: 520 }}>
-          Your coding agents reported these. Publish to show one on your public card;
-          Dismiss keeps it private and hides it from this inbox permanently.
-        </p>
-      </div>
-
+    <div className="pe-review">
       {facts.length === 0 ? (
-        <div
-          style={{
-            border: `1px solid ${border}`,
-            borderRadius: 14,
-            padding: "16px 18px",
-            background: fieldBg,
-            font: `400 13px/1.5 ${SANS}`,
-            color: muted,
-          }}
-        >
-          Nothing to review right now. Connect a coding agent and as it learns durable
-          facts about you at milestones, they&apos;ll show up here — already triaged.
-        </div>
+        <p className="pe-empty">
+          Nothing to review. When a connected assistant learns something lasting about you, it shows up here.
+        </p>
       ) : (
         <>
           {renderGroup("right")}
@@ -398,11 +289,7 @@ export function SuggestedFactsReview({
         </>
       )}
 
-      {error && (
-        <p style={{ margin: 0, font: `400 13px/1.5 ${SANS}`, color: light ? "#C2401F" : "#fbbf24" }}>
-          {error}
-        </p>
-      )}
+      {error && <p role="alert" className="pe-error">{error}</p>}
     </div>
   );
 }

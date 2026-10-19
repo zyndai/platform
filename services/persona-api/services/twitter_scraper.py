@@ -7,7 +7,7 @@ card, stored in the persona profile (profile.twitter), and pushed here.
 
 Raw tweets land in public.twitter_profiles (never in the memory layer).
 Only CURATED facts are synced to memory:
-  • is_interested_in — up to MAX_FACTS topics the user currently tweets
+  • is_learning — up to MAX_FACTS topics the user currently tweets
     about, extracted by the LLM from their latest tweets
   • one LLM-composed first-person summary ingested with
     source_system="twitter" for async extraction
@@ -251,10 +251,15 @@ async def _compose_summary(handle: str, facts: list[str], tweets: list[dict]) ->
     return f"I tweet about: {', '.join(facts)}."
 
 
+# Topics a person tweets about. Memory's taxonomy has no is_interested_in; is_learning is the
+# closest predicate it accepts (the interests the persona profile already maps there).
+INTEREST_PREDICATE = "is_learning"
+
+
 async def sync_to_memory(user_id: str, handle: str, facts: list[str]) -> dict:
     """Write the IMPORTANT Twitter facts to the memory layer, deduped.
 
-      • is_interested_in — each extracted topic, declared with
+      • is_learning — each extracted topic, declared with
         source_system="twitter" (provenance tag in the memory layer)
     Plus one LLM-composed first-person summary ingested with
     source_system="twitter" for async extraction — only when at least one
@@ -265,6 +270,7 @@ async def sync_to_memory(user_id: str, handle: str, facts: list[str]) -> dict:
     memory-layer problems are logged and never block the scrape.
     """
     from agent.memory_client import (
+        canonical_predicate,
         declare_fact,
         ingest_turns,
         is_enabled,
@@ -278,9 +284,9 @@ async def sync_to_memory(user_id: str, handle: str, facts: list[str]) -> dict:
 
     try:
         existing = await list_assertions(user_id)
-        seen = {(a.predicate, (a.object or "").strip().lower()) for a in existing}
+        seen = {(canonical_predicate(a.predicate), (a.object or "").strip().lower()) for a in existing}
         new_facts = [
-            f for f in facts if ("is_interested_in", f.strip().lower()) not in seen
+            f for f in facts if (INTEREST_PREDICATE, f.strip().lower()) not in seen
         ]
     except Exception as exc:
         logger.warning("[twitter] memory graph read failed for %s: %s", user_id, exc)
@@ -289,12 +295,12 @@ async def sync_to_memory(user_id: str, handle: str, facts: list[str]) -> dict:
     declared = 0
     for fact in new_facts:
         try:
-            if await declare_fact(user_id, "is_interested_in", fact, source_system="twitter"):
+            if await declare_fact(user_id, INTEREST_PREDICATE, fact, source_system="twitter"):
                 declared += 1
         except Exception as exc:
             logger.warning(
-                "[twitter] declare_fact(is_interested_in, %r) failed for %s: %s",
-                fact, user_id, exc,
+                "[twitter] declare_fact(%s, %r) failed for %s: %s",
+                INTEREST_PREDICATE, fact, user_id, exc,
             )
 
     if declared:

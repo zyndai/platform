@@ -96,3 +96,63 @@ test("ownerFactGroups: free-text facts from an older import land in Notes", () =
   assert.deepEqual(groups.map((g) => g.key), ["notes"]);
   assert.equal(ownerFactCount(groups), 1);
 });
+
+// ── De-duplication across predicates (Memory write-path unification, safety net) ──
+
+test("memoryFactKey folds tools into the tech family but keeps working-on apart", () => {
+  assert.equal(memoryFactKey("uses_tool", "Docker"), memoryFactKey("has_expertise_in", "docker"));
+  assert.equal(memoryFactKey("uses_tool", "javascript"), memoryFactKey("has_skill", "JS"));
+  assert.notEqual(memoryFactKey("is_working_on", "SendPilot"), memoryFactKey("is_building", "sendpilot"));
+  assert.notEqual(memoryFactKey("uses_tool", "Docker"), memoryFactKey("uses_tool", "Kubernetes"));
+});
+
+test("memoryFactKey ignores versions and aliases for technologies only", () => {
+  assert.equal(memoryFactKey("has_skill", "Python 3.12"), memoryFactKey("has_skill", "python"));
+  assert.equal(memoryFactKey("has_skill", "Next.js"), memoryFactKey("uses_tool", "nextjs"));
+  assert.notEqual(memoryFactKey("is_building", "Next"), memoryFactKey("is_building", "Next.js"));
+});
+
+test("learning a technology folds into it; learning a field does not", () => {
+  assert.equal(memoryFactKey("is_learning", "Rust"), memoryFactKey("has_skill", "rust"));
+  assert.notEqual(
+    memoryFactKey("is_learning", "machine learning"),
+    memoryFactKey("has_expertise_in", "machine learning"),
+  );
+});
+
+test("groupMemoryFacts shows a duplicated technology once, under the stronger predicate", () => {
+  const groups = groupMemoryFacts([
+    { predicate: "uses_tool", object: "javascript" },
+    { predicate: "has_skill", object: "JavaScript" },
+    { predicate: "is_learning", object: "JavaScript" },
+    { predicate: "uses_tool", object: "Figma" },
+  ]);
+  const byKey = Object.fromEntries(groups.map((g) => [g.key, g.items.map((i) => i.object)]));
+  assert.deepEqual(byKey.has_expertise_in, ["JavaScript"]);   // has_skill displays as expertise
+  assert.deepEqual(byKey.uses_tool, ["Figma"]);
+  assert.equal(byKey.is_learning, undefined);
+});
+
+test("groupMemoryFacts keeps a tool that is not also a skill, and a field being learned", () => {
+  const groups = groupMemoryFacts([
+    { predicate: "uses_tool", object: "Docker" },
+    { predicate: "has_expertise_in", object: "machine learning" },
+    { predicate: "is_learning", object: "machine learning" },
+  ]);
+  assert.deepEqual(groups.map((g) => g.key).sort(), ["has_expertise_in", "is_learning", "uses_tool"]);
+});
+
+test("ownerFactGroups: a duplicate technology counts once", () => {
+  const groups = ownerFactGroups([
+    { predicate: "uses_tool", object: "Docker" },
+    { predicate: "has_expertise_in", object: "docker" },
+  ]);
+  assert.equal(ownerFactCount(groups), 1);
+  assert.equal(groups[0].key, "has_expertise_in");
+});
+
+test("a trailing number is only a version for a known technology", () => {
+  assert.notEqual(memoryFactKey("has_skill", "Skill 1"), memoryFactKey("has_skill", "Skill 2"));
+  assert.notEqual(memoryFactKey("uses_tool", "Phase 2"), memoryFactKey("uses_tool", "Phase 3"));
+  assert.equal(memoryFactKey("has_skill", "React 18"), memoryFactKey("uses_tool", "react"));
+});

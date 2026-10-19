@@ -61,6 +61,20 @@ class IngestResult:
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+# Predicates the syncs used to declare that the memory taxonomy has never accepted (memory
+# answers 400 and the write was lost). Each maps to the predicate it was meant to be.
+LEGACY_PREDICATES: dict[str, str] = {
+    "is_interested_in": "is_learning",
+    "works_at": "is_affiliated_with",
+    "lives_in": "is_located_in",
+}
+
+
+def canonical_predicate(predicate: str) -> str:
+    """The taxonomy predicate for a (possibly legacy) one; use when diffing against the graph."""
+    return LEGACY_PREDICATES.get(predicate, predicate)
+
+
 
 def is_enabled() -> bool:
     """Memory features are enabled when a shared JWT secret is configured.
@@ -380,6 +394,7 @@ async def declare_fact(
     """
     if not is_enabled():
         return False
+    predicate = canonical_predicate(predicate)
     token = _make_jwt(user_id)
     try:
         async with _client() as client:
@@ -395,7 +410,10 @@ async def declare_fact(
             resp.raise_for_status()
             return True
     except Exception as exc:
-        logger.debug("[memory] /me/memory/declare failed for %s: %s", user_id, exc)
+        # A rejected declaration used to vanish at debug level (an out-of-taxonomy predicate
+        # is a 400), which is how the Twitter and LinkedIn syncs lost their facts unseen.
+        logger.warning(
+            "[memory] /me/memory/declare failed for %s (%s=%r): %s", user_id, predicate, value, exc)
         return False
 
 

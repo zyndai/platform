@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncpg
 
+from app.config import settings
 from app.services.entities import resolve_entity
+from app.services.facts import write_fact
 from app.services.matching import recompute_user_embeddings
 from app.services.provenance import evidence_excerpt, provenance_for
 from app.services.quality import (
@@ -306,6 +308,16 @@ async def declare(pool: asyncpg.Pool, user_id: str, predicate: str, value: str) 
     if allowed is not None and value not in allowed:
         raise ValueError(f"{value!r} not allowed for {predicate}; choose one of {sorted(allowed)}")
 
+    if settings.feature_fact_families:
+        async with pool.acquire() as conn, conn.transaction():
+            await write_fact(
+                conn, user_id, predicate, value, entity_type=DECLARE_ENTITY_TYPE[predicate],
+                confidence=DECLARED_CONFIDENCE, source="declared", source_system="user_confirmed",
+                visibility="public", explicit=True,
+            )
+        await recompute_user_embeddings(pool, user_id)
+        return
+
     async with pool.acquire() as conn:
         async with conn.transaction():
             entity_id = await resolve_entity(conn, user_id, value, DECLARE_ENTITY_TYPE[predicate])
@@ -338,6 +350,14 @@ async def declare_private(pool: asyncpg.Pool, user_id: str, predicate: str, valu
         raise ValueError("value is required")
 
     entity_type = PRIVATE_DECLARE_ENTITY_TYPE[predicate]
+    if settings.feature_fact_families:
+        async with pool.acquire() as conn, conn.transaction():
+            await write_fact(
+                conn, user_id, predicate, value, entity_type=entity_type,
+                confidence=PRIVATE_DECLARED_CONFIDENCE, source="declared",
+                source_system="user_confirmed", visibility="private", explicit=True,
+            )
+        return
     async with pool.acquire() as conn:
         async with conn.transaction():
             entity_id = await resolve_entity(conn, user_id, value, entity_type)
@@ -381,6 +401,14 @@ async def declare_for_review(
     if not value:
         return False
     entity_type = PRIVATE_DECLARE_ENTITY_TYPE[predicate]
+    if settings.feature_fact_families:
+        async with pool.acquire() as conn, conn.transaction():
+            result = await write_fact(
+                conn, user_id, predicate, value, entity_type=entity_type,
+                confidence=PRIVATE_DECLARED_CONFIDENCE, source="declared",
+                source_system=source_system, visibility=None, block_if_dismissed=True,
+            )
+        return result.written
     async with pool.acquire() as conn:
         async with conn.transaction():
             entity_id = await resolve_entity(conn, user_id, value, entity_type)

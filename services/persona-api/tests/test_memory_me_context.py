@@ -187,3 +187,35 @@ def test_prompt_marks_stale_facts_as_earlier_context():
     text = format_context_for_prompt(ctx)
     assert "Launch" in text and "Launch (earlier)" not in text
     assert "Old migration (earlier)" in text
+
+
+# ── declare_fact: legacy predicates and visible failures ──────────────────────────
+
+def test_declare_fact_translates_legacy_predicates_and_warns_when_memory_rejects(caplog):
+    import logging
+
+    from agent import memory_client
+
+    assert memory_client.canonical_predicate("works_at") == "is_affiliated_with"
+    assert memory_client.canonical_predicate("lives_in") == "is_located_in"
+    assert memory_client.canonical_predicate("is_interested_in") == "is_learning"
+    assert memory_client.canonical_predicate("has_skill") == "has_skill"
+
+    sent = {}
+    resp = MagicMock()
+    resp.raise_for_status.side_effect = RuntimeError("400 unknown predicate")
+    client = MagicMock()
+    client.post = AsyncMock(side_effect=lambda url, json, headers: sent.update(json) or resp)
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+
+    async def run():
+        with patch("agent.memory_client.is_enabled", return_value=True), \
+             patch("agent.memory_client._make_jwt", return_value="jwt"), \
+             patch("agent.memory_client._client", return_value=client), \
+             caplog.at_level(logging.WARNING, logger="agent.memory_client"):
+            return await memory_client.declare_fact("u1", "works_at", "CTO at Acme", source_system="linkedin")
+
+    assert asyncio.run(run()) is False
+    assert sent["predicate"] == "is_affiliated_with"
+    assert any("declare failed" in r.message and r.levelno == logging.WARNING for r in caplog.records)

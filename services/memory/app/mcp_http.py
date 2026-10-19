@@ -329,6 +329,10 @@ async def report_user_info(
     pool = await _get_pool()
     typed_on = settings.feature_s05_typed_capture
     observe = settings.feature_s05_observe or typed_on
+    if settings.feature_fact_families:
+        # Each technology once, whichever field the agent put it under.
+        from app.services.facts import dedupe_tech_fields
+        languages, frameworks, skills, tools = dedupe_tech_fields(languages, frameworks, skills, tools)
 
     typed_saved = 0
     typed_skipped = 0

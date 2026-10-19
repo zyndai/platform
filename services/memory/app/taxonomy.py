@@ -108,6 +108,33 @@ def family_of(predicate: str, *, is_tech: bool = False, is_project: bool = False
     return None
 
 
+# Entity types that name the same kind of thing. "JavaScript" can come back from extraction as
+# skill_technical, skill_domain or concept_topic; within a user these are one entity.
+ENTITY_TYPE_GROUPS: dict[str, tuple[str, ...]] = {
+    "tech": ("skill_technical", "skill_domain", "concept_topic"),
+    "project": ("project_venture", "project_assignment", "project_side"),
+}
+
+
+def entity_type_group(entity_type: str, *, tech_name: bool = False, work: bool = False) -> tuple[str, ...]:
+    """The set of entity types a name may already be stored under."""
+    if tech_name and entity_type in ENTITY_TYPE_GROUPS["tech"]:
+        return ENTITY_TYPE_GROUPS["tech"]
+    if work and entity_type in ENTITY_TYPE_GROUPS["project"]:
+        return ENTITY_TYPE_GROUPS["project"]
+    return (entity_type,)
+
+
+# Sources whose sync already DECLARES these facts directly (persona-api github_sync /
+# linkedin_scraper / twitter_scraper). The sync also ingests an LLM summary turn under the
+# same source_system, and extraction turned that summary into the same facts again, so
+# these predicates are dropped from chunks of those sources.
+SYNC_SOURCES: frozenset[str] = frozenset({"github", "linkedin", "twitter"})
+SYNC_DECLARED_PREDICATES: frozenset[str] = frozenset({
+    "has_skill", "uses_tool", "has_expertise_in", "is_working_on", "is_building",
+})
+
+
 # ── What context returns ─────────────────────────────────────────────────────────────
 # Always part of the no-topic context packet, as (predicate, max facts of it). Capped to a
 # share of k elsewhere so they never crowd out what the person is doing now.

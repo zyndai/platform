@@ -25,23 +25,25 @@ export async function signIn(context: BrowserContext) {
     ).toString("base64url"),
     "smoke-fixture-signature",
   ].join(".");
+  const session = {
+    access_token: token,
+    refresh_token: "smoke-refresh",
+    token_type: "bearer",
+    expires_at: exp,
+    expires_in: 3600,
+    user,
+  };
   await context.addCookies([
     {
       name: "sb-127-auth-token",
       value:
         "base64-" +
         Buffer.from(
-          JSON.stringify({
-            access_token: token,
-            refresh_token: "smoke-refresh",
-            token_type: "bearer",
-            expires_at: exp,
-            expires_in: 3600,
-            user,
-          }),
+          JSON.stringify(session),
         ).toString("base64url"),
       url: "http://127.0.0.1:3010",
       sameSite: "Lax",
     },
   ]);
+  return session;
 }

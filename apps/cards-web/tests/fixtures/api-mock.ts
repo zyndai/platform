@@ -79,6 +79,7 @@ export function startFixtureServer(): Promise<void> {
   let anonymousMode = true;
   let humanViews = 12;
   let namedVisits = 0;
+  const namedVisitIds = new Set<string>();
   let prefs = { weekly_digest: true, email_nudges: false };
   const ownerStatus = () => ({
     handle: "owner", card_id: "id-owner", name: "Alice Chen", visibility: ownerCard.status === "private" ? "private" : "public",
@@ -122,6 +123,7 @@ export function startFixtureServer(): Promise<void> {
       return;
     }
     if (path === "/__s10/reset") {
+      namedVisitIds.clear();
       ownerCard = cardFixture("owner"); hasDuplicate = true; anonymousMode = true; humanViews = 12; namedVisits = 0; prefs = { weekly_digest: true, email_nudges: false };
       return json(200, {});
     }
@@ -145,9 +147,15 @@ export function startFixtureServer(): Promise<void> {
       return json(200, { anonymous_mode: anonymousMode });
     }
     if (path.endsWith("/visit") && req.method === "POST") {
-      req.resume();
-      if (!anonymousMode) namedVisits++;
-      return json(200, { recorded: !anonymousMode });
+      let raw = "";
+      req.on("data", chunk => { raw += chunk; });
+      req.on("end", () => {
+        const { visit_id } = JSON.parse(raw || "{}");
+        const recorded = !anonymousMode && !namedVisitIds.has(visit_id);
+        if (recorded) { namedVisitIds.add(visit_id); namedVisits++; }
+        return json(200, { recorded });
+      });
+      return;
     }
     if (path === "/auth/v1/user") return json(200, { id: "11111111-1111-4111-8111-111111111111", aud: "authenticated", role: "authenticated", email: "owner@example.test", user_metadata: { name: "Alice Chen" } });
     if (path === "/cards/mine/status") return json(200, ownerStatus());

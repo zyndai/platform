@@ -72,8 +72,9 @@ class Settings(BaseSettings):
     # (top 3 per person, current-state predicates weighted up) instead of one averaged
     # profile vector. Off = the previous cluster-vector ranking.
     feature_fact_matching: bool = False
-    # Phase 4: last_seen_at / mention_count / base_confidence. Turn on ONLY after
-    # sql/schema.sql has been applied to the database (the columns must exist).
+    # Phase 4: last_seen_at / mention_count / base_confidence, idempotent decay, stale facts
+    # never auto-archived. Needs feature_fact_families too (see Settings.freshness_v2). Turn on
+    # ONLY after sql/schema.sql has been applied to the database (the columns must exist).
     feature_freshness_v2: bool = False
 
     # S11 — public Cards MCP (no auth) at /cards-public-mcp. Off by default;
@@ -180,6 +181,14 @@ class Settings(BaseSettings):
         "https://zynd.ai,https://www.zynd.ai,https://persona.zynd.ai,https://dev.persona.zynd.ai,"
         "https://cards.zynd.ai,https://dev.cards.zynd.ai,http://localhost:3000,http://localhost:3002"
     )
+
+    @property
+    def freshness_v2(self) -> bool:
+        """Freshness v2 is effective only when every writer records evidence the same way,
+        i.e. when the unified write path is also on. Legacy writers do not maintain
+        base_confidence / last_seen_at / mention_count, so v2 on their own would decay
+        facts from stale bases."""
+        return self.feature_freshness_v2 and self.feature_fact_families
 
     @property
     def cors_origin_list(self) -> list[str]:

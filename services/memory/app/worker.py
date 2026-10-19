@@ -12,6 +12,7 @@ from arq.connections import RedisSettings
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool, to_pgvector
 from app.services.assertions import upsert_assertion
+from app.services import job_runs
 from app.services.decay import run_decay_job, run_orphan_cleanup
 from app.services.embeddings import embed
 from app.services.entities import resolve_entity
@@ -104,6 +105,7 @@ async def recompute_user(ctx: dict, user_id: str) -> dict:
 async def decay_cron(ctx: dict) -> dict:
     result = await run_decay_job(get_pool())
     logger.info("decay_job: %s", result)
+    await job_runs.record(get_pool(), "decay", result)
     return result
 
 

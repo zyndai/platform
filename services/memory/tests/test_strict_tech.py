@@ -93,6 +93,7 @@ def test_visible_sql_is_a_noop_unless_strict(monkeypatch):
     monkeypatch.setattr(settings, "feature_strict_tech", True)
     assert "version < 2" in visible_sql("x") and "x.source = 'inferred'" in visible_sql("x")
     monkeypatch.setattr(settings, "feature_freshness_v2", True)
+    monkeypatch.setattr(settings, "feature_fact_families", True)
     assert "mention_count < 2" in visible_sql()
 
 

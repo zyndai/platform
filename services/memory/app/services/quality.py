@@ -232,7 +232,7 @@ def visible_sql(alias: str = "a") -> str:
     """
     if not settings.feature_strict_tech:
         return "TRUE"
-    mentions = f"{alias}.mention_count" if settings.feature_freshness_v2 else f"{alias}.version"
+    mentions = f"{alias}.mention_count" if settings.freshness_v2 else f"{alias}.version"
     return (
         f"NOT ({alias}.predicate IN ('has_skill', 'uses_tool') AND {alias}.source = 'inferred' "
         f"AND {alias}.confidence < {SECOND_SIGHTING_MAX_CONFIDENCE} AND {mentions} < 2)"

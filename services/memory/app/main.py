@@ -196,7 +196,15 @@ async def whoami(user_id: str = Depends(current_user)) -> dict:
 @app.get("/health")
 async def health() -> dict:
     await get_pool().execute("SELECT 1")
-    return {"status": "ok"}
+    out: dict = {"status": "ok"}
+    if settings.freshness_v2:
+        # Decay silently not running looks exactly like "facts never fade": say so.
+        from app.services import job_runs
+        decay = await job_runs.status(get_pool(), "decay", job_runs.DECAY_MAX_AGE_HOURS)
+        out["decay"] = decay
+        if not decay["ok"]:
+            out["warnings"] = [f"decay has not run in the last {job_runs.DECAY_MAX_AGE_HOURS}h"]
+    return out
 
 
 @app.get("/.well-known/openapi.json", include_in_schema=False)

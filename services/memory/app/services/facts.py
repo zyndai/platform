@@ -73,6 +73,7 @@ class _Member:
     id: str
     predicate: str
     confidence: float
+    base_confidence: float
     is_public: bool
     approved_at: datetime | None
     dismissed_at: datetime | None
@@ -120,9 +121,11 @@ async def _family_members(
 ) -> list[_Member]:
     """Active facts about the same thing in the same family (any predicate, any entity type)."""
     predicates = _FAMILY_PREDICATES.get(family or "", (predicate,))
+    base = "coalesce(a.base_confidence, a.confidence)" if settings.freshness_v2 else "a.confidence"
     rows = await conn.fetch(
-        """SELECT a.id, a.predicate, a.confidence, a.is_public, a.approved_at, a.dismissed_at,
-                  a.version, a.object_entity_id, e.canonical_name, e.entity_type
+        f"""SELECT a.id, a.predicate, a.confidence, {base} AS base_confidence, a.is_public,
+                  a.approved_at, a.dismissed_at, a.version, a.object_entity_id,
+                  e.canonical_name, e.entity_type
              FROM assertions a JOIN entities e ON e.id = a.object_entity_id
             WHERE a.user_id = $1 AND a.valid_until IS NULL AND a.predicate = ANY($2::text[])""",
         user_id, list(predicates),
@@ -141,7 +144,7 @@ async def _family_members(
                 continue
         members.append(_Member(
             id=str(r["id"]), predicate=r["predicate"], confidence=float(r["confidence"]),
-            is_public=bool(r["is_public"]), approved_at=r["approved_at"], dismissed_at=r["dismissed_at"],
+            base_confidence=float(r["base_confidence"]), is_public=bool(r["is_public"]), approved_at=r["approved_at"], dismissed_at=r["dismissed_at"],
             version=r["version"], entity_id=str(r["object_entity_id"]),
             name=r["canonical_name"], entity_type=r["entity_type"],
         ))
@@ -218,11 +221,18 @@ async def write_fact(
     # A weaker report of something already held more strongly only refreshes the stronger fact.
     if same is None and stronger and not explicit:
         top = max(stronger, key=lambda m: (m.rank, m.confidence))
+        seen = ""
+        if settings.freshness_v2:
+            # The weaker report is evidence for the stronger fact: it was seen again, now.
+            seen = """, last_seen_at = greatest(coalesce(last_seen_at, $2), $2),
+                      mention_count = CASE WHEN $3::uuid IS NOT NULL AND $3::uuid IS DISTINCT FROM trace_chunk_id
+                                           THEN mention_count + 1 ELSE mention_count END"""
         await conn.execute(
-            """UPDATE assertions SET version = version + 1,
-                      observed_at = greatest(coalesce(observed_at, $2), $2)
+            f"""UPDATE assertions SET version = version + 1,
+                      observed_at = greatest(coalesce(observed_at, $2), $2){seen}
                 WHERE id = $1""",
             top.id, evidence_at or datetime.now(timezone.utc),
+            *([trace_chunk_id] if settings.freshness_v2 else []),
         )
         await _log(conn, top.id, top.confidence, top.confidence, "new_evidence")
         return WriteResult("bumped", top.id, top.predicate, top.name)
@@ -231,10 +241,20 @@ async def write_fact(
         if declared:
             new_conf = DECLARED_CONFIDENCE
         else:
-            new_conf = bayesian_update(same.confidence, confidence, reliability)
+            # Evidence combines with the confidence the fact had before time decay, so a fact
+            # that decayed while unseen is not penalized twice (Phase 4).
+            new_conf = bayesian_update(same.base_confidence, confidence, reliability)
         public = visibility == "public"
+        v2 = ""
+        args = [same.id, new_conf, declared, source_system, trace_chunk_id, evidence_at, public, explicit and public]
+        if settings.freshness_v2:
+            v2 = """,
+                      base_confidence = $2,
+                      last_seen_at = greatest(coalesce(last_seen_at, coalesce($6, now())), coalesce($6, now())),
+                      mention_count = CASE WHEN $5::uuid IS NOT NULL AND $5::uuid IS DISTINCT FROM trace_chunk_id
+                                           THEN mention_count + 1 ELSE mention_count END"""
         await conn.execute(
-            """UPDATE assertions
+            f"""UPDATE assertions
                   SET confidence = $2, version = version + 1,
                       source = CASE WHEN $3 THEN 'declared' ELSE source END,
                       source_system = CASE WHEN approved_at IS NOT NULL OR source IN ('declared', 'both')
@@ -243,9 +263,9 @@ async def write_fact(
                       observed_at = coalesce($6, now()),
                       is_public = CASE WHEN $7 THEN true ELSE is_public END,
                       approved_at = CASE WHEN $7 THEN now() ELSE approved_at END,
-                      dismissed_at = CASE WHEN $8 THEN NULL ELSE dismissed_at END
+                      dismissed_at = CASE WHEN $8 THEN NULL ELSE dismissed_at END{v2}
                 WHERE id = $1""",
-            same.id, new_conf, declared, source_system, trace_chunk_id, evidence_at, public, explicit and public,
+            *args,
         )
         await _log(conn, same.id, same.confidence, new_conf, "declared" if declared else "new_evidence")
         archived = await _supersede(conn, [m for m in weaker])
@@ -257,13 +277,17 @@ async def write_fact(
         is_public = False if declared else initial_visibility(predicate)[0]
     else:
         is_public = visibility == "public"
+    v2_cols, v2_vals = "", ""
+    if settings.freshness_v2:
+        v2_cols = ", base_confidence, last_seen_at, mention_count"
+        v2_vals = ", $4, coalesce($9, now()), 1"
     row = await conn.fetchrow(
-        """INSERT INTO assertions
+        f"""INSERT INTO assertions
              (user_id, predicate, object_entity_id, confidence, source_system, source,
-              trace_chunk_id, decay_fn, observed_at, is_public, approved_at, dismissed_at)
+              trace_chunk_id, decay_fn, observed_at, is_public, approved_at, dismissed_at{v2_cols})
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9, now()), $10,
                    CASE WHEN $10 THEN now() END,
-                   CASE WHEN $11 THEN now() END)
+                   CASE WHEN $11 THEN now() END{v2_vals})
            RETURNING id""",
         user_id, predicate, entity_id, new_conf, source_system, source, trace_chunk_id,
         decay_fn_for(predicate), evidence_at, is_public, family_dismissed and not explicit,

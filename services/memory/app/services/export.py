@@ -306,10 +306,10 @@ async def rank_context(
     topic = (topic or "").strip()
     seen_expr = (
         "coalesce(a.last_seen_at, a.observed_at, a.extracted_at)"
-        if settings.feature_freshness_v2
+        if settings.freshness_v2
         else "coalesce(a.observed_at, a.extracted_at)"
     )
-    conf_expr = "coalesce(a.base_confidence, a.confidence)" if settings.feature_freshness_v2 else "a.confidence"
+    conf_expr = "coalesce(a.base_confidence, a.confidence)" if settings.freshness_v2 else "a.confidence"
     select = f"""SELECT a.predicate, coalesce(e.canonical_name, a.object_literal) AS object,
                         e.entity_type AS object_type, {conf_expr} AS confidence,
                         a.observed_at, {seen_expr} AS seen_at"""

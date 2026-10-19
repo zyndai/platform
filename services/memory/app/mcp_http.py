@@ -38,6 +38,7 @@ from app.services.ingest import clean_text, ingest_turns
 from app.services.linkedin_search import find_linkedin_people, search_linkedin_profile_urls, enrich_profile_urls
 from app.services.matching import match_users, search_by_query
 from app.services.people_discovery import search_cards, search_quickenrich
+from app.services.people_query import parse_target
 from app.services.self_context import load_self_context, normalize_profile, read_brief
 
 
@@ -528,12 +529,28 @@ async def find_similar_users(cluster_type: str = "intent_cluster", k: int = 10, 
 
 _FIND_SOURCES = frozenset({"zynd", "cards", "quickenrich"})
 
+# A source scoring at least this counts as a strong match. The external LinkedIn fallback
+# only runs when fewer than k strong matches came from Zynd users and Cards.
+_STRONG_MATCH = 0.5
+
 
 def _requested_sources(sources: str) -> set[str]:
     asked = {part.strip().lower() for part in (sources or "").split(",") if part.strip()}
     if not asked or "all" in asked:
         return set(_FIND_SOURCES)
     return asked & _FIND_SOURCES or set(_FIND_SOURCES)
+
+
+def _explicit_sources(sources: str) -> set[str]:
+    """Sources the caller named themselves (not implied by "all")."""
+    asked = {part.strip().lower() for part in (sources or "").split(",") if part.strip()}
+    return asked & _FIND_SOURCES
+
+
+def _strong_matches(zynd_users: list[dict], cards: list[dict]) -> int:
+    strong = sum(1 for r in zynd_users if (r.get("similarity") or 0) >= _STRONG_MATCH)
+    strong += sum(1 for r in cards if (r.get("match_score") or 0) >= _STRONG_MATCH)
+    return strong
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
@@ -550,22 +567,28 @@ async def find_people(
     Searches three sources and returns them separately:
       zynd_users — findable Zynd members (connection_eligible)
       cards — claimed and unclaimed published Cards (no contact data on unclaimed)
-      quickenrich — external prospects with a public LinkedIn URL only
+      quickenrich — external prospects with a public LinkedIn URL only; with
+        sources="all" this runs only when Zynd users and Cards gave fewer than k
+        strong matches
 
     Pass a natural-language target description (e.g. "seed-stage investor who
     backs dev-tools"). sources is "all" unless the user explicitly restricts it
-    to "zynd", "cards", and/or "quickenrich". A failed source is listed in
-    warnings; the others are still returned.
+    to "zynd", "cards", and/or "quickenrich". A source that failed, or is not
+    configured, is listed in warnings; the others are still returned.
 
     Use find_similar_users instead for "people like me" / overlapping context."""
     limit = max(1, min(k, 20))
     wanted = _requested_sources(sources)
+    explicit = _explicit_sources(sources)
+    query = await parse_target(target)
     zynd_users: list[dict] = []
     cards: list[dict] = []
     prospects: list[dict] = []
     warnings: list[str] = []
+    searched = set()
 
     if "zynd" in wanted:
+        searched.add("zynd")
         try:
             rows = await search_by_query(await _get_pool(), uid, target, limit=limit)
             for row in rows:
@@ -578,13 +601,17 @@ async def find_people(
             warnings.append("zynd_unavailable")
 
     if "cards" in wanted:
-        found, warning = await search_cards(target, limit)
+        searched.add("cards")
+        found, warning = await search_cards(target, limit, query=query)
         cards = found
         if warning:
             warnings.append(warning)
 
-    if "quickenrich" in wanted:
-        found, warning = await search_quickenrich(target, limit)
+    if "quickenrich" in wanted and (
+        "quickenrich" in explicit or _strong_matches(zynd_users, cards) < limit
+    ):
+        searched.add("quickenrich")
+        found, warning = await search_quickenrich(target, limit, query=query)
         prospects = found
         if warning:
             warnings.append(warning)
@@ -592,6 +619,8 @@ async def find_people(
     result = {
         "target": (target or "").strip(),
         "sources": sorted(wanted),
+        "searched": sorted(searched),
+        "parsed": {k_: v for k_, v in query.as_dict().items() if v and k_ not in ("raw", "titles")},
         "zynd_users": zynd_users,
         "cards": cards,
         "quickenrich": prospects,

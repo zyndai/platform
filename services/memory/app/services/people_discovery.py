@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.config import settings
+from app.services.people_query import TargetQuery, parse_target_heuristic
 
 logger = logging.getLogger(__name__)
 
@@ -53,17 +54,48 @@ def _card_url(handle: str, upstream: object) -> str:
     return built if _HANDLE.fullmatch(handle) else _public_url(upstream)
 
 
-def _keywords(target: str) -> list[str]:
-    words = []
-    for raw in re.findall(r"[A-Za-z][A-Za-z0-9+-]{2,}", target or ""):
-        word = raw.strip()
-        if word.lower() in _STOP:
-            continue
-        if word not in words:
+_GENERIC_TOPIC_WORDS = frozenset({
+    "tool", "tools", "platform", "platforms", "software", "company", "companies", "product",
+    "products", "service", "services", "app", "apps", "system", "systems", "technology", "tech",
+})
+
+
+def company_keywords(query: TargetQuery, limit: int = 2) -> list[str]:
+    """Words that would appear in the About text of the person's COMPANY, e.g. a fund that
+    "backs AI dev tools". Topic words only, deduplicated, generic nouns dropped. Short words
+    such as "AI" are kept: they are the signal, not noise."""
+    words: list[str] = []
+    for topic in query.topics:
+        for word in re.findall(r"[A-Za-z0-9][A-Za-z0-9+#.-]*", topic):
+            if word.lower() in _GENERIC_TOPIC_WORDS or word.lower() in (w.lower() for w in words):
+                continue
             words.append(word)
-        if len(words) == 4:
-            break
+            if len(words) >= limit:
+                return words
     return words
+
+
+def quickenrich_body(query: TargetQuery, limit: int) -> dict | None:
+    """Map a parsed target onto QuickEnrich contact-finder filters, or None when there is
+    nothing specific enough to search with.
+
+    title / country_code / locality describe the PERSON. bio_li is the company's LinkedIn
+    About text, so it only gets topic keywords when the target is described through their
+    company (an investor, a founder), never for "a Rust engineer".
+    """
+    body: dict = {"page": 1, "per_page": max(1, min(limit, 10))}
+    keywords = company_keywords(query) if query.company_hint else []
+    if query.titles:
+        body["title"] = {"include": list(query.titles), "exclude": []}
+    if keywords:
+        body["bio_li"] = {"include": keywords, "exclude": []}
+    if "title" not in body and "bio_li" not in body:
+        return None   # a location alone would return arbitrary people
+    if query.country_code:
+        body["country_code"] = {"include": [query.country_code], "exclude": []}
+    if query.locality:
+        body["locality"] = {"include": [query.locality], "exclude": []}
+    return body
 
 
 def _na(value: object) -> str:
@@ -71,15 +103,46 @@ def _na(value: object) -> str:
     return "" if text.upper() == "N/A" else text
 
 
-async def search_cards(target: str, limit: int) -> tuple[list[dict], str | None]:
+def _why(reasons: object) -> list[str]:
+    """Cards' match_reasons are strings or {"type": "memory", "text": ...}; show both as text."""
+    out: list[str] = []
+    for reason in reasons if isinstance(reasons, list) else []:
+        if isinstance(reason, str):
+            text = reason
+        elif isinstance(reason, dict) and isinstance(reason.get("text"), str):
+            text = f"Approved fact: {reason['text']}"
+        else:
+            continue
+        text = _public_text(text, 120)
+        if text and text not in out:
+            out.append(text)
+    return out[:4]
+
+
+def cards_search_params(target: str, limit: int, query: TargetQuery) -> dict:
+    """/v1/agents/search params: the free text plus the parsed filters Cards can score on."""
+    params: dict = {"q": (target or "").strip(), "limit": limit, "include_unclaimed": "true"}
+    if query.role:
+        params["role"] = query.role_noun
+    if query.locality or query.location:
+        params["location"] = query.locality or query.location
+    if query.topics:
+        params["skills"] = ",".join(query.topics)[:200]
+    return params
+
+
+async def search_cards(
+    target: str, limit: int, *, query: TargetQuery | None = None,
+) -> tuple[list[dict], str | None]:
     """Claimed and unclaimed published cards. Unclaimed rows carry no contact fields."""
     q = (target or "").strip()
     if not q or not settings.cards_api_base_url:
         return [], None
+    query = query or parse_target_heuristic(q)
     url = f"{settings.cards_api_base_url.rstrip('/')}/v1/agents/search"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
-            resp = await client.get(url, params={"q": q, "limit": limit, "include_unclaimed": "true"})
+            resp = await client.get(url, params=cards_search_params(q, limit, query))
             resp.raise_for_status()
             payload = resp.json()
     except Exception as exc:
@@ -110,6 +173,7 @@ async def search_cards(target: str, limit: int) -> tuple[list[dict], str | None]
                 _public_text(skill, 80) for skill in row.get("skills") or [] if isinstance(skill, str)
             ][:8],
             "match_score": row.get("match_score") if isinstance(row.get("match_score"), (int, float)) else None,
+            "why": _why(row.get("match_reasons")),
             "url": _card_url(handle, row.get("url")),
             "connection_eligible": False,
         }
@@ -126,18 +190,19 @@ def _qe_headers() -> dict:
     return {name: value, "Accept": "application/json"}
 
 
-async def search_quickenrich(target: str, limit: int) -> tuple[list[dict], str | None]:
-    """Free contact-finder. Returns LinkedIn URLs and contact flags, never email/phone."""
+async def search_quickenrich(
+    target: str, limit: int, *, query: TargetQuery | None = None,
+) -> tuple[list[dict], str | None]:
+    """Free contact-finder. Returns LinkedIn URLs and contact flags, never email/phone.
+
+    Every way this can return nothing carries a warning: not configured, a query too vague
+    to search with, an HTTP error. An empty list with no warning means "searched, found none".
+    """
     if not settings.quickenrich_base_url or not settings.quickenrich_api_key:
-        return [], None
-    keywords = _keywords(target)
-    if not keywords:
-        return [], None
-    body = {
-        "bio_li": {"include": keywords, "exclude": []},
-        "page": 1,
-        "per_page": max(1, min(limit, 10)),
-    }
+        return [], "quickenrich_not_configured"
+    body = quickenrich_body(query or parse_target_heuristic(target), limit)
+    if body is None:
+        return [], "quickenrich_query_too_vague"
     url = f"{settings.quickenrich_base_url.rstrip('/')}/api/employees/contact-finder"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(settings.quickenrich_timeout)) as client:

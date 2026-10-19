@@ -201,3 +201,34 @@ def test_emit_swallows_insert_errors(monkeypatch):
     monkeypatch.setattr(events_service, "_insert_rows", boom)
     # Should not raise
     events_service.emit("agent_fetch", meta={"endpoint": "ask"})
+
+
+# ── Networking funnel: server-emitted `search` event ────────────────────────────────
+
+def test_search_is_a_server_event_the_public_endpoint_cannot_forge():
+    from services import events as events_service
+    assert "search" in events_service.SERVER_EVENTS
+    assert "search" not in events_service.ALLOWED_EVENTS
+
+
+def test_agents_search_records_counts_and_handles_but_never_the_query(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api import agents as agents_api
+
+    seen = []
+    monkeypatch.setattr(agents_api.events_service, "emit", lambda event, **kw: seen.append((event, kw)))
+    monkeypatch.setattr(agents_api.search_service, "search_agents", lambda *a: [
+        {"handle": f"h{i}", "match_score": 0.9} for i in range(7)])
+    monkeypatch.setattr(agents_api.cards_service, "claimed_by_handles", lambda handles: {h: True for h in handles})
+    app = FastAPI()
+    app.include_router(agents_api.router, prefix="/v1/agents")
+
+    resp = TestClient(app).get("/v1/agents/search", params={"q": "my secret query", "role": "investor", "limit": 7})
+
+    assert resp.status_code == 200
+    (event, kw), = seen
+    assert event == "search"
+    assert kw["meta"] == {"n": 7, "top": ["h0", "h1", "h2", "h3", "h4"], "filters": ["role"], "text": True}
+    assert "secret" not in repr(kw)

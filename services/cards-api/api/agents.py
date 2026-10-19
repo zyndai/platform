@@ -1,9 +1,10 @@
 import asyncio
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 import config
 from services import cards as cards_service
+from services import events as events_service
 from services import search as search_service
 
 router = APIRouter()
@@ -20,8 +21,24 @@ SEARCHABLE_ATTRIBUTES = [
 ]
 
 
+def _record_search(request: Request, results: list[dict], *, has_query: bool, **filters: str) -> None:
+    """Top of the networking funnel (docs/cards/s04-funnel.sql): how many searches, how many
+    people came back, which ones. No query text and no caller identity is stored."""
+    events_service.emit(
+        "search",
+        request=request,
+        meta={
+            "n": len(results),
+            "top": [r["handle"] for r in results[:5] if r.get("handle")],
+            "filters": sorted(name for name, value in filters.items() if value),
+            "text": has_query,
+        },
+    )
+
+
 @router.get("/search")
 async def search_agents(
+    request: Request,
     q: str = Query("", max_length=200),
     role: str = Query("", max_length=100),
     location: str = Query("", max_length=100),
@@ -53,6 +70,8 @@ async def search_agents(
         if keep_unclaimed or r.get("claimed") is True:
             kept.append(r)
     results = kept
+    _record_search(request, results, role=role, location=location, skills=skills,
+                   industry=industry, availability=availability, has_query=bool(q.strip()))
     return {
         "query": {
             "q": q,

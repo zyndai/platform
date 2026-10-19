@@ -1,0 +1,780 @@
+{
+ "_about": "Synthetic corpus and golden queries for card search. relevant = every card that truly matches (labelled over the whole corpus). Metric: precision@min(5,|relevant|) and recall@5. q/role/location/skills are what Memory's find_people sends after parsing the target. Embeddings are a hashed bag-of-words stand-in, so this guards lexical scoring regressions; it is not a substitute for judging real embeddings.",
+ "targets": {
+  "precision_at_k": 0.94,
+  "recall_at_5": 0.95
+ },
+ "cards": [
+  {
+   "handle": "inv_seed_ai_in",
+   "headline": "Seed investor backing AI developer tools",
+   "location": "Bengaluru, India",
+   "skills": ["Investing", "Due diligence"],
+   "industries": ["AI", "Venture capital"],
+   "summary": "Partner at a seed fund. Backs AI infrastructure and developer tools founders across India.",
+   "memory": ["Backs AI dev tools founders"]
+  },
+  {
+   "handle": "inv_seed_fintech_in",
+   "headline": "Seed-stage investor in fintech",
+   "location": "Mumbai, India",
+   "skills": ["Investing"],
+   "industries": ["Fintech", "Venture capital"],
+   "summary": "Early investor in payments and lending startups in India.",
+   "memory": []
+  },
+  {
+   "handle": "inv_seriesa_saas_us",
+   "headline": "Series A investor, B2B SaaS",
+   "location": "San Francisco, USA",
+   "skills": ["Investing"],
+   "industries": ["SaaS", "Venture capital"],
+   "summary": "Leads Series A rounds in B2B software companies.",
+   "memory": []
+  },
+  {
+   "handle": "inv_angel_devtools_us",
+   "headline": "Angel investor and former founder",
+   "location": "New York, USA",
+   "skills": ["Investing", "Mentoring"],
+   "industries": ["Developer tools"],
+   "summary": "Writes small cheques into developer tools and open source companies.",
+   "memory": ["Backs developer tools"]
+  },
+  {
+   "handle": "inv_seed_ai_uk",
+   "headline": "Seed investor in AI and machine learning",
+   "location": "London, UK",
+   "skills": ["Investing"],
+   "industries": ["AI", "Venture capital"],
+   "summary": "Invests in applied AI startups at the seed stage across Europe.",
+   "memory": []
+  },
+  {
+   "handle": "inv_growth_climate_de",
+   "headline": "Growth investor in climate tech",
+   "location": "Berlin, Germany",
+   "skills": ["Investing"],
+   "industries": ["Climate", "Venture capital"],
+   "summary": "Growth equity for climate and energy companies.",
+   "memory": []
+  },
+  {
+   "handle": "inv_angel_consumer_in",
+   "headline": "Angel investor",
+   "location": "Pune, India",
+   "skills": ["Investing"],
+   "industries": ["Consumer"],
+   "summary": "Backs consumer startups and first-time founders in India.",
+   "memory": []
+  },
+  {
+   "handle": "inv_bio_us",
+   "headline": "Partner at a biotech venture fund",
+   "location": "Boston, USA",
+   "skills": ["Investing", "Biology"],
+   "industries": ["Biotech", "Venture capital"],
+   "summary": "Series A and B investments in biotech and therapeutics.",
+   "memory": []
+  },
+  {
+   "handle": "fnd_agents_blr",
+   "headline": "Founder building AI agents",
+   "location": "Bengaluru, India",
+   "skills": ["Python", "LLMs"],
+   "industries": ["AI"],
+   "summary": "Building autonomous AI agents for customer support.",
+   "memory": ["Building AI agents platform"]
+  },
+  {
+   "handle": "fnd_fintech_mum",
+   "headline": "Co-founder at a payments startup",
+   "location": "Mumbai, India",
+   "skills": ["Payments", "Product"],
+   "industries": ["Fintech"],
+   "summary": "Building cross-border payments infrastructure.",
+   "memory": []
+  },
+  {
+   "handle": "fnd_climate_berlin",
+   "headline": "Founder, carbon accounting software",
+   "location": "Berlin, Germany",
+   "skills": ["Sustainability", "SaaS"],
+   "industries": ["Climate"],
+   "summary": "Carbon accounting for mid-size manufacturers.",
+   "memory": []
+  },
+  {
+   "handle": "fnd_devtools_sf",
+   "headline": "Founder of a developer tools company",
+   "location": "San Francisco, USA",
+   "skills": ["Rust", "Developer tools"],
+   "industries": ["Developer tools"],
+   "summary": "Building observability tooling for engineering teams.",
+   "memory": ["Building developer observability"]
+  },
+  {
+   "handle": "fnd_health_london",
+   "headline": "Founder in digital health",
+   "location": "London, UK",
+   "skills": ["Healthcare", "Product"],
+   "industries": ["Healthcare"],
+   "summary": "Remote patient monitoring for clinics.",
+   "memory": []
+  },
+  {
+   "handle": "fnd_marketplace_pune",
+   "headline": "Founder of a B2B marketplace",
+   "location": "Pune, India",
+   "skills": ["Marketplaces", "Operations"],
+   "industries": ["Marketplace"],
+   "summary": "Procurement marketplace for small manufacturers.",
+   "memory": []
+  },
+  {
+   "handle": "fnd_aiinfra_nyc",
+   "headline": "Founder building AI infrastructure",
+   "location": "New York, USA",
+   "skills": ["Kubernetes", "GPU"],
+   "industries": ["AI", "Infrastructure"],
+   "summary": "GPU scheduling and inference infrastructure.",
+   "memory": []
+  },
+  {
+   "handle": "fnd_edtech_hyd",
+   "headline": "Founder in education technology",
+   "location": "Hyderabad, India",
+   "skills": ["Teaching", "Product"],
+   "industries": ["Education"],
+   "summary": "Adaptive learning for school students.",
+   "memory": []
+  },
+  {
+   "handle": "eng_rust_berlin",
+   "headline": "Rust engineer",
+   "location": "Berlin, Germany",
+   "skills": ["Rust", "Go", "Distributed systems"],
+   "industries": ["Infrastructure"],
+   "summary": "Systems engineer working on databases and networking in Rust.",
+   "memory": []
+  },
+  {
+   "handle": "eng_django_pune",
+   "headline": "Backend developer",
+   "location": "Pune, India",
+   "skills": ["Django", "Python", "PostgreSQL"],
+   "industries": ["SaaS"],
+   "summary": "Django developer building APIs for SaaS products.",
+   "memory": []
+  },
+  {
+   "handle": "eng_go_blr",
+   "headline": "Go engineer",
+   "location": "Bengaluru, India",
+   "skills": ["Go", "Kubernetes", "gRPC"],
+   "industries": ["Infrastructure"],
+   "summary": "Platform engineer writing Go services on Kubernetes.",
+   "memory": []
+  },
+  {
+   "handle": "eng_react_london",
+   "headline": "Frontend engineer",
+   "location": "London, UK",
+   "skills": ["React", "TypeScript", "CSS"],
+   "industries": ["E-commerce"],
+   "summary": "React and TypeScript developer focused on design systems.",
+   "memory": []
+  },
+  {
+   "handle": "eng_ml_blr",
+   "headline": "Machine learning engineer",
+   "location": "Bengaluru, India",
+   "skills": ["PyTorch", "Computer vision", "Python"],
+   "industries": ["AI"],
+   "summary": "Builds computer vision models for manufacturing.",
+   "memory": []
+  },
+  {
+   "handle": "eng_data_sf",
+   "headline": "Data engineer",
+   "location": "San Francisco, USA",
+   "skills": ["Spark", "SQL", "Airflow"],
+   "industries": ["Analytics"],
+   "summary": "Data pipelines and warehouses at scale.",
+   "memory": []
+  },
+  {
+   "handle": "eng_nextjs_remote",
+   "headline": "Next.js developer",
+   "location": "Remote",
+   "skills": ["Next.js", "React", "Node.js"],
+   "industries": ["Web"],
+   "summary": "Full-stack developer shipping Next.js products.",
+   "memory": []
+  },
+  {
+   "handle": "eng_mobile_mum",
+   "headline": "Mobile developer",
+   "location": "Mumbai, India",
+   "skills": ["Flutter", "Dart", "Android"],
+   "industries": ["Consumer"],
+   "summary": "Flutter apps for consumer fintech.",
+   "memory": []
+  },
+  {
+   "handle": "eng_security_nyc",
+   "headline": "Security engineer",
+   "location": "New York, USA",
+   "skills": ["Security", "Python", "Cloud"],
+   "industries": ["Security"],
+   "summary": "Application security and threat modelling.",
+   "memory": []
+  },
+  {
+   "handle": "eng_devops_blr",
+   "headline": "DevOps engineer",
+   "location": "Bengaluru, India",
+   "skills": ["Kubernetes", "Terraform", "AWS"],
+   "industries": ["Cloud"],
+   "summary": "Infrastructure as code and CI/CD pipelines.",
+   "memory": []
+  },
+  {
+   "handle": "des_product_blr",
+   "headline": "Product designer",
+   "location": "Bengaluru, India",
+   "skills": ["Figma", "Design systems", "UX"],
+   "industries": ["SaaS"],
+   "summary": "Designs B2B product experiences.",
+   "memory": []
+  },
+  {
+   "handle": "des_brand_london",
+   "headline": "Brand designer",
+   "location": "London, UK",
+   "skills": ["Branding", "Illustration"],
+   "industries": ["Consumer"],
+   "summary": "Visual identity for startups.",
+   "memory": []
+  },
+  {
+   "handle": "des_ux_sf",
+   "headline": "UX researcher",
+   "location": "San Francisco, USA",
+   "skills": ["User research", "Interviews"],
+   "industries": ["Developer tools"],
+   "summary": "Research for developer products.",
+   "memory": []
+  },
+  {
+   "handle": "des_lead_berlin",
+   "headline": "Design lead",
+   "location": "Berlin, Germany",
+   "skills": ["Design systems", "Figma", "Leadership"],
+   "industries": ["Climate"],
+   "summary": "Leads a design team at a climate startup.",
+   "memory": []
+  },
+  {
+   "handle": "pm_fintech_mum",
+   "headline": "Product manager in fintech",
+   "location": "Mumbai, India",
+   "skills": ["Product management", "Payments"],
+   "industries": ["Fintech"],
+   "summary": "Product manager for lending products.",
+   "memory": []
+  },
+  {
+   "handle": "rec_ai_blr",
+   "headline": "Recruiter for AI startups",
+   "location": "Bengaluru, India",
+   "skills": ["Recruiting", "Talent sourcing"],
+   "industries": ["AI", "Hiring"],
+   "summary": "Hires engineers and researchers for AI companies.",
+   "memory": []
+  },
+  {
+   "handle": "mkt_saas_us",
+   "headline": "Growth marketer for SaaS",
+   "location": "Austin, USA",
+   "skills": ["Growth", "SEO", "Content"],
+   "industries": ["SaaS"],
+   "summary": "Growth marketing for B2B SaaS companies.",
+   "memory": []
+  },
+  {
+   "handle": "sales_devtools_sf",
+   "headline": "Sales lead for developer tools",
+   "location": "San Francisco, USA",
+   "skills": ["Sales", "Enterprise"],
+   "industries": ["Developer tools"],
+   "summary": "Enterprise sales for developer products.",
+   "memory": []
+  },
+  {
+   "handle": "law_startups_london",
+   "headline": "Lawyer for startups",
+   "location": "London, UK",
+   "skills": ["Corporate law", "Fundraising"],
+   "industries": ["Legal"],
+   "summary": "Legal counsel for early-stage companies.",
+   "memory": []
+  },
+  {
+   "handle": "adv_cto_us",
+   "headline": "Advisor and former CTO",
+   "location": "Seattle, USA",
+   "skills": ["Engineering leadership", "Architecture"],
+   "industries": ["SaaS"],
+   "summary": "Mentors engineering leaders at startups.",
+   "memory": []
+  },
+  {
+   "handle": "res_cv_blr",
+   "headline": "Computer vision researcher",
+   "location": "Bengaluru, India",
+   "skills": ["Computer vision", "Deep learning", "Research"],
+   "industries": ["AI"],
+   "summary": "Research on vision transformers.",
+   "memory": []
+  },
+  {
+   "handle": "devrel_rust_berlin",
+   "headline": "Developer advocate",
+   "location": "Berlin, Germany",
+   "skills": ["Rust", "Developer relations", "Writing"],
+   "industries": ["Developer tools"],
+   "summary": "Developer relations for a Rust tooling company.",
+   "memory": []
+  },
+  {
+   "handle": "stu_ml_pune",
+   "headline": "Student learning machine learning",
+   "location": "Pune, India",
+   "skills": ["Python", "Machine learning"],
+   "industries": ["AI"],
+   "summary": "Final-year student exploring machine learning.",
+   "memory": []
+  },
+  {
+   "handle": "trap_plumbing",
+   "headline": "I maintain the plumbing systems",
+   "location": "Chicago, USA",
+   "skills": ["Maintenance", "Repairs"],
+   "industries": ["Construction"],
+   "summary": "Certain repairs again and again. Maintains buildings and pipes in the city.",
+   "memory": []
+  },
+  {
+   "handle": "trap_stopwords",
+   "headline": "Someone who works in the field",
+   "location": "Indiana, USA",
+   "skills": ["Fieldwork"],
+   "industries": ["Agriculture"],
+   "summary": "People who live in the area and work with the land.",
+   "memory": []
+  }
+ ],
+ "queries": [
+  {
+   "target": "seed-stage investor who backs AI dev tools in India",
+   "q": "seed-stage investor who backs AI dev tools in India",
+   "role": "investor",
+   "location": "India",
+   "skills": "AI dev tools",
+   "relevant": ["inv_seed_ai_in"]
+  },
+  {
+   "target": "investors in India",
+   "q": "investors in India",
+   "role": "investor",
+   "location": "India",
+   "skills": "",
+   "relevant": ["inv_seed_ai_in", "inv_seed_fintech_in", "inv_angel_consumer_in"]
+  },
+  {
+   "target": "seed investor fintech",
+   "q": "seed investor fintech",
+   "role": "investor",
+   "location": "",
+   "skills": "",
+   "relevant": ["inv_seed_fintech_in"]
+  },
+  {
+   "target": "series A investor B2B SaaS",
+   "q": "series A investor B2B SaaS",
+   "role": "investor",
+   "location": "",
+   "skills": "",
+   "relevant": ["inv_seriesa_saas_us"]
+  },
+  {
+   "target": "angel investor developer tools",
+   "q": "angel investor developer tools",
+   "role": "investor",
+   "location": "",
+   "skills": "developer tools",
+   "relevant": ["inv_angel_devtools_us"]
+  },
+  {
+   "target": "AI investors in London",
+   "q": "AI investors in London",
+   "role": "investor",
+   "location": "London",
+   "skills": "",
+   "relevant": ["inv_seed_ai_uk"]
+  },
+  {
+   "target": "climate tech investor Berlin",
+   "q": "climate tech investor Berlin",
+   "role": "investor",
+   "location": "Berlin",
+   "skills": "",
+   "relevant": ["inv_growth_climate_de"]
+  },
+  {
+   "target": "biotech venture investor",
+   "q": "biotech venture investor",
+   "role": "investor",
+   "location": "",
+   "skills": "",
+   "relevant": ["inv_bio_us"]
+  },
+  {
+   "target": "angel investor Pune",
+   "q": "angel investor Pune",
+   "role": "investor",
+   "location": "Pune",
+   "skills": "",
+   "relevant": ["inv_angel_consumer_in"]
+  },
+  {
+   "target": "who invests in developer tools",
+   "q": "who invests in developer tools",
+   "role": "investor",
+   "location": "",
+   "skills": "developer tools",
+   "relevant": ["inv_angel_devtools_us", "inv_seed_ai_in"]
+  },
+  {
+   "target": "founders building AI agents",
+   "q": "founders building AI agents",
+   "role": "founder",
+   "location": "",
+   "skills": "AI agents",
+   "relevant": ["fnd_agents_blr"]
+  },
+  {
+   "target": "fintech founder in Mumbai",
+   "q": "fintech founder in Mumbai",
+   "role": "founder",
+   "location": "Mumbai",
+   "skills": "",
+   "relevant": ["fnd_fintech_mum"]
+  },
+  {
+   "target": "climate founder in Berlin",
+   "q": "climate founder in Berlin",
+   "role": "founder",
+   "location": "Berlin",
+   "skills": "",
+   "relevant": ["fnd_climate_berlin"]
+  },
+  {
+   "target": "developer tools founder San Francisco",
+   "q": "developer tools founder San Francisco",
+   "role": "founder",
+   "location": "San Francisco",
+   "skills": "developer tools",
+   "relevant": ["fnd_devtools_sf"]
+  },
+  {
+   "target": "digital health founder",
+   "q": "digital health founder",
+   "role": "founder",
+   "location": "",
+   "skills": "health",
+   "relevant": ["fnd_health_london"]
+  },
+  {
+   "target": "marketplace founder Pune",
+   "q": "marketplace founder Pune",
+   "role": "founder",
+   "location": "Pune",
+   "skills": "",
+   "relevant": ["fnd_marketplace_pune"]
+  },
+  {
+   "target": "AI infrastructure founder",
+   "q": "AI infrastructure founder",
+   "role": "founder",
+   "location": "",
+   "skills": "AI infrastructure",
+   "relevant": ["fnd_aiinfra_nyc"]
+  },
+  {
+   "target": "education founder in Hyderabad",
+   "q": "education founder in Hyderabad",
+   "role": "founder",
+   "location": "Hyderabad",
+   "skills": "",
+   "relevant": ["fnd_edtech_hyd"]
+  },
+  {
+   "target": "rust engineer in Berlin",
+   "q": "rust engineer in Berlin",
+   "role": "engineer",
+   "location": "Berlin",
+   "skills": "rust",
+   "relevant": ["eng_rust_berlin"]
+  },
+  {
+   "target": "Django developer",
+   "q": "Django developer",
+   "role": "",
+   "location": "",
+   "skills": "django",
+   "relevant": ["eng_django_pune"]
+  },
+  {
+   "target": "Go engineer Bangalore",
+   "q": "Go engineer Bangalore",
+   "role": "engineer",
+   "location": "Bangalore",
+   "skills": "go",
+   "relevant": ["eng_go_blr"]
+  },
+  {
+   "target": "React developer in London",
+   "q": "React developer in London",
+   "role": "",
+   "location": "London",
+   "skills": "react",
+   "relevant": ["eng_react_london"]
+  },
+  {
+   "target": "machine learning engineer Bangalore",
+   "q": "machine learning engineer Bangalore",
+   "role": "engineer",
+   "location": "Bangalore",
+   "skills": "machine learning",
+   "relevant": ["eng_ml_blr"]
+  },
+  {
+   "target": "data engineer in San Francisco",
+   "q": "data engineer in San Francisco",
+   "role": "engineer",
+   "location": "San Francisco",
+   "skills": "data",
+   "relevant": ["eng_data_sf"]
+  },
+  {
+   "target": "nextjs developer",
+   "q": "nextjs developer",
+   "role": "",
+   "location": "",
+   "skills": "nextjs",
+   "relevant": ["eng_nextjs_remote"]
+  },
+  {
+   "target": "Flutter developer Mumbai",
+   "q": "Flutter developer Mumbai",
+   "role": "",
+   "location": "Mumbai",
+   "skills": "flutter",
+   "relevant": ["eng_mobile_mum"]
+  },
+  {
+   "target": "security engineer",
+   "q": "security engineer",
+   "role": "engineer",
+   "location": "",
+   "skills": "security",
+   "relevant": ["eng_security_nyc"]
+  },
+  {
+   "target": "kubernetes engineer in India",
+   "q": "kubernetes engineer in India",
+   "role": "engineer",
+   "location": "India",
+   "skills": "kubernetes",
+   "relevant": ["eng_go_blr", "eng_devops_blr"]
+  },
+  {
+   "target": "terraform devops",
+   "q": "terraform devops",
+   "role": "",
+   "location": "",
+   "skills": "terraform",
+   "relevant": ["eng_devops_blr"]
+  },
+  {
+   "target": "product designer Bangalore",
+   "q": "product designer Bangalore",
+   "role": "designer",
+   "location": "Bangalore",
+   "skills": "",
+   "relevant": ["des_product_blr"]
+  },
+  {
+   "target": "brand designer London",
+   "q": "brand designer London",
+   "role": "designer",
+   "location": "London",
+   "skills": "",
+   "relevant": ["des_brand_london"]
+  },
+  {
+   "target": "UX researcher developer tools",
+   "q": "UX researcher developer tools",
+   "role": "",
+   "location": "",
+   "skills": "user research",
+   "relevant": ["des_ux_sf"]
+  },
+  {
+   "target": "design systems lead",
+   "q": "design systems lead",
+   "role": "",
+   "location": "",
+   "skills": "design systems",
+   "relevant": ["des_lead_berlin", "des_product_blr"]
+  },
+  {
+   "target": "figma designer",
+   "q": "figma designer",
+   "role": "designer",
+   "location": "",
+   "skills": "figma",
+   "relevant": ["des_product_blr", "des_lead_berlin"]
+  },
+  {
+   "target": "product manager fintech",
+   "q": "product manager fintech",
+   "role": "product manager",
+   "location": "",
+   "skills": "",
+   "relevant": ["pm_fintech_mum"]
+  },
+  {
+   "target": "recruiter for AI companies",
+   "q": "recruiter for AI companies",
+   "role": "recruiter",
+   "location": "",
+   "skills": "AI",
+   "relevant": ["rec_ai_blr"]
+  },
+  {
+   "target": "SaaS growth marketer",
+   "q": "SaaS growth marketer",
+   "role": "marketing",
+   "location": "",
+   "skills": "growth",
+   "relevant": ["mkt_saas_us"]
+  },
+  {
+   "target": "enterprise sales developer tools",
+   "q": "enterprise sales developer tools",
+   "role": "",
+   "location": "",
+   "skills": "sales",
+   "relevant": ["sales_devtools_sf"]
+  },
+  {
+   "target": "startup lawyer London",
+   "q": "startup lawyer London",
+   "role": "lawyer",
+   "location": "London",
+   "skills": "",
+   "relevant": ["law_startups_london"]
+  },
+  {
+   "target": "former CTO advisor",
+   "q": "former CTO advisor",
+   "role": "advisor",
+   "location": "",
+   "skills": "",
+   "relevant": ["adv_cto_us"]
+  },
+  {
+   "target": "computer vision researcher",
+   "q": "computer vision researcher",
+   "role": "",
+   "location": "",
+   "skills": "computer vision",
+   "relevant": ["res_cv_blr", "eng_ml_blr"]
+  },
+  {
+   "target": "developer advocate for Rust",
+   "q": "developer advocate for Rust",
+   "role": "",
+   "location": "",
+   "skills": "rust",
+   "relevant": ["devrel_rust_berlin"]
+  },
+  {
+   "target": "someone learning machine learning in Pune",
+   "q": "someone learning machine learning in Pune",
+   "role": "",
+   "location": "Pune",
+   "skills": "machine learning",
+   "relevant": ["stu_ml_pune"]
+  },
+  {
+   "target": "AI",
+   "q": "AI",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "relevant": ["inv_seed_ai_in", "inv_seed_ai_uk", "fnd_agents_blr", "fnd_aiinfra_nyc", "eng_ml_blr", "rec_ai_blr", "res_cv_blr", "stu_ml_pune"]
+  },
+  {
+   "target": "people who work in AI in India",
+   "q": "people who work in AI in India",
+   "role": "",
+   "location": "India",
+   "skills": "AI",
+   "relevant": ["inv_seed_ai_in", "fnd_agents_blr", "eng_ml_blr", "rec_ai_blr", "res_cv_blr", "stu_ml_pune"]
+  },
+  {
+   "target": "who is in the",
+   "q": "who is in the",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "relevant": []
+  },
+  {
+   "target": "find me someone who knows Rust",
+   "q": "find me someone who knows Rust",
+   "role": "",
+   "location": "",
+   "skills": "rust",
+   "relevant": ["eng_rust_berlin", "fnd_devtools_sf", "devrel_rust_berlin"]
+  },
+  {
+   "target": "developer tools",
+   "q": "developer tools",
+   "role": "",
+   "location": "",
+   "skills": "developer tools",
+   "relevant": ["inv_seed_ai_in", "inv_angel_devtools_us", "fnd_devtools_sf", "des_ux_sf", "sales_devtools_sf", "devrel_rust_berlin"]
+  },
+  {
+   "target": "Bengaluru founder",
+   "q": "Bengaluru founder",
+   "role": "founder",
+   "location": "Bengaluru",
+   "skills": "",
+   "relevant": ["fnd_agents_blr"]
+  },
+  {
+   "target": "healthcare",
+   "q": "healthcare",
+   "role": "",
+   "location": "",
+   "skills": "healthcare",
+   "relevant": ["fnd_health_london"]
+  }
+ ]
+}

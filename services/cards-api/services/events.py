@@ -37,6 +37,12 @@ ALLOWED_EVENTS = frozenset({
     "chat_message",
 })
 
+# Emitted only by the API itself. Kept out of ALLOWED_EVENTS so the unauthenticated POST /events
+# cannot forge them and distort the networking funnel.
+SERVER_EVENTS = frozenset({
+    "search",
+})
+
 _UTM_KEYS = ("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term")
 _MAX_BATCH = 20
 _WINDOW_SECONDS = 60
@@ -209,7 +215,7 @@ def emit(
     user_agent: str | None = None,
 ) -> None:
     """Fire-and-forget single event. Never raises to the caller."""
-    if not events_enabled() or event not in ALLOWED_EVENTS:
+    if not events_enabled() or event not in ALLOWED_EVENTS | SERVER_EVENTS:
         return
     ua = user_agent
     ip = None

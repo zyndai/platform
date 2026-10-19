@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 import config
 from api.auth import Principal, verify_supabase_jwt
-from services import network
+from services import invites, network
 
 router = APIRouter()
 
@@ -70,6 +70,15 @@ class GroupCreate(BaseModel):
 class GroupInvite(BaseModel):
     model_config = ConfigDict(extra="forbid")
     target_handle: str = Field(min_length=1, max_length=128)
+    message: str | None = Field(default=None, max_length=500)
+
+
+class InviteCreate(BaseModel):
+    """Prepared by Memory from its own LinkedIn search result and sent with the service token."""
+    model_config = ConfigDict(extra="forbid")
+    linkedin_url: str = Field(min_length=10, max_length=300)
+    name: str = Field(min_length=1, max_length=120)
+    headline: str = Field(default="", max_length=200)
     message: str | None = Field(default=None, max_length=500)
 
 
@@ -157,3 +166,25 @@ async def group_messages(group_id: UUID, limit: int = Query(default=100, ge=1, l
 @router.post("/network/groups/{group_id}/messages")
 async def send_group_message(group_id: UUID, body: MessageCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.send_group_message(_uid(authorization, x_zynd_user), str(group_id), body.content)
+
+
+@router.post("/network/invites")
+async def create_invite(body: InviteCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    """Invite someone with no claimed Card. Only Memory (service token) may supply the name and
+    headline, because they are published on the new Card; a browser session cannot."""
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    if not (config.MEMORY_SERVICE_TOKEN and hmac.compare_digest(token.encode(), config.MEMORY_SERVICE_TOKEN.encode())):
+        raise HTTPException(403, "Invitations are prepared by the Zynd assistant, not the browser")
+    return invites.create_invite(
+        _uid(authorization, x_zynd_user), linkedin_url=body.linkedin_url, name=body.name,
+        headline=body.headline, message=body.message or "")
+
+
+@router.get("/network/invites")
+async def list_invites(authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return invites.list_invites(_uid(authorization, x_zynd_user))
+
+
+@router.post("/network/invites/{invite_id}/cancel")
+async def cancel_invite(invite_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return invites.cancel_invite(_uid(authorization, x_zynd_user), str(invite_id))

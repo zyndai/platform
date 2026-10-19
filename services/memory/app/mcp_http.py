@@ -561,8 +561,9 @@ async def find_people(
     Cards is the people index. Each result is one person:
       handle, name, headline, location, why (why they matched), sources, claimed,
       score, url, and next_action:
-        connect       — a claimed Card: call request_card_connection(target_handle=handle)
-        view_profile  — no claimed Card to connect to; url is their public page or LinkedIn
+        connect          — a claimed Card: call request_card_connection(target_handle=handle)
+        invite_to_claim  — no claimed Card yet: call invite_to_claim(invite_ref=...) (only offered when enabled)
+        view_profile     — nothing to act on; url is their public page or LinkedIn
     LinkedIn people are searched only when too few strong matches were found (or when sources
     names "quickenrich"). Contact details are never in results; they are shared once a
     connection is accepted.
@@ -683,6 +684,24 @@ async def request_card_connection(target_handle: str, message: str = "",
                                   uid: str = Depends(_uid)) -> dict:
     """Send a connection request to a claimed, published Card by handle."""
     return await cards_network_tools.request_connection(await _get_pool(), uid, target_handle, message)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
+async def invite_to_claim(invite_ref: str, message: str = "", uid: str = Depends(_uid)) -> dict:
+    """Invite someone who has no claimed Card yet. Pass the `invite_ref` from a find_people result
+    whose next_action is "invite_to_claim" (nothing else is accepted). This prepares their Card,
+    which they claim by signing in with the same LinkedIn account, and queues your connection
+    request for when they do. It does NOT contact them: give the user the returned claim_url /
+    share_text to send. Tell the user the Card is prepared from their public LinkedIn name and
+    headline only."""
+    if not settings.feature_invite_to_claim:
+        return {"ok": False, "error": "Invitations are not enabled"}
+    from app.services import invite_refs
+    person = invite_refs.verify(uid, invite_ref)
+    if person is None:
+        return {"ok": False, "error": "Unknown or expired invite_ref: run find_people again and use its invite_ref"}
+    return await cards_network_tools.create_invite(
+        await _get_pool(), uid, person["linkedin_url"], person["name"], person["headline"], _clip(message, 500))
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})

@@ -136,11 +136,12 @@ async def find(
         people = people_results.merge_people(
             people + [people_results.person_from_external(r, i) for i, r in enumerate(found)])
 
+    people = people_results.with_invites(people[:limit], uid, settings.feature_invite_to_claim)
     result = {
         "target": target,
         "mode": "like_me" if like_me else "target",
         "parsed": {} if like_me else {k: v for k, v in query.as_dict().items() if v and k not in ("raw", "titles")},
-        "people": people[:limit],
+        "people": people,
         "sources": sorted(wanted),
         "searched": sorted(searched),
     }

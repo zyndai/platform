@@ -162,6 +162,13 @@
       "when": 1792244068900,
       "tag": "0022_reconcile_cards_live_contracts",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792451996223,
+      "tag": "0023_connection_invites",
+      "breakpoints": true
     }
   ]
 }

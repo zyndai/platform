@@ -49,6 +49,11 @@ async def request_connection(pool, uid: str, target_handle: str, message: str = 
     return await _call(pool, uid, "POST", "/connections", json={"target_handle": target_handle, "message": message or None})
 
 
+async def create_invite(pool, uid: str, linkedin_url: str, name: str, headline: str, message: str = "") -> dict:
+    return await _call(pool, uid, "POST", "/invites", json={
+        "linkedin_url": linkedin_url, "name": name, "headline": headline, "message": message or None})
+
+
 async def respond_connection(pool, uid: str, connection_id: str, action: str) -> dict:
     return await _call(pool, uid, "POST", f"/connections/{connection_id}/respond", json={"action": action})
 

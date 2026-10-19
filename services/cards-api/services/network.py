@@ -120,22 +120,22 @@ def _serialize_connection(row: dict, user_id: str) -> dict:
     }
 
 
-def request_connection(user_id: str, target_handle: str, message: str | None = None) -> dict:
-    requester = _card_for_user(user_id)
-    recipient = _card_for_handle(target_handle)
-    recipient_user_id = recipient["owner_user_id"]
-    if recipient_user_id == user_id:
-        raise HTTPException(422, "You cannot connect to your own Card")
+def _create_connection(
+    requester_user_id: str, requester: dict, recipient_user_id: str, recipient: dict, message: str | None,
+) -> tuple[dict, bool]:
+    """The one place a connection request is written: (row, already_existed).
 
-    key = _connection_key(user_id, recipient_user_id)
+    One row per pair of people (connection_key), whoever asked first; a second request,
+    in either direction, returns the existing row instead of a duplicate.
+    """
+    key = _connection_key(requester_user_id, recipient_user_id)
     existing = _sb().table("connections").select("*").eq("connection_key", key).limit(1).execute().data or []
     if existing:
-        return {"connection": _serialize_connection(existing[0], user_id), "existing": True}
-
+        return existing[0], True
     try:
         inserted = _sb().table("connections").insert({
             "connection_key": key,
-            "requester_user_id": user_id,
+            "requester_user_id": requester_user_id,
             "requester_card_id": requester["id"],
             "recipient_user_id": recipient_user_id,
             "recipient_card_id": recipient["id"],
@@ -146,14 +146,26 @@ def request_connection(user_id: str, target_handle: str, message: str | None = N
         if getattr(exc, "code", None) == "23505" or "duplicate key" in str(exc).lower():
             existing = _sb().table("connections").select("*").eq("connection_key", key).limit(1).execute().data or []
             if existing:
-                return {"connection": _serialize_connection(existing[0], user_id), "existing": True}
+                return existing[0], True
         raise
     if not inserted.data:
         raise HTTPException(500, "Could not create connection request")
-    return {"connection": _serialize_connection(inserted.data[0], user_id), "existing": False}
+    return inserted.data[0], False
+
+
+def request_connection(user_id: str, target_handle: str, message: str | None = None) -> dict:
+    requester = _card_for_user(user_id)
+    recipient = _card_for_handle(target_handle)
+    recipient_user_id = recipient["owner_user_id"]
+    if recipient_user_id == user_id:
+        raise HTTPException(422, "You cannot connect to your own Card")
+    row, existed = _create_connection(user_id, requester, recipient_user_id, recipient, message)
+    return {"connection": _serialize_connection(row, user_id), "existing": existed}
 
 
 def list_connections(user_id: str) -> dict:
+    from services import invites
+    invites.deliver_for_user(user_id)    # invitations that were waiting for their Card to be claimed
     rows = (
         _sb().table("connections").select("*")
         .or_(f"requester_user_id.eq.{user_id},recipient_user_id.eq.{user_id}")

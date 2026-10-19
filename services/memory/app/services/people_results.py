@@ -35,6 +35,25 @@ def _next_action(handle: str | None, claimed: bool) -> str:
     return "view_profile"
 
 
+def with_invites(people: list[dict], uid: str, enabled: bool) -> list[dict]:
+    """Offer an invitation to everyone who has no claimed Card but a LinkedIn profile and a name.
+
+    The ref is signed here so invite_to_claim can trust the name and headline it will publish.
+    Off, nobody is offered one and next_action stays view_profile."""
+    if not enabled:
+        return people
+    from app.services import invite_refs
+    for person in people:
+        if person["claimed"] or not person.get("linkedin_url") or not person.get("name"):
+            continue
+        ref = invite_refs.sign(
+            uid, linkedin_url=person["linkedin_url"], name=person["name"], headline=person.get("headline") or "")
+        if ref:
+            person["next_action"] = "invite_to_claim"
+            person["invite_ref"] = ref
+    return people
+
+
 def _score(value: object) -> float:
     return round(float(value), 3) if isinstance(value, (int, float)) else 0.0
 

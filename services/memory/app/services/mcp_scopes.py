@@ -33,6 +33,7 @@ PEOPLE_TOOLS = frozenset({
     "find_people",
     "list_card_connections",
     "request_card_connection",
+    "invite_to_claim",
     "respond_card_connection",
     "read_card_dm",
     "send_card_dm",

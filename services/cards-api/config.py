@@ -38,6 +38,9 @@ MAINTENANCE_READONLY: bool = os.getenv("MAINTENANCE_READONLY", "false").lower() 
 # Cards written before then get owner_user_id from the cutover backfill (by email).
 WRITES_OWNER_USER_ID: bool = SUPABASE_DB_SCHEMA == "cards"
 FEATURE_S12_INTROS: bool = os.getenv("FEATURE_S12_INTROS", "false").lower() in ("1", "true", "yes")
+# A2: invite someone who has no claimed Card yet. Creates an unclaimed Card about a third party
+# from public LinkedIn data and needs cards.connection_invites (packages/db 0023). Off by default.
+FEATURE_A2_INVITE_TO_CLAIM: bool = os.getenv("FEATURE_A2_INVITE_TO_CLAIM", "false").lower() in ("1", "true", "yes")
 PERSONA_API_URL: str = os.getenv("PERSONA_API_URL", "http://127.0.0.1:8000")
 PERSONA_SITE_URL: str = os.getenv("PERSONA_SITE_URL", "https://persona.zynd.ai")
 CARDS_INTRO_SERVICE_TOKEN: str = os.getenv("CARDS_INTRO_SERVICE_TOKEN", "")

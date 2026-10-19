@@ -162,3 +162,36 @@ export const cardGroupMessages = cards.table(
     serviceOnly('group_messages'),
   ],
 );
+
+// owner: cards — an invitation from a Card owner to someone who has no claimed Card yet
+// (A2, "invite to claim"). The target is a pre-filled UNCLAIMED card; when its real owner
+// claims it, each pending invite is delivered as an ordinary connection request. Writes go
+// through cards-api only (service role), like the rest of the network.
+export const cardConnectionInvites = cards.table(
+  'connection_invites',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    inviterUserId: uuid('inviter_user_id').notNull(),
+    inviterCardId: text('inviter_card_id').notNull(),
+    targetCardId: text('target_card_id').notNull(),
+    message: text('message'),
+    status: text('status').notNull().default('pending'),
+    connectionId: uuid('connection_id'),
+    createdAt: tstz('created_at').notNull().defaultNow(),
+    deliveredAt: tstz('delivered_at'),
+    expiresAt: tstz('expires_at').notNull().default(sql`(now() + '60 days'::interval)`),
+  },
+  (t) => [
+    fk('cards_connection_invites_inviter_user_fkey', t.inviterUserId, authUsers.id, 'cascade'),
+    fk('cards_connection_invites_inviter_card_fkey', t.inviterCardId, agentProfileCards.id, 'cascade'),
+    fk('cards_connection_invites_target_card_fkey', t.targetCardId, agentProfileCards.id, 'cascade'),
+    fk('cards_connection_invites_connection_fkey', t.connectionId, cardConnections.id, 'set null'),
+    check('cards_connection_invites_status_check', sql`status IN ('pending', 'delivered', 'cancelled', 'expired')`),
+    index('cards_connection_invites_target_idx').on(t.targetCardId, t.status),
+    index('cards_connection_invites_inviter_idx').on(t.inviterUserId, t.createdAt),
+    uniqueIndex('cards_connection_invites_pending_key')
+      .on(t.inviterUserId, t.targetCardId)
+      .where(sql`status = 'pending'`),
+    serviceOnly('connection_invites'),
+  ],
+);

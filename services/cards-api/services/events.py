@@ -50,7 +50,7 @@ _MAX_PER_WINDOW = 60
 _META_MAX_BYTES = 2048
 _hits: dict[str, deque[float]] = defaultdict(deque)
 
-CREATED_VIA = frozenset({"web", "mcp", "import"})
+CREATED_VIA = frozenset({"web", "mcp", "import", "invite"})
 
 
 def events_enabled() -> bool:

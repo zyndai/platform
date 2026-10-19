@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     # (top 3 per person, current-state predicates weighted up) instead of one averaged
     # profile vector. Off = the previous cluster-vector ranking.
     feature_fact_matching: bool = False
+    # Cards networking A2: results who have no claimed Card can be invited to claim one
+    # (next_action invite_to_claim, tool invite_to_claim). Needs Cards' FEATURE_A2_INVITE_TO_CLAIM
+    # and packages/db migration 0023. Off by default.
+    feature_invite_to_claim: bool = False
     # Phase 4: last_seen_at / mention_count / base_confidence, idempotent decay, stale facts
     # never auto-archived. Needs feature_fact_families too (see Settings.freshness_v2). Turn on
     # ONLY after sql/schema.sql has been applied to the database (the columns must exist).

@@ -11,8 +11,10 @@ terminal/interrupted states, so the band-aids aren't needed.
 from __future__ import annotations
 
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+import logging
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from typing import Optional, Any, List
 
 import config
@@ -37,6 +39,7 @@ from agent.persona_manager import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Strong reference set for in-flight background A2A dispatches — without
 # this, asyncio can GC the task before it runs since nothing else holds a
@@ -190,6 +193,9 @@ class ThreadCreateRequest(BaseModel):
 class AgentChannelSend(BaseModel):
     thread_id: str
     content: str
+
+class ThreadMessageSend(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
 
 class ThreadPermissionsUpdate(BaseModel):
     # Any subset of CONNECTION_PERMISSION_KEYS — only the keys you pass
@@ -713,6 +719,224 @@ async def create_thread(user_id: str, req: ThreadCreateRequest, caller: Caller =
         raise HTTPException(status_code=500, detail="Failed to create thread.")
     return {"status": "created", "thread": inserted.data[0]}
 
+
+# ── Fast inbox + message history ──────────────────────────────────────
+#
+# The web client used to query Supabase directly for its whole inbox and
+# entire conversation history. These authenticated, bounded endpoints keep
+# the browser's contract small and let the API scope the query once to the
+# caller's user/agent identities. Cursor pagination is deliberately based on
+# the existing timestamps so this first pass needs no migration.
+
+THREAD_LIST_COLUMNS = (
+    "id, initiator_id, receiver_id, initiator_name, receiver_name, status, "
+    "lifecycle, initiator_mode, receiver_mode, created_at, updated_at"
+)
+MESSAGE_COLUMNS = "id, thread_id, sender_id, sender_type, channel, content, created_at"
+BLOCKED_MESSAGE_THREAD_STATES = {"blocked", "declined", "revoked"}
+
+
+def _caller_identities(user_id: str) -> tuple[list[str], dict]:
+    persona = get_persona_status(user_id)
+    identities = [user_id]
+    agent_id = persona.get("agent_id") if persona.get("deployed") else None
+    if agent_id:
+        identities.append(agent_id)
+    return identities, persona
+
+
+def _list_threads_for_identities(
+    sb,
+    identities: list[str],
+    limit: int,
+    before: str | None,
+) -> list[dict]:
+    clauses = [
+        f"{column}.eq.{identity}"
+        for identity in identities
+        for column in ("initiator_id", "receiver_id")
+    ]
+    query = (
+        sb.table("dm_threads")
+        .select(THREAD_LIST_COLUMNS)
+        .or_(",".join(clauses))
+        .order("updated_at", desc=True)
+        .limit(limit)
+    )
+    if before:
+        query = query.lt("updated_at", before)
+    result = query.execute()
+    return result.data or []
+
+
+@router.get("/threads")
+async def list_threads(
+    limit: int = Query(default=50, ge=1, le=100),
+    before: str | None = Query(default=None),
+    caller: Caller = Depends(current_caller),
+):
+    """Return a bounded, caller-scoped inbox page."""
+    if not caller.user_id:
+        raise HTTPException(status_code=400, detail="A user identity is required")
+
+    identities, persona = await asyncio.to_thread(_caller_identities, caller.user_id)
+    rows = await asyncio.to_thread(
+        _list_threads_for_identities,
+        _supabase(),
+        identities,
+        limit,
+        before,
+    )
+    return {
+        "threads": rows,
+        "agent_id": persona.get("agent_id") if persona.get("deployed") else None,
+        "name": persona.get("name") if persona.get("deployed") else None,
+        "has_more": len(rows) == limit,
+        "next_before": rows[-1].get("updated_at") if rows and len(rows) == limit else None,
+    }
+
+
+def _thread_for_participant(sb, thread_id: str, user_id: str) -> dict:
+    identities, _ = _caller_identities(user_id)
+    result = (
+        sb.table("dm_threads")
+        .select("id, initiator_id, receiver_id, status")
+        .eq("id", thread_id)
+        .limit(1)
+        .execute()
+    )
+    thread = result.data[0] if result.data else None
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    if not ({thread.get("initiator_id"), thread.get("receiver_id")} & set(identities)):
+        raise HTTPException(status_code=403, detail="Not a participant in this thread")
+    return thread
+
+
+def _list_messages(
+    sb,
+    thread_id: str,
+    limit: int,
+    before: str | None,
+) -> list[dict]:
+    query = (
+        sb.table("dm_messages")
+        .select(MESSAGE_COLUMNS)
+        .eq("thread_id", thread_id)
+        .order("created_at", desc=True)
+        .limit(limit)
+    )
+    if before:
+        query = query.lt("created_at", before)
+    result = query.execute()
+    return list(reversed(result.data or []))
+
+
+@router.get("/threads/{thread_id}/messages")
+async def list_thread_messages(
+    thread_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    before: str | None = Query(default=None),
+    caller: Caller = Depends(thread_participant),
+):
+    """Return the newest conversation page, oldest-first for chat rendering."""
+    if not caller.user_id:
+        raise HTTPException(status_code=400, detail="A user identity is required")
+
+    thread = await asyncio.to_thread(_thread_for_participant, _supabase(), thread_id, caller.user_id)
+    if thread.get("status") in BLOCKED_MESSAGE_THREAD_STATES:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    rows = await asyncio.to_thread(_list_messages, _supabase(), thread_id, limit, before)
+    return {
+        "messages": rows,
+        "has_more": len(rows) == limit,
+        "next_before": rows[0].get("created_at") if rows and len(rows) == limit else None,
+    }
+
+
+@router.get("/threads/{thread_id}")
+async def get_thread(
+    thread_id: str,
+    caller: Caller = Depends(thread_participant),
+):
+    """Resolve a specific thread for deep links outside the first inbox page."""
+    if not caller.user_id:
+        raise HTTPException(status_code=400, detail="A user identity is required")
+
+    await asyncio.to_thread(
+        _thread_for_participant,
+        _supabase(),
+        thread_id,
+        caller.user_id,
+    )
+
+    result = await asyncio.to_thread(
+        lambda: _supabase().table("dm_threads")
+        .select(THREAD_LIST_COLUMNS)
+        .eq("id", thread_id)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return {"thread": result.data[0]}
+
+
+def _send_thread_message(sb, thread_id: str, user_id: str, content: str) -> dict:
+    content = content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Message can't be empty")
+    thread = _thread_for_participant(sb, thread_id, user_id)
+    if thread.get("status") in BLOCKED_MESSAGE_THREAD_STATES:
+        raise HTTPException(status_code=409, detail="This connection is no longer open")
+
+    _identities, persona = _caller_identities(user_id)
+    sender_id = persona.get("agent_id") if persona.get("deployed") else user_id
+    inserted = (
+        sb.table("dm_messages")
+        .insert({
+            "thread_id": thread_id,
+            "sender_id": sender_id,
+            "sender_type": "human",
+            "channel": "human",
+            "content": content,
+        })
+        .execute()
+    )
+    if not inserted.data:
+        raise HTTPException(status_code=500, detail="Couldn't send the message")
+
+    # The inbox is ordered by thread activity. Older direct browser inserts
+    # did not reliably touch this timestamp, which made the list stale.
+    try:
+        sb.table("dm_threads").update({
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", thread_id).execute()
+    except Exception as exc:
+        # The message is already durable. Do not turn a successful send into
+        # a client-visible failure just because inbox ordering refresh failed.
+        logger.warning("[threads] couldn't update activity timestamp for %s: %s", thread_id, exc)
+    return inserted.data[0]
+
+
+@router.post("/threads/{thread_id}/messages")
+async def send_thread_message(
+    thread_id: str,
+    body: ThreadMessageSend,
+    caller: Caller = Depends(thread_participant),
+):
+    """Persist a human DM through the authenticated API boundary."""
+    if not caller.user_id:
+        raise HTTPException(status_code=400, detail="A user identity is required")
+    message = await asyncio.to_thread(
+        _send_thread_message,
+        _supabase(),
+        thread_id,
+        caller.user_id,
+        body.content,
+    )
+    return {"message": message}
+
 @router.get("/threads/{thread_id}/permissions")
 async def get_thread_permissions(thread_id: str, caller: Caller = Depends(thread_participant)):
     """Return the current per-connection permission set for a thread, with defaults filled in."""
@@ -950,4 +1174,3 @@ async def personas_avatars(ids: str = ""):
         elif i in user_to_agent and user_to_agent[i] in agent_avatar_map:
             result[i] = agent_avatar_map[user_to_agent[i]]
     return result
-

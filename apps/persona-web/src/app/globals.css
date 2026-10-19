@@ -9599,6 +9599,11 @@ textarea.input { resize: vertical; min-height: 88px; }
   list-style: none; margin: 0; padding: 0;
   display: flex; flex-direction: column; gap: 4px;
 }
+.group-chat-history-more {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 12px;
+}
 /* Mirrors .msg in home chat exactly — flex row, avatar sits beside
  * the bubble, .is-mine justify-content: flex-end so the user's own
  * messages right-align. */
@@ -13369,4 +13374,3 @@ textarea.input { resize: vertical; min-height: 88px; }
   flex-shrink: 0;
   display: flex; align-items: center; gap: 6px;
 }
-

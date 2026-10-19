@@ -300,3 +300,26 @@ def dedupe_tech_fields(
                 target = "skills"
             out[target].append(name)
     return out["languages"], out["frameworks"], out["skills"], out["tools"]
+
+
+MAX_TECH_VALUES = 5
+
+
+def cap_tech_values(
+    languages: list[str] | None, frameworks: list[str] | None,
+    skills: list[str] | None, tools: list[str] | None, limit: int = MAX_TECH_VALUES,
+) -> tuple[list[str], list[str], list[str], list[str], int]:
+    """Keep at most `limit` technologies across the four typed fields, in priority order
+    (languages, frameworks, skills, tools). Returns the trimmed lists and how many were dropped.
+
+    One report that names ten technologies is an agent reading a repo's package.json, not a
+    person saying what they use.
+    """
+    lists = [list(languages or []), list(frameworks or []), list(skills or []), list(tools or [])]
+    total = sum(len(v) for v in lists)
+    room = limit
+    out: list[list[str]] = []
+    for values in lists:
+        out.append(values[:max(room, 0)])
+        room -= len(out[-1])
+    return out[0], out[1], out[2], out[3], max(total - limit, 0)

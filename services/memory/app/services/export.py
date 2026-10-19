@@ -10,6 +10,7 @@ from app.config import settings
 from app.db import to_pgvector
 from app.services.canonical import dedupe_key, tech_kind
 from app.services.embeddings import embed
+from app.services.quality import visible_sql
 from app.taxonomy import (
     CORE_LIMITS,
     CORE_PREDICATES,
@@ -75,12 +76,12 @@ async def _legacy_active_context(pool: asyncpg.Pool, user_id: str, k: int = 20) 
     about me?'. The topic-less counterpart of context_slice (used by MCP get_my_context
     when no topic is supplied)."""
     rows = await pool.fetch(
-        """SELECT DISTINCT ON (a.predicate, e.canonical_name)
+        f"""SELECT DISTINCT ON (a.predicate, e.canonical_name)
                   a.predicate, e.canonical_name AS object, e.entity_type AS object_type,
                   a.confidence, a.observed_at
              FROM assertions a
              LEFT JOIN entities e ON e.id = a.object_entity_id
-            WHERE a.user_id = $1 AND a.valid_until IS NULL
+            WHERE a.user_id = $1 AND a.valid_until IS NULL AND {visible_sql("a")}
             ORDER BY a.predicate, e.canonical_name, a.confidence DESC
             LIMIT $2""",
         user_id, k,
@@ -107,13 +108,13 @@ async def _legacy_context_slice(pool: asyncpg.Pool, user_id: str, topic: str, k:
     """
     topic_vector = to_pgvector(await embed(topic))
     rows = await pool.fetch(
-        """SELECT DISTINCT ON (a.predicate, e.canonical_name)
+        f"""SELECT DISTINCT ON (a.predicate, e.canonical_name)
                   a.predicate, e.canonical_name AS object, e.entity_type AS object_type,
                   a.confidence, a.observed_at,
                   1 - (e.embedding <=> $2::vector) AS relevance
              FROM assertions a
              JOIN entities e ON e.id = a.object_entity_id
-            WHERE a.user_id = $1 AND a.valid_until IS NULL
+            WHERE a.user_id = $1 AND a.valid_until IS NULL AND {visible_sql("a")}
               AND a.confidence > $3 AND e.embedding IS NOT NULL
             ORDER BY a.predicate, e.canonical_name, e.embedding <=> $2::vector
             LIMIT $4""",
@@ -315,7 +316,7 @@ async def rank_context(
     where = f"""FROM assertions a
                 LEFT JOIN entities e ON e.id = a.object_entity_id
                WHERE a.user_id = $1 AND a.valid_until IS NULL AND a.dismissed_at IS NULL
-                 AND {conf_expr} > $2"""
+                 AND {conf_expr} > $2 AND {visible_sql("a")}"""
     if topic:
         vector = to_pgvector(await embed(topic))
         records = await pool.fetch(

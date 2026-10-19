@@ -48,7 +48,17 @@ GH_API_VERSION = "2022-11-28"
 
 MAX_REPOS = 100
 MAX_LANGUAGE_REPOS = 15
-MAX_SKILLS = 8
+MAX_SKILLS = 5
+# A language is "something you code in" only when it is a real share of your own code.
+MIN_LANGUAGE_SHARE = 0.15       # of the bytes left after the filters below
+MIN_LANGUAGE_REPOS = 2          # ...and it shows up in at least this many repos (one repo: waived)
+VENDOR_REPO_SHARE = 0.80        # one repo holding this much of a language, with the language
+VENDOR_OTHER_SHARE = 0.05       # barely present anywhere else, is a committed SDK or build
+# Markup, config and templating: present in nearly every project, not what anyone is hired for.
+IGNORED_LANGUAGES = frozenset({
+    "HTML", "CSS", "SCSS", "Sass", "Less", "Shell", "PowerShell", "Batchfile", "Dockerfile",
+    "Makefile", "CMake", "Procfile", "Jinja", "Handlebars", "Mustache", "Roff", "TeX",
+})
 MAX_PROJECTS = 10
 MAX_ACTIVE = 5          # repos declared as "currently working on"
 MAX_NOTABLE = 5         # repos declared as "has built"
@@ -206,6 +216,60 @@ async def _fetch_languages(client: httpx.AsyncClient, full_name: str) -> dict[st
     return data if isinstance(data, dict) else {}
 
 
+def _derive_skills(repos: list[dict], languages_by_repo: dict[str, dict[str, int]]) -> list[dict]:
+    """Languages worth recording as skills: the ones you actually write.
+
+    Generated, vendored and markup bytes used to count, so HTML, CSS, Shell and a committed
+    SDK showed up as "Skilled in". Now: archived repos and markup/config languages are
+    ignored; a repo that is the only real home of a language (a vendored build) is dropped
+    for that language; and a language must be at least MIN_LANGUAGE_SHARE of what is left and
+    appear in MIN_LANGUAGE_REPOS repos (a user with a single repo is held to the share only).
+    """
+    archived = {r.get("full_name") for r in repos if r.get("archived")}
+    per_repo: dict[str, dict[str, int]] = {}
+    for full_name, langs in languages_by_repo.items():
+        if full_name in archived:
+            continue
+        kept = {
+            lang: int(nbytes) for lang, nbytes in langs.items()
+            if lang not in IGNORED_LANGUAGES and int(nbytes) > 0
+        }
+        if kept:
+            per_repo[full_name] = kept
+
+    totals: Counter = Counter()
+    for langs in per_repo.values():
+        totals.update(langs)
+    grand_total = sum(totals.values())
+    if len(per_repo) > 1:
+        for full_name, langs in per_repo.items():
+            for lang in list(langs):
+                others_lang = totals[lang] - langs[lang]
+                others_all = grand_total - sum(langs.values())
+                if (
+                    langs[lang] > VENDOR_REPO_SHARE * totals[lang]
+                    and others_all > 0
+                    and others_lang / others_all < VENDOR_OTHER_SHARE
+                ):
+                    del langs[lang]   # one repo holds this language and nothing else does
+
+    lang_bytes: Counter = Counter()
+    repo_count: Counter = Counter()
+    for langs in per_repo.values():
+        for lang, nbytes in langs.items():
+            lang_bytes[lang] += nbytes
+            repo_count[lang] += 1
+    remaining = sum(lang_bytes.values())
+    if not remaining:
+        return []
+    needed_repos = MIN_LANGUAGE_REPOS if len([r for r in per_repo.values() if r]) > 1 else 1
+    return [
+        {"language": lang, "bytes": nbytes, "share": round(nbytes / remaining, 3), "repos": repo_count[lang]}
+        for lang, nbytes in lang_bytes.most_common()
+        if nbytes / remaining >= MIN_LANGUAGE_SHARE and repo_count[lang] >= needed_repos
+    ][:MAX_SKILLS]
+
+
 def _derive_profile(
     repos: list[dict],
     languages_by_repo: dict[str, dict[str, int]],
@@ -218,15 +282,7 @@ def _derive_profile(
     so the memory-write step can decide what's worth declaring. Projects
     are ordered: currently-active first, then notable past work.
     """
-    lang_bytes: Counter = Counter()
-    for langs in languages_by_repo.values():
-        for lang, nbytes in langs.items():
-            lang_bytes[lang] += int(nbytes)
-
-    skills = [
-        {"language": lang, "bytes": nbytes}
-        for lang, nbytes in lang_bytes.most_common(MAX_SKILLS)
-    ]
+    skills = _derive_skills(repos, languages_by_repo)
 
     topic_counter: Counter = Counter()
     for repo in repos:

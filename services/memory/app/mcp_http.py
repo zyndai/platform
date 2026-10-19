@@ -294,6 +294,10 @@ async def report_user_info(
     products only; goals → intends. role and notes stay free text.
     Only include skills/languages/frameworks/tools the user EXPLICITLY
     stated; never infer a stack from a single "working on X" mention.
+    Bad: tools=["webpack", "lodash", "jest", "eslint", "react"] copied from the
+    repo's package.json. Good: tools=["Cursor"] after the user said "I use Cursor".
+    The repo's dependencies are the project's, not the user's; at most 5
+    technologies are kept per call.
     Never pass secrets, API keys, passwords, tokens, .env, repo paths, or
     one-off task details. Facts stay private until the user reviews them."""
     text = (text or "").strip()
@@ -331,6 +335,13 @@ async def report_user_info(
         # Each technology once, whichever field the agent put it under.
         from app.services.facts import dedupe_tech_fields
         languages, frameworks, skills, tools = dedupe_tech_fields(languages, frameworks, skills, tools)
+    tech_note: str | None = None
+    if settings.feature_strict_tech:
+        from app.services.facts import MAX_TECH_VALUES, cap_tech_values
+        languages, frameworks, skills, tools, dropped = cap_tech_values(languages, frameworks, skills, tools)
+        if dropped:
+            tech_note = (f"Kept the first {MAX_TECH_VALUES} technologies and ignored {dropped} more. "
+                         "Send only what the user said they use or know, not the stack of the repo you are in.")
 
     typed_saved = 0
     typed_skipped = 0
@@ -437,17 +448,23 @@ async def report_user_info(
     total_saved = typed_saved + text_saved
     total_skipped = typed_skipped + text_skipped
     if total_saved == 0:
-        return {
+        result = {
             "saved": False,
             "reason": "nothing new (too short, duplicates, or filtered)",
             "items_skipped": total_skipped,
         }
-    return {
+        if tech_note:
+            result["tech_note"] = tech_note
+        return result
+    result = {
         "saved": True,
         "note": "Saved privately. The user reviews facts before anything becomes public.",
         "items_saved": total_saved,
         "items_skipped": total_skipped,
     }
+    if tech_note:
+        result["tech_note"] = tech_note
+    return result
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})

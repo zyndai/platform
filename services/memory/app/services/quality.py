@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 Group = Literal["right", "look", "noise"]
@@ -213,3 +215,25 @@ def dedupe_suggestion_rows(rows: list[dict]) -> list[dict]:
         seen.add(key)
         out.append(row)
     return out
+
+
+# ── Second sighting ───────────────────────────────────────────────────────────────
+
+SECOND_SIGHTING_MAX_CONFIDENCE = 0.9
+
+
+def visible_sql(alias: str = "a") -> str:
+    """SQL condition that is false for an inferred skill or tool seen only once.
+
+    One passing mention ("working in some-repo's webpack config") must not put a skill into
+    context or the review inbox; seeing it in a second chunk, or the person declaring it,
+    does. Declared facts and anything strongly evidenced are visible at once. `version`
+    counts observations until Phase 4's mention_count exists. TRUE when the rule is off.
+    """
+    if not settings.feature_strict_tech:
+        return "TRUE"
+    mentions = f"{alias}.mention_count" if settings.feature_freshness_v2 else f"{alias}.version"
+    return (
+        f"NOT ({alias}.predicate IN ('has_skill', 'uses_tool') AND {alias}.source = 'inferred' "
+        f"AND {alias}.confidence < {SECOND_SIGHTING_MAX_CONFIDENCE} AND {mentions} < 2)"
+    )

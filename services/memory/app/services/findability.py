@@ -18,6 +18,7 @@ from app.services.quality import (
     dedupe_suggestion_rows,
     public_label_for,
     public_predicate_for,
+    visible_sql,
 )
 from app.taxonomy import FINDABILITY_PREDICATES, PREDICATE_HALFLIFE_DAYS, decay_fn_for
 
@@ -177,10 +178,10 @@ async def get_suggestions(pool: asyncpg.Pool, user_id: str) -> list[dict]:
     Excludes permanently dismissed rows. Attaches triage group / Shows-as label.
     """
     rows = await pool.fetch(
-        """SELECT a.predicate, e.canonical_name AS object, a.confidence
+        f"""SELECT a.predicate, e.canonical_name AS object, a.confidence
              FROM assertions a JOIN entities e ON e.id = a.object_entity_id
             WHERE a.user_id = $1 AND a.valid_until IS NULL AND a.is_public = false
-              AND a.dismissed_at IS NULL
+              AND a.dismissed_at IS NULL AND {visible_sql("a")}
               AND a.predicate = ANY($2::text[])
               AND (
                     a.source <> 'declared'

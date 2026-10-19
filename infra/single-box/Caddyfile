@@ -43,6 +43,9 @@ cards.api.zynd.ai {
 # (same routing as infra/api-box/Caddyfile).
 api.zynd.ai {
 	# Remote MCP endpoint (streamable-HTTP) for Claude/Cursor/any MCP client.
+	handle /chatgpt/mcp* {
+		reverse_proxy 127.0.0.1:8091
+	}
 	handle /mcp* {
 		reverse_proxy 127.0.0.1:8090
 	}
@@ -108,6 +111,9 @@ dev.cards.api.zynd.ai {
 }
 
 dev.api.zynd.ai {
+	handle /chatgpt/mcp* {
+		reverse_proxy 127.0.0.1:8191
+	}
 	handle /mcp* {
 		reverse_proxy 127.0.0.1:8190
 	}

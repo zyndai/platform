@@ -16,7 +16,7 @@ import {
 import { ownerRequest, type OwnerStatus } from "@/lib/owner-home";
 import { VisitorPrivacy } from "@/components/VisitorPrivacy";
 import { DiscoveryAnalytics } from "./discovery-analytics";
-import "./owner-home.css";
+import { CompletionRing } from "./completion-ring";
 
 export function OwnerHome({
   initial,
@@ -139,7 +139,7 @@ export function OwnerHome({
         <header className="oh-header">
           <div>
             <div className="oh-header-context">
-              <span className="oh-workspace-mark">Z</span>
+              <Link className="oh-workspace-mark" href="/directory" aria-label="Zynd directory">Z</Link>
               <p className="oh-eyebrow">YOUR CARD, AT A GLANCE</p>
               <span className="oh-handle">@{data.handle}</span>
             </div>
@@ -155,6 +155,11 @@ export function OwnerHome({
                 : <LockKeyhole size={13} aria-hidden="true" />}
               {data.visibility === "public" ? "Public profile" : "Private profile"}
             </span>
+            {data.visibility === "public" && (
+              <Link className="oh-button oh-outline" href={profile}>
+                View your card <ArrowUpRight size={16} aria-hidden="true" />
+              </Link>
+            )}
             <Link className="oh-button" href={`${profile}/edit`}>
               Edit your card <ArrowUpRight size={16} aria-hidden="true" />
             </Link>
@@ -167,19 +172,7 @@ export function OwnerHome({
           <section className="oh-panel oh-completeness">
             <p className="oh-eyebrow">A LITTLE MORE YOU</p>
             <div className="oh-score-row">
-              <div
-                className="oh-ring"
-                role="img"
-                aria-label={`Card completeness ${data.completeness.score}%`}
-                style={{
-                  background: `conic-gradient(#7B72E9 ${data.completeness.score}%, #263146 0)`,
-                }}
-              >
-                <span>
-                  {data.completeness.score}
-                  <small>%</small>
-                </span>
-              </div>
+              <CompletionRing score={data.completeness.score} />
               <div>
                 <h2>Your card is taking shape</h2>
                 <p>A few details help the right people find you.</p>
@@ -286,9 +279,9 @@ export function OwnerHome({
             </Link>
           </section>
           <section className="oh-panel oh-controls">
-            <p className="oh-eyebrow">YOU ARE IN CONTROL</p>
+            <p className="oh-eyebrow">Setting</p>
             <h2 className="oh-heading-icon"><ShieldCheck size={20} aria-hidden="true" />Visibility &amp; emails</h2>
-            <VisitorPrivacy dark />
+            <VisitorPrivacy />
             <label className="oh-toggle">
               <span>
                 Public card<small>Visible to people and agents</small>

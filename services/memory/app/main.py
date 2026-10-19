@@ -21,6 +21,7 @@ from app.docs import router as docs_router
 from app.oauth import router as oauth_router
 from app.oauth import _well_known_router as oauth_well_known_router
 from app.oauth_ui import router as oauth_ui_router
+from plugin_review import router as plugin_review_router
 
 
 def _valid_service_token(token: str) -> bool:
@@ -60,6 +61,7 @@ app.include_router(oauth_well_known_router)
 app.include_router(oauth_ui_router)
 app.include_router(connect_router)
 app.include_router(docs_router)
+app.include_router(plugin_review_router)
 
 _PRIVACY_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -136,6 +138,12 @@ async def current_user(authorization: str = Header(default="")) -> str:
         if settings.enable_dev_bearer and hmac.compare_digest(token, settings.dev_bearer_token):
             return app.state.dev_user_id   # dev backdoor: not a JWT, no revocation check
         raise HTTPException(status_code=401, detail="invalid bearer token")
+    if meta.get("oauth_client_id") == settings.plugin_oauth_client_id:
+        raise HTTPException(status_code=403, detail="ChatGPT plugin tokens cannot access REST memory endpoints")
+    if meta.get("jti"):
+        label = await get_pool().fetchval("SELECT label FROM mcp_clients WHERE jti = $1::uuid", meta["jti"])
+        if label == "ZYND ChatGPT plugin":
+            raise HTTPException(status_code=403, detail="Reconnect the ChatGPT plugin with reduced scopes")
     from app.services.sessions import token_rejected
     user_id = meta["sub"]
     if await token_rejected(get_pool(), user_id, meta["iat"], meta["ver"]):

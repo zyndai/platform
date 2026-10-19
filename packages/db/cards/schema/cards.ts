@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, index, jsonb, pgPolicy, text, uuid, vector } from 'drizzle-orm/pg-core';
+import { boolean, date, index, jsonb, pgPolicy, text, uuid, vector } from 'drizzle-orm/pg-core';
 import { authUsers, fk, serviceRole, tsvector, tstz } from '../../lib/shared';
 import { cards } from './_schema';
 
@@ -52,6 +52,11 @@ export const agentProfileCards = cards.table(
     notificationPrefs: jsonb('notification_prefs').notNull().default(sql`'{"weekly_digest":true,"email_nudges":false}'::jsonb`),
     unsubscribeToken: uuid('unsubscribe_token').notNull().defaultRandom().unique('agent_profile_cards_unsubscribe_token_key'),
     mergedInto: text('merged_into'),
+    // Existing live owner-digest metadata, adopted without resetting values.
+    digestOptOut: boolean('digest_opt_out').notNull().default(false),
+    lastLookingForNudgeOn: date('last_looking_for_nudge_on'),
+    lastOwnerDigestOn: date('last_owner_digest_on'),
+    lookingForExpiresAt: tstz('looking_for_expires_at'),
   },
   (t) => [
     fk('agent_profile_cards_owner_user_id_fkey', t.ownerUserId, authUsers.id, 'set null'),

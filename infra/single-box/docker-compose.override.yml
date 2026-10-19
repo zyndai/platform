@@ -19,6 +19,9 @@ services:
   api:
     ports:
       - "8001:8000"
+  chatgpt-plugin:
+    ports:
+      - "8091:8091"
   mcp:
     ports:
       - "8090:8090"

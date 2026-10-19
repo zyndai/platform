@@ -56,7 +56,7 @@ from app.auth import (
     verify_refresh_meta,
 )
 from app.config import settings
-from app.services.mcp_scopes import PLUGIN_SCOPES
+from plugin_mcp import PLUGIN_SCOPES
 from app.db import get_pool
 from app.supabase_auth import supabase_identity
 
@@ -350,6 +350,7 @@ def _public_scope(client_id: str) -> str:
 def _plugin_callbacks() -> list[str]:
     callbacks = [uri.strip() for uri in settings.plugin_oauth_redirect_uris.split(",") if uri.strip()]
     if (not callbacks or not settings.feature_s09_mcp_clients or
+            not settings.feature_plugin_consent or
             settings.plugin_oauth_client_id in _oauth_clients() or
             any(not _valid_redirect_parts(urlsplit(uri)) or urlsplit(uri).scheme != "https"
                 for uri in callbacks)):
@@ -545,7 +546,7 @@ async def authorization_server_metadata() -> dict:
         "authorization_endpoint": f"{base}/oauth/authorize",
         "token_endpoint": f"{base}/oauth/token",
         "registration_endpoint": f"{base}/oauth/register",
-        "scopes_supported": ["user", "ingest", "offline_access", *PLUGIN_SCOPES],
+        "scopes_supported": ["user", "ingest", "offline_access", *PLUGIN_SCOPES, "people:message"],
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
@@ -635,23 +636,26 @@ async def authorize(
     if response_type != "code":
         raise HTTPException(status_code=400, detail="response_type must be 'code'")
 
+    plugin = _is_plugin_client(client_id)
+    expected_resource = settings.plugin_resource_url if plugin else settings.mcp_resource_url
+    expected_origin = settings.plugin_mcp_origin if plugin else settings.mcp_origin
     if resource:
         res = resource.rstrip("/")
         # Accept the canonical resource or its origin (some hosts send the
         # server URL without the /mcp path); normalize to the canonical value.
-        if res != settings.mcp_resource_url and res != settings.mcp_origin.rstrip("/"):
+        if res != expected_resource and res != expected_origin.rstrip("/"):
             raise HTTPException(status_code=400, detail="unsupported resource indicator")
-        resource = settings.mcp_resource_url
+        resource = expected_resource
 
     is_connector_client = not _is_known_client(client_id)
     if is_connector_client:
         if code_challenge_method != "S256" or not re.fullmatch(r"[A-Za-z0-9_-]{43}", code_challenge):
             raise HTTPException(status_code=400, detail="S256 PKCE required")
-        allowed_scopes = set(PLUGIN_SCOPES) if _is_plugin_client(client_id) else {"user", "ingest", "offline_access", *PLUGIN_SCOPES}
+        allowed_scopes = set(PLUGIN_SCOPES) if _is_plugin_client(client_id) else {"user", "ingest", "offline_access", *PLUGIN_SCOPES, "people:message"}
         if not set(scope.split()).issubset(allowed_scopes):
             raise HTTPException(status_code=400, detail="unsupported scope")
         scope = _public_scope(client_id)
-        resource = resource or settings.mcp_resource_url
+        resource = resource or expected_resource
 
     client_name = client_id
     if _is_plugin_client(client_id):
@@ -951,10 +955,12 @@ async def token(
                 grant = json.loads(raw)
             except (ValueError, TypeError):
                 _invalid_grant()
+            bound_resource = settings.plugin_resource_url if _is_plugin_client(client_id) else settings.mcp_resource_url
+            bound_origin = settings.plugin_mcp_origin if _is_plugin_client(client_id) else settings.mcp_origin
             if (grant.get("client_type") != "public" or grant.get("client_id") != client_id or
-                grant.get("redirect_uri") != redirect_uri or grant.get("resource") != settings.mcp_resource_url or
+                grant.get("redirect_uri") != redirect_uri or grant.get("resource") != bound_resource or
                 grant.get("scope") != _public_scope(client_id) or
-                (resource and resource.rstrip("/") not in (settings.mcp_resource_url, settings.mcp_origin.rstrip("/"))) or
+                (resource and resource.rstrip("/") not in (bound_resource, bound_origin.rstrip("/"))) or
                 not _verify_code_challenge(code_verifier, grant.get("challenge", ""), grant.get("method", ""))):
                 _invalid_grant()
             if scope and set(scope.split()) != set(grant["scope"].split()):
@@ -969,12 +975,13 @@ async def token(
                 user_id, clean_label(grant.get("client_name") or client_id), grant["scope"].split(), connection_jti)
             refresh_tok, refresh_jti = issue_rotating_refresh_token(user_id, bound=True)
             await redis.set(_grant_key("refresh", refresh_jti), json.dumps({
-                "v": 2, "sub": user_id, "client_id": client_id, "resource": settings.mcp_resource_url,
+                "v": 2, "sub": user_id, "client_id": client_id, "resource": bound_resource,
                 "scope": grant["scope"], "connection_jti": connection_jti}), ex=settings.refresh_token_ttl_seconds)
             access_token, expires_in = issue_connector_access_token(
-                user_id, settings.mcp_resource_url, connection_jti, scopes=grant["scope"].split())
+                user_id, bound_resource, connection_jti, scopes=grant["scope"].split(),
+                oauth_client_id=client_id)
             return JSONResponse({"access_token": access_token, "token_type": "Bearer", "expires_in": expires_in,
-                                 "refresh_token": refresh_tok, "resource": settings.mcp_resource_url, "scope": grant["scope"]},
+                                 "refresh_token": refresh_tok, "resource": bound_resource, "scope": grant["scope"]},
                                 headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
         key = f"{_CODE_PREFIX}{code}"
         raw = await _consume(redis, key)
@@ -1083,9 +1090,11 @@ async def token(
                 grant = json.loads(raw)
             except (ValueError, TypeError):
                 _invalid_grant()
+            bound_resource = settings.plugin_resource_url if _is_plugin_client(client_id) else settings.mcp_resource_url
+            bound_origin = settings.plugin_mcp_origin if _is_plugin_client(client_id) else settings.mcp_origin
             if (grant.get("v") != 2 or grant.get("sub") != user_id or grant.get("client_id") != client_id or
-                grant.get("resource") != settings.mcp_resource_url or grant.get("scope") != _public_scope(client_id) or
-                (resource and resource.rstrip("/") not in (settings.mcp_resource_url, settings.mcp_origin.rstrip("/"))) or
+                grant.get("resource") != bound_resource or grant.get("scope") != _public_scope(client_id) or
+                (resource and resource.rstrip("/") not in (bound_resource, bound_origin.rstrip("/"))) or
                 (scope and set(scope.split()) != set(grant["scope"].split()))):
                 _invalid_grant()
             connection_jti = grant.get("connection_jti")
@@ -1096,11 +1105,12 @@ async def token(
             if not await _consume(redis, _grant_key("refresh", jti)):
                 _invalid_grant()
             access_token, expires_in = issue_connector_access_token(
-                user_id, settings.mcp_resource_url, connection_jti, scopes=grant["scope"].split())
+                user_id, bound_resource, connection_jti, scopes=grant["scope"].split(),
+                oauth_client_id=client_id)
             refresh_tok, refresh_jti = issue_rotating_refresh_token(user_id, bound=True)
             await redis.set(_grant_key("refresh", refresh_jti), json.dumps(grant), ex=settings.refresh_token_ttl_seconds)
             return JSONResponse({"access_token": access_token, "token_type": "Bearer", "expires_in": expires_in,
-                                 "refresh_token": refresh_tok, "resource": settings.mcp_resource_url, "scope": grant["scope"]},
+                                 "refresh_token": refresh_tok, "resource": bound_resource, "scope": grant["scope"]},
                                 headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
         try:
             user_id, issued_at, jti = verify_refresh_meta(refresh_token, bound=True)

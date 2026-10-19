@@ -28,6 +28,7 @@ def _encode(
     ver: int | None = None,
     jti: str | None = None,
     scopes: list[str] | None = None,
+    oauth_client_id: str | None = None,
     iss: str | None = None,
     aud: str | None = None,
 ) -> str:
@@ -46,6 +47,8 @@ def _encode(
         payload["jti"] = jti
     if scopes:
         payload["scp"] = list(scopes)
+    if oauth_client_id:
+        payload["cid"] = oauth_client_id
     return jwt.encode(payload, settings.jwt_secret, algorithm=_ALGO)
 
 
@@ -120,7 +123,8 @@ def issue_access_token(user_id: str) -> tuple[str, int]:
 
 
 def issue_connector_access_token(user_id: str, resource: str, connection_jti: str | None = None,
-                                 *, scopes: list[str] | None = None) -> tuple[str, int]:
+                                 *, scopes: list[str] | None = None,
+                                 oauth_client_id: str | None = None) -> tuple[str, int]:
     """Access token for MCP connector OAuth flows (Claude/ChatGPT connectors).
 
     Bound to the RFC 8707 resource indicator the client asked for:
@@ -135,6 +139,7 @@ def issue_connector_access_token(user_id: str, resource: str, connection_jti: st
         aud=resource,
         scopes=["user"] if scopes is None else scopes,
         jti=connection_jti,
+        oauth_client_id=oauth_client_id,
     )
     return token, ttl
 
@@ -236,6 +241,7 @@ def verify_access_meta(
         "exp": int(payload["exp"]) if payload.get("exp") else None,
         "iss": payload.get("iss"),
         "aud": payload.get("aud"),
+        "oauth_client_id": payload.get("cid"),
     }
 
 

@@ -127,7 +127,7 @@ async def test_authorize_connector_rejects_unadvertised_scope():
         await oauth.authorize(
             client_id="https://claude.ai/oauth/mcp-oauth-client-metadata",
             redirect_uri="https://claude.ai/api/mcp/auth_callback",
-            scope="user people:message",
+            scope="user scope-that-does-not-exist",
             code_challenge=CHALLENGE, code_challenge_method="S256", resource=RESOURCE,
         )
     assert exc.value.detail == "unsupported scope"
@@ -417,7 +417,9 @@ async def test_prm_advertises_user_scope():
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
         r = await c.get("/.well-known/oauth-protected-resource/mcp")
     assert r.status_code == 200
-    assert r.json()["scopes_supported"] == ["user", "memory:write", "cards:read", "cards:approve"]
+    assert r.json()["scopes_supported"] == [
+        "user", "memory:write", "cards:read", "cards:approve",
+    ]
 
 
 @patch("app.services.sessions.token_rejected", new_callable=AsyncMock, return_value=False)

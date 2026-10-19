@@ -28,7 +28,6 @@ import { CountUp } from "./count-up";
 import { AutoScroll } from "./auto-scroll";
 import { ContributionHeatmap } from "./contribution-heatmap";
 import { ProfileView } from "@/components/ProfileView";
-import { VisitorPrivacy } from "@/components/VisitorPrivacy";
 import { ProfileChatWidget } from "@/components/ProfileChatWidget";
 import { FallbackAvatar } from "@/components/FallbackAvatar";
 import { WorkExperienceCard } from "./work-experience-card";
@@ -36,8 +35,7 @@ import { HeroAskPanel } from "./hero-agent-bar";
 import { ProjectsCard } from "./projects-card";
 import { MemoryCard } from "./memory-card";
 import { ClaimBanner } from "./claim-banner";
-import { RequestIntro } from "@/components/intros/RequestIntro";
-import { introsEnabled } from "@/lib/intros";
+import { RequestConnection } from "@/components/network/RequestConnection";
 import { memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
 
 interface PageProps {
@@ -782,7 +780,6 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
       `}</style>
 
       <div className="pf-page" style={{ backgroundColor: "#f5f6f8", minHeight: "100vh" }}>
-        <div style={{ maxWidth: 1100, padding: "0 20px", margin: "auto" }}><VisitorPrivacy /></div>
         <div className="pf-inner" style={{ maxWidth: 1300, margin: "0 auto", padding: "24px 24px 56px" }}>
 
           {/* ── UNCLAIMED BANNER ── */}
@@ -790,7 +787,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             <ClaimBanner handle={card.handle ?? handle} name={identity.name} />
           )}
 
-          {introsEnabled && claimed && !isOwner && <RequestIntro handle={card.handle ?? handle} />}
+          {claimed && !isOwner && <RequestConnection handle={card.handle ?? handle} />}
           {/* ── HEADER ── */}
           <header className="pf-header flex justify-between items-center pb-5">
             <div className="pf-mono text-[0.75rem] text-slate-500">

@@ -16,6 +16,8 @@
     "identity/**/*.ts",
     "persona/**/*.ts",
     "cards/**/*.ts",
+    "memory/**/*.ts",
+    "test/**/*.ts",
     "scripts/**/*.ts"
   ]
 }

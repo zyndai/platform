@@ -1,7 +1,0 @@
-dependencies:
-  tools:
-    - type: "mcp"
-      value: "zynd"
-      description: "Review the connected ZYND account's public card and pending facts"
-      transport: "streamable_http"
-      url: "https://api.zynd.ai/mcp"

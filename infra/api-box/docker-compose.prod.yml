@@ -34,7 +34,9 @@ services:
       retries: 10
 
   api:
-    build: ../../services/memory
+    build:
+      context: ../../services
+      dockerfile: memory/Dockerfile
     env_file: ../../services/memory/.env.prod
     command: sh -c "python -m app.schema_apply && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     depends_on:
@@ -43,7 +45,9 @@ services:
     restart: unless-stopped
 
   worker:
-    build: ../../services/memory
+    build:
+      context: ../../services
+      dockerfile: memory/Dockerfile
     env_file: ../../services/memory/.env.prod
     command: arq app.worker.WorkerSettings
     depends_on:
@@ -51,8 +55,21 @@ services:
       redis: { condition: service_healthy }
     restart: unless-stopped
 
+  chatgpt-plugin:
+    build:
+      context: ../../services
+      dockerfile: memory/Dockerfile
+    env_file: ../../services/memory/.env.prod
+    command: uvicorn server:app --app-dir /chatgpt-plugin --host 0.0.0.0 --port 8091
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
   mcp:
-    build: ../../services/memory
+    build:
+      context: ../../services
+      dockerfile: memory/Dockerfile
     env_file: ../../services/memory/.env.prod
     # CARDS_API_BASE_URL / FEATURE_S11_PUBLIC_MCP come from .env.prod when enabling S11.
     # Default cards reachability on the compose network:

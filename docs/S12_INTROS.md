@@ -29,8 +29,8 @@ use mocked services and a disposable Postgres, not production accounts.
 - Real `intro_request` and `intro_accepted` events when S04 collection is on.
   S10 digests include the pending intro count and an authenticated review link.
 - Authenticated MCP `list_intros`, requiring `cards:read` or the legacy owner
-  scope. This is read-only. Public MCP does not offer `request_intro`, and no
-  assistant approval action is enabled in this human-only release.
+  scope. This remains read-only; Cards-native networking is documented in
+  `docs/CARDS_NETWORK.md`.
 
 This release proposes the time the owner selects. It does not automatically
 search both calendars for free slots or introduce a new email-sharing permission.

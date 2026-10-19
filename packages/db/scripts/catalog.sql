@@ -4,6 +4,8 @@
 -- introspection/aafo-YYYY-MM-DD.txt; `npm run db:drift` runs it on a scratch
 -- DB built from the migrations and diffs the two. Names are schema-qualified.
 -- First line identifies the project: developer_keys=true means xmfj.
+-- ACL order is not a permission change. Sort with C collation so differing
+-- database locales cannot manufacture drift; all grants remain in the output.
 with owned as (
   select oid, nspname from pg_namespace where nspname in ('public', 'cards', 'identity')
 )
@@ -34,7 +36,7 @@ select string_agg(line, E'\n' order by line) from (
   where not t.tgisinternal
   union all
   select 'function | ' || o.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'
-      || ' | acl=' || coalesce(p.proacl::text, 'default') || E'\n' || pg_get_functiondef(p.oid)
+      || ' | acl=' || coalesce((select array_agg(a order by a::text collate "C") from unnest(p.proacl) a)::text, 'default') || E'\n' || pg_get_functiondef(p.oid)
   from pg_proc p join owned o on o.oid = p.pronamespace
   where p.prokind = 'f'
     and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
@@ -55,10 +57,10 @@ select string_agg(line, E'\n' order by line) from (
   from information_schema.role_table_grants g join owned o on o.nspname = g.table_schema
   group by g.table_schema, g.table_name, g.grantee
   union all
-  select 'schema-acl | ' || nspname || ' | ' || coalesce(n.nspacl::text, 'default')
+  select 'schema-acl | ' || nspname || ' | ' || coalesce((select array_agg(a order by a::text collate "C") from unnest(n.nspacl) a)::text, 'default')
   from pg_namespace n where nspname in ('cards', 'identity')
   union all
-  select 'default-acl | ' || n.nspname || ' | ' || d.defaclobjtype::text || ' | ' || d.defaclacl::text
+  select 'default-acl | ' || n.nspname || ' | ' || d.defaclobjtype::text || ' | ' || (select array_agg(a order by a::text collate "C") from unnest(d.defaclacl) a)::text
   from pg_default_acl d join pg_namespace n on n.oid = d.defaclnamespace
   where n.nspname in ('cards', 'identity')
 ) x;

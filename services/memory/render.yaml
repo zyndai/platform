@@ -18,7 +18,8 @@ services:
   - type: web
     name: zynd-api
     runtime: docker
-    dockerfilePath: ./Dockerfile
+    rootDir: services
+    dockerfilePath: ./memory/Dockerfile
     plan: starter
     # Apply the schema (idempotent) before each deploy goes live.
     preDeployCommand: python -m app.schema_apply
@@ -49,7 +50,8 @@ services:
   - type: worker
     name: zynd-worker
     runtime: docker
-    dockerfilePath: ./Dockerfile
+    rootDir: services
+    dockerfilePath: ./memory/Dockerfile
     plan: starter
     dockerCommand: arq app.worker.WorkerSettings
     envVars: *shared_env         # same DB/Redis/keys as the API

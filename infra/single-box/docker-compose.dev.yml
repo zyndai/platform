@@ -22,14 +22,27 @@
 # and `http://api-dev:8000` is how cards-dev reaches memory-dev.
 services:
   api-dev:
-    build: ${DEV_ROOT}/services/memory
+    build:
+      context: ${DEV_ROOT}/services
+      dockerfile: memory/Dockerfile
     env_file: ${DEV_ROOT}/services/memory/.env.prod
     command: sh -c "python -m app.schema_apply && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     ports:
       - "127.0.0.1:8101:8000"
     restart: unless-stopped
+  chatgpt-plugin-dev:
+    build:
+      context: ${DEV_ROOT}/services
+      dockerfile: memory/Dockerfile
+    env_file: ${DEV_ROOT}/services/memory/.env.prod
+    command: uvicorn server:app --app-dir /chatgpt-plugin --host 0.0.0.0 --port 8091
+    ports:
+      - "127.0.0.1:8191:8091"
+    restart: unless-stopped
   mcp-dev:
-    build: ${DEV_ROOT}/services/memory
+    build:
+      context: ${DEV_ROOT}/services
+      dockerfile: memory/Dockerfile
     env_file: ${DEV_ROOT}/services/memory/.env.prod
     command: uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
     ports:

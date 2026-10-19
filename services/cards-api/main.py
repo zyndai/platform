@@ -19,6 +19,7 @@ from api.events import router as events_router
 from api.owner_home import router as owner_home_router
 from api.intros import router as intros_router
 from api.visitors import router as visitors_router
+from api.network import router as network_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -100,6 +101,7 @@ app.add_middleware(
 app.include_router(onboard_router, prefix="/onboard", tags=["Onboard"])
 app.include_router(ask_router, prefix="/ask", tags=["Ask"])
 app.include_router(visitors_router, prefix="/cards", tags=["Visitor privacy"])
+app.include_router(network_router, prefix="/cards", tags=["Cards network"])
 app.include_router(owner_home_router, prefix="/cards", tags=["Owner home"])
 app.include_router(intros_router,prefix="/cards",tags=["Intros"])
 app.include_router(cards_router, prefix="/cards", tags=["Cards"])

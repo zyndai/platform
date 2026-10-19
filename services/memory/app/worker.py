@@ -117,6 +117,13 @@ async def on_shutdown(ctx: dict) -> None:
     await close_pool()
 
 
+async def plugin_outbox_cron(ctx: dict) -> dict:
+    from plugin_consent import process_outbox
+    processed = await process_outbox(get_pool())
+    logger.info("plugin_outbox: processed=%d", processed)
+    return {"processed": processed}
+
+
 async def cleanup_pages_cron(ctx: dict) -> dict:
     pool = get_pool()
     from app.services.pages import cleanup_expired_pages as cleanup_pg
@@ -129,7 +136,7 @@ async def cleanup_pages_cron(ctx: dict) -> dict:
 
 class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
-    functions = [chunk_processor, recompute_user, cleanup_pages_cron]
+    functions = [chunk_processor, recompute_user, cleanup_pages_cron, plugin_outbox_cron]
     # Brief §9: decay nightly 00:30 UTC; recompute + orphan cleanup nightly/weekly.
     # cleanup_pages: hourly expire of anonymous/ttl pages.
     cron_jobs = [
@@ -138,6 +145,7 @@ class WorkerSettings:
         cron(recompute_all_cron, hour=2, minute=0),
         cron(orphan_cron, weekday="sun", hour=1, minute=0),
         cron(cleanup_pages_cron, minute=0),  # hourly: delete expired anonymous pages
+        cron(plugin_outbox_cron, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
     ]
     on_startup = on_startup
     on_shutdown = on_shutdown

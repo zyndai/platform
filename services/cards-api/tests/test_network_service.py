@@ -170,3 +170,39 @@ def test_simultaneous_dm_thread_creation_returns_the_winning_thread(monkeypatch)
     queries["dm_threads"].upsert.assert_called_once_with(
         {"connection_id": "connection"}, on_conflict="connection_id", ignore_duplicates=True,
     )
+
+
+# ── contact links are for accepted connections only ───────────────────────────────
+
+def _partner_row(status):
+    return {"requester_user_id": USER, "requester_card_id": "c-me", "recipient_user_id": "other",
+            "recipient_card_id": "c-them", "status": status}
+
+
+def _partner_sb(monkeypatch):
+    from unittest.mock import MagicMock
+
+    chain = MagicMock()
+    for method in ("select", "eq", "limit"):
+        getattr(chain, method).return_value = chain
+    chain.execute.return_value = MagicMock(data=[{
+        "id": "c-them", "handle": "bob",
+        "card": {"identity": {"name": "Bob", "headline": "Founder",
+                              "links": {"linkedin": "https://linkedin.com/in/bob", "x": "  ", "github": ""}}},
+    }])
+    sb = MagicMock()
+    sb.table.return_value = chain
+    monkeypatch.setattr(network, "_sb", lambda: sb)
+
+
+@pytest.mark.parametrize("status", ["pending", "declined", "blocked", "revoked"])
+def test_partner_links_are_withheld_until_the_connection_is_accepted(monkeypatch, status):
+    _partner_sb(monkeypatch)
+    partner = network._partner_card(_partner_row(status), USER)
+    assert partner["handle"] == "bob" and "links" not in partner
+
+
+def test_partner_links_are_shared_once_accepted_and_blanks_dropped(monkeypatch):
+    _partner_sb(monkeypatch)
+    partner = network._partner_card(_partner_row("accepted"), USER)
+    assert partner["links"] == {"linkedin": "https://linkedin.com/in/bob"}

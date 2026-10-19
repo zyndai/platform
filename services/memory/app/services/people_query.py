@@ -167,8 +167,13 @@ _FREE_LOCATION = re.compile(
     r"\b(?:in|based in|from|near)\s+([A-Z][\w-]+(?:\s+[A-Z][\w-]+){0,2})\b")
 
 
+_NON_WORD = re.compile(r"[^a-z0-9+#.]+")
+
+
 def _norm(text: str) -> str:
-    return " ".join((text or "").lower().replace("-", " ").split())
+    """Lowercase words separated by single spaces; commas, hyphens and brackets are
+    separators, so "Pune, India" and "seed-stage" match as the words they contain."""
+    return " ".join(_NON_WORD.sub(" ", (text or "").lower()).split())
 
 
 def _find_phrase(haystack: str, needles: list[str]) -> str:
@@ -227,6 +232,29 @@ def _detect_location(text: str) -> tuple[str, str, str, str]:
         phrase = free.group(1).strip()
         return phrase, "", "", _norm(phrase)
     return "", "", "", ""
+
+
+def resolve_location(text: str) -> tuple[str, str, str]:
+    """(display text, ISO country code, city) for a free-text place like "Pune, India"."""
+    location, code, locality, _phrase = _detect_location(text or "")
+    return location, code, locality
+
+
+def query_from_filters(
+    *, titles: list[str] | tuple[str, ...] = (), keywords: list[str] | tuple[str, ...] = (),
+    location: str = "",
+) -> TargetQuery:
+    """A TargetQuery from already-structured filters (what Cards' suggestions send), so one
+    QuickEnrich request builder serves every caller. Keywords describe the person's
+    company, as everywhere else."""
+    place, code, locality = resolve_location(location)
+    clean_titles = tuple(t.strip()[:60] for t in titles if isinstance(t, str) and t.strip())[:5]
+    clean_keywords = tuple(k.strip()[:60] for k in keywords if isinstance(k, str) and k.strip())[:5]
+    return TargetQuery(
+        raw=" ".join([*clean_titles, *clean_keywords, place]).strip(), titles=clean_titles,
+        topics=clean_keywords, location=place, country_code=code, locality=locality,
+        company_hint=True,
+    )
 
 
 def parse_target_heuristic(target: str) -> TargetQuery:

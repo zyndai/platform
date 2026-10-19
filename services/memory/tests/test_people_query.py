@@ -153,3 +153,11 @@ async def test_parse_target_never_calls_the_llm_in_mock_mode(monkeypatch):
     monkeypatch.setattr(pq.settings, "mock_llm", True)
     monkeypatch.setattr(pq, "_get_client", lambda: pytest.fail("should not be called"))
     assert (await parse_target("investor in India")).role == "investor"
+
+
+def test_places_written_with_commas_are_still_found():
+    # "City, Country" is how locations are written everywhere (Cards, LinkedIn, profiles).
+    q = parse_target_heuristic("designer in Pune, India")
+    assert (q.location, q.country_code, q.locality) == ("Pune", "IN", "Pune")
+    q = parse_target_heuristic("founder, San Francisco, CA")
+    assert (q.country_code, q.locality) == ("US", "San Francisco")

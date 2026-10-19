@@ -35,10 +35,8 @@ from app.services.control import confirm_fact, forget_fact, near_matches
 from app.services.export import active_context, build_jsonld_export, context_slice
 from app.services.findability import get_card
 from app.services.ingest import clean_text, ingest_turns
-from app.services.linkedin_search import find_linkedin_people, search_linkedin_profile_urls, enrich_profile_urls
-from app.services.matching import match_users, search_by_query
-from app.services.people_discovery import search_cards, search_quickenrich
-from app.services.people_query import parse_target
+from app.services import people_search
+from app.services.matching import match_users
 from app.services.self_context import load_self_context, normalize_profile, read_brief
 
 
@@ -75,7 +73,7 @@ WRITE - exactly one durable-fact tool: use report_user_info with typed fields at
 
 CORRECT: confirm_fact_tool and forget_fact_tool use the exact predicate and object from get_my_context.facts; never claim success on a false result.
 EXPORT: export_my_context only for an explicit backup, download, or export request.
-PEOPLE / CARDS NETWORK: find_people searches claimed and unclaimed Cards. A people:message token can send and decide Cards-native connection requests, DM accepted Cards connections, create groups, invite connected Cards (invitees must accept), and message groups. Never claim a request, invitation, or message succeeded unless the tool says so.
+PEOPLE / CARDS NETWORK: find_people returns one list of people from the Cards index (claimed and unclaimed Cards, Zynd members, and LinkedIn only when too few strong matches exist); connect to a result with its handle. A people:message token can send and decide Cards-native connection requests, DM accepted Cards connections, create groups, invite connected Cards (invitees must accept), and message groups. Never claim a request, invitation, or message succeeded unless the tool says so.
 CARD OWNER: list_pending_facts, approve_fact, dismiss_fact, set_looking_for, and list_intros when granted by the token. Change headlines in the card editor.
 
 Use only tools visible in the client's actual tool list; export and hosted-page tools retain their existing legacy user scope requirement. Do not search for unavailable tools.
@@ -531,32 +529,6 @@ async def find_similar_users(cluster_type: str = "intent_cluster", k: int = 10, 
     return await match_users(await _get_pool(), uid, cluster_type, max(1, min(k, 50)))
 
 
-_FIND_SOURCES = frozenset({"zynd", "cards", "quickenrich"})
-
-# A source scoring at least this counts as a strong match. The external LinkedIn fallback
-# only runs when fewer than k strong matches came from Zynd users and Cards.
-_STRONG_MATCH = 0.5
-
-
-def _requested_sources(sources: str) -> set[str]:
-    asked = {part.strip().lower() for part in (sources or "").split(",") if part.strip()}
-    if not asked or "all" in asked:
-        return set(_FIND_SOURCES)
-    return asked & _FIND_SOURCES or set(_FIND_SOURCES)
-
-
-def _explicit_sources(sources: str) -> set[str]:
-    """Sources the caller named themselves (not implied by "all")."""
-    asked = {part.strip().lower() for part in (sources or "").split(",") if part.strip()}
-    return asked & _FIND_SOURCES
-
-
-def _strong_matches(zynd_users: list[dict], cards: list[dict]) -> int:
-    strong = sum(1 for r in zynd_users if (r.get("similarity") or 0) >= _STRONG_MATCH)
-    strong += sum(1 for r in cards if (r.get("match_score") or 0) >= _STRONG_MATCH)
-    return strong
-
-
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
 async def find_people(
     target: str,
@@ -566,121 +538,25 @@ async def find_people(
 ) -> dict:
     """Find people matching a TARGET PROFILE — complementary people, not people
     like the user. Use when the user asks for investors, cofounders, designers,
-    engineers, marketers, mentors, customers, domain experts, etc.
+    engineers, marketers, mentors, customers, domain experts, etc. Pass
+    target="like_me" for people close to the user's own profile.
 
-    Searches three sources and returns them separately:
-      zynd_users — findable Zynd members (connection_eligible)
-      cards — claimed and unclaimed published Cards (no contact data on unclaimed)
-      quickenrich — external prospects with a public LinkedIn URL only; with
-        sources="all" this runs only when Zynd users and Cards gave fewer than k
-        strong matches
+    Cards is the people index. Each result is one person:
+      handle, name, headline, location, why (why they matched), sources, claimed,
+      score, url, and next_action:
+        connect       — a claimed Card: call request_card_connection(target_handle=handle)
+        view_profile  — no claimed Card to connect to; url is their public page or LinkedIn
+    LinkedIn people are searched only when too few strong matches were found (or when sources
+    names "quickenrich"). Contact details are never in results; they are shared once a
+    connection is accepted.
 
     Pass a natural-language target description (e.g. "seed-stage investor who
-    backs dev-tools"). sources is "all" unless the user explicitly restricts it
-    to "zynd", "cards", and/or "quickenrich". A source that failed, or is not
-    configured, is listed in warnings; the others are still returned.
-
-    Use find_similar_users instead for "people like me" / overlapping context."""
-    limit = max(1, min(k, 20))
-    wanted = _requested_sources(sources)
-    explicit = _explicit_sources(sources)
-    query = await parse_target(target)
-    zynd_users: list[dict] = []
-    cards: list[dict] = []
-    prospects: list[dict] = []
-    warnings: list[str] = []
-    searched = set()
-
-    if "zynd" in wanted:
-        searched.add("zynd")
-        try:
-            rows = await search_by_query(await _get_pool(), uid, target, limit=limit)
-            for row in rows:
-                if isinstance(row, dict):
-                    row["source"] = "zynd"
-                    row["connection_eligible"] = True
-                    zynd_users.append(row)
-        except Exception as exc:
-            logging.getLogger("zynd.find_people").warning("zynd search failed: %s", exc)
-            warnings.append("zynd_unavailable")
-
-    if "cards" in wanted:
-        searched.add("cards")
-        found, warning = await search_cards(target, limit, query=query)
-        cards = found
-        if warning:
-            warnings.append(warning)
-
-    if "quickenrich" in wanted and (
-        "quickenrich" in explicit or _strong_matches(zynd_users, cards) < limit
-    ):
-        searched.add("quickenrich")
-        found, warning = await search_quickenrich(target, limit, query=query)
-        prospects = found
-        if warning:
-            warnings.append(warning)
-
-    result = {
-        "target": (target or "").strip(),
-        "sources": sorted(wanted),
-        "searched": sorted(searched),
-        "parsed": {k_: v for k_, v in query.as_dict().items() if v and k_ not in ("raw", "titles")},
-        "zynd_users": zynd_users,
-        "cards": cards,
-        "quickenrich": prospects,
-    }
-    if warnings:
-        result["warnings"] = warnings
-    return result
-
-
-# ── LinkedIn People Search (Exa + Firecrawl + ZYND cross-reference) ──────────
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
-async def search_linkedin_profiles(query: str, num_results: int = 10, uid: str = Depends(_uid)) -> dict:
-    """Search LinkedIn for people matching a natural-language query via Exa semantic
-    search (Tavily fallback). Returns profile URLs enriched with Firecrawl data
-    (name, headline, about). Use when the user asks to find specific types of people
-    on LinkedIn: "find CTOs in climate tech", "search LinkedIn for product designers".
-
-    Combine with find_people for ZYND-internal matches — ZYND users won't appear
-    in LinkedIn results unless they've also set up findability."""
-    pool = await _get_pool()
-    warnings: list[str] = []
-
-    profile_urls, search_warnings = await search_linkedin_profile_urls(query, num_results=num_results)
-    warnings.extend(search_warnings)
-
-    linkedin_profiles, enrich_warnings = await enrich_profile_urls(profile_urls)
-    warnings.extend(enrich_warnings)
-
-    zynd_users = await search_by_query(pool, uid, query, cluster_type="full_context", limit=num_results)
-
-    result: dict = {
-        "query": query,
-        "zynd_users": zynd_users,
-        "linkedin_profiles": linkedin_profiles,
-    }
-    if warnings:
-        result["warnings"] = warnings
-    return result
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def find_linkedin_people_for_me(num_results: int = 10, uid: str = Depends(_uid)) -> dict:
-    """Auto-search LinkedIn for people like the user using their ZYND context graph.
-    Reads the user's stored facts, builds a natural-language query, searches ZYND
-    internal users first, then finds matching LinkedIn profiles via Exa + enriches
-    with Firecrawl (name, headline, about). ZYND users are ranked on top.
-
-    Use when the user asks: "find people like me on LinkedIn", "who should I meet
-    on LinkedIn", "find my tribe on LinkedIn"."""
-    return await find_linkedin_people(
-        await _get_pool(),
-        uid,
-        query=None,
-        num_results=num_results,
-    )
+    backs dev-tools in India"). sources is "all" unless the user explicitly restricts it
+    to "cards", "zynd" and/or "quickenrich". A source that failed, or is not configured,
+    is listed in warnings; the others are still returned."""
+    wanted, explicit = people_search.requested_sources(sources)
+    return await people_search.find(
+        await _get_pool(), uid, target, limit=max(1, min(k, 20)), wanted=wanted, explicit=explicit)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})

@@ -866,6 +866,41 @@ def claimed_by_handles(handles: list[str]) -> dict[str, bool]:
     return {r["handle"]: _claimed_from_row(r) for r in (resp.data or [])}
 
 
+def cards_by_owner_user_ids(user_ids: list[str]) -> dict[str, dict]:
+    """Published, claimed card for each owner (shared Zynd user id), for service callers
+    that need to turn "this person" into "this Card" (Memory's people search).
+
+    Only public identity: handle, name, headline, location. Never an email. A user with
+    several published cards resolves to the most recently published one.
+    """
+    ids = [u for u in dict.fromkeys(user_ids) if u][:50]
+    if not ids:
+        return {}
+    resp = (
+        config.get_supabase()
+        .table("agent_profile_cards")
+        .select("handle,card,owner_user_id,owner_email,published_at")
+        .in_("owner_user_id", ids)
+        .eq("status", "published")
+        .order("published_at", desc=True, nullsfirst=False)
+        .execute()
+    )
+    out: dict[str, dict] = {}
+    for row in resp.data or []:
+        owner = str(row.get("owner_user_id") or "")
+        if not owner or owner in out or not _claimed_from_row(row) or not row.get("handle"):
+            continue
+        identity = (row.get("card") or {}).get("identity") or {}
+        out[owner] = {
+            "handle": row["handle"],
+            "name": identity.get("name") or "",
+            "headline": identity.get("headline") or "",
+            "location": identity.get("location") or "",
+            "claimed": True,
+        }
+    return out
+
+
 def _public_card_payload(row: dict) -> dict:
     """JSON card plus claimed/alias. Never includes owner_email.
 

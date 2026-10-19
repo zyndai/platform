@@ -96,7 +96,15 @@ def _require_connection_party(row: dict, user_id: str) -> bool:
 def _partner_card(row: dict, user_id: str) -> dict:
     partner_id = row["recipient_card_id"] if row["requester_user_id"] == user_id else row["requester_card_id"]
     cards = _sb().table("agent_profile_cards").select("id,handle,card").eq("id", partner_id).limit(1).execute().data or []
-    return _card_payload(cards[0]) if cards else {"card_id": partner_id, "name": "Zynd member"}
+    if not cards:
+        return {"card_id": partner_id, "name": "Zynd member"}
+    payload = _card_payload(cards[0])
+    if row.get("status") == "accepted":
+        # Contact links are for people who have agreed to connect: search results never carry
+        # them, and neither does a pending request.
+        links = ((cards[0].get("card") or {}).get("identity") or {}).get("links") or {}
+        payload["links"] = {k: v for k, v in links.items() if isinstance(v, str) and v.strip()}
+    return payload
 
 
 def _serialize_connection(row: dict, user_id: str) -> dict:

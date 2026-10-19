@@ -16,6 +16,11 @@ class OwnerStatusRequest(BaseModel):
     email: str
 
 
+class CardsForUsersRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_ids: list[UUID]
+
+
 class OwnerIntrosRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     zynd_uid: UUID
@@ -37,6 +42,21 @@ async def service_owner_intros(body: OwnerIntrosRequest, authorization: str | No
     intros.require_scope(result["intros"],str(body.zynd_uid))
     await intros.sync(result["intros"])
     return {"intros": [intros.public_record(row) for row in result["intros"]]}
+
+
+@router.post("/cards-for-users")
+async def service_cards_for_users(body: CardsForUsersRequest, authorization: str | None = Header(default=None)):
+    """Memory's people search resolves Zynd users to their Cards so one person is one result
+    and can be connected to by handle. Public identity only."""
+    secret = config.MEMORY_SERVICE_TOKEN
+    supplied = (authorization or "").removeprefix("Bearer ").strip()
+    if not secret or not hmac.compare_digest(supplied.encode(), secret.encode()):
+        raise HTTPException(401, "Unauthorized")
+    if len(body.user_ids) > 50:
+        raise HTTPException(422, "At most 50 user ids per call")
+    from services import cards as cards_service
+    cards = await asyncio.to_thread(cards_service.cards_by_owner_user_ids, [str(u) for u in body.user_ids])
+    return {"cards": cards}
 
 
 @router.post("/owner-status")

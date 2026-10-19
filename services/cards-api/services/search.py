@@ -209,6 +209,7 @@ def search_agents(
                 "industries": card.industries,
                 "availability": card.availability,
                 "experience_years": card.experience_years,
+                "linkedin_url": (card.identity.links or {}).get("linkedin") or "",
                 "match_score": round(min(score, 1.0), 3),
                 "match_reasons": reasons[:6],
                 "url": f"{config.SITE_BASE_URL}/p/{card.handle}" if card.handle else f"{config.SITE_BASE_URL}/profile/{card.id}",

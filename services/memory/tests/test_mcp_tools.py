@@ -28,7 +28,6 @@ from app.mcp_http import ZyndTokenVerifier, app as mcp_asgi, mcp
 _EXPECTED_TOOLS = {
     "report_user_info", "get_my_context", "export_my_context",
     "find_similar_users", "find_people", "confirm_fact_tool", "forget_fact_tool",
-    "search_linkedin_profiles", "find_linkedin_people_for_me",
     "publish_page", "list_my_pages", "disconnect",
     "list_card_connections", "request_card_connection", "respond_card_connection",
     "read_card_dm", "send_card_dm", "list_card_groups", "create_card_group",
@@ -47,7 +46,7 @@ def test_consolidated_tools_registered():
 
 def test_tool_count_includes_cards_owner_and_discovery():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert len(names) == 30
+    assert len(names) == 28   # find_people is the one people-search tool
 
 
 @pytest.mark.parametrize("owner_enabled", [False, True])
@@ -659,35 +658,41 @@ class _FakePool:
         return self._rows
 
 
+def _card_names(names):
+    """Stand-in for matching._card_names: shared user id -> the name on their Card."""
+    async def fake(pool, ids):
+        return names
+    return fake
+
+
 async def test_enrich_and_dedup_collapses_ghost_onto_named_duplicate():
-    # ghost row (id == Abhinav's supabase_user_id) + named persona-linked row share
-    # the same identity -> keep the named row (with socials), drop the ghost.
+    # ghost row (id == Abhinav's supabase_user_id) + named linked row share the same
+    # identity -> keep the named row, drop the ghost.
     from app.services import matching as mg
     results = [
         {"user_id": "3689ceaf-49ce-484e-9149-ff825bd2ceac", "display_name": "zynd-3689ceaf", "similarity": 0.56, "assertion_count": 4},
-        {"user_id": "bd07ba99-09dc-4e29-a66f-2ec20904035b", "display_name": "Abhinav Gupta", "similarity": 0.47, "assertion_count": 6, "socials": {"linkedin": "https://x"}},
+        {"user_id": "bd07ba99-09dc-4e29-a66f-2ec20904035b", "display_name": "Abhinav Gupta", "similarity": 0.47, "assertion_count": 6},
     ]
     pool = _FakePool([
         {"id": "3689ceaf-49ce-484e-9149-ff825bd2ceac", "supabase_user_id": None},
         {"id": "bd07ba99-09dc-4e29-a66f-2ec20904035b", "supabase_user_id": "3689ceaf-49ce-484e-9149-ff825bd2ceac"},
     ])
-    with patch.object(mg, "_persona_names", return_value={"3689ceaf-49ce-484e-9149-ff825bd2ceac": "Abhinav Gupta"}):
+    with patch.object(mg, "_card_names", _card_names({"3689ceaf-49ce-484e-9149-ff825bd2ceac": "Abhinav Gupta"})):
         out = await mg._enrich_and_dedup(pool, results)
 
     assert len(out) == 1
     assert out[0]["display_name"] == "Abhinav Gupta"
-    assert out[0].get("socials")
 
 
-async def test_enrich_and_dedup_names_ghost_without_duplicate():
-    # a ghost whose users.id == Supabase user id and has a persona, but no separate
-    # named row -> the fallback name gets replaced with the persona name.
+async def test_enrich_and_dedup_names_ghost_from_their_card():
+    # a ghost whose users.id == Supabase user id and has a Card, but no separate named
+    # row -> the fallback name gets replaced with the name on the Card.
     from app.services import matching as mg
     results = [
         {"user_id": "01fb569b-de8a-4e7d-b6a0-b225ff44aa24", "display_name": "zynd-01fb569b", "similarity": 0.44, "assertion_count": 6},
     ]
     pool = _FakePool([{"id": "01fb569b-de8a-4e7d-b6a0-b225ff44aa24", "supabase_user_id": None}])
-    with patch.object(mg, "_persona_names", return_value={"01fb569b-de8a-4e7d-b6a0-b225ff44aa24": "Vikram"}):
+    with patch.object(mg, "_card_names", _card_names({"01fb569b-de8a-4e7d-b6a0-b225ff44aa24": "Vikram"})):
         out = await mg._enrich_and_dedup(pool, results)
 
     assert len(out) == 1
@@ -695,16 +700,36 @@ async def test_enrich_and_dedup_names_ghost_without_duplicate():
 
 
 async def test_enrich_and_dedup_drops_unresolvable_anonymous():
-    # no persona anywhere -> still anonymous, and therefore not findable -> dropped.
+    # no Card anywhere -> still anonymous, and therefore not findable -> dropped.
     from app.services import matching as mg
     results = [
         {"user_id": "e603070a-e568-4d32-a4f2-bc2a3144bb19", "display_name": "zynd-e603070a", "similarity": 0.5, "assertion_count": 3},
     ]
     pool = _FakePool([{"id": "e603070a-e568-4d32-a4f2-bc2a3144bb19", "supabase_user_id": None}])
-    with patch.object(mg, "_persona_names", return_value={}):
+    with patch.object(mg, "_card_names", _card_names({})):
         out = await mg._enrich_and_dedup(pool, results)
 
     assert out == []
+
+
+async def test_card_names_come_from_cards_not_the_persona_product(monkeypatch):
+    from app.services import card_directory
+    from app.services import matching as mg
+    seen = []
+
+    async def fake_cards(ids):
+        seen.append(ids)
+        return {"u1": {"handle": "ada", "name": " Ada Lovelace "}, "u2": {"handle": "x", "name": ""}}
+
+    monkeypatch.setattr(card_directory, "cards_for_canonical", fake_cards)
+    assert await mg._card_names(None, ["u1", "u2"]) == {"u1": "Ada Lovelace"}
+    assert seen == [["u1", "u2"]]
+
+    async def unreachable(ids):
+        return None
+
+    monkeypatch.setattr(card_directory, "cards_for_canonical", unreachable)
+    assert await mg._card_names(None, ["u1"]) == {}      # Cards down: no names, no crash
 
 
 # ── OAuth discovery endpoint ───────────────────────────────────────────────────

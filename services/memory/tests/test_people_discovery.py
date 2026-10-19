@@ -9,48 +9,6 @@ from app.services import people_discovery as discovery
 
 
 @pytest.mark.asyncio
-async def test_find_people_merges_cards_and_quickenrich():
-    zynd = [{"user_id": "u1", "display_name": "Ada"}]
-    cards = [{"source": "zynd_card", "handle": "ada", "claimed": True, "name": "Ada"}]
-    prospects = [{"source": "quickenrich", "name": "Grace", "linkedin_url": "https://www.linkedin.com/in/grace"}]
-    with patch("app.mcp_http._get_pool", AsyncMock(return_value=MagicMock())), \
-         patch("app.mcp_http.search_by_query", AsyncMock(return_value=zynd)), \
-         patch("app.mcp_http.search_cards", AsyncMock(return_value=(cards, None))), \
-         patch("app.mcp_http.search_quickenrich", AsyncMock(return_value=(prospects, None))):
-        result = await m.find_people("ai founder", k=5, uid="caller")
-
-    assert result["zynd_users"][0]["connection_eligible"] is True
-    assert result["zynd_users"][0]["source"] == "zynd"
-    assert result["cards"][0]["claimed"] is True
-    assert result["quickenrich"][0]["name"] == "Grace"
-    assert "warnings" not in result
-
-
-@pytest.mark.asyncio
-async def test_find_people_sources_filter_skips_external():
-    with patch("app.mcp_http._get_pool", AsyncMock(return_value=MagicMock())), \
-         patch("app.mcp_http.search_by_query", AsyncMock(return_value=[])), \
-         patch("app.mcp_http.search_cards", AsyncMock()) as cards, \
-         patch("app.mcp_http.search_quickenrich", AsyncMock()) as qe:
-        result = await m.find_people("investor", sources="zynd", uid="caller")
-    cards.assert_not_awaited()
-    qe.assert_not_awaited()
-    assert result["sources"] == ["zynd"]
-
-
-@pytest.mark.asyncio
-async def test_find_people_keeps_other_sources_when_zynd_fails():
-    with patch("app.mcp_http._get_pool", AsyncMock(return_value=MagicMock())), \
-         patch("app.mcp_http.search_by_query", AsyncMock(side_effect=RuntimeError("db"))), \
-         patch("app.mcp_http.search_cards", AsyncMock(return_value=([{"handle": "sam", "claimed": False}], None))), \
-         patch("app.mcp_http.search_quickenrich", AsyncMock(return_value=([], "quickenrich_unavailable"))):
-        result = await m.find_people("designer", uid="caller")
-    assert result["zynd_users"] == []
-    assert result["cards"][0]["claimed"] is False
-    assert result["warnings"] == ["zynd_unavailable", "quickenrich_unavailable"]
-
-
-@pytest.mark.asyncio
 async def test_search_cards_keeps_claimed_and_unclaimed(monkeypatch):
     monkeypatch.setattr(discovery.settings, "cards_api_base_url", "http://cards.test")
     monkeypatch.setattr(discovery.settings, "cards_site_base_url", "https://cards.zynd.ai")
@@ -212,35 +170,3 @@ async def test_quickenrich_query_too_vague_is_a_warning_not_silence(monkeypatch)
     monkeypatch.setattr(discovery.settings, "quickenrich_api_key", "k")
     rows, warning = await discovery.search_quickenrich("people in India", 3)
     assert rows == [] and warning == "quickenrich_query_too_vague"
-
-
-@pytest.mark.asyncio
-async def test_find_people_skips_the_external_fallback_when_matches_are_strong():
-    strong_cards = [{"handle": f"h{i}", "claimed": True, "match_score": 0.8} for i in range(3)]
-    with patch("app.mcp_http._get_pool", AsyncMock(return_value=MagicMock())), \
-         patch("app.mcp_http.search_by_query", AsyncMock(return_value=[])), \
-         patch("app.mcp_http.search_cards", AsyncMock(return_value=(strong_cards, None))), \
-         patch("app.mcp_http.search_quickenrich", AsyncMock(return_value=([], None))) as qe:
-        result = await m.find_people("investor", k=3, uid="caller")
-    qe.assert_not_awaited()
-    assert result["searched"] == ["cards", "zynd"]
-
-
-@pytest.mark.asyncio
-async def test_find_people_runs_the_fallback_when_matches_are_weak_or_asked_for():
-    weak = [{"handle": "w", "claimed": True, "match_score": 0.25}]
-    with patch("app.mcp_http._get_pool", AsyncMock(return_value=MagicMock())), \
-         patch("app.mcp_http.search_by_query", AsyncMock(return_value=[])), \
-         patch("app.mcp_http.search_cards", AsyncMock(return_value=(weak, None))), \
-         patch("app.mcp_http.search_quickenrich", AsyncMock(return_value=([], "quickenrich_not_configured"))) as qe:
-        weak_result = await m.find_people("investor", k=3, uid="caller")
-        qe.assert_awaited_once()
-        assert weak_result["warnings"] == ["quickenrich_not_configured"]
-
-        strong = [{"handle": f"h{i}", "claimed": True, "match_score": 0.9} for i in range(3)]
-    with patch("app.mcp_http._get_pool", AsyncMock(return_value=MagicMock())), \
-         patch("app.mcp_http.search_by_query", AsyncMock(return_value=[])), \
-         patch("app.mcp_http.search_cards", AsyncMock(return_value=(strong, None))), \
-         patch("app.mcp_http.search_quickenrich", AsyncMock(return_value=([], None))) as qe2:
-        await m.find_people("investor", k=3, sources="cards,quickenrich", uid="caller")
-    qe2.assert_awaited_once()      # explicitly requested: always runs

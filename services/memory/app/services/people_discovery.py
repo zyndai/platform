@@ -49,9 +49,18 @@ def _public_url(value: object) -> str:
     return value
 
 
+def _linkedin_url(value: object) -> str:
+    url = _public_url(value)
+    return url if "linkedin.com" in url.lower() else ""
+
+
+def card_url(handle: str) -> str:
+    """Public page of a Card, built from the handle (never trusted from upstream)."""
+    return f"{settings.cards_site_base_url.rstrip('/')}/p/{handle}" if _HANDLE.fullmatch(handle or "") else ""
+
+
 def _card_url(handle: str, upstream: object) -> str:
-    built = f"{settings.cards_site_base_url.rstrip('/')}/p/{handle}"
-    return built if _HANDLE.fullmatch(handle) else _public_url(upstream)
+    return card_url(handle) or _public_url(upstream)
 
 
 _GENERIC_TOPIC_WORDS = frozenset({
@@ -174,6 +183,7 @@ async def search_cards(
             ][:8],
             "match_score": row.get("match_score") if isinstance(row.get("match_score"), (int, float)) else None,
             "why": _why(row.get("match_reasons")),
+            "linkedin_url": _linkedin_url(row.get("linkedin_url")),
             "url": _card_url(handle, row.get("url")),
             "connection_eligible": False,
         }

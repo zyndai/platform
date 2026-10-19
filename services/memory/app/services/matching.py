@@ -8,22 +8,13 @@ Match (brief §6.1): cosine ANN over user_embeddings — the HNSW index makes th
 a single vector scan. Decayed/archived assertions are excluded upstream, so a
 match reflects what each user is about *now*.
 """
-import json
-
 import asyncpg
 
 from app.config import settings
 from app.db import from_pgvector, to_pgvector
+from app.services import card_directory
 from app.services.embeddings import embed
 from app.taxonomy import CLUSTER_PREDICATES
-
-# Social links surfaced with a match (from the person's persona profile) so the caller
-# can reach out. Non-URL/empty values are dropped.
-_SOCIAL_KEYS = ("linkedin", "twitter", "github", "website", "instagram", "telegram")
-_SOCIAL_LABELS = {
-    "linkedin": "LinkedIn", "twitter": "Twitter/X", "github": "GitHub",
-    "website": "Website", "instagram": "Instagram", "telegram": "Telegram",
-}
 
 CONFIDENCE_FLOOR = 0.3   # brief §10.2
 MAX_ASSERTIONS_PER_CLUSTER = 50
@@ -109,7 +100,7 @@ async def match_users(
         return []  # this user has no vector for that cluster yet
 
     rows = await pool.fetch(
-        """SELECT ue.user_id, u.display_name, u.socials,
+        """SELECT ue.user_id, u.display_name,
                   1 - (ue.embedding <=> $1::vector) AS similarity,
                   ue.assertion_count
              FROM user_embeddings ue
@@ -121,7 +112,7 @@ async def match_users(
             LIMIT $5""",
         self_vector, cluster_type, user_id, settings.match_min_assertions, limit,
     )
-    results = await _results_with_socials(rows)
+    results = await _shape_results(rows)
     return await _enrich_and_dedup(pool, results)
 
 
@@ -147,7 +138,7 @@ async def search_by_query(
 
     query_vector = to_pgvector(await embed(query_text))
     rows = await pool.fetch(
-        """SELECT ue.user_id, u.display_name, u.socials,
+        """SELECT ue.user_id, u.display_name,
                   1 - (ue.embedding <=> $1::vector) AS similarity,
                   ue.assertion_count
              FROM user_embeddings ue
@@ -159,7 +150,7 @@ async def search_by_query(
             LIMIT $5""",
         query_vector, cluster_type, caller_id, settings.match_min_assertions, limit,
     )
-    results = await _results_with_socials(rows)
+    results = await _shape_results(rows)
     return await _enrich_and_dedup(pool, results)
 
 
@@ -173,36 +164,20 @@ def _match_label(display_name: str | None, user_id: str) -> str:
     return display_name.split("@", 1)[0]
 
 
-def _parse_socials(raw) -> dict:
-    """Clean the stored users.socials jsonb (str or dict) to known non-empty links."""
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (ValueError, TypeError):
-            return {}
-    if not isinstance(raw, dict):
-        return {}
-    return {k: str(raw[k]).strip() for k in _SOCIAL_KEYS if raw.get(k) and str(raw[k]).strip()}
-
-
-async def _results_with_socials(rows: list[asyncpg.Record]) -> list[dict]:
-    """Shape match rows + attach each person's stored social links (users.socials, kept
-    in sync from the persona profile). Adds an optional `socials` object and a ready-to-
-    print `contact` line so the agent can show LinkedIn / Telegram / etc. verbatim."""
-    out: list[dict] = []
-    for r in rows:
-        item = {
+async def _shape_results(rows: list[asyncpg.Record]) -> list[dict]:
+    """Shape match rows. Contact details (LinkedIn, Telegram, X, ...) are deliberately NOT
+    part of a match: someone who is merely findable has not agreed to be contacted that way.
+    They are shared with the other side of an accepted Cards connection (see
+    cards-api services/network.py), never in search."""
+    return [
+        {
             "user_id": str(r["user_id"]),
             "display_name": _match_label(r["display_name"], str(r["user_id"])),
             "similarity": round(float(r["similarity"]), 4),
             "assertion_count": r["assertion_count"],
         }
-        links = _parse_socials(r["socials"])
-        if links:
-            item["socials"] = links
-            item["contact"] = " · ".join(f"{_SOCIAL_LABELS[k]}: {v}" for k, v in links.items())
-        out.append(item)
-    return out
+        for r in rows
+    ]
 
 
 # ── name enrichment + identity dedup ─────────────────────────────────────────
@@ -211,57 +186,31 @@ async def _results_with_socials(rows: list[asyncpg.Record]) -> list[dict]:
 # users.id == the Supabase auth user id, with display_name/supabase_user_id NULL.
 # They share an identity with a later persona-linked row (same Supabase user id),
 # so a match can surface two rows for the same person — one named, one "zynd-<id>".
-# Resolve names from persona_agents (Supabase) and collapse duplicate identities.
-
-_supabase_client = None
-
-
-def _supabase():
-    """Lazy Supabase client (service key), or None when unavailable. Never raises."""
-    global _supabase_client
-    if _supabase_client is None:
-        try:
-            from supabase import create_client
-            _supabase_client = create_client(settings.supabase_url, settings.supabase_service_key)
-        except Exception:
-            _supabase_client = False
-    return _supabase_client if _supabase_client is not False else None
-
-
-def _persona_names(user_ids: list[str]) -> dict[str, str]:
-    """Map Supabase user_id -> persona display name (agent_handle preferred)."""
-    user_ids = [u for u in dict.fromkeys(user_ids) if u]
-    if not user_ids:
-        return {}
-    sb = _supabase()
-    if sb is None:
-        return {}
-    out: dict[str, str] = {}
-    for i in range(0, len(user_ids), 20):
-        chunk = user_ids[i:i + 20]
-        try:
-            rows = sb.table("persona_agents").select("user_id,name,agent_handle").eq("active", True).in_("user_id", chunk).execute()
-        except Exception:
-            continue
-        for r in (rows.data or []):
-            uid = r.get("user_id")
-            name = (r.get("agent_handle") or r.get("name") or "").strip()
-            if uid and name:
-                out[uid] = name
-    return out
+# Names come from the person's Card (the persona product is paused), and duplicate
+# identities collapse onto one row.
 
 
 def _is_fallback(name: str | None) -> bool:
     return bool(name) and name.startswith("zynd-")
 
 
+async def _card_names(pool: asyncpg.Pool, ids: list[str]) -> dict[str, str]:
+    """Shared Zynd user id -> the name on their Card, for those that have one."""
+    cards = await card_directory.cards_for_canonical(ids)
+    return {
+        uid: str(card.get("name") or "").strip()
+        for uid, card in (cards or {}).items()
+        if str(card.get("name") or "").strip()
+    }
+
+
 async def _enrich_and_dedup(pool: asyncpg.Pool, results: list[dict]) -> list[dict]:
     """Fill in display_name for anonymous matches and drop duplicate identities.
 
-    Returns only named, findable people: ghost rows are enriched from persona_agents
-    (via users.supabase_user_id, or users.id for pre-persona ghost rows where the id
-    IS the Supabase user id), collapsed onto their persona-linked row, and any
-    remaining unnamed rows (no persona anywhere) are dropped.
+    Returns only named, findable people: ghost rows are named from their Card (via
+    users.supabase_user_id, or users.id for pre-persona ghost rows where the id IS the
+    Supabase user id), collapsed onto their linked row, and any remaining unnamed rows (no
+    Card anywhere) are dropped.
     """
     if not results:
         return results
@@ -276,17 +225,16 @@ async def _enrich_and_dedup(pool: asyncpg.Pool, results: list[dict]) -> list[dic
     # Canonical identity key: supabase_user_id when set, else the row's own id
     # (pre-persona ghost rows have users.id == the Supabase user id).
     keys = [suid_by_id.get(r["user_id"]) or r["user_id"] for r in results]
-    names = _persona_names(keys)
+    names = await _card_names(pool, [str(k) for k in keys])
 
     for r, key in zip(results, keys):
-        name = names.get(key)
+        name = names.get(str(key))
         if name and _is_fallback(r.get("display_name")):
             r["display_name"] = name
 
-    # Dedup by identity key, keeping the richest row (socials > real name > similarity).
+    # Dedup by identity key, keeping the best row (real name > similarity).
     def _rank(r: dict) -> tuple:
         return (
-            1 if r.get("socials") else 0,
             0 if _is_fallback(r.get("display_name")) else 1,
             r.get("similarity") or 0.0,
         )

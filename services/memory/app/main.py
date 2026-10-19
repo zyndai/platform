@@ -349,6 +349,30 @@ async def service_findability(identifier: str, authorization: str = Header(defau
     return {"connected": True, "facts": facts}
 
 
+class OutsidePeopleRequest(BaseModel):
+    """Structured filters for the external people search. Cards' suggestions send these."""
+    titles: list[str] = Field(default_factory=list, max_length=5)
+    keywords: list[str] = Field(default_factory=list, max_length=5)
+    location: str = Field(default="", max_length=120)
+    limit: int = Field(default=2, ge=1, le=10)
+
+
+@app.post("/v1/service/outside-people")
+async def service_outside_people(req: OutsidePeopleRequest, authorization: str = Header(default="")) -> dict:
+    """Service-to-service external (LinkedIn) people search: the one QuickEnrich client.
+
+    Called by the Cards backend for "people outside Zynd you may want to meet". Auth is the
+    shared MEMORY_SERVICE_TOKEN. Returns {"people": [...], "warning": str | None}; an empty
+    list always comes with a reason unless the search genuinely found nobody."""
+    if not _valid_service_token(authorization.removeprefix("Bearer ").strip()):
+        raise HTTPException(status_code=401, detail="invalid service token")
+    from app.services.people_discovery import search_quickenrich
+    from app.services.people_query import query_from_filters
+    query = query_from_filters(titles=req.titles, keywords=req.keywords, location=req.location)
+    people, warning = await search_quickenrich(query.raw, req.limit, query=query)
+    return {"people": people, "warning": warning}
+
+
 @app.get("/v1/service/identity/{uid}")
 async def service_identity(uid: UUID, authorization: str = Header(default="")) -> dict:
     """Verified UUID linkage only, with no private memory or email fallback."""

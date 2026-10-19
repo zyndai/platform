@@ -9,6 +9,9 @@ the top of conftest (pytest imports conftest before any test module).
 """
 import os
 import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "chatgpt-plugin"))
 
 os.environ["MOCK_LLM"] = "true"   # hermetic: ignore .env LLM settings
 os.environ["DATABASE_URL"] = "postgresql://zynd:zynd@localhost:5433/zynd_test"

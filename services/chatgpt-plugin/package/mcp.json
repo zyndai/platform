@@ -3,7 +3,7 @@
   "mcpServers": {
     "zynd": {
       "type": "streamable-http",
-      "url": "https://api.zynd.ai/mcp",
+      "url": "https://api.zynd.ai/chatgpt/mcp",
       "extensions": {
         "com.openai": {
           "auth": {
@@ -13,7 +13,7 @@
               "clientId": "zynd-chatgpt-plugin",
               "tokenEndpointAuthMethod": "none"
             },
-            "resource": "https://api.zynd.ai/mcp",
+            "resource": "https://api.zynd.ai/chatgpt/mcp",
             "baseScopes": ["memory:recall", "memory:propose", "cards:review"]
           }
         }

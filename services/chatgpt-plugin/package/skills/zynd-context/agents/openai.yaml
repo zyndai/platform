@@ -4,4 +4,4 @@ dependencies:
       value: "zynd"
       description: "Recall focused private Zynd facts only on explicit user request"
       transport: "streamable_http"
-      url: "https://api.zynd.ai/mcp"
+      url: "https://api.zynd.ai/chatgpt/mcp"

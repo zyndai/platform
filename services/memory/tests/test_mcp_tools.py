@@ -35,7 +35,6 @@ _EXPECTED_TOOLS = {
     "find_card_group_people", "invite_card_group_member", "list_card_group_invitations",
     "respond_card_group_invitation", "read_card_group_messages", "send_card_group_message",
     "list_pending_facts", "approve_fact", "dismiss_fact", "set_looking_for", "list_intros",
-    "recall_memories", "propose_memory", "get_proposal_status", "propose_card_fact", "get_public_card",
 }
 
 
@@ -48,7 +47,7 @@ def test_consolidated_tools_registered():
 
 def test_tool_count_includes_cards_owner_and_discovery():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert len(names) == 35
+    assert len(names) == 30
 
 
 @pytest.mark.parametrize("owner_enabled", [False, True])
@@ -56,6 +55,7 @@ def test_tool_count_includes_cards_owner_and_discovery():
 def test_catalog_and_routes_respect_feature_flags(owner_enabled, public_enabled):
     import json
     import os
+    import pathlib
     import subprocess
     import sys
 
@@ -70,7 +70,8 @@ print(json.dumps({
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, timeout=60,
         env={**os.environ, "FEATURE_S09_MCP_CLIENTS": str(owner_enabled).lower(),
-             "FEATURE_S11_PUBLIC_MCP": str(public_enabled).lower()},
+             "FEATURE_S11_PUBLIC_MCP": str(public_enabled).lower(),
+             "PYTHONPATH": os.pathsep.join([str(pathlib.Path(__file__).resolve().parents[2] / "chatgpt-plugin"), os.environ.get("PYTHONPATH", "")])},
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout.strip().splitlines()[-1])

@@ -3,19 +3,19 @@
   "name": "zynd",
   "version": "0.2.0",
   "description": "Recall private facts on explicit request and propose exact memory or card facts for signed-in Zynd web review.",
-  "author": {"name": "ZYND", "url": "https://zynd.ai"},
-  "homepage": "https://zynd.ai",
+  "author": {"name": "ZYND", "url": "https://cards.zynd.ai"},
+  "homepage": "https://cards.zynd.ai",
   "keywords": ["memory", "context", "profile"],
   "extensions": {
     "com.openai": {
       "interface": {
         "displayName": "Zynd",
         "shortDescription": "Your context and public card",
-        "longDescription": "On explicit request, recall relevant private facts, inspect your public card or private pending facts, and create one exact temporary proposal. Save privately in signed-in Zynd web review; publish only through a separate web confirmation of exact public wording. Connection scopes allow recall, proposals and card review, never direct saving or publication. Draft contract; installed-client behavior is not yet verified.",
+        "longDescription": "On explicit request, recall relevant private facts, inspect your public card or private pending facts, and create one exact temporary proposal. Save privately at https://cards.zynd.ai; publish only through a separate confirmation there of exact public wording. Connection scopes allow recall, proposals and card review, never direct saving or publication. Draft contract; installed-client behavior is not yet verified.",
         "developerName": "ZYND",
         "category": "Productivity",
         "capabilities": ["Recall private facts on request", "Propose exact facts for web review", "Inspect public card and private pending facts"],
-        "websiteURL": "https://zynd.ai",
+        "websiteURL": "https://cards.zynd.ai",
         "defaultPrompt": [
           "What does ZYND remember about my current project?",
           "Show me facts pending review for my public card.",

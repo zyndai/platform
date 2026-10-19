@@ -12,7 +12,7 @@
     "dev:cards-web": "npm --prefix apps/cards-web run dev -- -p 3002",
     "dev:persona-api": "cd services/persona-api && .venv/bin/uvicorn main:app --reload --host 127.0.0.1 --port 8000",
     "dev:cards-api": "cd services/cards-api && .venv/bin/uvicorn main:app --reload --host 127.0.0.1 --port 8002",
-    "dev:memory": "npx --yes concurrently@10.0.5 -k -n memory-api,memory-mcp,memory-worker -c cyan,white,gray \"cd services/memory && .venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8001\" \"cd services/memory && .venv/bin/uvicorn app.mcp_http:app --reload --host 127.0.0.1 --port 8090\" \"cd services/memory && .venv/bin/arq app.worker.WorkerSettings\"",
+    "dev:memory": "npx --yes concurrently@10.0.5 -k -n memory-api,memory-mcp,chatgpt-plugin,memory-worker -c cyan,white,blue,gray \"cd services/memory && .venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8001\" \"cd services/memory && .venv/bin/uvicorn app.mcp_http:app --reload --host 127.0.0.1 --port 8090\" \"cd services/memory && PYTHONPATH=../chatgpt-plugin .venv/bin/uvicorn server:app --app-dir ../chatgpt-plugin --reload --host 127.0.0.1 --port 8091\" \"cd services/memory && .venv/bin/arq app.worker.WorkerSettings\"",
     "dev:infra": "docker compose -f infra/local/docker-compose.yml up -d --wait",
     "dev:infra:down": "docker compose -f infra/local/docker-compose.yml down",
 
@@ -21,7 +21,7 @@
     "test:cards-api": "cd services/cards-api && .venv/bin/python -m pytest -q",
     "test:memory": "cd services/memory && .venv/bin/python -m pytest -q -m 'not integration'",
     "check:web": "npm --prefix apps/persona-web run lint && (cd apps/persona-web && npx tsc --noEmit) && npm --prefix apps/cards-web run lint && (cd apps/cards-web && npx tsc --noEmit)",
-    "build:plugin": "python3 plugins/zynd/build.py --output /tmp/zynd-plugin-draft.zip",
+    "build:plugin": "python3 services/chatgpt-plugin/package/build.py --output dist/zynd-plugin.zip",
 
     "db:check": "npm --prefix packages/db run db:check",
     "db:migrate": "npm --prefix packages/db run db:migrate --",

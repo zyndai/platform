@@ -121,7 +121,7 @@ else
   touched '^services/persona-api/'  && do_persona_api=1
   touched '^apps/persona-web/'      && do_persona_web=1
   touched '^apps/cards-web/'        && do_cards_web=1
-  touched '^services/memory/'       && do_memory=1
+  touched '^services/memory/|^services/chatgpt-plugin/' && do_memory=1
   touched '^services/cards-api/'    && do_cards_api=1
   if touched "$COMPOSE_TOUCHED"; then do_memory=1; do_cards_api=1; fi
 fi

@@ -1,6 +1,6 @@
 """Validate and reproducibly package the ZYND plugin (stdlib only).
 
-Run `python3 plugins/zynd/build.py --output /tmp/zynd-draft.zip` from any cwd.
+Run `python3 services/chatgpt-plugin/package/build.py --output /tmp/zynd-draft.zip` from any cwd.
 Submission validation is stricter: `--submission` refuses missing verified
 listing/review data. No ZIP is written on validation failure.
 """
@@ -26,7 +26,7 @@ SKILL_TOOLS = {
     "zynd-card": {"list_pending_facts", "propose_card_fact", "get_proposal_status", "get_public_card"},
 }
 SCOPES = ["memory:recall", "memory:propose", "cards:review"]
-MCP_URL = "https://api.zynd.ai/mcp"
+MCP_URL = "https://api.zynd.ai/chatgpt/mcp"
 REVIEW_ORIGIN = "https://cards.zynd.ai"
 PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
@@ -56,7 +56,7 @@ def files(root):
         require(not item.is_symlink(), f"symlink forbidden: {rel}")
         require(not item.is_file() or rel in allowed or rel in {"build.py", "test_build.py"} or
                 (item.parent.name == "__pycache__" and item.parent.parent == root and
-                 re.fullmatch(r"(?:build|test_build)\.cpython-\d+(?:\.opt-\d+)?\.pyc", item.name)),
+                 re.fullmatch(r"(?:build|test_build)\.cpython-[\w.-]+\.pyc", item.name)),
                 f"unexpected package file: {rel}")
         if rel in allowed:
             require(item.is_file(), f"missing regular file: {rel}")
@@ -118,12 +118,12 @@ def validate(root=ROOT, submission=False):
         require(re.fullmatch(
             r'dependencies:\n  tools:\n    - type: "mcp"\n      value: "zynd"\n'
             r'      description: "[^"\n]+"\n      transport: "streamable_http"\n'
-            r'      url: "https://api\.zynd\.ai/mcp"\n\s*', dependency),
+            r'      url: "https://api\.zynd\.ai/chatgpt/mcp"\n\s*', dependency),
             f"invalid MCP dependency: {skill}")
     text = "\n".join((root / name).read_text() for name in names if name.endswith((".json", ".md", ".yaml")))
     require(not re.search(r"(?i)(authorization\s*[:=]|bearer\s+\S+|clientsecret|api[_-]?key\s*[:=]|-----BEGIN .*PRIVATE KEY-----)", text),
             "possible credential or authorization header in package")
-    require("https://api.zynd.ai/mcp" in text, "missing endpoint")
+    require("https://api.zynd.ai/chatgpt/mcp" in text, "missing endpoint")
     review = plugin["extensions"]["com.openai"].get("review", {})
     cases = review.get("test_cases", {})
     require(len(cases.get("positive", [])) == 5 and len(cases.get("negative", [])) == 6,
@@ -167,12 +167,13 @@ def validate_official_schemas(root=ROOT):
 
 
 def build(output, root=ROOT, submission=False, mcp_url=MCP_URL, review_origin=REVIEW_ORIGIN):
-    require(safe_url(mcp_url) and urlsplit(mcp_url).path == "/mcp", "MCP URL must be HTTPS with path /mcp")
+    require(safe_url(mcp_url) and urlsplit(mcp_url).path == "/chatgpt/mcp", "MCP URL must be HTTPS with path /chatgpt/mcp")
     require(safe_url(review_origin) and urlsplit(review_origin).path == "", "review origin must be an HTTPS origin without a path")
     require(not submission or (mcp_url == MCP_URL and review_origin == REVIEW_ORIGIN),
             "submission cannot use test targets")
     names = validate(root, submission)
     output = Path(output).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
     require(not output.is_relative_to(root.resolve()), "write the generated ZIP outside the plugin folder")
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name in names:
@@ -188,7 +189,7 @@ def build(output, root=ROOT, submission=False, mcp_url=MCP_URL, review_origin=RE
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", help="ZIP output path (outside plugins/zynd)")
+    parser.add_argument("--output", help="ZIP output path (outside services/chatgpt-plugin/package)")
     parser.add_argument("--submission", action="store_true", help="fail closed until submission prerequisites are verified")
     parser.add_argument("--mcp-url", default=MCP_URL, help="explicit isolated HTTPS /mcp target for draft ZIPs")
     parser.add_argument("--review-origin", default=REVIEW_ORIGIN, help="trusted HTTPS review origin for draft ZIPs")

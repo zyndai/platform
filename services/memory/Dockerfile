@@ -10,15 +10,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install dependencies first (layer cache) — prod deps only, no dev/test tools.
-# uv.lock is copied alongside pyproject.toml and the install is --frozen: without
-# the lockfile, `uv sync` re-resolves from pyproject.toml (which allows newer
-# versions than the pin) and a lock-only change never invalidates this layer,
-# so the pinned dependency set never reaches the containers.
-COPY pyproject.toml uv.lock ./
+# Build context is services/ (see infra compose files) so the ChatGPT plugin
+# package can sit beside memory on PYTHONPATH.
+COPY memory/pyproject.toml memory/uv.lock ./
 RUN uv sync --frozen --no-dev
 
-COPY . .
+COPY memory/ .
+COPY chatgpt-plugin /chatgpt-plugin
+ENV PYTHONPATH="/chatgpt-plugin"
 
 # Default command (API). Render's worker service overrides this via render.yaml.
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

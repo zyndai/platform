@@ -1,0 +1,7 @@
+{
+  "name": "zynd-chatgpt-plugin",
+  "private": true,
+  "scripts": {
+    "build": "python3 package/build.py --output ../../dist/zynd-plugin.zip"
+  }
+}

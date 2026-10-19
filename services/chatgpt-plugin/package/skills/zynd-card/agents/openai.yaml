@@ -4,4 +4,4 @@ dependencies:
       value: "zynd"
       description: "Inspect Zynd card facts and propose individual web reviews; MCP cannot publish"
       transport: "streamable_http"
-      url: "https://api.zynd.ai/mcp"
+      url: "https://api.zynd.ai/chatgpt/mcp"

@@ -67,7 +67,8 @@ def person_from_zynd(row: dict, card: dict, card_url: str) -> dict:
         "name": card.get("name") or row.get("display_name") or "",
         "headline": card.get("headline") or "",
         "location": card.get("location") or "",
-        "why": ["Matches their Zynd profile"],
+        "why": [f"Zynd profile · {label}" for label in (row.get("matched_on") or [])[:2]]
+               or ["Matches their Zynd profile"],
         "sources": ["zynd"],
         "claimed": card.get("claimed") is True,
         "score": _score(row.get("similarity")),

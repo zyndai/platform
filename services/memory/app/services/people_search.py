@@ -53,11 +53,12 @@ async def _profile_text(pool: asyncpg.Pool, uid: str) -> str:
 
 async def _zynd_people(
     pool: asyncpg.Pool, uid: str, text: str, like_me: bool, limit: int, warnings: list[str],
+    query: TargetQuery | None = None,
 ) -> list[dict]:
     """Zynd members close to the target, as people identified by their Cards."""
     try:
         rows = await (match_users(pool, uid, "full_context", limit) if like_me
-                      else search_by_query(pool, uid, text, limit=limit))
+                      else search_by_query(pool, uid, text, limit=limit, query=query))
     except Exception as exc:  # noqa: BLE001 — one source failing must not sink the search
         logger.warning("zynd search failed: %s", exc)
         warnings.append("zynd_unavailable")
@@ -102,7 +103,7 @@ async def find(
     if "cards" in wanted:
         coros["cards"] = people_discovery.search_cards(text, pool_size, query=query)
     if "zynd" in wanted:
-        coros["zynd"] = _zynd_people(pool, uid, text, like_me, pool_size, warnings)
+        coros["zynd"] = _zynd_people(pool, uid, text, like_me, pool_size, warnings, query)
     results = dict(zip(coros, await asyncio.gather(*coros.values(), return_exceptions=True)))
 
     people: list[dict] = []

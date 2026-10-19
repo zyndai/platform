@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     feature_fact_families: bool = False
     # Phase 3: stricter extraction prompt and the second-sighting rule for inferred tech.
     feature_strict_tech: bool = False
+    # Cards networking F4: find_people matches the target against individual public facts
+    # (top 3 per person, current-state predicates weighted up) instead of one averaged
+    # profile vector. Off = the previous cluster-vector ranking.
+    feature_fact_matching: bool = False
     # Phase 4: last_seen_at / mention_count / base_confidence. Turn on ONLY after
     # sql/schema.sql has been applied to the database (the columns must exist).
     feature_freshness_v2: bool = False

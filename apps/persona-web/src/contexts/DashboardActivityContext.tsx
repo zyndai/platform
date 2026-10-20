@@ -335,13 +335,20 @@ export function DashboardActivityProvider({ children }: { children: ReactNode })
           const row = (payload.new || payload.old || {}) as {
             initiator_id?: string | null;
             receiver_id?: string | null;
+            status?: string | null;
           };
           const mine =
             row.initiator_id === user.id ||
             row.receiver_id === user.id ||
             (myAgentId.current !== null &&
               (row.initiator_id === myAgentId.current || row.receiver_id === myAgentId.current));
-          if (mine) scheduleRefresh();
+          // The message-activity trigger updates dm_threads on every DM. Those
+          // rows keep status='accepted' and do not affect dashboard activity;
+          // refetching five endpoints per message would recreate the exact
+          // polling cost this work removed. Accept/decline/block/revoke and new
+          // requests still change status, so they still refresh.
+          const relevant = payload.eventType === "INSERT" || row.status !== "accepted";
+          if (mine && relevant) scheduleRefresh();
         },
       )
       .on(

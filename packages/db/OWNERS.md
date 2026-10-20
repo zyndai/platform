@@ -10,9 +10,9 @@ every service listed as a reader.
 | Table | Owner | Also read by |
 |---|---|---|
 | `persona_agents` | persona | **memory** (`services/memory/app/tools/zynd_network.py`: `agent_id, name, description, active, updated_at`), persona-web (via RLS subqueries) |
-| `dm_threads`, `dm_messages`, `a2a_tasks`, `agent_tasks`, `pending_approvals` | persona | persona-web (signed-in reads + realtime) |
+| `dm_threads`, `dm_messages`, `dm_thread_reads`, `a2a_tasks`, `agent_tasks`, `pending_approvals` | persona | persona-web (signed-in reads + realtime); read cursors are persona-api only |
 | `outbound_callbacks`, `callback_results` | persona | persona-web (realtime) |
-| `persona_groups`, `persona_group_members`, `persona_group_messages`, `persona_group_invitations`, `persona_group_constraints`, `persona_group_audit_events` | persona | persona-web (realtime on messages/invitations) |
+| `persona_groups`, `persona_group_members`, `persona_group_messages`, `persona_group_reads`, `persona_group_invitations`, `persona_group_constraints`, `persona_group_audit_events` | persona | persona-web (realtime on messages/invitations); read cursors are persona-api only |
 | `api_tokens`, `oauth_pending_state`, `telegram_links`, `telegram_chat_history` | persona | — |
 | `linkedin_profiles`, `twitter_profiles`, `github_profiles` | persona | — |
 | `enriched_contacts`, `enriched_companies`, `suggested_contacts`, `suggested_contact_runs` | persona | — |

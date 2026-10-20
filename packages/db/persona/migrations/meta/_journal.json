@@ -50,6 +50,20 @@
       "when": 1791881946908,
       "tag": "0006_s12_meeting_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792482188212,
+      "tag": "0007_network_inbox_read_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792482198435,
+      "tag": "0008_network_inbox_activity",
+      "breakpoints": true
     }
   ]
 }

@@ -372,6 +372,18 @@ export default function GroupChatPage() {
     resizeComposerInput();
   }, [draft, resizeComposerInput]);
 
+  const markGroupRead = useCallback(async () => {
+    if (!groupId) return;
+    try {
+      await apiPost(`/api/groups/${groupId}/read`, {});
+      // The groups list is cached; clear it so the unread badge disappears
+      // the next time the user navigates back.
+      invalidate("/api/groups/");
+    } catch {
+      /* Pre-migration or transient failure: the next open will re-sync. */
+    }
+  }, [groupId]);
+
   useEffect(() => {
     if (!groupId) return;
     let cancelled = false;
@@ -394,6 +406,7 @@ export default function GroupChatPage() {
         setMemberCount(g.member_count);
         setNotFound(false);
         setLoading(false);
+        void markGroupRead();
 
         const [ms, msgs] = await Promise.all([
           apiGet<{ members: Member[] }>(`/api/groups/${groupId}/members`).catch(() => ({ members: [] as Member[] })),
@@ -421,7 +434,7 @@ export default function GroupChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [groupId]);
+  }, [groupId, markGroupRead]);
 
   const loadOlderMessages = useCallback(async () => {
     if (!groupId || !hasMoreMessages || loadingOlderMessages || messages.length === 0) return;
@@ -494,13 +507,16 @@ export default function GroupChatPage() {
               prev.filter((p) => p.userId !== msg.sender_user_id),
             );
           }
+          if (msg.sender_user_id !== user?.id) {
+            void markGroupRead();
+          }
         },
       )
       .subscribe();
     return () => {
       sb.removeChannel(channel);
     };
-  }, [groupId, notFound]);
+  }, [groupId, notFound, markGroupRead, user?.id]);
 
   // Sweep expired pending-reply markers once a second. A persona that
   // never answers (LLM error, no deployed agent on that account, etc.)

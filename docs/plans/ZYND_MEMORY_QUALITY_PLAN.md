@@ -12,7 +12,9 @@ This doc has two parts that share code and should be sequenced together:
 
 # Part A — Memory fact quality and context retrieval
 
-> **Status:** proposed, 2026-10-20 — not implemented.
+> **Status:** implemented on branch `feat/memory-quality-and-cards-networking`, behind flags that
+> are all off by default. Not deployed anywhere. See §17 for what shipped, what changed from this plan
+> and the rollout order.
 >
 > **Scope:** `services/memory` (fact writes, ranking, decay) and the parts of
 > `services/persona-api` that write facts into it (GitHub / LinkedIn / Twitter
@@ -492,7 +494,8 @@ Coordinate the memory deploy with a maintainer.
 
 # Part B — Cards networking: fix and improve
 
-> **Status:** proposed, 2026-10-20 — not implemented.
+> **Status:** implemented on the same branch except where §17 says otherwise (A6 is partial, A4/A5/A7/A8
+> are API and MCP only, no cards-web UI).
 >
 > **Scope:** Cards only: `services/cards-api`, the people-search and MCP code
 > in `services/memory`, and `apps/cards-web`. Persona is paused, so nothing
@@ -602,3 +605,72 @@ touch different files:
 | 4 | Phase 4: freshness (memory DB schema, **human OK**) | A1, A2 (A2 needs a `packages/db` migration, **human OK**) |
 | 5 | Phase 5: cleanup of existing data (**human OK**) | A3, A4, A5 |
 | 6 | — | A6, A7, A8 |
+
+---
+
+# 17. Implementation status and rollout
+
+Everything below is on branch `feat/memory-quality-and-cards-networking`, one commit per phase / feature.
+Nothing is deployed and no flag is on anywhere except the dev compose file (see Rollout).
+
+## 17.1 What shipped
+
+| Item | Where | Flag (default off) |
+|---|---|---|
+| Phase 1 ranked context, eval set + harness | `memory/app/services/export.py`, `tests/fixtures/context_eval.json`, `scripts/eval_context.py`; persona-api sends `topic` | `FEATURE_RANKED_CONTEXT` |
+| Phase 2 one fact per thing | `memory/app/services/{canonical,facts,entities,findability}.py`, `worker.py`; persona-api predicate fixes; cards-web / persona-web safety nets | `FEATURE_FACT_FAMILIES` |
+| Phase 3 dependency noise | persona-api `github_sync._derive_skills` (always on, new syncs only); memory extraction guard, second sighting, per-call cap | `FEATURE_STRICT_TECH` |
+| Phase 4 freshness (**schema**) | `memory/sql/schema.sql`, `decay.py`, `job_runs.py`, `/health` | `FEATURE_FRESHNESS_V2` (+ families) |
+| Phase 5 cleanup | `memory/scripts/dedupe_memory.py`, `app/services/cleanup.py` | n/a (script, dry run by default) |
+| F1-F3, F9 search quality, golden set, funnel | `memory/.../people_{query,discovery}.py`, `cards-api/services/search*.py`, `docs/cards/s04-funnel.sql` | none |
+| F5-F8 + Simplify (one tool, one shape) | `memory/.../people_{search,results}.py`, `card_directory.py`, cards-api `/internal/cards-for-users`, `/v1/service/outside-people` | none |
+| F4 per-fact matching | `memory/app/services/matching.py` | `FEATURE_FACT_MATCHING` |
+| A1 two-way match | `cards-api/services/two_way.py` | none (needs the searcher's Card) |
+| A2 invite to claim (**schema**) | `packages/db` 0023, `cards-api/services/invites.py`, `memory/.../invite_refs.py` | Cards `FEATURE_A2_INVITE_TO_CLAIM`, Memory `FEATURE_INVITE_TO_CLAIM` |
+| A3 saved searches, A4 digest, A5 brief, A6 trust (partial), A8 match controls (**schema**) | `packages/db` 0024, `cards-api/services/{saved_searches,digest_network,connection_brief,trust,match_prefs}.py` | Cards `FEATURE_NETWORK_CONTROLS` |
+| A7 group search | `cards-api/services/network.search_group`, `find_people(group_id=)` | none |
+
+Tests at the end of the branch: memory 663 unit tests pass; memory integration: the same 6 failures that
+failed before this work (stale tests, e.g. `test_forgotten_fact_can_be_reported_again`); cards-api: the 2
+known `test_x_bot` failures; persona-api all pass. Integration tests need Postgres + pgvector (and Redis for
+the ASGI ones): the repo's docker compose, or a local Postgres plus any Redis.
+
+## 17.2 Where this differs from the plan
+
+- **Second sighting (Phase 3.3)** counts `assertions.version` until Phase 4, not distinct `trace_chunk_id`s in
+  `assertion_history`: that table has no chunk id.
+- **`feature_freshness_v2` is only effective with `feature_fact_families`** (`Settings.freshness_v2`): every
+  writer must record `base_confidence` / `last_seen_at` the same way, and only `write_fact` does.
+- **GitHub thresholds (D1)** as written give a user with several repos and no language in two of them no
+  skills at all. Kept as decided; revisit if that shows up in practice.
+- **Per-fact matching (F4)** reads the public subset of `assertions` with no new index. If the public fact set
+  grows large, add a partial HNSW index on `entities.embedding`.
+- **Find people**: `zynd_users` / `cards` / `quickenrich` keys are gone; `search_linkedin_profiles` and
+  `find_linkedin_people_for_me` are removed (`linkedin_search.py` is now unused and can be deleted).
+- **A2** needs the invitee's Card to be claimable by LinkedIn sign-in (existing S03 flow); invitations are
+  created only from a signed `invite_ref` Memory issues for a person it returned to that user.
+- **A6 is partial**: request limits, report, block and the LinkedIn badge are done; GitHub and work-email
+  verification need verification flows that do not exist, and "capacity" is a fixed 50 unanswered requests, not
+  an owner setting. Reports are stored; there is no review UI.
+- **No cards-web UI** for invites, saved searches, controls, reports or the brief: API and MCP only.
+
+## 17.3 Rollout (needs a human at the marked steps, AGENTS.md section 6)
+
+1. **Deploy order:** Memory first, then Cards. Cards' suggested people call Memory's
+   `/v1/service/outside-people`; Memory calls Cards' `/internal/cards-for-users`.
+2. **Memory schema (Phase 4):** `make deploy` and the dev compose both run `python -m app.schema_apply`. **The dev
+   compose shares prod's database, so deploying this branch to dev applies the Phase 4 schema change to prod's
+   memory DB.** It is expand-only, idempotent and inert while `FEATURE_FRESHNESS_V2` is off (rehearsed on a
+   5,000-row scratch database), but get a human's OK before the first deploy of this branch anywhere.
+3. **Flags in dev:** `infra/single-box/docker-compose.dev.yml` turns on ranked context, fact families, strict
+   tech and fact matching for `api-dev` / `mcp-dev`. Dev writes to prod data, so the write-path flags act on prod
+   facts from there. Leave `FEATURE_FRESHNESS_V2` off until step 2 has happened and someone checks `/health`.
+4. **Before prod flags:** run `scripts/eval_context.py --sweep 0.35 0.40 0.45 0.50 0.55` with real embeddings
+   against a scratch database and set `RELATED_MIN`; confirm `decay_cron` runs (`assertion_history` rows with
+   `change_reason = 'decay'`) before turning freshness on.
+5. **Phase 5:** run `scripts/dedupe_memory.py` (dry run) on a restored copy, review `dedupe_report.json` with a
+   person, apply with `--apply --confirm-database <name>`, then `python -m app.jobs recompute`. Undo with
+   `--undo <run_id>`.
+6. **Cards migrations 0023 and 0024:** apply with `packages/db` (README step 6) only on a human's say-so, then set
+   `FEATURE_A2_INVITE_TO_CLAIM` / `FEATURE_NETWORK_CONTROLS` (and Memory's `FEATURE_INVITE_TO_CLAIM`). Review the
+   `claim_card_by_owner` change that records `owner_user_id` (aafo-issued principals only).

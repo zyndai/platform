@@ -230,13 +230,25 @@ def pick_avatar(linkedin_avatar: str | None, x_avatar: str | None, github_avatar
     return ""
 
 
+# Photos the owner uploads in the card editor land in the public `avatars` bucket.
+_OWNER_UPLOAD_MARKER = "/storage/v1/object/public/avatars/"
+
+
+def is_owner_uploaded_avatar(url: str | None) -> bool:
+    """True for a photo the owner chose themselves, which scrapes must never replace."""
+    return _OWNER_UPLOAD_MARKER in str(url or "")
+
+
 def refresh_avatar(card: dict, linkedin_avatar: str | None, x_avatar: str | None) -> bool:
     """Patch identity.avatar_url from freshly scraped platform avatars.
 
     Only overwrites when a scraped avatar is present and different; the existing
     avatar (e.g. a GitHub fallback) is left untouched when neither platform
-    returned a usable one. Returns True when the card changed."""
+    returned a usable one, and an owner-uploaded photo is never replaced.
+    Returns True when the card changed."""
     identity = dict(card.get("identity") or {})
+    if is_owner_uploaded_avatar(identity.get("avatar_url")):
+        return False
     candidate = pick_avatar(linkedin_avatar, x_avatar, None)
     if candidate and candidate != identity.get("avatar_url"):
         identity["avatar_url"] = candidate
@@ -248,19 +260,22 @@ def refresh_avatar(card: dict, linkedin_avatar: str | None, x_avatar: str | None
 def apply_linkedin_avatar(card: dict, avatar: str | None) -> str:
     """Sync a card's avatar after a fresh LinkedIn scrape.
 
-    Photo present: store it in linkedin_stats and identity.avatar_url.
+    Photo present: store it in linkedin_stats and identity.avatar_url, unless
+    the owner uploaded their own photo (then only linkedin_stats is updated).
     Photo removed (avatar is None): drop the stale LinkedIn avatar so the
     frontend falls back to GitHub/X instead of a dead signed URL.
     Returns 'set' | 'cleared' | 'none' (nothing changed)."""
     if avatar:
         stats = dict(card.get("linkedin_stats") or {})
         identity = dict(card.get("identity") or {})
-        if stats.get("avatar") == avatar and identity.get("avatar_url") == avatar:
+        keep_upload = is_owner_uploaded_avatar(identity.get("avatar_url"))
+        if stats.get("avatar") == avatar and (keep_upload or identity.get("avatar_url") == avatar):
             return "none"
         stats["avatar"] = avatar
         card["linkedin_stats"] = stats
-        identity["avatar_url"] = avatar
-        card["identity"] = identity
+        if not keep_upload:
+            identity["avatar_url"] = avatar
+            card["identity"] = identity
         return "set"
     changed = False
     stats = dict(card.get("linkedin_stats") or {})

@@ -169,6 +169,41 @@ def test_refresh_avatar_unchanged_is_noop():
     assert cards_service.refresh_avatar(card, "https://media.licdn.com/a.jpg", None) is False
 
 
+UPLOADED = "https://x.supabase.co/storage/v1/object/public/avatars/u1/alice-1.jpg"
+
+
+def test_refresh_avatar_never_replaces_owner_upload():
+    card = {"identity": {"name": "Alice", "avatar_url": UPLOADED, "links": {}}}
+
+    assert cards_service.refresh_avatar(card, "https://media.licdn.com/new.jpg", None) is False
+    assert card["identity"]["avatar_url"] == UPLOADED
+
+
+def test_apply_linkedin_avatar_keeps_owner_upload_but_records_linkedin_photo():
+    card = {"identity": {"avatar_url": UPLOADED}, "linkedin_stats": {}}
+
+    assert cards_service.apply_linkedin_avatar(card, "https://media.licdn.com/new.jpg") == "set"
+    assert card["identity"]["avatar_url"] == UPLOADED
+    assert card["linkedin_stats"]["avatar"] == "https://media.licdn.com/new.jpg"
+    # A second scrape of the same photo is a no-op, so the self-heal doesn't rewrite the card each time.
+    assert cards_service.apply_linkedin_avatar(card, "https://media.licdn.com/new.jpg") == "none"
+
+
+def test_apply_linkedin_avatar_still_replaces_scraped_avatar():
+    card = {"identity": {"avatar_url": "https://media.licdn.com/old.jpg"}, "linkedin_stats": {}}
+
+    assert cards_service.apply_linkedin_avatar(card, "https://media.licdn.com/new.jpg") == "set"
+    assert card["identity"]["avatar_url"] == "https://media.licdn.com/new.jpg"
+
+
+def test_apply_linkedin_avatar_removed_photo_keeps_owner_upload():
+    card = {"identity": {"avatar_url": UPLOADED}, "linkedin_stats": {"avatar": "https://media.licdn.com/old.jpg"}}
+
+    assert cards_service.apply_linkedin_avatar(card, None) == "cleared"
+    assert card["identity"]["avatar_url"] == UPLOADED
+    assert "avatar" not in card["linkedin_stats"]
+
+
 def test_merge_scraped_posts_injects_both_platforms():
     from models.card import WritingSample
 

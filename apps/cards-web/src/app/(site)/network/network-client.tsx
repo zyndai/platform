@@ -3,9 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, MessageCircle, Plus, Search, Send, Users, X } from "lucide-react";
 import {
+  briefIsEmpty,
   cardsNetworkRequest,
   connectionRequestNotice,
+  sharedSummary,
   type CardConnection,
+  type ConnectionBrief,
   type CardGroup,
   type CardGroupInvitation,
   type CardGroupMember,
@@ -45,6 +48,7 @@ export function NetworkClient({ token, userId }: { token: string; userId: string
   const [connectionId, setConnectionId] = useState<string | null>(null);
   const [groupId, setGroupId] = useState<string | null>(null);
   const [messages, setMessages] = useState<CardMessage[]>([]);
+  const [brief, setBrief] = useState<ConnectionBrief | null>(null);
   const [groupMessages, setGroupMessages] = useState<CardMessage[]>([]);
   const [members, setMembers] = useState<CardGroupMember[]>([]);
   const [draft, setDraft] = useState("");
@@ -125,6 +129,19 @@ export function NetworkClient({ token, userId }: { token: string; userId: string
     void refresh();
     const timer = window.setInterval(() => void refresh(), 3000);
     return () => { controller.abort(); window.clearInterval(timer); };
+  }, [connectionId, connectionStatus, token]);
+
+  useEffect(() => {
+    // The brief is a nicety: when Cards cannot produce one (older API, nothing approved yet) the
+    // panel is simply not shown and the conversation is unaffected.
+    const controller = new AbortController();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setBrief(null);
+    if (!connectionId || connectionStatus !== "accepted") return () => controller.abort();
+    cardsNetworkRequest<{ brief: ConnectionBrief }>(`/connections/${connectionId}/brief`, token, "GET", undefined, controller.signal)
+      .then((result) => { if (!controller.signal.aborted) setBrief(result.brief); })
+      .catch(() => { /* no brief */ });
+    return () => controller.abort();
   }, [connectionId, connectionStatus, token]);
 
   useEffect(() => {
@@ -263,7 +280,11 @@ export function NetworkClient({ token, userId }: { token: string; userId: string
             </section>
             <section style={{ ...panelStyle, gridColumn: "1 / -1" }}>
               <h2 style={headingStyle}>{selectedConnection ? `Conversation with ${selectedConnection.partner.name}` : "Direct messages"}</h2>
-              {!selectedConnection || selectedConnection.status !== "accepted" ? <Empty>Select an accepted connection to message.</Empty> : <><div aria-label="Direct messages" style={chatBox}>{messages.map((message) => <div key={message.id} style={{ ...bubble, alignSelf: message.sender_user_id === userId ? "flex-end" : "flex-start", background: message.sender_user_id === userId ? "#3730a3" : "#1f2937" }}>{message.content}</div>)}</div><div style={{ display: "flex", gap: 10 }}><input aria-label="Direct message" maxLength={4000} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder="Write a message" style={{ ...inputStyle, margin: 0 }} /><button type="button" aria-label="Send direct message" disabled={busy || !draft.trim()} onClick={() => void sendMessage()} style={primaryButton}><Send size={15} /></button></div></>}
+              {!selectedConnection || selectedConnection.status !== "accepted" ? <Empty>Select an accepted connection to message.</Empty> : <>{!briefIsEmpty(brief) && brief && <div aria-label={`About ${brief.partner.name}`} style={briefBox}>
+                {brief.now.them.length > 0 && <p style={briefLine}><strong>{brief.partner.name} is now:</strong> {brief.now.them.map((item) => item.text).join(" · ")}</p>}
+                {sharedSummary(brief.shared) && <p style={briefLine}><strong>In common:</strong> {sharedSummary(brief.shared)}</p>}
+                {brief.suggested_topics.length > 0 && <p style={briefLine}><strong>Things to bring up:</strong> {brief.suggested_topics.join(" · ")}</p>}
+              </div>}<div aria-label="Direct messages" style={chatBox}>{messages.map((message) => <div key={message.id} style={{ ...bubble, alignSelf: message.sender_user_id === userId ? "flex-end" : "flex-start", background: message.sender_user_id === userId ? "#3730a3" : "#1f2937" }}>{message.content}</div>)}</div><div style={{ display: "flex", gap: 10 }}><input aria-label="Direct message" maxLength={4000} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder="Write a message" style={{ ...inputStyle, margin: 0 }} /><button type="button" aria-label="Send direct message" disabled={busy || !draft.trim()} onClick={() => void sendMessage()} style={primaryButton}><Send size={15} /></button></div></>}
             </section>
           </div>
         ) : (
@@ -323,5 +344,7 @@ const rowStyle: React.CSSProperties = { display: "flex", alignItems: "center", g
 const connectionRow: React.CSSProperties = { width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 0", border: 0, borderBottom: "1px solid rgba(255,255,255,.07)", background: "transparent", color: "white", cursor: "pointer" };
 const selectedRow: React.CSSProperties = { background: "rgba(79,70,229,.15)", borderRadius: 10, paddingLeft: 10, paddingRight: 10 };
 const memberPill: React.CSSProperties = { borderRadius: 999, padding: "6px 10px", background: "rgba(99,102,241,.18)", color: "#c7d2fe", fontSize: 12 };
+const briefBox: React.CSSProperties = { marginBottom: 12, padding: "12px 14px", borderRadius: 12, background: "rgba(99,102,241,.1)", border: "1px solid rgba(99,102,241,.25)" };
+const briefLine: React.CSSProperties = { margin: "0 0 6px", color: "#c7d2fe", fontSize: 13, lineHeight: 1.5 };
 const chatBox: React.CSSProperties = { minHeight: 150, maxHeight: 360, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, padding: 12, marginBottom: 12, background: "rgba(0,0,0,.18)", borderRadius: 12 };
 const bubble: React.CSSProperties = { maxWidth: "75%", padding: "9px 12px", borderRadius: 12, lineHeight: 1.45, whiteSpace: "pre-wrap", overflowWrap: "anywhere" };

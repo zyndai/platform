@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CARDS_API, formatMatchReason } from "@/lib/cards";
+import { verifiedLabels, type MatchReason } from "@/lib/match-reason";
 
 export const revalidate = 0;
 
@@ -13,7 +14,8 @@ interface SearchResult {
   skills: string[];
   availability: string;
   experience_years: number | null;
-  match_reasons: Array<string | { type: string; text: string }>;
+  match_reasons: MatchReason[];
+  verified?: string[];
   match_score: number;
   url: string;
   claimed?: boolean;
@@ -156,6 +158,11 @@ export default async function FindPage({ searchParams }: PageProps) {
                           Unclaimed
                         </span>
                       )}
+                      {verifiedLabels(r.verified).map((label) => (
+                        <span key={label} title={`The owner proved this ${label} identity`} style={{ marginLeft: "0.5rem", fontSize: "0.7rem", fontWeight: 700, color: "#14532d", background: "#dcefe1", borderRadius: 999, padding: "0.1rem 0.5rem", verticalAlign: "middle" }}>
+                          ✓ {label}
+                        </span>
+                      ))}
                       {r.headline && (
                         <p style={{ margin: "0.2rem 0 0", color: SUB, fontSize: "0.9rem" }}>{r.headline}</p>
                       )}

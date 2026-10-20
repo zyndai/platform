@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { formatMatchReason, searchAgents } from "@/lib/cards";
+import { verifiedLabels } from "@/lib/match-reason";
 import { pageMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = pageMetadata({
@@ -168,6 +169,11 @@ export default async function SearchPage({ searchParams }: PageProps) {
                                 Unclaimed
                               </span>
                             )}
+                            {verifiedLabels(r.verified).map((label) => (
+                              <span key={label} title={`The owner proved this ${label} identity`} className="shrink-0 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+                                ✓ {label}
+                              </span>
+                            ))}
                           </div>
                           {r.headline && (
                             <div className="mt-0.5 text-sm text-zinc-400 line-clamp-2">

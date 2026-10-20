@@ -1,4 +1,5 @@
 import { claimHeaders, forgetClaimToken } from "./claim-tokens";
+import type { MatchReason } from "./match-reason";
 import { ownerHomeEnabled } from "./owner-home";
 
 export interface Identity {
@@ -189,10 +190,12 @@ export interface AgentSearchResult {
   availability: string;
   experience_years: number | null;
   match_score: number;
-  match_reasons: Array<string | { type: string; text: string }>;
+  match_reasons: MatchReason[];
   url: string;
   /** S03: false when the card has no owner yet (shown with an "Unclaimed" chip). */
   claimed?: boolean;
+  /** Identities Cards has proven for the owner (e.g. "linkedin"); absent until network controls are on. */
+  verified?: string[];
 }
 
 export interface AgentSearchResponse {
@@ -252,11 +255,7 @@ export async function fetchCardView(handle: string): Promise<CardView | null> {
   }
 }
 
-export function formatMatchReason(reason: string | { type: string; text: string }): string {
-  if (typeof reason === "string") return reason;
-  if (reason?.type === "memory" && reason.text) return `Memory: ${reason.text}`;
-  return reason?.text || "";
-}
+export { formatMatchReason, type MatchReason } from "./match-reason";
 
 export function citeAsForCard(card: AgentProfileCard, view?: CardView | null): string {
   if (view?.cite_as) return view.cite_as;

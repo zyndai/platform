@@ -17,8 +17,8 @@ function PlatformIcon({ platform }: { platform: string }) {
   return <Link2 size={15} />;
 }
 
-export function ProfileTab({ form, set, handle, token, autosave }: {
-  form: EditForm; set: SetField; handle: string; token: string; autosave: boolean;
+export function ProfileTab({ form, set, handle, token }: {
+  form: EditForm; set: SetField; handle: string; token: string;
 }) {
   // A preview built from the owner's latest public memory. It replaces the
   // About text only when the owner clicks "Use this draft".
@@ -97,7 +97,7 @@ export function ProfileTab({ form, set, handle, token, autosave }: {
               <button type="button" className="pe-btn pe-btn-secondary pe-btn-sm" onClick={() => setAboutDraft({ status: "idle" })}>
                 Keep mine
               </button>
-              <span className="pe-note">Your text only changes if you use the draft{autosave ? "" : " and save"}.</span>
+              <span className="pe-note">Your text only changes if you use the draft and save.</span>
             </div>
           </div>
         )}

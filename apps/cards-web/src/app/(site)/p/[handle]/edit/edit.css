@@ -92,6 +92,7 @@
 .pe-save-state { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
 .pe-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pe-ok); flex-shrink: 0; }
 .pe-save-state.is-saving { color: var(--pe-soft); }
+.pe-save-state.is-unsaved .pe-dot { background: var(--pe-accent); }
 .pe-save-state.is-error { color: var(--pe-danger); }
 .pe-save-state.is-error .pe-dot { background: var(--pe-danger); }
 

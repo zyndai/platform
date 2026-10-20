@@ -76,7 +76,7 @@ replaced by the shared authenticated MCP.
 | Free-text branch | Memory extraction worker/Redis and its provider are functioning if you test role/notes. |
 
 There is no separate S05 web flag in this implementation. The grouped review
-component is part of the deployed editor. S10's flag adds owner home/autosave;
+component is part of the deployed editor. S10's flag adds owner home and section saving;
 it is not a prerequisite for the inbox at `/edit#inbox`.
 
 On the checked-in single-box setup, Memory's production settings come from

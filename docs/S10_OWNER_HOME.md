@@ -23,11 +23,17 @@ Persona is unchanged.
   canonical published card with 301; redirects are flattened on later merges.
   Same LinkedIn URL produces a claim-first prompt for unowned cards. Shared
   names are insufficient evidence for ownership or a merge.
-- Section autosave in the editor: debounced, serialized, visible saved state,
-  row-locked comparison of acknowledged values. Other sections and memory
-  updates are preserved. Memory/source refreshes use atomic JSON patches when
-  S10 is enabled, including for private cards. Internal link navigation flushes saves; failed saves
-  keep the draft in the editor. Hard unloads warn while changes are unsaved.
+- Section saves in the editor: serialized, visible saved state, row-locked
+  comparison of acknowledged values. Edits are saved only when the owner clicks
+  Save changes (or presses Cmd/Ctrl+S), so an accidental removal can be discarded
+  with Discard instead of being persisted by a timer; the hook still supports
+  debounced autosave (`auto` argument) if that is wanted back. Other sections and
+  memory updates are preserved. Memory/source refreshes use atomic JSON patches
+  when S10 is enabled, including for private cards. A source refresh asks the
+  owner to save or discard first. Internal link navigation and hard unloads warn
+  while changes are unsaved; failed saves keep the draft in the editor. The
+  photo is not editable: it comes from the linked accounts and the server keeps
+  the stored one when a section is saved.
   A session-local backup, scoped to owner and handle, offers restoration after
   browser-back navigation or a reload. It contains editable values, never tokens.
 - MCP `get_my_context.status` and `get_my_context.activity` derive the owner
@@ -45,7 +51,7 @@ opt-in.
 
 | Service | Setting | Purpose |
 |---|---|---|
-| cards-api | `FEATURE_S10_HOME=true` (default) | Owner endpoints, preferences, autosave, merge, nudge scanner |
+| cards-api | `FEATURE_S10_HOME=true` (default) | Owner endpoints, preferences, section saves, merge, nudge scanner |
 | cards-web | `NEXT_PUBLIC_FEATURE_S10_HOME=true` (default) | Home/nav/editor behavior; rebuild the web app |
 | memory | `FEATURE_S10_HOME=true` | Enable the owner MCP reads |
 | memory | `CARDS_API_URL` | Cards API origin for the service HTTP bridge |
@@ -94,7 +100,7 @@ No production SQL is part of local implementation or tests.
 Rollback: flags off. Keep additive schema, archived rows, audits, and delivery
 records. Public merged redirects continue resolving after disabling home.
 
-## Delivery and autosave failure behavior
+## Delivery and save failure behavior
 
 SMTP cannot guarantee exactly-once delivery across a process crash. The worker
 claims a unique `(owner_email, kind, period)` before sending, then marks the result.
@@ -102,7 +108,7 @@ It never automatically retries an ambiguous `claimed` or `failed` delivery;
 review these records manually. This guarantees at-most-one send attempt per owner
 per ISO week (and per day for reminders). Test previews/no-op never consume a claim.
 
-Autosave clears stale embeddings and regenerates them after saving, guarded by
+Saving a section clears stale embeddings and regenerates them, guarded by
 the returned row timestamp. Full-text search updates in the transaction. A
 failed embedding call leaves FTS available and the vector empty; regeneration
 can be run via the existing re-embedding script. Conflicts require reloading,

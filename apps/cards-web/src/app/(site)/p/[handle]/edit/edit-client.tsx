@@ -85,7 +85,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     signals: { working_on: formCard.working_on, connect_with: formCard.connect_with, love_talking_about: formCard.love_talking_about },
     skills: { skills: formCard.skills },
     settings: { calendly_url: formCard.calendly_url ?? null, google_calendar_url: formCard.google_calendar_url ?? null },
-  }, ownerHomeEnabled);
+  }, ownerHomeEnabled, false);
 
   function restoreUnsavedEdits() {
     if (!autosave.recovery) return;
@@ -93,6 +93,37 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     setForm(formFromCard(restored));
     autosave.discardRecovery();
   }
+
+  // Edits are saved only on request, so a slip (an accidental removal) can be discarded.
+  async function saveChanges() {
+    const ok = await autosave.flush();
+    showToast(ok ? "Changes saved" : "Couldn't save — try again", ok ? "ok" : "err");
+  }
+
+  function discardChanges() {
+    const savedCard = { ...draft, ...Object.assign({}, ...Object.values(autosave.saved)) } as AgentProfileCard;
+    setForm(formFromCard(savedCard));
+    autosave.reset();
+    showToast("Changes discarded");
+  }
+
+  const saveShortcut = useRef<() => void>(() => {});
+  useEffect(() => {
+    saveShortcut.current = () => {
+      if (autosave.unsaved && autosave.status !== "Saving…") void saveChanges();
+    };
+  });
+  useEffect(() => {
+    if (!ownerHomeEnabled) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        saveShortcut.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Only without autosave (S10 flag off): one explicit save of the whole card.
   async function save() {
@@ -115,9 +146,13 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
       showToast("Add a GitHub or LinkedIn URL first", "err");
       return;
     }
+    if (ownerHomeEnabled && autosave.unsaved) {
+      showToast("Save or discard your changes first", "err");
+      return;
+    }
     setRefreshing(true);
     try {
-      // Flush section saves before a source refresh; don't replace the whole
+      // Wait for any save still in flight before a source refresh; don't replace the whole
       // card with an older local memory snapshot or publish a private card.
       if (ownerHomeEnabled && !await autosave.flush()) return;
       const saved = ownerHomeEnabled ? draft : await updateCard(handle, { ...cardFromForm(draft, form), status: "published" }, token);
@@ -184,7 +219,9 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     document.getElementById(`pe-tab-${TABS[next].key}`)?.focus();
   }
 
-  const saveState = autosave.status === "Saving…" ? "saving" : autosave.status === "Not saved" ? "error" : "saved";
+  const saveState = autosave.status === "Saving…" ? "saving"
+    : autosave.status === "Not saved" ? "error"
+    : autosave.unsaved ? "unsaved" : "saved";
 
   return (
     <>
@@ -209,11 +246,9 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
                       <span role="status" aria-live="polite" className={`pe-save-state is-${saveState}`}>
                         {saveState === "saving" ? <Loader2 size={12} className="pe-spin" /> : <span className="pe-dot" />}
                         {saveState === "saved" ? "All changes saved" : saveState === "saving" ? "Saving…"
+                          : saveState === "unsaved" ? "Unsaved changes"
                           : `Not saved${autosave.error ? ` — ${autosave.error}` : ""}`}
                       </span>
-                      {saveState === "error" && (
-                        <button type="button" className="pe-btn-link" onClick={() => void autosave.flush()}>Retry</button>
-                      )}
                     </span>
                   )}
                 </div>
@@ -222,6 +257,16 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
             <div className="pe-head-actions">
               {ownerHomeEnabled && <Link href="/home" className="pe-btn pe-btn-secondary">Owner home</Link>}
               <Link href={`/p/${handle}`} className="pe-btn pe-btn-secondary">View card</Link>
+              {ownerHomeEnabled && autosave.unsaved && saveState !== "saving" && (
+                <button type="button" className="pe-btn pe-btn-secondary" onClick={discardChanges}>Discard</button>
+              )}
+              {ownerHomeEnabled && (
+                <button type="button" className="pe-btn pe-btn-primary" onClick={() => void saveChanges()}
+                  disabled={!autosave.unsaved || saveState === "saving"}>
+                  {saveState === "saving" ? <Loader2 size={16} className="pe-spin" /> : <Check size={16} />}
+                  {saveState === "saving" ? "Saving…" : "Save changes"}
+                </button>
+              )}
               {!ownerHomeEnabled && (
                 <button type="button" className="pe-btn pe-btn-primary" onClick={save} disabled={saving}>
                   {saving ? <Loader2 size={16} className="pe-spin" /> : <Check size={16} />}
@@ -265,7 +310,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
           </div>
 
           <div role="tabpanel" id="pe-panel-profile" aria-labelledby="pe-tab-profile" className="pe-panel" hidden={tab !== "profile"}>
-            <ProfileTab form={form} set={set} handle={handle} token={token} autosave={ownerHomeEnabled} />
+            <ProfileTab form={form} set={set} handle={handle} token={token} />
           </div>
           <div role="tabpanel" id="pe-panel-interests" aria-labelledby="pe-tab-interests" className="pe-panel" hidden={tab !== "interests"}>
             <InterestsTab form={form} set={set} />

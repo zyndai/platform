@@ -495,7 +495,7 @@ Coordinate the memory deploy with a maintainer.
 # Part B — Cards networking: fix and improve
 
 > **Status:** implemented on the same branch except where §17 says otherwise (A6 is partial, A4/A5/A7/A8
-> are API and MCP only, no cards-web UI).
+> are API and MCP only apart from the brief and badges in cards-web).
 >
 > **Scope:** Cards only: `services/cards-api`, the people-search and MCP code
 > in `services/memory`, and `apps/cards-web`. Persona is paused, so nothing
@@ -652,7 +652,7 @@ the ASGI ones): the repo's docker compose, or a local Postgres plus any Redis.
 - **A6 is partial**: request limits, report, block and the LinkedIn badge are done; GitHub and work-email
   verification need verification flows that do not exist, and "capacity" is a fixed 50 unanswered requests, not
   an owner setting. Reports are stored; there is no review UI.
-- **No cards-web UI** for invites, saved searches, controls, reports or the brief: API and MCP only.
+- **cards-web UI is partial**: `/find` and `/search` show verified chips and how current a matched fact is, and `/network` shows the connection brief for an accepted connection. There is no UI for invites, saved searches, match controls or reports: API and MCP only. The Playwright suite was not run; the `next build`, `tsc`, ESLint and node:test checks pass.
 
 ## 17.3 Rollout (needs a human at the marked steps, AGENTS.md section 6)
 

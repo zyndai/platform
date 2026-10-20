@@ -23,9 +23,12 @@ async function uploadAvatar(file: File, handle: string): Promise<string> {
   if (!user) throw new Error("Sign in again to change your photo.");
   const ext = file.name.split(".").pop() ?? "jpg";
   // Storage RLS scopes writes to the uploader's own folder — see
-  // ZYND_DB_UNIFY_PLAN.md §5.5.
+  // ZYND_DB_UNIFY_PLAN.md §5.5. The bucket has INSERT and UPDATE policies but no SELECT one (reads
+  // are public), and an upsert needs SELECT too: with `upsert: true` Postgres rejects even a brand-new
+  // path with "new row violates row-level security policy". Every upload gets a unique path, so a
+  // plain insert is all that is needed.
   const path = `${user.id}/${handle}-${Date.now()}.${ext}`;
-  const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: true });
+  const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: false });
   if (error) throw error;
   return supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
 }

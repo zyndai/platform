@@ -195,3 +195,12 @@ def is_known_tech(name: str) -> bool:
 def dedupe_key(name: str) -> str:
     """Case- and alias-insensitive identity of a name, for collapsing duplicates."""
     return canonical_name(name).lower()
+
+
+# Languages that are markup, config or templating: present in nearly every project, never "what
+# someone codes in". persona-api's GitHub sync ignores the same list (github_sync.IGNORED_LANGUAGES);
+# the data cleanup uses it to archive such skills that were stored before that fix.
+IGNORED_SKILL_LANGUAGES: frozenset[str] = frozenset(n.lower() for n in (
+    "HTML", "CSS", "SCSS", "Sass", "Less", "Shell", "PowerShell", "Batchfile", "Dockerfile",
+    "Makefile", "CMake", "Procfile", "Jinja", "Handlebars", "Mustache", "Roff", "TeX",
+))

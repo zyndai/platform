@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, Fragment } from "react";
+import { useCallback, useEffect, useState, useRef, Fragment } from "react";
 import Link from "next/link";
 import { ArrowLeft, ArrowUp, Check, Settings, X, Info } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -31,6 +31,11 @@ interface Thread {
   mode?: "human" | "agent";
   created_at: string;
   updated_at?: string;
+  last_message_at?: string | null;
+  last_message_preview?: string | null;
+  last_message_sender_id?: string | null;
+  last_activity_at?: string | null;
+  unread_count?: number;
 }
 
 // Friendly per-state copy + tag color for the lifecycle pill at the top
@@ -163,6 +168,23 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
   const [messagesError, setMessagesError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const activeThreadIdRef = useRef<string | null>(null);
+
+  const markThreadRead = useCallback(async (threadId: string) => {
+    setThreads((prev) =>
+      prev.map((thread) => (thread.id === threadId ? { ...thread, unread_count: 0 } : thread)),
+    );
+    setActiveThread((prev) =>
+      prev?.id === threadId ? { ...prev, unread_count: 0 } : prev,
+    );
+    try {
+      await authFetch(`${API}/api/persona/threads/${encodeURIComponent(threadId)}/read`, {
+        method: "POST",
+      });
+    } catch {
+      /* Pre-migration or transient failure: the next open will re-sync. */
+    }
+  }, []);
 
   useEffect(() => {
     getSupabase()
@@ -223,18 +245,40 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     const handleThreadChange = (payload: { eventType: string; new: unknown; old: unknown }) => {
       const row = (payload.new || payload.old) as Thread;
       if (!row?.id) return;
+      const activeId = activeThreadIdRef.current;
+      const mine =
+        row.last_message_sender_id === sessionUser.id ||
+        row.last_message_sender_id === sessionAgentId;
       setThreads((prev) => {
         if (payload.eventType === "DELETE") return prev.filter((thread) => thread.id !== row.id);
-        const merged = prev.some((thread) => thread.id === row.id)
-          ? prev.map((thread) => (thread.id === row.id ? { ...thread, ...row } : thread))
-          : [...prev, row];
+        const existing = prev.find((thread) => thread.id === row.id);
+        const newMessage =
+          !!existing &&
+          !!row.last_message_at &&
+          row.last_message_at !== existing.last_message_at;
+        let unread = existing?.unread_count ?? 0;
+        if (activeId === row.id) unread = 0;
+        else if ((newMessage || (!existing && row.last_message_at)) && !mine) unread += 1;
+        const nextRow = { ...row, unread_count: unread };
+        const merged = existing
+          ? prev.map((thread) => (thread.id === row.id ? { ...thread, ...nextRow } : thread))
+          : [...prev, nextRow];
         return merged
-          .sort((a, b) => Date.parse(b.updated_at || b.created_at) - Date.parse(a.updated_at || a.created_at))
+          .sort(
+            (a, b) =>
+              Date.parse(b.last_activity_at || b.last_message_at || b.updated_at || b.created_at) -
+              Date.parse(a.last_activity_at || a.last_message_at || a.updated_at || a.created_at),
+          )
           .slice(0, INBOX_PAGE_SIZE);
       });
       setActiveThread((current) =>
-        current?.id === row.id && payload.eventType !== "DELETE" ? { ...current, ...row } : current,
+        current?.id === row.id && payload.eventType !== "DELETE"
+          ? { ...current, ...row, unread_count: 0 }
+          : current,
       );
+      if (activeId === row.id && row.last_message_at && !mine) {
+        void markThreadRead(row.id);
+      }
     };
 
     for (const identity of identities) {
@@ -250,13 +294,17 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
     return () => {
       sb.removeChannel(channel);
     };
-  }, [sessionUser, sessionAgentId]);
+  }, [sessionUser, sessionAgentId, markThreadRead]);
 
   // Depend on the thread *id*, not the thread object reference. Mode flips
   // and other state changes that build a new object via {...prev, mode: x}
   // would otherwise re-run this effect (and reset activeChannel) even
   // though the actual thread didn't change.
   const activeThreadId = activeThread?.id ?? null;
+  useEffect(() => {
+    activeThreadIdRef.current = activeThreadId;
+  }, [activeThreadId]);
+
   useEffect(() => {
     if (!activeThreadId) return;
     // Each thread switch lands on the Conversation tab by default; users
@@ -279,7 +327,14 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
           filter: `thread_id=eq.${activeThreadId}`,
         },
         (payload) => {
-          setMessages((prev) => mergeMessages(prev, [payload.new as Message]));
+          const incoming = payload.new as Message;
+          setMessages((prev) => mergeMessages(prev, [incoming]));
+          if (
+            incoming.sender_id !== sessionAgentId &&
+            incoming.sender_id !== sessionUser?.id
+          ) {
+            void markThreadRead(activeThreadId);
+          }
           setTimeout(
             () => scrollRef.current?.scrollIntoView({ behavior: "smooth" }),
             100
@@ -298,6 +353,14 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
         if (cancelled) return;
         setMessages((prev) => mergeMessages(prev, data.messages || []));
         setHasMoreMessages(data.has_more === true);
+        setThreads((prev) =>
+          prev.map((thread) =>
+            thread.id === activeThreadId ? { ...thread, unread_count: 0 } : thread,
+          ),
+        );
+        setActiveThread((current) =>
+          current?.id === activeThreadId ? { ...current, unread_count: 0 } : current,
+        );
         setTimeout(
           () => scrollRef.current?.scrollIntoView({ behavior: "smooth" }),
           100,
@@ -311,7 +374,7 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
       cancelled = true;
       sb.removeChannel(channel);
     };
-  }, [activeThreadId]);
+  }, [activeThreadId, markThreadRead, sessionAgentId, sessionUser?.id]);
 
   const loadOlderMessages = async () => {
     if (!activeThreadId || !hasMoreMessages || loadingOlderMessages || messages.length === 0) return;
@@ -801,8 +864,9 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
       if (!response.ok) throw new Error(await response.text());
       const result = (await response.json()) as { thread?: Thread };
       if (result.thread) {
-        setThreads((prev) => [result.thread!, ...prev.filter((t) => t.id !== result.thread!.id)]);
-        setActiveThread(result.thread);
+        const created = { ...result.thread, unread_count: 0 };
+        setThreads((prev) => [created, ...prev.filter((t) => t.id !== created.id)]);
+        setActiveThread(created);
       }
       setNewChatQuery("");
       setSearchResults([]);
@@ -961,7 +1025,17 @@ export default function MessagesPanel({ initialThreadId }: { initialThreadId?: s
                     )}
                   </Link>
                   <div className="messages-request-body">
-                  <div className="name">{partnerName}</div>
+                  <div className="messages-thread-title-row">
+                    <div className="name">{partnerName}</div>
+                    {(t.unread_count ?? 0) > 0 && (
+                      <span className="messages-unread-badge" aria-label={`${t.unread_count} unread messages`}>
+                        {t.unread_count! > 99 ? "99+" : t.unread_count}
+                      </span>
+                    )}
+                  </div>
+                  {t.last_message_preview && (
+                    <div className="messages-thread-preview">{t.last_message_preview}</div>
+                  )}
                   <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
                     {(() => {
                       // Terminal connection states first — these threads rarely

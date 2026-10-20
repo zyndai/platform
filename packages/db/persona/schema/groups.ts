@@ -1,5 +1,16 @@
 import { sql } from 'drizzle-orm';
-import { check, index, integer, jsonb, pgTable, text, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  check,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  unique,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { authUsers, fk, publicPolicy, serviceRolePolicy, tstz } from '../../lib/shared';
 
 // owner: persona — persona groups. is_persona_group_member / _manager are
@@ -21,6 +32,9 @@ export const personaGroups = pgTable(
     inviteToken: text('invite_token').unique('persona_groups_invite_token_key'),
     groupSeedIndex: integer('group_seed_index').notNull().default(0),
     archivedAt: tstz('archived_at'),
+    lastMessageAt: tstz('last_message_at'),
+    lastMessagePreview: text('last_message_preview'),
+    lastMessageSenderName: text('last_message_sender_name'),
     createdAt: tstz('created_at').notNull().defaultNow(),
     updatedAt: tstz('updated_at').notNull().defaultNow(),
     briefDocId: text('brief_doc_id'),
@@ -88,10 +102,34 @@ export const personaGroupMessages = pgTable(
     fk('persona_group_messages_reply_to_fkey', t.replyTo, t.id, 'set null'),
     check('persona_group_messages_channel_check', sql`channel IN ('human', 'agent', 'system', 'broadcast')`),
     index('persona_group_messages_group_idx').on(t.groupId, t.createdAt.desc().nullsFirst()),
+    index('persona_group_messages_group_created_id_idx').on(
+      t.groupId,
+      t.createdAt.desc().nullsFirst(),
+      t.id.desc(),
+    ),
     svc('persona_group_messages'),
     publicPolicy('members read messages', { for: 'select', using: isMember('group_id') }),
   ],
 );
+
+/** Per-user read cursor for a group room; same derivation model as DMs. */
+export const personaGroupReads = pgTable(
+  'persona_group_reads',
+  {
+    groupId: uuid('group_id').notNull(),
+    userId: uuid('user_id').notNull(),
+    lastReadAt: tstz('last_read_at').notNull().defaultNow(),
+    createdAt: tstz('created_at').notNull().defaultNow(),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    fk('persona_group_reads_group_id_fkey', t.groupId, personaGroups.id, 'cascade'),
+    fk('persona_group_reads_user_id_fkey', t.userId, authUsers.id, 'cascade'),
+    primaryKey({ columns: [t.groupId, t.userId] }),
+    index('persona_group_reads_user_idx').on(t.userId, t.updatedAt.desc().nullsFirst()),
+    svc('persona_group_reads'),
+  ],
+).enableRLS();
 
 // RLS on, no policies: only the service role reads or writes invitations.
 export const personaGroupInvitations = pgTable(

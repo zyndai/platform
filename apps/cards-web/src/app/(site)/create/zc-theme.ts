@@ -149,8 +149,6 @@ export const ZC_CSS = `
     .zc-tap-end { margin-left: auto !important; }
     .zc-btn, .zc-quick { min-height: 40px; }
     .zc-dirlink { padding: 13px 6px; margin: -13px -6px; }
-    .zc-pencil::after { content: ""; position: absolute; inset: -10px; }
-    .zc-photo-actions { gap: 24px !important; }
 
     /* header / panel */
     .zc-badge { padding: 8px 13px !important; max-width: 100%; }

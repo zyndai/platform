@@ -230,13 +230,27 @@ def pick_avatar(linkedin_avatar: str | None, x_avatar: str | None, github_avatar
     return ""
 
 
-# Photos the owner uploads in the card editor land in the public `avatars` bucket.
-_OWNER_UPLOAD_MARKER = "/storage/v1/object/public/avatars/"
+# The card editor used to let owners upload a photo into the public `avatars` bucket.
+# Uploads are gone; photos that were already uploaded are only a last resort now.
+_LEGACY_UPLOAD_MARKER = "/storage/v1/object/public/avatars/"
 
 
-def is_owner_uploaded_avatar(url: str | None) -> bool:
-    """True for a photo the owner chose themselves, which scrapes must never replace."""
-    return _OWNER_UPLOAD_MARKER in str(url or "")
+def is_legacy_upload(url: str | None) -> bool:
+    return _LEGACY_UPLOAD_MARKER in str(url or "")
+
+
+def resolve_avatar(identity: dict, card: dict) -> str | None:
+    """The photo a card shows when its stored `avatar_url` isn't a linked-account photo.
+
+    A stored http(s) photo from LinkedIn/X/GitHub is used as is (returns None). A blank
+    value, a blob: URL left by the old editor bug, or a legacy upload gives way to the
+    LinkedIn photo, then the X one. With none of those the stored value stays."""
+    current = str(identity.get("avatar_url") or "")
+    if current.startswith("http") and not is_legacy_upload(current):
+        return None
+    sources = [(card.get(k) or {}).get("avatar") if isinstance(card.get(k), dict) else None
+               for k in ("linkedin_stats", "x_stats")]
+    return pick_avatar(*sources, None) or None
 
 
 def refresh_avatar(card: dict, linkedin_avatar: str | None, x_avatar: str | None) -> bool:
@@ -244,11 +258,8 @@ def refresh_avatar(card: dict, linkedin_avatar: str | None, x_avatar: str | None
 
     Only overwrites when a scraped avatar is present and different; the existing
     avatar (e.g. a GitHub fallback) is left untouched when neither platform
-    returned a usable one, and an owner-uploaded photo is never replaced.
-    Returns True when the card changed."""
+    returned a usable one. Returns True when the card changed."""
     identity = dict(card.get("identity") or {})
-    if is_owner_uploaded_avatar(identity.get("avatar_url")):
-        return False
     candidate = pick_avatar(linkedin_avatar, x_avatar, None)
     if candidate and candidate != identity.get("avatar_url"):
         identity["avatar_url"] = candidate
@@ -260,22 +271,19 @@ def refresh_avatar(card: dict, linkedin_avatar: str | None, x_avatar: str | None
 def apply_linkedin_avatar(card: dict, avatar: str | None) -> str:
     """Sync a card's avatar after a fresh LinkedIn scrape.
 
-    Photo present: store it in linkedin_stats and identity.avatar_url, unless
-    the owner uploaded their own photo (then only linkedin_stats is updated).
+    Photo present: store it in linkedin_stats and identity.avatar_url.
     Photo removed (avatar is None): drop the stale LinkedIn avatar so the
     frontend falls back to GitHub/X instead of a dead signed URL.
     Returns 'set' | 'cleared' | 'none' (nothing changed)."""
     if avatar:
         stats = dict(card.get("linkedin_stats") or {})
         identity = dict(card.get("identity") or {})
-        keep_upload = is_owner_uploaded_avatar(identity.get("avatar_url"))
-        if stats.get("avatar") == avatar and (keep_upload or identity.get("avatar_url") == avatar):
+        if stats.get("avatar") == avatar and identity.get("avatar_url") == avatar:
             return "none"
         stats["avatar"] = avatar
         card["linkedin_stats"] = stats
-        if not keep_upload:
-            identity["avatar_url"] = avatar
-            card["identity"] = identity
+        identity["avatar_url"] = avatar
+        card["identity"] = identity
         return "set"
     changed = False
     stats = dict(card.get("linkedin_stats") or {})
@@ -392,12 +400,10 @@ def _row_to_card(row: dict) -> AgentProfileCard:
     if row.get("handle"):
         data["handle"] = row["handle"]
     identity = data.get("identity")
-    if isinstance(identity, dict) and not str(identity.get("avatar_url") or "").startswith("http"):
-        # No usable photo (blank, or a blob: URL saved by an old editor bug): use the LinkedIn one.
-        stats = data.get("linkedin_stats")
-        linkedin_avatar = str(stats.get("avatar") or "") if isinstance(stats, dict) else ""
-        if linkedin_avatar.startswith("http"):
-            data["identity"] = {**identity, "avatar_url": linkedin_avatar}
+    if isinstance(identity, dict):
+        photo = resolve_avatar(identity, data)
+        if photo:
+            data["identity"] = {**identity, "avatar_url": photo}
     if "zynd_memory" in data and isinstance(data.get("zynd_memory"), list):
         data["zynd_memory"] = dedupe_memory_facts(data["zynd_memory"])
     samples = data.get("writing_samples")

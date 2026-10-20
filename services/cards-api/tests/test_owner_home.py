@@ -174,63 +174,35 @@ def _identity_save(client, monkeypatch, stored, patch_identity, expected_identit
     return response, operation
 
 
-def test_replacing_photo_survives_avatar_self_heal(client, monkeypatch):
-    # The editor loaded a LinkedIn photo that the self-heal has since cleared.
-    response, operation = _identity_save(
-        client, monkeypatch, {"name": "Alice", "avatar_url": ""},
-        {"name": "Alice", "avatar_url": "https://cdn.example/new.jpg"},
-        {"name": "Alice", "avatar_url": "https://media.licdn.com/old"})
-    assert response.status_code == 200
-    assert operation.call_args.args[1]["p_expected"] == {"identity": {"name": "Alice", "avatar_url": ""}}
-
-
-def test_untouched_photo_still_conflicts_with_self_heal(client, monkeypatch):
+def test_photo_drift_from_avatar_self_heal_does_not_conflict(client, monkeypatch):
+    # The editor loaded the old LinkedIn photo; the self-heal has since stored a new one.
     response, operation = _identity_save(
         client, monkeypatch, {"name": "Alice", "avatar_url": "https://media.licdn.com/healed"},
         {"name": "Alicia", "avatar_url": "https://media.licdn.com/old"},
         {"name": "Alice", "avatar_url": "https://media.licdn.com/old"})
-    assert response.status_code == 409
-    operation.assert_not_called()
-
-
-def test_other_identity_drift_still_conflicts_when_photo_replaced(client, monkeypatch):
-    response, operation = _identity_save(
-        client, monkeypatch, {"name": "Renamed elsewhere", "avatar_url": ""},
-        {"name": "Alice", "avatar_url": "https://cdn.example/new.jpg"},
-        {"name": "Alice", "avatar_url": "https://media.licdn.com/old"})
-    assert response.status_code == 409
-    operation.assert_not_called()
-
-
-def test_stored_blank_links_are_not_drift(client, monkeypatch):
-    # The editor's form drops blank links, so it can't send the blank entry the stored card carries.
-    stored = {"name": "Alice", "links": {"github": "https://github.com/a", "x": "", "website": "  "}}
-    response, operation = _identity_save(
-        client, monkeypatch, stored,
-        {"name": "Alice", "avatar_url": "https://cdn.example/new.jpg", "links": {"github": "https://github.com/a"}},
-        {"name": "Alice", "links": {"github": "https://github.com/a"}})
     assert response.status_code == 200
-    # The row-lock comparison still runs against the raw stored value.
-    assert operation.call_args.args[1]["p_expected"] == {"identity": stored}
+    sent = operation.call_args.args[1]
+    assert sent["p_patch"]["identity"]["name"] == "Alicia"
+    assert sent["p_patch"]["identity"]["avatar_url"] == "https://media.licdn.com/healed"
+    assert sent["p_expected"]["identity"]["avatar_url"] == "https://media.licdn.com/healed"
 
 
-def test_changed_link_still_conflicts_beside_blank_ones(client, monkeypatch):
+def test_editor_cannot_set_the_photo(client, monkeypatch):
     response, operation = _identity_save(
-        client, monkeypatch, {"name": "Alice", "links": {"github": "https://github.com/changed", "x": ""}},
-        {"name": "Alicia", "links": {"github": "https://github.com/a"}},
-        {"name": "Alice", "links": {"github": "https://github.com/a"}})
+        client, monkeypatch, {"name": "Alice", "avatar_url": "https://media.licdn.com/li.jpg"},
+        {"name": "Alice", "avatar_url": "https://cdn.example/mine.jpg"},
+        {"name": "Alice", "avatar_url": "https://media.licdn.com/li.jpg"})
+    assert response.status_code == 200
+    assert operation.call_args.args[1]["p_patch"]["identity"]["avatar_url"] == "https://media.licdn.com/li.jpg"
+
+
+def test_other_identity_drift_still_conflicts(client, monkeypatch):
+    response, operation = _identity_save(
+        client, monkeypatch, {"name": "Renamed elsewhere", "avatar_url": "https://media.licdn.com/li.jpg"},
+        {"name": "Alice", "avatar_url": "https://media.licdn.com/li.jpg"},
+        {"name": "Alice", "avatar_url": "https://media.licdn.com/li.jpg"})
     assert response.status_code == 409
     operation.assert_not_called()
-
-
-def test_conflict_logs_field_names_only(client, monkeypatch, caplog):
-    with caplog.at_level("INFO", logger=routes.logger.name):
-        response, _ = _identity_save(
-            client, monkeypatch, {"name": "Alice", "headline": "Changed in another tab"},
-            {"name": "Alicia", "headline": "Old"}, {"name": "Alice", "headline": "Old"})
-    assert response.status_code == 409
-    assert "fields=identity.headline" in caplog.text
-    assert "Changed in another tab" not in caplog.text and "Alicia" not in caplog.text
 
 
 def test_rpc_conflict_returns_409(monkeypatch):

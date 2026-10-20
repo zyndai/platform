@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { Camera, Github, Globe, Link2, Linkedin, Loader2, Plus, Sparkles, Twitter, X } from "lucide-react";
+import { useState } from "react";
+import { Github, Globe, Link2, Linkedin, Loader2, Plus, Sparkles, Twitter, X } from "lucide-react";
+import { imgProxyUrl } from "@/lib/avatar";
 import { fetchSummaryDraft, type SummaryDraft } from "@/lib/cards";
-import { createClient } from "@/lib/supabase/client";
 import { AutoGrowTextArea } from "@/components/AutoGrowTextArea";
 import { Card, Field, TagInput } from "./edit-ui";
 import { initialsOf, type EditForm, type SetField } from "./edit-form";
@@ -17,28 +17,9 @@ function PlatformIcon({ platform }: { platform: string }) {
   return <Link2 size={15} />;
 }
 
-async function uploadAvatar(file: File, handle: string): Promise<string> {
-  const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error("Sign in again to change your photo.");
-  const ext = file.name.split(".").pop() ?? "jpg";
-  // Storage RLS scopes writes to the uploader's own folder — see
-  // ZYND_DB_UNIFY_PLAN.md §5.5. The bucket has INSERT and UPDATE policies but no SELECT one (reads
-  // are public), and an upsert needs SELECT too: with `upsert: true` Postgres rejects even a brand-new
-  // path with "new row violates row-level security policy". Every upload gets a unique path, so a
-  // plain insert is all that is needed.
-  const path = `${user.id}/${handle}-${Date.now()}.${ext}`;
-  const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: false });
-  if (error) throw error;
-  return supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
-}
-
 export function ProfileTab({ form, set, handle, token, autosave }: {
   form: EditForm; set: SetField; handle: string; token: string; autosave: boolean;
 }) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState("");
   // A preview built from the owner's latest public memory. It replaces the
   // About text only when the owner clicks "Use this draft".
   const [aboutDraft, setAboutDraft] = useState<
@@ -54,6 +35,7 @@ export function ProfileTab({ form, set, handle, token, autosave }: {
     }
   }
 
+  const photo = imgProxyUrl(form.avatar, null, handle);
   const setLink = (i: number, next: [string, string]) => set("links", form.links.map((l, j) => (j === i ? next : l)));
 
   return (
@@ -61,34 +43,13 @@ export function ProfileTab({ form, set, handle, token, autosave }: {
       <Card id="identity" title="Basics" hint="How you show up at the top of your card.">
         <div className="pe-basics">
           <div className="pe-photo" id="avatar">
-            <button type="button" className="pe-avatar" onClick={() => fileRef.current?.click()} disabled={uploading}
-              aria-label="Change photo">
-              {form.avatar ? (
+            <span className="pe-avatar">
+              {photo ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={form.avatar} alt="" />
+                <img src={photo} alt="" />
               ) : <span className="ph">{initialsOf(form.name)}</span>}
-              <span className="cam">{uploading ? <Loader2 size={14} className="pe-spin" /> : <Camera size={14} />}</span>
-            </button>
-            <button type="button" className="pe-btn-link" onClick={() => fileRef.current?.click()} disabled={uploading}>
-              {uploading ? "Uploading…" : "Change photo"}
-            </button>
-            <input ref={fileRef} type="file" accept="image/*" hidden
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                setUploading(true);
-                setUploadError("");
-                try {
-                  // A failed upload must not fall back to a blob: URL; it would be saved to the card.
-                  set("avatar", await uploadAvatar(file, handle));
-                } catch (err) {
-                  setUploadError(err instanceof Error && err.message ? `Couldn't upload that photo: ${err.message}` : "Couldn't upload that photo. Try again.");
-                } finally {
-                  setUploading(false);
-                  e.target.value = "";
-                }
-              }} />
-            {uploadError && <p className="pe-error" role="alert">{uploadError}</p>}
+            </span>
+            <p className="pe-photo-note">From your linked accounts</p>
           </div>
           <div className="pe-grid">
             <Field label="Full name" htmlFor="pe-name">

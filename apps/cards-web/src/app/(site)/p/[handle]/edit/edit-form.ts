@@ -5,6 +5,7 @@ export interface EditForm {
   name: string;
   headline: string;
   location: string;
+  /** Display only: the photo comes from the linked accounts, never from this form. */
   avatar: string;
   links: [string, string][];
   summary: string;
@@ -88,7 +89,7 @@ export function cardFromForm(base: AgentProfileCard, form: EditForm): AgentProfi
     identity: {
       ...base.identity,
       name: form.name, headline: form.headline, location: form.location,
-      avatar_url: form.avatar, links: formLinks(form),
+      links: formLinks(form),
     },
     summary: form.summary,
     availability: form.availability,

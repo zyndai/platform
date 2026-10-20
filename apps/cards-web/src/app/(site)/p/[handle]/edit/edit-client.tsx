@@ -1,6 +1,7 @@
 "use client";
 
 import { useSectionAutosave } from "@/hooks/useSectionAutosave";
+import { imgProxyUrl } from "@/lib/avatar";
 import { ownerHomeEnabled } from "@/lib/owner-home";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
@@ -76,6 +77,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
     document.getElementById(hash)?.scrollIntoView({ block: "start" });
   }, [hash]);
 
+  const headAvatar = imgProxyUrl(form.avatar, null, handle);
   const formCard = cardFromForm(draft, form);
   const autosave = useSectionAutosave(handle, token, {
     identity: { identity: formCard.identity },
@@ -193,9 +195,9 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
           <header className="pe-head">
             <div className="pe-head-id">
               <span className="pe-head-avatar" aria-hidden="true">
-                {form.avatar ? (
+                {headAvatar ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={form.avatar} alt="" />
+                  <img src={headAvatar} alt="" />
                 ) : initialsOf(form.name)}
               </span>
               <div style={{ minWidth: 0 }}>

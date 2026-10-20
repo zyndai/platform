@@ -204,6 +204,29 @@ def test_apply_linkedin_avatar_removed_photo_keeps_owner_upload():
     assert "avatar" not in card["linkedin_stats"]
 
 
+def _row(avatar_url: str, linkedin_avatar: str | None) -> dict:
+    card = _card().model_dump(mode="json")
+    card["identity"]["avatar_url"] = avatar_url
+    card["linkedin_stats"] = {"avatar": linkedin_avatar} if linkedin_avatar else None
+    return {"handle": "alice", "card": card}
+
+
+def test_card_without_photo_uses_linkedin_photo():
+    li = "https://media.licdn.com/li.jpg"
+
+    assert cards_service._row_to_card(_row("", li)).identity.avatar_url == li
+    # A blob: URL saved by the old editor bug is not a photo any browser can load.
+    assert cards_service._row_to_card(_row("blob:https://cards.zynd.ai/1234", li)).identity.avatar_url == li
+
+
+def test_card_photo_wins_over_linkedin_photo():
+    assert cards_service._row_to_card(_row(UPLOADED, "https://media.licdn.com/li.jpg")).identity.avatar_url == UPLOADED
+
+
+def test_card_without_any_photo_stays_blank():
+    assert cards_service._row_to_card(_row("", None)).identity.avatar_url == ""
+
+
 def test_merge_scraped_posts_injects_both_platforms():
     from models.card import WritingSample
 

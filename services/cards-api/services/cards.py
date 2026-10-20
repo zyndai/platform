@@ -391,6 +391,13 @@ def _row_to_card(row: dict) -> AgentProfileCard:
     data = dict(row["card"])
     if row.get("handle"):
         data["handle"] = row["handle"]
+    identity = data.get("identity")
+    if isinstance(identity, dict) and not str(identity.get("avatar_url") or "").startswith("http"):
+        # No usable photo (blank, or a blob: URL saved by an old editor bug): use the LinkedIn one.
+        stats = data.get("linkedin_stats")
+        linkedin_avatar = str(stats.get("avatar") or "") if isinstance(stats, dict) else ""
+        if linkedin_avatar.startswith("http"):
+            data["identity"] = {**identity, "avatar_url": linkedin_avatar}
     if "zynd_memory" in data and isinstance(data.get("zynd_memory"), list):
         data["zynd_memory"] = dedupe_memory_facts(data["zynd_memory"])
     samples = data.get("writing_samples")

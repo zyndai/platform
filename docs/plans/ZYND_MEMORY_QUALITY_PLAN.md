@@ -1,6 +1,20 @@
-# ZYND Memory Layer — Fact Quality & Context Retrieval Plan
+# ZYND Memory Quality & Cards Networking Plan
 
-> **Status:** proposed, 2026-10-20 — not implemented.
+This doc has two parts that share code and should be sequenced together:
+
+- **Part A: Memory fact quality and context retrieval** (§1–§8). What memory
+  stores and what `get_my_context` returns.
+- **Part B: Cards networking, fix and improve** (§9–§15). People search,
+  results, and connecting on Cards.
+- **§16** gives the combined order, since some Part B items build on Part A.
+
+---
+
+# Part A — Memory fact quality and context retrieval
+
+> **Status:** implemented on branch `feat/memory-quality-and-cards-networking`, behind flags that
+> are all off by default. Not deployed anywhere. See §17 for what shipped, what changed from this plan
+> and the rollout order.
 >
 > **Scope:** `services/memory` (fact writes, ranking, decay) and the parts of
 > `services/persona-api` that write facts into it (GitHub / LinkedIn / Twitter
@@ -468,3 +482,195 @@ Coordinate the memory deploy with a maintainer.
   "Interested in" reads better.
 - **Open:** does `decay_cron` run in prod today? Check before Phase 4 so the
   before/after comparison is honest.
+- **Open (from Part B):** Part B says persona is paused. Part A has
+  persona-api steps: Phase 1 step 5 (`memory_client.get_context` passes
+  `topic`), Phase 2 step 6 (sync double-writes and out-of-taxonomy
+  predicates), and Phase 3 step 1 (GitHub thresholds). If the GitHub,
+  LinkedIn and Twitter syncs still run while persona is paused, those steps
+  stay in scope because they write into the memory that Cards reads.
+  Otherwise defer them and let Phase 5 cleanup handle what's already stored.
+
+---
+
+# Part B — Cards networking: fix and improve
+
+> **Status:** implemented on the same branch except where §17 says otherwise (A6 is partial, A4/A5/A7/A8
+> are API and MCP only apart from the brief and badges in cards-web).
+>
+> **Scope:** Cards only: `services/cards-api`, the people-search and MCP code
+> in `services/memory`, and `apps/cards-web`. Persona is paused, so nothing
+> in Part B depends on `persona-api`. Intros are out of scope.
+>
+> All files and functions named below exist in the repo as of 2026-10-20.
+
+## 9. Goal
+
+A search for **"seed-stage investor who backs AI dev tools in India"** returns
+real investors, explains why each one matched, and gives every result one
+clear next step.
+
+## 10. Fix: search quality
+
+| # | Problem | Where | Fix |
+|---|---|---|---|
+| F1 | The LinkedIn fallback searches **company About text**, not people. It sends the first 4 raw words as `bio_li` and drops "AI" and "India" (under the 3-char rule), so it returns empty. | `services/memory/app/services/people_discovery.py` → `search_quickenrich` | Map the query to `title` + `country_code` (+ `locality`) filters. Keep `bio_li` only for company keywords. |
+| F2 | Stopwords inflate scores. `"in"`, `"who"` and `"ai"` substring-match almost every card ("ai" is inside "maintain"). The memory-fact bonus has the same bug. | `services/cards-api/services/search.py` → `search_agents` | Drop stopwords and match whole words, not substrings. |
+| F3 | Memory passes only `q` to Cards. It ignores the `role` / `location` / `skills` filters and drops `match_reasons`. | `people_discovery.py` → `search_cards` | Pass the parsed filters; return `match_reasons` as `why`. |
+| F4 | Zynd-user search ranks by topic, not role: the query is compared with one averaged vector built from up to 50 facts. | `services/memory/app/services/matching.py` → `search_by_query` | Match the query against individual public facts (`entities.embedding`). Score a user by their top 3 facts, weighting current-state predicates (role, `is_working_on`, `is_seeking`). |
+| F5 | The same person comes back twice (Zynd user + Card) with different scores. | `services/memory/app/mcp_http.py` → `find_people` | Merge results per person (card handle / LinkedIn URL). |
+| F6 | Zynd users get `connection_eligible: true`, but no MCP tool connects by `user_id`, so it's a dead end. | `mcp_http.py`, `services/memory/app/services/social.py` | Resolve every result to a card handle and connect through `request_card_connection`. |
+| F7 | Zynd-user results expose LinkedIn / Telegram / X before any opt-in. | `matching.py` → `_results_with_socials` | Hide contact fields in search; show them only after an accepted connection. |
+| F8 | Zynd-user display names are read from `persona_agents` (paused product). | `matching.py` → `_persona_names` | Take names from the user's card. |
+| F9 | QuickEnrich silently returns `[]`, and the fallback only adds results. It never kicks in when matches are weak. | `find_people` | Run the fallback when fewer than *k* results score above a threshold; always report source failures in `warnings`. |
+
+## 11. Simplify: workflow
+
+- **Cards is the one people index:** claimed cards (synced through
+  `services/memory/app/services/card_sync.py`) plus unclaimed cards. External
+  LinkedIn people become unclaimed cards.
+- **One search tool:** `find_people(target | "like_me")` → Cards search →
+  external fallback. Remove `search_linkedin_profiles`,
+  `find_linkedin_people_for_me`, and the `zynd_users` source.
+- **One result shape:**
+  `{handle, name, headline, why, sources, claimed, next_action: connect | invite_to_claim}`.
+- **One QuickEnrich client,** shared by memory's `people_discovery.py` and
+  `services/cards-api/services/suggested_people.py`. Remove the hardcoded
+  India-only request bodies.
+- **One query parser:** a small LLM call turns the target into
+  `{role, stage, topics, location}`, which every source uses.
+
+## 12. Add: features
+
+| # | Feature | Builds on |
+|---|---|---|
+| A1 | **Two-way match:** rank higher when the other person's `connect_with` / looking-for also fits the searcher. | card `connect_with`, `set_looking_for` |
+| A2 | **Invite to claim:** a LinkedIn-only result becomes a pre-filled unclaimed card, the searcher sends an invite, and the connection request is delivered when the card is claimed. A growth loop. | unclaimed cards, claim token |
+| A3 | **Saved searches:** "notify me when a matching card is published or updated". | `card_sync`, `services/cards-api/services/owner_notifications.py` |
+| A4 | **Better weekly digest:** two-way matches, changes in connections' cards ("X started fundraising"), and saved-search hits. | `services/cards-api/services/digest.py`, `signals.py` |
+| A5 | **Connection brief:** on an accepted connection, show what each person is working on now, shared ground, and suggested topics, drawn from approved facts. | `card_view.live_facts`, freshness (Part A Phase 4) |
+| A6 | **Trust:** verified LinkedIn / GitHub / work-email badges, fact source and age, block/report, a rate limit on connection requests, and capacity ("max N requests/week"). | `services/memory/app/services/provenance.py`, `services/cards-api/services/network.py` |
+| A7 | **Event mode / private pools:** search scoped to one event's or community's cards. | card groups, `find_card_group_people` |
+| A8 | **Match controls:** "less like this", hide a person, mute a topic. | search ranking |
+
+## 13. Quality and measurement
+
+- **Eval set:** about 50 golden queries with expected people; track
+  precision@5 on every search change. Shares tooling with Part A's context
+  eval set (Phase 1 step 6).
+- **Funnel:** search → shown → connection requested → accepted → messaged
+  (extend `docs/cards/s04-funnel.sql`).
+
+## 14. Order within Part B
+
+1. **F1–F3, F9:** small, code-only, biggest visible gain.
+2. **F5–F8 + Simplify:** single index, single tool, single result shape.
+3. **F4:** per-fact matching (memory owner in the loop).
+4. **A1, A2:** better matches and growth.
+5. **A3, A4, A5:** retention.
+6. **A6, A7, A8:** trust, scale, paid tiers.
+7. **Eval + funnel:** set up alongside step 1 so every step is measured.
+
+## 15. Notes
+
+- Shared-DB changes (A2, A3, A6) go through `packages/db` migrations and are
+  applied only on a human's say-so (AGENTS.md §4, §6). These are Cards
+  tables in aafo, unlike Part A's schema change, which is in memory's own DB
+  (`services/memory/sql/schema.sql`).
+- Changing the `find_people` response shape is safe for Cards: no code in
+  `cards-web` or `cards-api` reads its `zynd_users` / `quickenrich` keys
+  (checked). Only MCP clients see it.
+
+---
+
+# 16. Combined order (Part A + Part B)
+
+Some Part B items depend on Part A, mostly on clean, de-duplicated, fresh
+facts:
+
+| Part B item | Depends on | Why |
+|---|---|---|
+| F4 per-fact matching | Part A Phase 2 (one fact per thing) | Matching against individual facts double-counts a person who has JavaScript stored three times, and rewards dependency noise |
+| F2 whole-word matching, memory-fact bonus | Part A Phase 2 canonical names | The bonus reads memory facts. Canonical names make whole-word matching reliable ("Next.js" vs "nextjs") |
+| A5 connection brief, A4 digest "what changed" | Part A Phase 4 (`last_seen_at`, stale state) | "What they're working on now" needs a real notion of now |
+| §13 eval sets | Part A Phase 1 step 6 | Build one eval harness and use it for both |
+
+Suggested sequence. Rows that share a step can run in parallel because they
+touch different files:
+
+| Step | Part A | Part B |
+|---|---|---|
+| 1 | Phase 1: ranked context + eval harness | F1–F3, F9 + search eval set + funnel |
+| 2 | Phase 2: one fact per thing | F5–F8 + Simplify |
+| 3 | Phase 3: dependency noise | F4: per-fact matching (after A2) |
+| 4 | Phase 4: freshness (memory DB schema, **human OK**) | A1, A2 (A2 needs a `packages/db` migration, **human OK**) |
+| 5 | Phase 5: cleanup of existing data (**human OK**) | A3, A4, A5 |
+| 6 | — | A6, A7, A8 |
+
+---
+
+# 17. Implementation status and rollout
+
+Everything below is on branch `feat/memory-quality-and-cards-networking`, one commit per phase / feature.
+Nothing is deployed and no flag is on anywhere except the dev compose file (see Rollout).
+
+## 17.1 What shipped
+
+| Item | Where | Flag (default off) |
+|---|---|---|
+| Phase 1 ranked context, eval set + harness | `memory/app/services/export.py`, `tests/fixtures/context_eval.json`, `scripts/eval_context.py`; persona-api sends `topic` | `FEATURE_RANKED_CONTEXT` |
+| Phase 2 one fact per thing | `memory/app/services/{canonical,facts,entities,findability}.py`, `worker.py`; persona-api predicate fixes; cards-web / persona-web safety nets | `FEATURE_FACT_FAMILIES` |
+| Phase 3 dependency noise | persona-api `github_sync._derive_skills` (always on, new syncs only); memory extraction guard, second sighting, per-call cap | `FEATURE_STRICT_TECH` |
+| Phase 4 freshness (**schema**) | `memory/sql/schema.sql`, `decay.py`, `job_runs.py`, `/health` | `FEATURE_FRESHNESS_V2` (+ families) |
+| Phase 5 cleanup | `memory/scripts/dedupe_memory.py`, `app/services/cleanup.py` | n/a (script, dry run by default) |
+| F1-F3, F9 search quality, golden set, funnel | `memory/.../people_{query,discovery}.py`, `cards-api/services/search*.py`, `docs/cards/s04-funnel.sql` | none |
+| F5-F8 + Simplify (one tool, one shape) | `memory/.../people_{search,results}.py`, `card_directory.py`, cards-api `/internal/cards-for-users`, `/v1/service/outside-people` | none |
+| F4 per-fact matching | `memory/app/services/matching.py` | `FEATURE_FACT_MATCHING` |
+| A1 two-way match | `cards-api/services/two_way.py` | none (needs the searcher's Card) |
+| A2 invite to claim (**schema**) | `packages/db` 0024, `cards-api/services/invites.py`, `memory/.../invite_refs.py` | Cards `FEATURE_A2_INVITE_TO_CLAIM`, Memory `FEATURE_INVITE_TO_CLAIM` |
+| A3 saved searches, A4 digest, A5 brief, A6 trust (partial), A8 match controls (**schema**) | `packages/db` 0025, `cards-api/services/{saved_searches,digest_network,connection_brief,trust,match_prefs}.py` | Cards `FEATURE_NETWORK_CONTROLS` |
+| A7 group search | `cards-api/services/network.search_group`, `find_people(group_id=)` | none |
+
+Tests at the end of the branch: memory 663 unit tests pass; memory integration: the same 6 failures that
+failed before this work (stale tests, e.g. `test_forgotten_fact_can_be_reported_again`); cards-api: the 2
+known `test_x_bot` failures; persona-api all pass. Integration tests need Postgres + pgvector (and Redis for
+the ASGI ones): the repo's docker compose, or a local Postgres plus any Redis.
+
+## 17.2 Where this differs from the plan
+
+- **Second sighting (Phase 3.3)** counts `assertions.version` until Phase 4, not distinct `trace_chunk_id`s in
+  `assertion_history`: that table has no chunk id.
+- **`feature_freshness_v2` is only effective with `feature_fact_families`** (`Settings.freshness_v2`): every
+  writer must record `base_confidence` / `last_seen_at` the same way, and only `write_fact` does.
+- **GitHub thresholds (D1)** as written give a user with several repos and no language in two of them no
+  skills at all. Kept as decided; revisit if that shows up in practice.
+- **Per-fact matching (F4)** reads the public subset of `assertions` with no new index. If the public fact set
+  grows large, add a partial HNSW index on `entities.embedding`.
+- **Find people**: `zynd_users` / `cards` / `quickenrich` keys are gone; `search_linkedin_profiles` and
+  `find_linkedin_people_for_me` are removed (`linkedin_search.py` is now unused and can be deleted).
+- **A2** needs the invitee's Card to be claimable by LinkedIn sign-in (existing S03 flow); invitations are
+  created only from a signed `invite_ref` Memory issues for a person it returned to that user.
+- **A6 is partial**: request limits, report, block and the LinkedIn badge are done; GitHub and work-email
+  verification need verification flows that do not exist, and "capacity" is a fixed 50 unanswered requests, not
+  an owner setting. Reports are stored; there is no review UI.
+- **cards-web UI is partial**: `/find` and `/search` show verified chips and how current a matched fact is, and `/network` shows the connection brief for an accepted connection. There is no UI for invites, saved searches, match controls or reports: API and MCP only. The Playwright suite was not run; the `next build`, `tsc`, ESLint and node:test checks pass.
+
+## 17.3 Rollout (needs a human at the marked steps, AGENTS.md section 6)
+
+1. **Deploy order:** Memory first, then Cards. Cards' suggested people call Memory's
+   `/v1/service/outside-people`; Memory calls Cards' `/internal/cards-for-users`.
+2. **Memory schema (Phase 4):** `make deploy` and the dev compose both run `python -m app.schema_apply`. **The dev
+   compose shares prod's database, so deploying this branch to dev applies the Phase 4 schema change to prod's
+   memory DB.** It is expand-only, idempotent and inert while `FEATURE_FRESHNESS_V2` is off (rehearsed on a
+   5,000-row scratch database), but get a human's OK before the first deploy of this branch anywhere.
+3. **Flags in dev:** `infra/single-box/docker-compose.dev.yml` turns on ranked context, fact families, strict
+   tech and fact matching for `api-dev` / `mcp-dev`. Dev writes to prod data, so the write-path flags act on prod
+   facts from there. Leave `FEATURE_FRESHNESS_V2` off until step 2 has happened and someone checks `/health`.
+4. **Before prod flags:** run `scripts/eval_context.py --sweep 0.35 0.40 0.45 0.50 0.55` with real embeddings
+   against a scratch database and set `RELATED_MIN`; confirm `decay_cron` runs (`assertion_history` rows with
+   `change_reason = 'decay'`) before turning freshness on.
+5. **Phase 5:** run `scripts/dedupe_memory.py` (dry run) on a restored copy, review `dedupe_report.json` with a
+   person, apply with `--apply --confirm-database <name>`, then `python -m app.jobs recompute`. Undo with
+   `--undo <run_id>`.
+6. **Cards migrations 0024 and 0025** (dev's own 0023, messaging v2, is already on aafo): apply with `packages/db` (README step 6) only on a human's say-so, then set
+   `FEATURE_A2_INVITE_TO_CLAIM` / `FEATURE_NETWORK_CONTROLS` (and Memory's `FEATURE_INVITE_TO_CLAIM`). Review the
+   `claim_card_by_owner` change that records `owner_user_id` (aafo-issued principals only).

@@ -1,10 +1,20 @@
 import json
 import logging
+from datetime import datetime, timezone
 
 import config
 from models.card import AgentProfileCard
 from services import cards as cards_service
 from services.embed import card_search_text, embed_text
+from services.two_way import LESS_LIKE_PENALTY, TWO_WAY_BOOST, kinds_of, too_much_like, two_way_match
+from services.search_text import (
+    contains_all,
+    location_terms,
+    location_tokens,
+    query_terms,
+    role_matches,
+    token_set,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +48,23 @@ def _cosine(a: list[float], b: list[float]) -> float:
     if na == 0 or nb == 0:
         return 0.0
     return dot / (na * nb)
+
+
+def _age_days(fact: dict) -> int | None:
+    """Days since the owner approved this fact (how current it is), or None when unknown."""
+    from services.card_view import _parse_ts
+
+    approved = _parse_ts(fact.get("approved_at") if isinstance(fact, dict) else None)
+    if approved is None:
+        return None
+    return max((datetime.now(timezone.utc) - approved).days, 0)
+
+
+def _skill_matches(wanted: str, skill_name: str) -> bool:
+    """Whole-word skill match, either direction: "AI dev tools" reaches a skill called "AI",
+    but "go" no longer reaches "django"."""
+    want, have = set(query_terms(wanted)), set(query_terms(skill_name))
+    return bool(want and have) and (have <= want or want <= have)
 
 
 def _candidates(q: str, query_vec: list[float], include_unclaimed: bool) -> list[dict]:
@@ -84,15 +111,27 @@ def search_agents(
     experience_min: int | None = None,
     limit: int = 10,
     include_unclaimed: bool = False,
+    searcher: AgentProfileCard | None = None,
+    less_like: list[AgentProfileCard] | None = None,
+    candidate_rows: list[dict] | None = None,
 ) -> list[dict]:
+    """Score published cards against a query.
+
+    candidate_rows scopes the search to those rows (a group's members) instead of every card;
+    less_like are Cards the searcher asked to see less of."""
+    # Stopwords out, whole words only: "in", "who" and "ai" used to substring-match nearly
+    # every card ("ai" is inside "maintain").
+    q_terms = query_terms(q)
+    if q and not q_terms and not any((role, location, skills, industry, availability)):
+        return []   # "who is in the": nothing to look for, and embedding it would match noise
     query_vec = embed_text(q) if q else []
-    rows = _candidates(q, query_vec, include_unclaimed)
-    q_tokens = _norm(q).split() if q else []
-    skill_list = [s.strip().lower() for s in skills.split(",") if s.strip()] if skills else []
+    rows = candidate_rows if candidate_rows is not None else _candidates(q, query_vec, include_unclaimed)
+    skill_list = [s.strip() for s in skills.split(",") if s.strip()] if skills else []
     industry_norm = _norm(industry)
-    location_norm = _norm(location)
     role_norm = _norm(role)
     availability_norm = _norm(availability)
+    location_want = location_terms(location)
+    searcher_kinds = kinds_of(searcher) if searcher is not None else set()
 
     results = []
     for row in rows:
@@ -104,6 +143,7 @@ def search_agents(
         if row.get("handle"):
             card.handle = row["handle"]
         search_text = card_search_text(card).lower()
+        text_tokens = token_set(search_text)
 
         score = 0.0
         reasons: list = []
@@ -116,20 +156,25 @@ def search_agents(
             if sim > 0.6:
                 reasons.append("Strong overall match for your query")
 
-        if q_tokens:
-            hits = [t for t in q_tokens if t in search_text]
+        if q_terms:
+            hits = [t for t in q_terms if t in text_tokens]
             if hits:
-                score += 0.25 * (len(hits) / len(q_tokens))
+                score += 0.25 * (len(hits) / len(q_terms))
                 reasons.append("Matches your search terms")
             from services.card_view import fact_object, freshness_boost, live_facts
 
+            # A card's approved facts earn a bonus in proportion to how much of the query the
+            # best of them covers, so one shared word no longer counts as a full match.
             matched_memory = []
+            best_cover = 0.0
             for fact in live_facts(card.zynd_memory):
-                blob = fact_object(fact).lower()
-                if blob and any(t and t in blob for t in q_tokens):
+                blob = token_set(fact_object(fact))
+                covered = len([t for t in q_terms if t in blob]) / len(q_terms) if blob else 0.0
+                if covered:
                     matched_memory.append(fact)
+                    best_cover = max(best_cover, covered)
             if matched_memory:
-                score += 0.2
+                score += 0.2 * best_cover
                 if config.FEATURE_S06_CARDVIEW:
                     boost = max(freshness_boost(f) for f in matched_memory)
                     score += boost
@@ -137,33 +182,49 @@ def search_agents(
                         reasons.append({
                             "type": "memory",
                             "text": fact_object(fact),
+                            "source": fact.get("source") or "",
+                            "age_days": _age_days(fact),
                         })
                 else:
                     reasons.append("Approved fact")
 
-        if role_norm and (role_norm in _norm(card.identity.headline) or role_norm in search_text):
-            score += 0.25
-            reasons.append(card.identity.headline or "Role match")
+        if role_norm:
+            if role_matches(token_set(card.identity.headline), role):
+                score += 0.25            # their headline says it: the strongest role signal
+                reasons.append(card.identity.headline or "Role match")
+            elif role_matches(text_tokens, role):
+                score += 0.1             # mentioned somewhere on the card
+                reasons.append("Role match")
 
-        if location_norm and location_norm in _norm(card.identity.location):
+        if location_want and all(t in location_tokens(card.identity.location) for t in location_want):
             score += 0.3
             reasons.append(f"Based in {card.identity.location}")
 
         matched_skills = [
             sk for sk in skill_list
-            if any(sk in s.name.lower() or s.name.lower() in sk for s in card.skills)
+            if any(_skill_matches(sk, s.name) for s in card.skills)
         ]
         if skill_list and matched_skills:
             score += 0.25 * (len(matched_skills) / len(skill_list))
             reasons.append("Skills: " + ", ".join(matched_skills))
 
-        if industry_norm and any(industry_norm in _norm(i) for i in card.industries):
+        if industry_norm and any(contains_all(token_set(i), industry) for i in card.industries):
             score += 0.2
             reasons.append("Industry: " + ", ".join(card.industries))
 
-        if availability_norm and availability_norm in _norm(card.availability):
+        if availability_norm and contains_all(token_set(card.availability), availability):
             score += 0.2
             reasons.append(f"Available for {card.availability}")
+
+        if searcher_kinds and searcher is not None and card.handle != searcher.handle:
+            fits = two_way_match(searcher_kinds, card)
+            if fits:
+                score += TWO_WAY_BOOST
+                reasons.append("Wants to meet people like you: " + ", ".join(fits[:2]))
+
+        if less_like and any(too_much_like(d, card) for d in less_like):
+            score -= LESS_LIKE_PENALTY
+            reasons.append("Similar to people you asked to see less of")
 
         if experience_min is not None and card.experience_years and card.experience_years >= experience_min:
             score += 0.15
@@ -180,7 +241,8 @@ def search_agents(
                 "industries": card.industries,
                 "availability": card.availability,
                 "experience_years": card.experience_years,
-                "match_score": round(min(score, 1.0), 3),
+                "linkedin_url": (card.identity.links or {}).get("linkedin") or "",
+                "match_score": round(max(min(score, 1.0), 0.0), 3),
                 "match_reasons": reasons[:6],
                 "url": f"{config.SITE_BASE_URL}/p/{card.handle}" if card.handle else f"{config.SITE_BASE_URL}/profile/{card.id}",
             }

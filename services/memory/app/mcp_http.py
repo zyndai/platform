@@ -35,9 +35,8 @@ from app.services.control import confirm_fact, forget_fact, near_matches
 from app.services.export import active_context, build_jsonld_export, context_slice
 from app.services.findability import get_card
 from app.services.ingest import clean_text, ingest_turns
-from app.services.linkedin_search import find_linkedin_people, search_linkedin_profile_urls, enrich_profile_urls
-from app.services.matching import match_users, search_by_query
-from app.services.people_discovery import search_cards, search_quickenrich
+from app.services import people_search
+from app.services.matching import match_users
 from app.services.self_context import load_self_context, normalize_profile, read_brief
 
 
@@ -74,7 +73,7 @@ WRITE - exactly one durable-fact tool: use report_user_info with typed fields at
 
 CORRECT: confirm_fact_tool and forget_fact_tool use the exact predicate and object from get_my_context.facts; never claim success on a false result.
 EXPORT: export_my_context only for an explicit backup, download, or export request.
-PEOPLE / CARDS NETWORK: find_people searches claimed and unclaimed Cards. A people:message token can send and decide Cards-native connection requests, DM accepted Cards connections, create groups, invite connected Cards (invitees must accept), and message groups. Never claim a request, invitation, or message succeeded unless the tool says so.
+PEOPLE / CARDS NETWORK: find_people returns one list of people from the Cards index (claimed and unclaimed Cards, Zynd members, and LinkedIn only when too few strong matches exist); connect to a result with its handle. A people:message token can send and decide Cards-native connection requests, DM accepted Cards connections, create groups, invite connected Cards (invitees must accept), and message groups. Never claim a request, invitation, or message succeeded unless the tool says so.
 CARD OWNER: list_pending_facts, approve_fact, dismiss_fact, set_looking_for, and list_intros when granted by the token. Change headlines in the card editor.
 
 Use only tools visible in the client's actual tool list; export and hosted-page tools retain their existing legacy user scope requirement. Do not search for unavailable tools.
@@ -295,6 +294,10 @@ async def report_user_info(
     products only; goals → intends. role and notes stay free text.
     Only include skills/languages/frameworks/tools the user EXPLICITLY
     stated; never infer a stack from a single "working on X" mention.
+    Bad: tools=["webpack", "lodash", "jest", "eslint", "react"] copied from the
+    repo's package.json. Good: tools=["Cursor"] after the user said "I use Cursor".
+    The repo's dependencies are the project's, not the user's; at most 5
+    technologies are kept per call.
     Never pass secrets, API keys, passwords, tokens, .env, repo paths, or
     one-off task details. Facts stay private until the user reviews them."""
     text = (text or "").strip()
@@ -328,6 +331,17 @@ async def report_user_info(
     pool = await _get_pool()
     typed_on = settings.feature_s05_typed_capture
     observe = settings.feature_s05_observe or typed_on
+    if settings.feature_fact_families:
+        # Each technology once, whichever field the agent put it under.
+        from app.services.facts import dedupe_tech_fields
+        languages, frameworks, skills, tools = dedupe_tech_fields(languages, frameworks, skills, tools)
+    tech_note: str | None = None
+    if settings.feature_strict_tech:
+        from app.services.facts import MAX_TECH_VALUES, cap_tech_values
+        languages, frameworks, skills, tools, dropped = cap_tech_values(languages, frameworks, skills, tools)
+        if dropped:
+            tech_note = (f"Kept the first {MAX_TECH_VALUES} technologies and ignored {dropped} more. "
+                         "Send only what the user said they use or know, not the stack of the repo you are in.")
 
     typed_saved = 0
     typed_skipped = 0
@@ -434,17 +448,23 @@ async def report_user_info(
     total_saved = typed_saved + text_saved
     total_skipped = typed_skipped + text_skipped
     if total_saved == 0:
-        return {
+        result = {
             "saved": False,
             "reason": "nothing new (too short, duplicates, or filtered)",
             "items_skipped": total_skipped,
         }
-    return {
+        if tech_note:
+            result["tech_note"] = tech_note
+        return result
+    result = {
         "saved": True,
         "note": "Saved privately. The user reviews facts before anything becomes public.",
         "items_saved": total_saved,
         "items_skipped": total_skipped,
     }
+    if tech_note:
+        result["tech_note"] = tech_note
+    return result
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
@@ -453,7 +473,11 @@ async def get_my_context(topic: str | None = None, k: int = 20,
                          token: AccessToken = CurrentAccessToken()) -> dict:
     """Load identity, profile, socials, brief, private facts, and approved public card.
 
-    Call at conversation start; topic filters facts only and k is bounded to 1..50.
+    Call at conversation start, then again with ``topic`` whenever the conversation has
+    a subject (a project, a technology, a person, a goal): without a topic you get what
+    is true now; with one you also get older facts that relate to it. Facts with
+    ``stale: true`` are past context, not current. topic filters facts only and k is
+    bounded to 1..50.
     Present lists substantive sections, not proof of a complete memory graph.
     Optional unavailable sections are null; owner status/activity require cards:read
     or legacy user scope. A persona name may self-heal an empty stored display name.
@@ -522,128 +546,43 @@ async def find_similar_users(cluster_type: str = "intent_cluster", k: int = 10, 
     return await match_users(await _get_pool(), uid, cluster_type, max(1, min(k, 50)))
 
 
-_FIND_SOURCES = frozenset({"zynd", "cards", "quickenrich"})
-
-
-def _requested_sources(sources: str) -> set[str]:
-    asked = {part.strip().lower() for part in (sources or "").split(",") if part.strip()}
-    if not asked or "all" in asked:
-        return set(_FIND_SOURCES)
-    return asked & _FIND_SOURCES or set(_FIND_SOURCES)
-
-
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
 async def find_people(
     target: str,
     k: int = 10,
     sources: str = "all",
+    group_id: str = "",
     uid: str = Depends(_uid),
 ) -> dict:
     """Find people matching a TARGET PROFILE — complementary people, not people
     like the user. Use when the user asks for investors, cofounders, designers,
-    engineers, marketers, mentors, customers, domain experts, etc.
+    engineers, marketers, mentors, customers, domain experts, etc. Pass
+    target="like_me" for people close to the user's own profile.
 
-    Searches three sources and returns them separately:
-      zynd_users — findable Zynd members (connection_eligible)
-      cards — claimed and unclaimed published Cards (no contact data on unclaimed)
-      quickenrich — external prospects with a public LinkedIn URL only
+    Cards is the people index. Each result is one person:
+      handle, name, headline, location, why (why they matched), sources, claimed,
+      score, url, and next_action:
+        connect          — a claimed Card: call request_card_connection(target_handle=handle)
+        invite_to_claim  — no claimed Card yet: call invite_to_claim(invite_ref=...) (only offered when enabled)
+        view_profile     — nothing to act on; url is their public page or LinkedIn
+    LinkedIn people are searched only when too few strong matches were found (or when sources
+    names "quickenrich"). Contact details are never in results; they are shared once a
+    connection is accepted.
 
     Pass a natural-language target description (e.g. "seed-stage investor who
-    backs dev-tools"). sources is "all" unless the user explicitly restricts it
-    to "zynd", "cards", and/or "quickenrich". A failed source is listed in
-    warnings; the others are still returned.
+    backs dev-tools in India"). sources is "all" unless the user explicitly restricts it
+    to "cards", "zynd" and/or "quickenrich". A source that failed, or is not configured,
+    is listed in warnings; the others are still returned.
 
-    Use find_similar_users instead for "people like me" / overlapping context."""
-    limit = max(1, min(k, 20))
-    wanted = _requested_sources(sources)
-    zynd_users: list[dict] = []
-    cards: list[dict] = []
-    prospects: list[dict] = []
-    warnings: list[str] = []
-
-    if "zynd" in wanted:
-        try:
-            rows = await search_by_query(await _get_pool(), uid, target, limit=limit)
-            for row in rows:
-                if isinstance(row, dict):
-                    row["source"] = "zynd"
-                    row["connection_eligible"] = True
-                    zynd_users.append(row)
-        except Exception as exc:
-            logging.getLogger("zynd.find_people").warning("zynd search failed: %s", exc)
-            warnings.append("zynd_unavailable")
-
-    if "cards" in wanted:
-        found, warning = await search_cards(target, limit)
-        cards = found
-        if warning:
-            warnings.append(warning)
-
-    if "quickenrich" in wanted:
-        found, warning = await search_quickenrich(target, limit)
-        prospects = found
-        if warning:
-            warnings.append(warning)
-
-    result = {
-        "target": (target or "").strip(),
-        "sources": sorted(wanted),
-        "zynd_users": zynd_users,
-        "cards": cards,
-        "quickenrich": prospects,
-    }
-    if warnings:
-        result["warnings"] = warnings
-    return result
-
-
-# ── LinkedIn People Search (Exa + Firecrawl + ZYND cross-reference) ──────────
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
-async def search_linkedin_profiles(query: str, num_results: int = 10, uid: str = Depends(_uid)) -> dict:
-    """Search LinkedIn for people matching a natural-language query via Exa semantic
-    search (Tavily fallback). Returns profile URLs enriched with Firecrawl data
-    (name, headline, about). Use when the user asks to find specific types of people
-    on LinkedIn: "find CTOs in climate tech", "search LinkedIn for product designers".
-
-    Combine with find_people for ZYND-internal matches — ZYND users won't appear
-    in LinkedIn results unless they've also set up findability."""
-    pool = await _get_pool()
-    warnings: list[str] = []
-
-    profile_urls, search_warnings = await search_linkedin_profile_urls(query, num_results=num_results)
-    warnings.extend(search_warnings)
-
-    linkedin_profiles, enrich_warnings = await enrich_profile_urls(profile_urls)
-    warnings.extend(enrich_warnings)
-
-    zynd_users = await search_by_query(pool, uid, query, cluster_type="full_context", limit=num_results)
-
-    result: dict = {
-        "query": query,
-        "zynd_users": zynd_users,
-        "linkedin_profiles": linkedin_profiles,
-    }
-    if warnings:
-        result["warnings"] = warnings
-    return result
-
-
-@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
-async def find_linkedin_people_for_me(num_results: int = 10, uid: str = Depends(_uid)) -> dict:
-    """Auto-search LinkedIn for people like the user using their ZYND context graph.
-    Reads the user's stored facts, builds a natural-language query, searches ZYND
-    internal users first, then finds matching LinkedIn profiles via Exa + enriches
-    with Firecrawl (name, headline, about). ZYND users are ranked on top.
-
-    Use when the user asks: "find people like me on LinkedIn", "who should I meet
-    on LinkedIn", "find my tribe on LinkedIn"."""
-    return await find_linkedin_people(
-        await _get_pool(),
-        uid,
-        query=None,
-        num_results=num_results,
-    )
+    Pass group_id (from list_card_groups) to search only that group's members, e.g. an event
+    or community; nothing outside the group is searched. Results already respect the user's
+    match controls (see tune_matches): hidden people and muted topics are left out. Each person
+    carries `verified` (identities proven, e.g. "linkedin") and `why`, which says how current an
+    approved fact is."""
+    wanted, explicit = people_search.requested_sources(sources)
+    return await people_search.find(
+        await _get_pool(), uid, target, limit=max(1, min(k, 20)), wanted=wanted, explicit=explicit,
+        group_id=(group_id or "").strip())
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
@@ -753,6 +692,78 @@ async def request_card_connection(target_handle: str, message: str = "",
                                   uid: str = Depends(_uid)) -> dict:
     """Send a connection request to a claimed, published Card by handle."""
     return await cards_network_tools.request_connection(await _get_pool(), uid, target_handle, message)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
+async def invite_to_claim(invite_ref: str, message: str = "", uid: str = Depends(_uid)) -> dict:
+    """Invite someone who has no claimed Card yet. Pass the `invite_ref` from a find_people result
+    whose next_action is "invite_to_claim" (nothing else is accepted). This prepares their Card,
+    which they claim by signing in with the same LinkedIn account, and queues your connection
+    request for when they do. It does NOT contact them: give the user the returned claim_url /
+    share_text to send. Tell the user the Card is prepared from their public LinkedIn name and
+    headline only."""
+    if not settings.feature_invite_to_claim:
+        return {"ok": False, "error": "Invitations are not enabled"}
+    from app.services import invite_refs
+    person = invite_refs.verify(uid, invite_ref)
+    if person is None:
+        return {"ok": False, "error": "Unknown or expired invite_ref: run find_people again and use its invite_ref"}
+    return await cards_network_tools.create_invite(
+        await _get_pool(), uid, person["linkedin_url"], person["name"], person["headline"], _clip(message, 500))
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+async def saved_searches(action: str = "list", q: str = "", role: str = "", location: str = "",
+                         skills: str = "", label: str = "", search_id: str = "",
+                         uid: str = Depends(_uid)) -> dict:
+    """Saved people searches: get notified when a NEW matching Card appears.
+    action "add" saves a search (q, role, location, skills; label is a short name) — what already
+    matches is not reported, only new people; "list" shows them; "remove" stops one (search_id).
+    New matches show up as notes on the user's Cards home and in their notification email."""
+    pool = await _get_pool()
+    if action == "add":
+        return await cards_network_tools.add_saved_search(pool, uid, _clip(q, 200), _clip(role, 100),
+                                                          _clip(location, 100), _clip(skills, 200), _clip(label, 80))
+    if action == "remove":
+        return await cards_network_tools.remove_saved_search(pool, uid, search_id.strip())
+    return await cards_network_tools.saved_searches(pool, uid)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+async def tune_matches(action: str, value: str = "", uid: str = Depends(_uid)) -> dict:
+    """Tune who find_people shows the user. action: "hide_person" (value = Card handle: never show
+    them again), "mute_topic" (value = a topic to leave out, e.g. "crypto trading"), "less_like_this"
+    (value = a Card handle: rank people like them lower), "undo_hide_person" / "undo_mute_topic" /
+    "undo_less_like_this" to reverse one, or "show" to list the current controls."""
+    pool = await _get_pool()
+    if action == "show":
+        return await cards_network_tools.preferences(pool, uid)
+    undo = action.startswith("undo_")
+    kind = action.removeprefix("undo_")
+    if kind not in ("hide_person", "mute_topic", "less_like_this"):
+        return {"ok": False, "error": "action must be hide_person, mute_topic, less_like_this, an undo_ of those, or show"}
+    return await cards_network_tools.change_preference(pool, uid, kind, _clip(value, 100), remove=undo)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False})
+async def report_or_block_card(handle: str, action: str = "report", reason: str = "other",
+                               details: str = "", uid: str = Depends(_uid)) -> dict:
+    """Report or block a Card. action "report" (reason: spam, impersonation, harassment, inaccurate
+    or other; details optional) sends it to a person for review and changes nothing automatically.
+    action "block" ends any connection with them, stops them contacting the user, and hides them from
+    searches. Only do this when the user asks; blocking cannot be undone from here."""
+    pool = await _get_pool()
+    if action == "block":
+        return await cards_network_tools.block_card(pool, uid, handle.strip().lstrip("@"))
+    return await cards_network_tools.report_card(pool, uid, handle.strip().lstrip("@"), reason, _clip(details, 1000))
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+async def connection_brief(connection_id: str, uid: str = Depends(_uid)) -> dict:
+    """For an ACCEPTED connection: what each person is working on now, what they have in common and
+    a few things to bring up, from what both approved onto their Cards. Use before the user writes
+    to someone they are connected with."""
+    return await cards_network_tools.brief(await _get_pool(), uid, connection_id)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})

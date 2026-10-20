@@ -200,3 +200,29 @@ export function connectionRequestNotice(result: { connection: CardConnection; ex
     : "Your connection request is already pending";
   return `This connection is ${connection.status}. No new request was sent.`;
 }
+
+/** What each side of an accepted connection is doing now, what they share, and what to bring up
+ *  (Cards API GET /network/connections/{id}/brief). */
+export interface ConnectionBrief {
+  partner: { handle: string; name: string; headline: string };
+  now: { you: { text: string }[]; them: { text: string }[] };
+  shared: { skills: string[]; industries: string[]; interests: string[]; location: string };
+  suggested_topics: string[];
+}
+
+/** True when there is nothing worth showing, so the page can skip the panel instead of
+ *  rendering empty headings. */
+export function briefIsEmpty(brief: ConnectionBrief | null | undefined): boolean {
+  if (!brief) return true;
+  const { now, shared, suggested_topics } = brief;
+  return !(
+    now.you.length || now.them.length || suggested_topics.length ||
+    shared.skills.length || shared.industries.length || shared.interests.length || shared.location
+  );
+}
+
+/** One line for the "in common" row: "Python, AI · Pune, India". */
+export function sharedSummary(shared: ConnectionBrief["shared"]): string {
+  const things = [...shared.skills, ...shared.industries, ...shared.interests];
+  return [things.join(", "), shared.location].filter(Boolean).join(" · ");
+}

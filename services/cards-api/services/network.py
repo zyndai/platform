@@ -101,7 +101,15 @@ def _require_connection_party(row: dict, user_id: str) -> bool:
 def _partner_card(row: dict, user_id: str) -> dict:
     partner_id = row["recipient_card_id"] if row["requester_user_id"] == user_id else row["requester_card_id"]
     cards = _sb().table("agent_profile_cards").select("id,handle,card").eq("id", partner_id).limit(1).execute().data or []
-    return _card_payload(cards[0]) if cards else {"card_id": partner_id, "name": "Zynd member"}
+    if not cards:
+        return {"card_id": partner_id, "name": "Zynd member"}
+    payload = _card_payload(cards[0])
+    if row.get("status") == "accepted":
+        # Contact links are for people who have agreed to connect: search results never carry
+        # them, and neither does a pending request.
+        links = ((cards[0].get("card") or {}).get("identity") or {}).get("links") or {}
+        payload["links"] = {k: v for k, v in links.items() if isinstance(v, str) and v.strip()}
+    return payload
 
 
 def _serialize_connection(row: dict, user_id: str) -> dict:
@@ -126,22 +134,25 @@ def _rpc_result(name: str, params: dict) -> dict:
     return result
 
 
-def request_connection(user_id: str, target_handle: str, message: str | None = None) -> dict:
-    requester = _card_for_user(user_id)
-    recipient = _card_for_handle(target_handle)
-    recipient_user_id = recipient["owner_user_id"]
-    if recipient_user_id == user_id:
-        raise HTTPException(422, "You cannot connect to your own Card")
+def _create_connection(
+    requester_user_id: str, requester: dict, recipient_user_id: str, recipient: dict, message: str | None,
+    before_insert=None,
+) -> tuple[dict, bool]:
+    """The one place a connection request is written: (row, already_existed).
 
-    key = _connection_key(user_id, recipient_user_id)
+    One row per pair of people (connection_key), whoever asked first; a second request,
+    in either direction, returns the existing row instead of a duplicate.
+    """
+    key = _connection_key(requester_user_id, recipient_user_id)
     existing = _sb().table("connections").select("*").eq("connection_key", key).limit(1).execute().data or []
     if existing:
-        return {"connection": _serialize_connection(existing[0], user_id), "existing": True}
-
+        return existing[0], True
+    if before_insert is not None:
+        before_insert()      # limits apply to NEW requests only; repeating one is harmless
     try:
         inserted = _sb().table("connections").insert({
             "connection_key": key,
-            "requester_user_id": user_id,
+            "requester_user_id": requester_user_id,
             "requester_card_id": requester["id"],
             "recipient_user_id": recipient_user_id,
             "recipient_card_id": recipient["id"],
@@ -152,11 +163,24 @@ def request_connection(user_id: str, target_handle: str, message: str | None = N
         if getattr(exc, "code", None) == "23505" or "duplicate key" in str(exc).lower():
             existing = _sb().table("connections").select("*").eq("connection_key", key).limit(1).execute().data or []
             if existing:
-                return {"connection": _serialize_connection(existing[0], user_id), "existing": True}
+                return existing[0], True
         raise
     if not inserted.data:
         raise HTTPException(500, "Could not create connection request")
-    return {"connection": _serialize_connection(inserted.data[0], user_id), "existing": False}
+    return inserted.data[0], False
+
+
+def request_connection(user_id: str, target_handle: str, message: str | None = None) -> dict:
+    requester = _card_for_user(user_id)
+    recipient = _card_for_handle(target_handle)
+    recipient_user_id = recipient["owner_user_id"]
+    if recipient_user_id == user_id:
+        raise HTTPException(422, "You cannot connect to your own Card")
+    from services import trust
+    row, existed = _create_connection(
+        user_id, requester, recipient_user_id, recipient, message,
+        before_insert=lambda: trust.check_request_limits(user_id, recipient_user_id))
+    return {"connection": _serialize_connection(row, user_id), "existing": existed}
 
 
 def get_inbox(user_id: str) -> dict:
@@ -165,7 +189,56 @@ def get_inbox(user_id: str) -> dict:
 
 
 def list_connections(user_id: str) -> dict:
-    return {"connections": get_inbox(user_id).get("connections", [])}
+    from services import invites
+    invites.deliver_for_user(user_id)    # invitations that were waiting for their Card to be claimed
+    connections = get_inbox(user_id).get("connections", [])
+    return {"connections": _with_accepted_links(connections)}
+
+
+def _with_accepted_links(connections: list[dict]) -> list[dict]:
+    """Contact links are for people who have agreed to connect: the inbox carries the partner's
+    public identity only, so add the owner's chosen links for ACCEPTED connections (never for pending,
+    declined or blocked ones, and never in search results)."""
+    ids = [c["partner"]["card_id"] for c in connections
+           if c.get("status") == "accepted" and (c.get("partner") or {}).get("card_id")]
+    if not ids:
+        return connections
+    rows = _sb().table("agent_profile_cards").select("id,card").in_("id", ids).execute().data or []
+    links_by_id = {
+        r["id"]: {k: v for k, v in (((r.get("card") or {}).get("identity") or {}).get("links") or {}).items()
+                  if isinstance(v, str) and v.strip()}
+        for r in rows
+    }
+    for c in connections:
+        partner = c.get("partner") or {}
+        if c.get("status") == "accepted" and partner.get("card_id") in links_by_id:
+            partner["links"] = links_by_id[partner["card_id"]]
+    return connections
+
+
+def connection_brief(user_id: str, connection_id: str) -> dict:
+    """A5: what each side is doing now, what they share and what to talk about, for an accepted
+    connection only (a pending or blocked one reveals nothing beyond the public Card)."""
+    from models.card import AgentProfileCard
+    from services import connection_brief as brief
+
+    row = _connection_row(connection_id)
+    _require_connection_party(row, user_id)
+    if row.get("status") != "accepted":
+        raise HTTPException(409, "Accept the connection first")
+    mine_id, theirs_id = (row["requester_card_id"], row["recipient_card_id"]) if row["requester_user_id"] == user_id \
+        else (row["recipient_card_id"], row["requester_card_id"])
+    cards = _sb().table("agent_profile_cards").select("id,handle,card").in_("id", [mine_id, theirs_id]).execute().data or []
+    by_id = {c["id"]: c for c in cards}
+    if mine_id not in by_id or theirs_id not in by_id:
+        raise HTTPException(404, "Connection not found")
+
+    def load(card_row: dict) -> AgentProfileCard:
+        card = AgentProfileCard.model_validate(card_row.get("card") or {})
+        card.handle = card_row.get("handle") or card.handle
+        return card
+
+    return {"connection_id": connection_id, "brief": brief.build_brief(load(by_id[mine_id]), load(by_id[theirs_id]))}
 
 
 def respond_connection(user_id: str, connection_id: str, action: str) -> dict:
@@ -276,6 +349,34 @@ def list_groups(user_id: str) -> dict:
 
 def list_members(user_id: str, group_id: str) -> dict:
     return _rpc_result("network_group_members", {"p_user": user_id, "p_group": group_id})
+
+
+def search_group(user_id: str, group_id: str, *, q: str = "", role: str = "", location: str = "",
+                 skills: str = "", limit: int = 10) -> dict:
+    """A7: people search scoped to one group (an event, a community). Only members can ask, only
+    the group's own Cards are searched, and the caller never finds themselves."""
+    from models.card import AgentProfileCard
+    from services import search as search_service
+    from services import trust
+
+    _require_member(group_id, user_id)
+    member_ids = [m["user_id"] for m in (_sb().table("group_members").select("user_id").eq("group_id", group_id).execute().data or [])]
+    rows = (_sb().table("agent_profile_cards").select("id,card,handle,owner_user_id,owner_email,embedding")
+            .in_("owner_user_id", member_ids).eq("status", "published").execute().data or []) if member_ids else []
+    mine = next((r for r in rows if r.get("owner_user_id") == user_id), None)
+    rows = [r for r in rows if r.get("owner_user_id") != user_id]
+    searcher = None
+    if mine is not None:
+        searcher = AgentProfileCard.model_validate(mine.get("card") or {})
+        searcher.handle = mine.get("handle") or searcher.handle
+    results = search_service.search_agents(
+        q=q, role=role, location=location, skills=skills, limit=max(1, min(limit, 50)),
+        include_unclaimed=True, searcher=searcher, candidate_rows=rows)
+    verified = trust.verified_by_card_ids([r["agent_id"] for r in results])
+    for r in results:
+        r["claimed"] = True
+        r["verified"] = verified.get(r["agent_id"], [])
+    return {"group_id": group_id, "members_searched": len(rows), "results": results}
 
 
 def _connected(user_id: str, target_user_id: str) -> bool:

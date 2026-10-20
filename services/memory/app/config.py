@@ -60,6 +60,27 @@ class Settings(BaseSettings):
     # (quality then always runs and enforces soft triage).
     feature_s05_observe: bool = True
 
+    # Memory quality (docs/plans/ZYND_MEMORY_QUALITY_PLAN.md). All off by default so a deploy
+    # changes nothing until an operator opts in; dev enables them in its compose file.
+    # Phase 1: /me/context + get_my_context rank by relevance and freshness and take a topic.
+    feature_ranked_context: bool = False
+    # Phase 2: every fact write goes through facts.write_fact (one fact per thing).
+    feature_fact_families: bool = False
+    # Phase 3: stricter extraction prompt and the second-sighting rule for inferred tech.
+    feature_strict_tech: bool = False
+    # Cards networking F4: find_people matches the target against individual public facts
+    # (top 3 per person, current-state predicates weighted up) instead of one averaged
+    # profile vector. Off = the previous cluster-vector ranking.
+    feature_fact_matching: bool = False
+    # Cards networking A2: results who have no claimed Card can be invited to claim one
+    # (next_action invite_to_claim, tool invite_to_claim). Needs Cards' FEATURE_A2_INVITE_TO_CLAIM
+    # and packages/db migration 0024. Off by default.
+    feature_invite_to_claim: bool = False
+    # Phase 4: last_seen_at / mention_count / base_confidence, idempotent decay, stale facts
+    # never auto-archived. Needs feature_fact_families too (see Settings.freshness_v2). Turn on
+    # ONLY after sql/schema.sql has been applied to the database (the columns must exist).
+    feature_freshness_v2: bool = False
+
     # S11 — public Cards MCP (no auth) at /cards-public-mcp. Off by default;
     # mount + Caddy route when ready. Rollback: leave false / remove Caddy handle.
     feature_s11_public_mcp: bool = False
@@ -164,6 +185,14 @@ class Settings(BaseSettings):
         "https://zynd.ai,https://www.zynd.ai,https://persona.zynd.ai,https://dev.persona.zynd.ai,"
         "https://cards.zynd.ai,https://dev.cards.zynd.ai,http://localhost:3000,http://localhost:3002"
     )
+
+    @property
+    def freshness_v2(self) -> bool:
+        """Freshness v2 is effective only when every writer records evidence the same way,
+        i.e. when the unified write path is also on. Legacy writers do not maintain
+        base_confidence / last_seen_at / mention_count, so v2 on their own would decay
+        facts from stale bases."""
+        return self.feature_freshness_v2 and self.feature_fact_families
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -3,7 +3,7 @@ Tests for the Twitter scraper service (backend/services/twitter_scraper.py).
 
 Covers the handle-required scrape contract, tweet selection (retweets and
 other-authors' tweets dropped), LLM fact-JSON parsing, and sync_to_memory —
-which declares curated interest facts (is_interested_in) into the memory
+which declares curated interest facts (is_learning) into the memory
 layer with source_system="twitter", deduped against the existing assertion
 graph, ingesting an LLM-composed summary only when new facts were declared.
 """
@@ -208,7 +208,7 @@ def test_scrape_user_leaves_db_untouched_when_the_run_is_refused():
 
 
 def test_sync_to_memory_declares_only_new_facts_with_twitter_tag():
-    existing = [_assertion("is_interested_in", "AI agents")]
+    existing = [_assertion("is_interested_in", "AI agents")]   # the legacy name still counts as known
     declared = []
 
     async def fake_declare(user_id, predicate, value, source_system="user_confirmed"):
@@ -224,7 +224,7 @@ def test_sync_to_memory_declares_only_new_facts_with_twitter_tag():
 
     result = asyncio.run(run())
     assert result["facts_declared"] == 1
-    assert declared == [("is_interested_in", "Rust", "twitter")]
+    assert declared == [("is_learning", "Rust", "twitter")]
 
 
 def test_sync_to_memory_ingests_summary_with_twitter_source():

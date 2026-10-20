@@ -83,17 +83,18 @@ def test_derive_profile_aggregates_languages_and_projects():
             "full_name": "a/bar",
             "description": "",
             "html_url": "https://github.com/a/bar",
-            "language": "Go",
+            "language": "Python",
             "topics": [],
             "stargazers_count": 0,
             "pushed_at": "2020-01-01T00:00:00Z",
         },
     ]
-    langs = {"a/foo": {"Python": 1000, "TypeScript": 500}, "a/bar": {"Go": 100}}
+    langs = {"a/foo": {"Python": 1000, "TypeScript": 500}, "a/bar": {"Python": 400, "TypeScript": 300}}
     profile = _derive_profile(repos, langs)
 
-    assert [s["language"] for s in profile["skills"]] == ["Python", "TypeScript", "Go"]
-    assert profile["skills"][0]["bytes"] == 1000
+    assert [s["language"] for s in profile["skills"]] == ["Python", "TypeScript"]
+    assert profile["skills"][0]["bytes"] == 1400 and profile["skills"][0]["repos"] == 2
+    assert profile["skills"][0]["share"] == 0.636
     assert "ai" in profile["interests"]
     assert profile["projects"][0]["name"] == "foo"
     assert profile["projects"][0]["languages"] == ["Python", "TypeScript"]
@@ -101,6 +102,79 @@ def test_derive_profile_aggregates_languages_and_projects():
     assert profile["projects"][1]["name"] == "bar"
     assert profile["projects"][1]["active"] is False
     assert profile["projects"][1]["notable"] is False
+
+
+# ── Which languages count as skills (docs/plans/ZYND_MEMORY_QUALITY_PLAN.md, Phase 3) ──
+
+
+def _repo(name, **extra):
+    return {"name": name, "full_name": f"a/{name}", "description": name, "pushed_at": "2026-08-20T00:00:00Z",
+            "topics": [], **extra}
+
+
+def _skills(languages_by_repo, **repo_extras):
+    repos = [_repo(n, **repo_extras.get(n, {})) for n in languages_by_repo]
+    return [s["language"] for s in _derive_profile(repos, {f"a/{n}": l for n, l in languages_by_repo.items()})["skills"]]
+
+
+def test_markup_config_and_template_languages_are_not_skills():
+    skills = _skills({
+        "web": {"Python": 5000, "HTML": 90_000, "CSS": 40_000, "Shell": 9_000, "Dockerfile": 500, "Makefile": 300},
+        "api": {"Python": 4000, "HTML": 50_000, "Jinja": 10_000},
+    })
+    assert skills == ["Python"]
+
+
+def test_a_language_needs_a_real_share_and_to_appear_in_two_repos():
+    skills = _skills({
+        "a": {"Python": 10_000, "Go": 600},        # Go is 4% of the code
+        "b": {"Python": 8_000, "Rust": 3_000},     # Rust is real but lives in one repo
+        "c": {"Python": 6_000, "TypeScript": 5_000},
+        "d": {"TypeScript": 4_000},
+    })
+    assert skills == ["Python", "TypeScript"]
+
+
+def test_a_user_with_one_repo_is_held_to_the_share_only():
+    assert _skills({"solo": {"Rust": 9_000, "Python": 4_000, "C": 100}}) == ["Rust", "Python"]
+
+
+def test_archived_repos_do_not_count():
+    skills = _skills(
+        {"live1": {"Python": 5_000}, "live2": {"Python": 4_000}, "old": {"Perl": 90_000}, "old2": {"Perl": 90_000}},
+        old={"archived": True}, old2={"archived": True},
+    )
+    assert skills == ["Python"]
+
+
+def test_a_vendored_build_in_one_repo_is_not_a_skill():
+    # A Python project that commits a compiled JS frontend (2 MB), next to ordinary Python repos
+    # with a sliver of JS elsewhere: the JS is that one repo's vendored bundle.
+    skills = _skills({
+        "app": {"Python": 30_000, "JavaScript": 2_000_000},
+        "lib1": {"Python": 40_000, "JavaScript": 600},
+        "lib2": {"Python": 35_000},
+    })
+    assert skills == ["Python"]
+
+
+def test_a_language_used_across_repos_is_kept_even_when_one_repo_dominates_it():
+    skills = _skills({
+        "big": {"Go": 80_000, "Python": 1_000},
+        "small": {"Go": 12_000, "Python": 20_000},
+        "tool": {"Go": 9_000, "Python": 15_000},
+    })
+    assert skills == ["Go", "Python"]          # Go elsewhere is 28% of the other repos, not a vendored blob
+
+
+def test_skills_are_capped_at_five():
+    six = {k: 5_000 for k in "ABCDEF"}            # six languages at 16.7% each: all clear the share
+    assert _skills({"a": dict(six), "b": dict(six)}) == list("ABCDE")
+
+
+def test_no_language_data_means_no_skills():
+    assert _derive_profile([_repo("x")], {})["skills"] == []
+    assert _derive_profile([_repo("x")], {"a/x": {"HTML": 100}})["skills"] == []
 
 
 # ── Memory wiring ────────────────────────────────────────────────────

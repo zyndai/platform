@@ -152,15 +152,10 @@ def _linkedin_key(url: str) -> str:
     return f"{host}{path}" if host else ""
 
 
-def _india_body() -> dict:
-    return {
-        "page": 1,
-        "per_page": 4,
-        "country_code": {"include": ["IN"], "exclude": []},
-    }
-
-
-def outside_search_bodies(card: AgentProfileCard) -> list[dict]:
+def outside_search_requests(card: AgentProfileCard) -> list[dict]:
+    """Filters for the external people search: job titles from who the card wants to meet,
+    company keywords from what they work on, both near where the card owner is. No country is
+    assumed; a card with no location searches everywhere."""
     interests = _card_interests(card)
     titles = [_TITLE_FOR[k] for k in KEYWORDS["connect_with"] if k in interests["connect_with"]][:2]
     keywords = list(dict.fromkeys(
@@ -169,57 +164,47 @@ def outside_search_bodies(card: AgentProfileCard) -> list[dict]:
         for k in KEYWORDS[field]
         if k in interests[field] and k in _KEYWORD_FOR
     ))[:2]
-    bodies = []
+    location = (card.identity.location or "").strip()
+    requests = []
     if titles:
-        bodies.append({**_india_body(), "title": {"include": titles, "exclude": []}})
+        requests.append({"titles": titles, "keywords": [], "location": location, "limit": 4})
     if keywords:
-        bodies.append({**_india_body(), "bio_li": {"include": keywords, "exclude": []}})
-    return bodies
+        requests.append({"titles": [], "keywords": keywords, "location": location, "limit": 4})
+    return requests
 
 
 def _shape_outside(record: dict) -> dict | None:
-    def field(key: str) -> str:
-        text = str(record.get(key) or "").strip()
-        return "" if text.upper() == "N/A" else text
-
-    url = field("employee_linkedin")
-    name = " ".join(part for part in (field("first_name"), field("last_name")) if part)
+    url = str(record.get("linkedin_url") or "").strip()
+    name = str(record.get("name") or "").strip()
     if not url and not name:
         return None
     return {
         "name": name,
-        "title": field("title"),
-        "company": field("company_name"),
+        "title": str(record.get("title") or "").strip(),
+        "company": str(record.get("company") or "").strip(),
         "linkedin_url": url,
         "source": "quickenrich",
     }
 
 
-def _qe_headers() -> dict:
-    header = (config.QUICKENRICH_AUTH_HEADER or "Authorization").strip()
-    key = config.QUICKENRICH_API_KEY
-    return {
-        header: f"Bearer {key}" if header.lower() == "authorization" else key,
-        "Accept": "application/json",
-    }
-
-
-def _contact_finder(body: dict) -> list[dict]:
-    url = f"{config.QUICKENRICH_BASE_URL.rstrip('/')}/api/employees/contact-finder"
+def _outside_people(request: dict) -> list[dict]:
+    """One request to Memory's external people search (the only QuickEnrich client)."""
+    url = f"{config.MEMORY_LAYER_URL.rstrip('/')}/v1/service/outside-people"
     try:
-        resp = httpx.post(url, json=body, headers=_qe_headers(), timeout=config.QUICKENRICH_TIMEOUT)
+        resp = httpx.post(
+            url, json=request, timeout=config.QUICKENRICH_TIMEOUT,
+            headers={"Authorization": f"Bearer {config.MEMORY_SERVICE_TOKEN}", "Accept": "application/json"},
+        )
         if resp.status_code >= 400:
-            logger.warning(
-                "QuickEnrich contact-finder failed: HTTP %s %s",
-                resp.status_code,
-                (resp.text or "")[:300],
-            )
+            logger.warning("outside-people failed: HTTP %s %s", resp.status_code, (resp.text or "")[:300])
             return []
         payload = resp.json()
     except Exception as exc:
-        logger.warning("QuickEnrich contact-finder failed: %s", exc)
+        logger.warning("outside-people failed: %s", exc)
         return []
-    records = payload.get("data") if isinstance(payload, dict) else payload
+    if isinstance(payload, dict) and payload.get("warning"):
+        logger.info("outside-people returned nothing: %s", payload["warning"])
+    records = payload.get("people") if isinstance(payload, dict) else None
     return [
         shaped
         for record in records or []
@@ -227,13 +212,17 @@ def _contact_finder(body: dict) -> list[dict]:
     ]
 
 
+def outside_search_enabled() -> bool:
+    return bool(config.MEMORY_LAYER_URL and config.MEMORY_SERVICE_TOKEN)
+
+
 def search_outside(card: AgentProfileCard, _taken: set[str]) -> list[dict]:
-    if not config.QUICKENRICH_BASE_URL or not config.QUICKENRICH_API_KEY:
+    if not outside_search_enabled():
         return []
     out = []
     seen = set()
-    for body in outside_search_bodies(card):
-        for person in _contact_finder(body):
+    for request in outside_search_requests(card):
+        for person in _outside_people(request):
             url = person.get("linkedin_url") or ""
             key = url or person.get("name")
             if not key or key in seen:
@@ -297,7 +286,7 @@ def get_suggested_people(handle: str) -> dict | None:
 
     results.sort(key=lambda person: (-person["match_score"], person["handle"].casefold()))
     outside = []
-    if config.QUICKENRICH_BASE_URL and config.QUICKENRICH_API_KEY:
+    if outside_search_enabled():
         for person in search_outside(requester, taken):
             url = person.get("linkedin_url") or ""
             key = _linkedin_key(url)

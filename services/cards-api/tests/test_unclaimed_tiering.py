@@ -35,8 +35,8 @@ def _card_json(handle="alice", linkedin="https://www.linkedin.com/in/alice-engin
 
 def test_claim_card_by_owner_matching_linkedin(monkeypatch):
     sb = MagicMock()
-    sb.table("agent_profile_cards").select("owner_email,claim_token_hash,card,status").eq("handle", "alice").execute.return_value = MagicMock(
-        data=[{"owner_email": None, "claim_token_hash": "h", "card": _card_json()}]
+    sb.table("agent_profile_cards").select("id,owner_email,claim_token_hash,card,status").eq("handle", "alice").execute.return_value = MagicMock(
+        data=[{"id": "c1", "owner_email": None, "claim_token_hash": "h", "card": _card_json()}]
     )
     monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
 
@@ -52,8 +52,8 @@ def test_claim_card_by_owner_matching_linkedin(monkeypatch):
 
 def test_claim_card_by_owner_refuses_mismatched_linkedin(monkeypatch):
     sb = MagicMock()
-    sb.table("agent_profile_cards").select("owner_email,claim_token_hash,card,status").eq("handle", "alice").execute.return_value = MagicMock(
-        data=[{"owner_email": None, "claim_token_hash": "h", "card": _card_json()}]
+    sb.table("agent_profile_cards").select("id,owner_email,claim_token_hash,card,status").eq("handle", "alice").execute.return_value = MagicMock(
+        data=[{"id": "c1", "owner_email": None, "claim_token_hash": "h", "card": _card_json()}]
     )
     monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
 
@@ -67,7 +67,7 @@ def test_claim_card_by_owner_refuses_mismatched_linkedin(monkeypatch):
 
 def test_claim_card_by_owner_refuses_when_card_has_no_linkedin(monkeypatch):
     sb = MagicMock()
-    sb.table("agent_profile_cards").select("owner_email,claim_token_hash,card,status").eq("handle", "alice").execute.return_value = MagicMock(
+    sb.table("agent_profile_cards").select("id,owner_email,claim_token_hash,card,status").eq("handle", "alice").execute.return_value = MagicMock(
         data=[{"owner_email": None, "claim_token_hash": "h", "card": _card_json(linkedin="")}]
     )
     monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
@@ -81,7 +81,7 @@ def test_claim_card_by_owner_refuses_when_card_has_no_linkedin(monkeypatch):
 
 def test_claim_card_by_owner_refuses_already_claimed(monkeypatch):
     sb = MagicMock()
-    sb.table("agent_profile_cards").select("owner_email,claim_token_hash,card,status").eq("handle", "alice").execute.return_value = MagicMock(
+    sb.table("agent_profile_cards").select("id,owner_email,claim_token_hash,card,status").eq("handle", "alice").execute.return_value = MagicMock(
         data=[{"owner_email": "someone@example.com", "claim_token_hash": None, "card": _card_json()}]
     )
     monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)

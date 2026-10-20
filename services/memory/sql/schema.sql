@@ -229,3 +229,25 @@ CREATE TABLE IF NOT EXISTS mcp_tool_calls (
   error_class     text,
   created_at      timestamptz NOT NULL DEFAULT now()
 );
+
+-- Freshness v2 (docs/plans/ZYND_MEMORY_QUALITY_PLAN.md, Phase 4). Expand-only and idempotent:
+-- nothing is dropped or rewritten, the new columns are nullable or defaulted, and the two
+-- backfills only touch rows that have not been filled in yet. Read by code only when
+-- FEATURE_FRESHNESS_V2 (with FEATURE_FACT_FAMILIES) is on, so applying this changes no behaviour.
+--   last_seen_at    when the fact was last evidenced (decay and staleness count from here)
+--   mention_count   in how many distinct chunks it has been seen (second-sighting rule)
+--   base_confidence confidence before time decay; confidence = base x 0.5^(days since seen / halflife)
+ALTER TABLE assertions ADD COLUMN IF NOT EXISTS last_seen_at     timestamptz;
+ALTER TABLE assertions ADD COLUMN IF NOT EXISTS mention_count    int NOT NULL DEFAULT 1;
+ALTER TABLE assertions ADD COLUMN IF NOT EXISTS base_confidence  double precision;
+UPDATE assertions SET last_seen_at = coalesce(observed_at, extracted_at) WHERE last_seen_at IS NULL;
+UPDATE assertions SET base_confidence = confidence WHERE base_confidence IS NULL;
+CREATE INDEX IF NOT EXISTS assertions_user_active_seen
+  ON assertions (user_id, last_seen_at DESC) WHERE valid_until IS NULL;
+
+-- Last run of each nightly job, so /health can say when decay last ran (and shout if it hasn't).
+CREATE TABLE IF NOT EXISTS job_runs (
+  job         text PRIMARY KEY,
+  last_run_at timestamptz NOT NULL DEFAULT now(),
+  summary     jsonb NOT NULL DEFAULT '{}'::jsonb
+);

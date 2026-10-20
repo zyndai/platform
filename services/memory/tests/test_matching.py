@@ -265,7 +265,9 @@ async def test_findability_facts_are_public_by_default(client):
     assert by_pred.get("believes") is False      # everything else -> stays private
 
 
-async def test_match_surfaces_stored_socials(client):
+async def test_match_never_surfaces_contact_details(client):
+    # F7: being findable is not consent to be contacted on LinkedIn / Telegram / X. Stored
+    # social links stay out of every search and match result.
     pool = get_pool()
     caller = await _make_user("sc_caller@example.com")
     target = await _make_user("sc_target@example.com")
@@ -277,8 +279,11 @@ async def test_match_surfaces_stored_socials(client):
 
     res = await search_by_query(pool, str(caller), _TARGET_QUERY, "full_context")
     tgt = next(r for r in res if r["user_id"] == str(target))
-    assert tgt["socials"] == {"linkedin": "https://linkedin.com/in/t", "telegram": "@t"}  # empty dropped
-    assert "LinkedIn:" in tgt["contact"] and "Telegram:" in tgt["contact"]
+    assert "socials" not in tgt and "contact" not in tgt
+    assert "linkedin.com/in/t" not in repr(res) and "@t" not in repr(res)
+
+    similar = await match_users(pool, str(caller), "full_context", 10)
+    assert all("socials" not in r and "contact" not in r for r in similar)
 
 
 async def test_social_links_endpoint_requires_valid_session(client):

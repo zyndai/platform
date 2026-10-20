@@ -200,3 +200,65 @@ def test_ordinary_group_members_cannot_invite(monkeypatch):
     with pytest.raises(HTTPException) as error:
         network.invite_to_group(USER, "group", PARTNER, None)
     assert error.value.status_code == 403
+
+
+# ── contact links are for accepted connections only ───────────────────────────────
+
+def _partner_row(status):
+    return {"requester_user_id": USER, "requester_card_id": "c-me", "recipient_user_id": "other",
+            "recipient_card_id": "c-them", "status": status}
+
+
+def _partner_sb(monkeypatch):
+    from unittest.mock import MagicMock
+
+    chain = MagicMock()
+    for method in ("select", "eq", "limit"):
+        getattr(chain, method).return_value = chain
+    chain.execute.return_value = MagicMock(data=[{
+        "id": "c-them", "handle": "bob",
+        "card": {"identity": {"name": "Bob", "headline": "Founder",
+                              "links": {"linkedin": "https://linkedin.com/in/bob", "x": "  ", "github": ""}}},
+    }])
+    sb = MagicMock()
+    sb.table.return_value = chain
+    monkeypatch.setattr(network, "_sb", lambda: sb)
+
+
+@pytest.mark.parametrize("status", ["pending", "declined", "blocked", "revoked"])
+def test_partner_links_are_withheld_until_the_connection_is_accepted(monkeypatch, status):
+    _partner_sb(monkeypatch)
+    partner = network._partner_card(_partner_row(status), USER)
+    assert partner["handle"] == "bob" and "links" not in partner
+
+
+def test_partner_links_are_shared_once_accepted_and_blanks_dropped(monkeypatch):
+    _partner_sb(monkeypatch)
+    partner = network._partner_card(_partner_row("accepted"), USER)
+    assert partner["links"] == {"linkedin": "https://linkedin.com/in/bob"}
+
+
+def test_the_inbox_carries_links_only_for_accepted_partners(monkeypatch):
+    from unittest.mock import MagicMock
+
+    chain = MagicMock()
+    for method in ("select", "in_"):
+        getattr(chain, method).return_value = chain
+    chain.execute.return_value = MagicMock(data=[
+        {"id": "c-bob", "card": {"identity": {"links": {"linkedin": "https://linkedin.com/in/bob", "x": " "}}}},
+        {"id": "c-cy", "card": {"identity": {"links": {"github": "https://github.com/cy"}}}},
+    ])
+    sb = MagicMock()
+    sb.table.return_value = chain
+    monkeypatch.setattr(network, "_sb", lambda: sb)
+    inbox = [
+        {"id": "1", "status": "accepted", "partner": {"card_id": "c-bob", "handle": "bob"}},
+        {"id": "2", "status": "pending", "partner": {"card_id": "c-cy", "handle": "cy"}},
+        {"id": "3", "status": "accepted", "partner": {"card_id": "c-gone", "handle": "gone"}},
+    ]
+    out = network._with_accepted_links(inbox)
+    assert out[0]["partner"]["links"] == {"linkedin": "https://linkedin.com/in/bob"}
+    assert "links" not in out[1]["partner"]          # pending: nothing shared
+    assert "links" not in out[2]["partner"]          # card not found: nothing invented
+    chain.in_.assert_called_once_with("id", ["c-bob", "c-gone"])   # one lookup, accepted partners only
+    assert network._with_accepted_links([{"status": "pending", "partner": {"card_id": "x"}}])[0]["partner"] == {"card_id": "x"}

@@ -5,7 +5,7 @@ import asyncio
 import html
 import re
 import smtplib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from postgrest.exceptions import APIError
@@ -34,6 +34,8 @@ def render_weekly(data: dict, unsubscribe_url: str | None, *, preview_label: str
              f"Card completeness: {data['completeness']['score']}%", "", "Questions that found your card:",
              *(questions or ["Matching queries are not recorded yet."]), "", f"Review your inbox: {inbox}",
              f"Owner home: {base}/home"]
+    from services import digest_network
+    lines += digest_network.lines(data.get("network"))
     body = "\n".join(lines)
     intro_waiting = data.get("intro_inbox_count")
     if intro_waiting is not None:
@@ -46,10 +48,19 @@ def render_weekly(data: dict, unsubscribe_url: str | None, *, preview_label: str
               f'<main style="max-width:600px;margin:auto;background:white;padding:24px;border-radius:16px"><h1>Your week on Zynd</h1>{content}'
               '<h2>Questions that found your card</h2><ul>' + "".join(f"<li>{esc(q)}</li>" for q in (questions or ["Matching queries are not recorded yet."])) + '</ul>'
               f'<p><a href="{esc(inbox)}">Review your inbox</a> · <a href="{esc(base + "/home")}">Owner home</a></p>'
+              + _network_html(data.get("network"), esc)
               + (f'<p>{intro_waiting} intro requests waiting. <a href="{esc(base + "/intros")}">Review introductions</a></p>' if intro_waiting is not None else '')
               + (f'<footer>You receive this because you own a Zynd card. <a href="{esc(unsubscribe_url)}">Unsubscribe</a></footer>' if unsubscribe_url else f'<footer>{esc(preview_label)}</footer>')
               + '</main></body></html>')
     return body, markup
+
+
+def _network_html(network: dict | None, esc) -> str:
+    from services import digest_network
+    rows = digest_network.lines(network)[2:]
+    if not rows:
+        return ""
+    return "<h2>Your network this week</h2><ul>" + "".join(f"<li>{esc(r.removeprefix('- '))}</li>" for r in rows) + "</ul>"
 
 
 def render_reminder(nudges: list[dict], unsubscribe_url: str | None) -> tuple[str, str]:
@@ -158,6 +169,31 @@ def claim_delivery(email: str, kind: str, period: str) -> str | None:
         raise
 
 
+def _network_section(email: str, row: dict, all_rows: list[dict]) -> dict | None:
+    """A4: mutual matches, what connections changed, saved-search hits. Best effort and
+    off unless network controls are on: the digest must never fail because of it."""
+    from services import digest_network, network, trust
+    if not trust.enabled() or not row.get("owner_user_id"):
+        return None
+    try:
+        me = digest_network._card(row)
+        user_id = row["owner_user_id"]
+        conns = network._sb().table("connections").select("*").or_(
+            f"requester_user_id.eq.{user_id},recipient_user_id.eq.{user_id}").execute().data or []
+        partner_ids = [c["recipient_card_id"] if c["requester_user_id"] == user_id else c["requester_card_id"]
+                       for c in conns if c.get("status") == "accepted"]
+        by_id = {r["id"]: r for r in all_rows if r.get("id")}
+        partners = [c for c in (digest_network._card(by_id[i]) for i in partner_ids if i in by_id) if c]
+        linked = {r["handle"] for r in all_rows if r.get("id") in {c["recipient_card_id"] for c in conns} | {c["requester_card_id"] for c in conns}}
+        hits = network._sb().table("card_nudges").select("title").eq("owner_email", email).eq("kind", "saved_search") \
+            .gte("created_at", (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()).execute().data or []
+        return digest_network.section(
+            digest_network.mutual_matches(me, [r for r in all_rows if r.get("status") == "published"], linked) if me else [],
+            digest_network.connection_updates(partners), [h["title"] for h in hits])
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def run_notifications(*, dry_run: bool = False, now: datetime | None = None) -> dict:
     stats = {"sent": 0, "skipped": 0, "failed": 0, "previews": []}
     if not owner_home.enabled():
@@ -188,6 +224,7 @@ async def run_notifications(*, dry_run: bool = False, now: datetime | None = Non
             data = await owner_home.status(email, persist=not dry_run)
             if not data:
                 continue
+            data["network"] = await asyncio.to_thread(_network_section, email, row, rows)
             if dry_run:
                 stats["previews"].append({"handle": data["handle"], "body": render_weekly(data, None)[0]})
                 continue

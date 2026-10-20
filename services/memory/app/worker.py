@@ -12,11 +12,14 @@ from arq.connections import RedisSettings
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool, to_pgvector
 from app.services.assertions import upsert_assertion
+from app.services import job_runs
 from app.services.decay import run_decay_job, run_orphan_cleanup
 from app.services.embeddings import embed
 from app.services.entities import resolve_entity
 from app.services.extraction import extract_assertions
+from app.services.facts import write_fact
 from app.services.matching import recompute_user_embeddings, run_recompute_all
+from app.taxonomy import SYNC_DECLARED_PREDICATES, SYNC_SOURCES
 
 logger = logging.getLogger("zynd.worker")
 
@@ -55,6 +58,20 @@ async def chunk_processor(ctx: dict, chunk_id: str) -> dict:
     async with pool.acquire() as conn:
         for item in extracted:
             async with conn.transaction():
+                if settings.feature_fact_families:
+                    # One fact per thing. A sync (github / linkedin / twitter) already declared
+                    # its skills, tools and work directly; the summary turn it ingests would
+                    # say the same things again, so extraction does not re-emit them.
+                    if source_system in SYNC_SOURCES and item.predicate in SYNC_DECLARED_PREDICATES:
+                        continue
+                    result = await write_fact(
+                        conn, user_id, item.predicate, item.object_name,
+                        entity_type=item.object_type, confidence=item.confidence,
+                        source="inferred", source_system=source_system,
+                        trace_chunk_id=chunk_id, observed_at=chunk["observed_at"],
+                    )
+                    written += 1 if result.written else 0
+                    continue
                 entity_id = await resolve_entity(conn, user_id, item.object_name, item.object_type)
                 await upsert_assertion(
                     conn,
@@ -65,7 +82,8 @@ async def chunk_processor(ctx: dict, chunk_id: str) -> dict:
                     trace_chunk_id=chunk_id,
                     observed_at=chunk["observed_at"],
                 )
-            written += 1
+            if not settings.feature_fact_families:
+                written += 1
 
     # Stage: refresh this user's matching vectors now that their graph changed.
     # ctx["redis"] is present under arq; absent when chunk_processor is called
@@ -87,6 +105,7 @@ async def recompute_user(ctx: dict, user_id: str) -> dict:
 async def decay_cron(ctx: dict) -> dict:
     result = await run_decay_job(get_pool())
     logger.info("decay_job: %s", result)
+    await job_runs.record(get_pool(), "decay", result)
     return result
 
 

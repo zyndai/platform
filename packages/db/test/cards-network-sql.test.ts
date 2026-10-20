@@ -36,7 +36,7 @@ test('Cards network migrations preserve invitation and membership invariants', {
     });
     await apply();
     await apply();
-    assert.equal((await client.query('select count(*)::int as n from drizzle.__cards_migrations')).rows[0].n, 24);
+    assert.equal((await client.query('select count(*)::int as n from drizzle.__cards_migrations')).rows[0].n, 26);
     assert.equal((await client.query("select to_regclass('drizzle.__persona_migrations') as table")).rows[0].table, null);
     await client.query("set request.jwt.claim.role='service_role'");
 

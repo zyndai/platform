@@ -196,7 +196,15 @@ async def whoami(user_id: str = Depends(current_user)) -> dict:
 @app.get("/health")
 async def health() -> dict:
     await get_pool().execute("SELECT 1")
-    return {"status": "ok"}
+    out: dict = {"status": "ok"}
+    if settings.freshness_v2:
+        # Decay silently not running looks exactly like "facts never fade": say so.
+        from app.services import job_runs
+        decay = await job_runs.status(get_pool(), "decay", job_runs.DECAY_MAX_AGE_HOURS)
+        out["decay"] = decay
+        if not decay["ok"]:
+            out["warnings"] = [f"decay has not run in the last {job_runs.DECAY_MAX_AGE_HOURS}h"]
+    return out
 
 
 @app.get("/.well-known/openapi.json", include_in_schema=False)
@@ -347,6 +355,30 @@ async def service_findability(identifier: str, authorization: str = Header(defau
     from app.services.findability import get_card
     facts = await get_card(get_pool(), str(row["id"]))
     return {"connected": True, "facts": facts}
+
+
+class OutsidePeopleRequest(BaseModel):
+    """Structured filters for the external people search. Cards' suggestions send these."""
+    titles: list[str] = Field(default_factory=list, max_length=5)
+    keywords: list[str] = Field(default_factory=list, max_length=5)
+    location: str = Field(default="", max_length=120)
+    limit: int = Field(default=2, ge=1, le=10)
+
+
+@app.post("/v1/service/outside-people")
+async def service_outside_people(req: OutsidePeopleRequest, authorization: str = Header(default="")) -> dict:
+    """Service-to-service external (LinkedIn) people search: the one QuickEnrich client.
+
+    Called by the Cards backend for "people outside Zynd you may want to meet". Auth is the
+    shared MEMORY_SERVICE_TOKEN. Returns {"people": [...], "warning": str | None}; an empty
+    list always comes with a reason unless the search genuinely found nobody."""
+    if not _valid_service_token(authorization.removeprefix("Bearer ").strip()):
+        raise HTTPException(status_code=401, detail="invalid service token")
+    from app.services.people_discovery import search_quickenrich
+    from app.services.people_query import query_from_filters
+    query = query_from_filters(titles=req.titles, keywords=req.keywords, location=req.location)
+    people, warning = await search_quickenrich(query.raw, req.limit, query=query)
+    return {"people": people, "warning": warning}
 
 
 @app.get("/v1/service/identity/{uid}")
@@ -537,18 +569,26 @@ async def my_graph(user_id: str = Depends(current_user)) -> list[AssertionView]:
 
 
 @app.get("/me/context")
-async def my_context(k: int = 20, user_id: str = Depends(current_user)) -> dict:
+async def my_context(
+    k: int = 20, topic: str | None = None, user_id: str = Depends(current_user)
+) -> dict:
     """Combined context packet: identity, ZYND facts, persona profile, and brief.
 
     Single endpoint for ChatGPT to call at conversation start so every reply is
     grounded. Persona fetch is best-effort: network failures return profile=null
     but local assertions are preserved. Existing response fields stay additive.
+
+    Without `topic` the facts are what is true now (stale ones left out). With `topic`
+    they are the facts related to it, older ones included and marked `stale: true`.
     """
-    from app.services.export import active_context
+    from app.services.export import active_context, context_slice
     from app.services.self_context import load_self_context, read_brief
 
     pool = get_pool()
-    assertions = await active_context(pool, user_id, k)
+    k = max(1, min(k, 50))
+    topic = (topic or "").strip()
+    assertions = await (context_slice(pool, user_id, topic, k) if topic
+                        else active_context(pool, user_id, k))
 
     context = await load_self_context(pool, user_id)
     brief = await read_brief(context["supabase_user_id"] or user_id)

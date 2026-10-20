@@ -167,13 +167,14 @@ async def test_legacy_transport_excludes_unregistered_tools():
         with patch.object(m, "_get_pool", AsyncMock()):
             async with Client(m.mcp) as client:
                 tools = await client.list_tools()
-                for removed in ("remember", "update_headline", "search_gmail_emails"):
+                for removed in ("remember", "update_headline", "search_gmail_emails",
+                                "search_linkedin_profiles", "find_linkedin_people_for_me"):
                     with pytest.raises((MCPError, ToolError), match="Unknown tool"):
                         await client.call_tool(removed, {})
     finally:
         auth_context_var.reset(reset)
     names = {tool.name for tool in tools}
-    assert len(names) == 30  # Cards-native network tools; ChatGPT plugin tools stay off this server.
+    assert len(names) == 33  # Cards-native network tools; ChatGPT plugin tools stay off this server.
     assert {"export_my_context", "publish_page", "find_people", "request_card_connection", "create_card_group"} <= names
     assert names.isdisjoint({
         "remember", "get_my_card", "get_my_socials", "read_my_brief",

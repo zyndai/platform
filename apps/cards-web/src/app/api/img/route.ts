@@ -37,6 +37,11 @@ function validImageUrl(raw: string): string | null {
     // the whole suffix so a host rotation can't break already-stored URLs.
     if (ALLOWED_HOSTS.has(host)) return u.toString();
     if (host.endsWith(".googleusercontent.com")) return u.toString();
+    // Photos the owner uploads in the card editor live in our public avatars bucket. Match the
+    // bucket path, not just the host, so this isn't a proxy for arbitrary Supabase storage.
+    if (host.endsWith(".supabase.co") && u.pathname.startsWith("/storage/v1/object/public/avatars/")) {
+      return u.toString();
+    }
     return null;
   } catch {
     return null;

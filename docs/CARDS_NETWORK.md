@@ -154,6 +154,28 @@ preflight rejects any difference outside the exact reviewed Cards object list;
 the rehearsal passes the unfiltered drift check. Live application must also pass
 that full check.
 
+### Live application — 2026-10-20 (messaging v2)
+
+Applied `0023_network_messaging_v2` to aafo through the session pooler. Only
+that Cards migration was pending. Post-application verification:
+
+- All existing DM and group message rows have a non-null `seq`; message counts
+  and last-message summaries are backfilled.
+- Read cursors were created for existing DM participants and group members, so
+  old conversations start read.
+- The only policy on `realtime.messages` is
+  `cards network can receive broadcasts`, scoped to `authenticated` and
+  `cards:*` topics.
+- `authenticated` has schema usage and execute on
+  `cards.network_can_subscribe(text)` only. It has no table grants in `cards`,
+  and `cards.purge_card_events` is not executable by browser roles.
+- Safe service-role smoke calls to `network_inbox` and `network_dm_messages`
+  return the expected empty/404 payloads.
+- Full drift check against prod: **No drift: 1,295 catalog entries match**.
+- Cards API and Cards web were not deployed by this migration step. Apply the
+  code in the rollout order above; the migration is additive and the currently
+  deployed API keeps working.
+
 ### Live application — 2026-10-17
 
 Applied `0020_network_atomic_operations`, `0021_reconcile_owner_metadata`, and

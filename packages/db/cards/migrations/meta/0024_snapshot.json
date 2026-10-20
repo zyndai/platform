@@ -1,6 +1,6 @@
 {
-  "id": "1c302dbd-807f-47e7-8e3d-b61ea600010e",
-  "prevId": "ec35207b-65d9-43ca-bf7e-882b35c53b49",
+  "id": "601adbb9-862a-49dd-bc11-d2588e4b751a",
+  "prevId": "f0f47b8b-d9bd-4b48-a647-ed78433a3f61",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1938,6 +1938,18 @@
           "primaryKey": false,
           "notNull": true
         },
+        "seq": {
+          "name": "seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "sender_user_id": {
           "name": "sender_user_id",
           "type": "uuid",
@@ -1959,6 +1971,55 @@
         }
       },
       "indexes": {
+        "cards_dm_messages_thread_seq_key": {
+          "name": "cards_dm_messages_thread_seq_key",
+          "columns": [
+            {
+              "expression": "thread_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "seq",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "cards_dm_messages_client_key": {
+          "name": "cards_dm_messages_client_key",
+          "columns": [
+            {
+              "expression": "thread_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "sender_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "client_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "client_id IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "cards_dm_messages_thread_created_idx": {
           "name": "cards_dm_messages_thread_created_idx",
           "columns": [
@@ -2025,7 +2086,126 @@
           "withCheck": "true"
         }
       },
-      "checkConstraints": {},
+      "checkConstraints": {
+        "cards_dm_messages_seq_check": {
+          "name": "cards_dm_messages_seq_check",
+          "value": "seq > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "cards.dm_read_state": {
+      "name": "dm_read_state",
+      "schema": "cards",
+      "columns": {
+        "thread_id": {
+          "name": "thread_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_read_seq": {
+          "name": "last_read_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_read_at": {
+          "name": "last_read_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "cards_dm_read_state_user_idx": {
+          "name": "cards_dm_read_state_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "last_read_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "cards_dm_read_state_thread_fkey": {
+          "name": "cards_dm_read_state_thread_fkey",
+          "tableFrom": "dm_read_state",
+          "tableTo": "dm_threads",
+          "schemaTo": "cards",
+          "columnsFrom": [
+            "thread_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cards_dm_read_state_user_fkey": {
+          "name": "cards_dm_read_state_user_fkey",
+          "tableFrom": "dm_read_state",
+          "tableTo": "users",
+          "schemaTo": "auth",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "cards_dm_read_state_pkey": {
+          "name": "cards_dm_read_state_pkey",
+          "columns": [
+            "thread_id",
+            "user_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "service role full access on dm_read_state": {
+          "name": "service role full access on dm_read_state",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "service_role"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "cards_dm_read_state_seq_check": {
+          "name": "cards_dm_read_state_seq_check",
+          "value": "last_read_seq >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "cards.dm_threads": {
@@ -2044,6 +2224,31 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
+        },
+        "message_count": {
+          "name": "message_count",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_message_at": {
+          "name": "last_message_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_message_preview": {
+          "name": "last_message_preview",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_message_sender_user_id": {
+          "name": "last_message_sender_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -2075,6 +2280,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "cards_dm_threads_last_message_idx": {
+          "name": "cards_dm_threads_last_message_idx",
+          "columns": [
+            {
+              "expression": "last_message_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2090,6 +2310,20 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cards_dm_threads_last_sender_fkey": {
+          "name": "cards_dm_threads_last_sender_fkey",
+          "tableFrom": "dm_threads",
+          "tableTo": "users",
+          "schemaTo": "auth",
+          "columnsFrom": [
+            "last_message_sender_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -2115,7 +2349,12 @@
           "withCheck": "true"
         }
       },
-      "checkConstraints": {},
+      "checkConstraints": {
+        "cards_dm_threads_message_count_check": {
+          "name": "cards_dm_threads_message_count_check",
+          "value": "message_count >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "cards.group_invitations": {
@@ -2499,6 +2738,18 @@
           "primaryKey": false,
           "notNull": true
         },
+        "seq": {
+          "name": "seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "sender_user_id": {
           "name": "sender_user_id",
           "type": "uuid",
@@ -2520,6 +2771,55 @@
         }
       },
       "indexes": {
+        "cards_group_messages_group_seq_key": {
+          "name": "cards_group_messages_group_seq_key",
+          "columns": [
+            {
+              "expression": "group_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "seq",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "cards_group_messages_client_key": {
+          "name": "cards_group_messages_client_key",
+          "columns": [
+            {
+              "expression": "group_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "sender_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "client_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "client_id IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "cards_group_messages_group_created_idx": {
           "name": "cards_group_messages_group_created_idx",
           "columns": [
@@ -2586,7 +2886,126 @@
           "withCheck": "true"
         }
       },
-      "checkConstraints": {},
+      "checkConstraints": {
+        "cards_group_messages_seq_check": {
+          "name": "cards_group_messages_seq_check",
+          "value": "seq > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "cards.group_read_state": {
+      "name": "group_read_state",
+      "schema": "cards",
+      "columns": {
+        "group_id": {
+          "name": "group_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_read_seq": {
+          "name": "last_read_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_read_at": {
+          "name": "last_read_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "cards_group_read_state_user_idx": {
+          "name": "cards_group_read_state_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "last_read_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "cards_group_read_state_group_fkey": {
+          "name": "cards_group_read_state_group_fkey",
+          "tableFrom": "group_read_state",
+          "tableTo": "groups",
+          "schemaTo": "cards",
+          "columnsFrom": [
+            "group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cards_group_read_state_user_fkey": {
+          "name": "cards_group_read_state_user_fkey",
+          "tableFrom": "group_read_state",
+          "tableTo": "users",
+          "schemaTo": "auth",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "cards_group_read_state_pkey": {
+          "name": "cards_group_read_state_pkey",
+          "columns": [
+            "group_id",
+            "user_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "service role full access on group_read_state": {
+          "name": "service role full access on group_read_state",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "service_role"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "cards_group_read_state_seq_check": {
+          "name": "cards_group_read_state_seq_check",
+          "value": "last_read_seq >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "cards.groups": {
@@ -2624,6 +3043,31 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'private'"
+        },
+        "message_count": {
+          "name": "message_count",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_message_at": {
+          "name": "last_message_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_message_preview": {
+          "name": "last_message_preview",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_message_sender_user_id": {
+          "name": "last_message_sender_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -2667,6 +3111,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "cards_groups_last_message_idx": {
+          "name": "cards_groups_last_message_idx",
+          "columns": [
+            {
+              "expression": "last_message_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2682,6 +3141,20 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cards_groups_last_sender_fkey": {
+          "name": "cards_groups_last_sender_fkey",
+          "tableFrom": "groups",
+          "tableTo": "users",
+          "schemaTo": "auth",
+          "columnsFrom": [
+            "last_message_sender_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -2703,495 +3176,10 @@
         "cards_groups_visibility_check": {
           "name": "cards_groups_visibility_check",
           "value": "visibility IN ('private', 'open')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "cards.match_preferences": {
-      "name": "match_preferences",
-      "schema": "cards",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
         },
-        "user_id": {
-          "name": "user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "value": {
-          "name": "value",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "cards_match_preferences_user_idx": {
-          "name": "cards_match_preferences_user_idx",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "cards_match_preferences_user_fkey": {
-          "name": "cards_match_preferences_user_fkey",
-          "tableFrom": "match_preferences",
-          "tableTo": "users",
-          "schemaTo": "auth",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "cards_match_preferences_key": {
-          "name": "cards_match_preferences_key",
-          "nullsNotDistinct": false,
-          "columns": [
-            "user_id",
-            "kind",
-            "value"
-          ]
-        }
-      },
-      "policies": {
-        "service role full access on match_preferences": {
-          "name": "service role full access on match_preferences",
-          "as": "PERMISSIVE",
-          "for": "ALL",
-          "to": [
-            "service_role"
-          ],
-          "using": "true",
-          "withCheck": "true"
-        }
-      },
-      "checkConstraints": {
-        "cards_match_preferences_kind_check": {
-          "name": "cards_match_preferences_kind_check",
-          "value": "kind IN ('hide_person', 'mute_topic', 'less_like_this')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "cards.card_reports": {
-      "name": "card_reports",
-      "schema": "cards",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "reporter_user_id": {
-          "name": "reporter_user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "target_card_id": {
-          "name": "target_card_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "details": {
-          "name": "details",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'open'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "cards_card_reports_open_key": {
-          "name": "cards_card_reports_open_key",
-          "columns": [
-            {
-              "expression": "reporter_user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "target_card_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "status = 'open'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "cards_card_reports_target_idx": {
-          "name": "cards_card_reports_target_idx",
-          "columns": [
-            {
-              "expression": "target_card_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "cards_card_reports_reporter_fkey": {
-          "name": "cards_card_reports_reporter_fkey",
-          "tableFrom": "card_reports",
-          "tableTo": "users",
-          "schemaTo": "auth",
-          "columnsFrom": [
-            "reporter_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "cards_card_reports_target_fkey": {
-          "name": "cards_card_reports_target_fkey",
-          "tableFrom": "card_reports",
-          "tableTo": "agent_profile_cards",
-          "schemaTo": "cards",
-          "columnsFrom": [
-            "target_card_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {
-        "service role full access on card_reports": {
-          "name": "service role full access on card_reports",
-          "as": "PERMISSIVE",
-          "for": "ALL",
-          "to": [
-            "service_role"
-          ],
-          "using": "true",
-          "withCheck": "true"
-        }
-      },
-      "checkConstraints": {
-        "cards_card_reports_reason_check": {
-          "name": "cards_card_reports_reason_check",
-          "value": "reason IN ('spam', 'impersonation', 'harassment', 'inaccurate', 'other')"
-        },
-        "cards_card_reports_status_check": {
-          "name": "cards_card_reports_status_check",
-          "value": "status IN ('open', 'reviewed', 'dismissed')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "cards.saved_searches": {
-      "name": "saved_searches",
-      "schema": "cards",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "search_key": {
-          "name": "search_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "label": {
-          "name": "label",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "q": {
-          "name": "q",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "role": {
-          "name": "role",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "location": {
-          "name": "location",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "skills": {
-          "name": "skills",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "active": {
-          "name": "active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
-        "seen_handles": {
-          "name": "seen_handles",
-          "type": "text[]",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::text[]"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "last_checked_at": {
-          "name": "last_checked_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_notified_at": {
-          "name": "last_notified_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "cards_saved_searches_active_idx": {
-          "name": "cards_saved_searches_active_idx",
-          "columns": [
-            {
-              "expression": "active",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "last_checked_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "cards_saved_searches_user_fkey": {
-          "name": "cards_saved_searches_user_fkey",
-          "tableFrom": "saved_searches",
-          "tableTo": "users",
-          "schemaTo": "auth",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "cards_saved_searches_user_key": {
-          "name": "cards_saved_searches_user_key",
-          "nullsNotDistinct": false,
-          "columns": [
-            "user_id",
-            "search_key"
-          ]
-        }
-      },
-      "policies": {
-        "service role full access on saved_searches": {
-          "name": "service role full access on saved_searches",
-          "as": "PERMISSIVE",
-          "for": "ALL",
-          "to": [
-            "service_role"
-          ],
-          "using": "true",
-          "withCheck": "true"
-        }
-      },
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "cards.card_verifications": {
-      "name": "card_verifications",
-      "schema": "cards",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "card_id": {
-          "name": "card_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "provider": {
-          "name": "provider",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "verified_at": {
-          "name": "verified_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "cards_card_verifications_card_fkey": {
-          "name": "cards_card_verifications_card_fkey",
-          "tableFrom": "card_verifications",
-          "tableTo": "agent_profile_cards",
-          "schemaTo": "cards",
-          "columnsFrom": [
-            "card_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "cards_card_verifications_key": {
-          "name": "cards_card_verifications_key",
-          "nullsNotDistinct": false,
-          "columns": [
-            "card_id",
-            "provider"
-          ]
-        }
-      },
-      "policies": {
-        "service role full access on card_verifications": {
-          "name": "service role full access on card_verifications",
-          "as": "PERMISSIVE",
-          "for": "ALL",
-          "to": [
-            "service_role"
-          ],
-          "using": "true",
-          "withCheck": "true"
-        }
-      },
-      "checkConstraints": {
-        "cards_card_verifications_provider_check": {
-          "name": "cards_card_verifications_provider_check",
-          "value": "provider IN ('linkedin', 'github', 'work_email')"
+        "cards_groups_message_count_check": {
+          "name": "cards_groups_message_count_check",
+          "value": "message_count >= 0"
         }
       },
       "isRLSEnabled": false

@@ -1,3 +1,5 @@
+import inspect
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -49,3 +51,66 @@ def test_request_body_cannot_override_the_caller(monkeypatch):
         "Authorization": "Bearer memory-network-test", "X-Zynd-User": UID,
     })
     assert response.status_code == 422
+
+
+def test_inbox_route_uses_the_bound_user(monkeypatch):
+    app = client(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(network.network, "get_inbox", lambda uid: seen.update(uid=uid) or {
+        "connections": [], "groups": [], "invitations": [],
+    })
+    response = app.get("/cards/network/inbox", headers={
+        "Authorization": "Bearer memory-network-test", "X-Zynd-User": UID,
+    })
+    assert response.status_code == 200
+    assert response.json() == {"connections": [], "groups": [], "invitations": []}
+    assert seen == {"uid": UID}
+
+
+def test_send_message_accepts_a_client_idempotency_key(monkeypatch):
+    app = client(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(network.network, "send_message", lambda uid, connection, content, client_id: seen.update({
+        "uid": uid, "connection": connection, "content": content, "client_id": client_id,
+    }) or {"message": {"id": "m"}})
+    response = app.post(
+        "/cards/network/connections/00000000-0000-4000-8000-000000000001/messages",
+        json={"content": "hello", "client_id": "00000000-0000-4000-8000-000000000002"},
+        headers={"Authorization": "Bearer memory-network-test", "X-Zynd-User": UID},
+    )
+    assert response.status_code == 200
+    assert seen["client_id"] == "00000000-0000-4000-8000-000000000002"
+    assert seen["content"] == "hello"
+
+
+def test_read_mark_route(monkeypatch):
+    app = client(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(network.network, "mark_read", lambda uid, kind, target, seq: seen.update({
+        "uid": uid, "kind": kind, "target": target, "seq": seq,
+    }) or {"status": "ok"})
+    response = app.post(
+        "/cards/network/read",
+        json={"kind": "dm", "id": "00000000-0000-4000-8000-000000000001", "seq": 7},
+        headers={"Authorization": "Bearer memory-network-test", "X-Zynd-User": UID},
+    )
+    assert response.status_code == 200
+    assert seen == {
+        "uid": UID, "kind": "dm", "target": "00000000-0000-4000-8000-000000000001", "seq": 7,
+    }
+
+
+def test_network_handlers_do_not_block_the_event_loop():
+    # The Supabase client is synchronous. These handlers must be plain `def`
+    # so FastAPI runs them in its threadpool instead of on the event loop.
+    for handler in (
+        network.inbox,
+        network.connections,
+        network.connection_messages,
+        network.send_connection_message,
+        network.groups,
+        network.group_messages,
+        network.send_group_message,
+        network.mark_read,
+    ):
+        assert not inspect.iscoroutinefunction(handler), handler.__name__

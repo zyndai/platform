@@ -1,5 +1,5 @@
 {
-  "id": "ec35207b-65d9-43ca-bf7e-882b35c53b49",
+  "id": "f0f47b8b-d9bd-4b48-a647-ed78433a3f61",
   "prevId": "49a2c9dd-fa18-457d-b065-caceb9f05f46",
   "version": "7",
   "dialect": "postgresql",
@@ -1487,221 +1487,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "cards.connection_invites": {
-      "name": "connection_invites",
-      "schema": "cards",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "inviter_user_id": {
-          "name": "inviter_user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "inviter_card_id": {
-          "name": "inviter_card_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "target_card_id": {
-          "name": "target_card_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "message": {
-          "name": "message",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "connection_id": {
-          "name": "connection_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "delivered_at": {
-          "name": "delivered_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "(now() + '60 days'::interval)"
-        }
-      },
-      "indexes": {
-        "cards_connection_invites_target_idx": {
-          "name": "cards_connection_invites_target_idx",
-          "columns": [
-            {
-              "expression": "target_card_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "cards_connection_invites_inviter_idx": {
-          "name": "cards_connection_invites_inviter_idx",
-          "columns": [
-            {
-              "expression": "inviter_user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "cards_connection_invites_pending_key": {
-          "name": "cards_connection_invites_pending_key",
-          "columns": [
-            {
-              "expression": "inviter_user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "target_card_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "status = 'pending'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "cards_connection_invites_inviter_user_fkey": {
-          "name": "cards_connection_invites_inviter_user_fkey",
-          "tableFrom": "connection_invites",
-          "tableTo": "users",
-          "schemaTo": "auth",
-          "columnsFrom": [
-            "inviter_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "cards_connection_invites_inviter_card_fkey": {
-          "name": "cards_connection_invites_inviter_card_fkey",
-          "tableFrom": "connection_invites",
-          "tableTo": "agent_profile_cards",
-          "schemaTo": "cards",
-          "columnsFrom": [
-            "inviter_card_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "cards_connection_invites_target_card_fkey": {
-          "name": "cards_connection_invites_target_card_fkey",
-          "tableFrom": "connection_invites",
-          "tableTo": "agent_profile_cards",
-          "schemaTo": "cards",
-          "columnsFrom": [
-            "target_card_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "cards_connection_invites_connection_fkey": {
-          "name": "cards_connection_invites_connection_fkey",
-          "tableFrom": "connection_invites",
-          "tableTo": "connections",
-          "schemaTo": "cards",
-          "columnsFrom": [
-            "connection_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {
-        "service role full access on connection_invites": {
-          "name": "service role full access on connection_invites",
-          "as": "PERMISSIVE",
-          "for": "ALL",
-          "to": [
-            "service_role"
-          ],
-          "using": "true",
-          "withCheck": "true"
-        }
-      },
-      "checkConstraints": {
-        "cards_connection_invites_status_check": {
-          "name": "cards_connection_invites_status_check",
-          "value": "status IN ('pending', 'delivered', 'cancelled', 'expired')"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "cards.connections": {
       "name": "connections",
       "schema": "cards",
@@ -1938,6 +1723,18 @@
           "primaryKey": false,
           "notNull": true
         },
+        "seq": {
+          "name": "seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "sender_user_id": {
           "name": "sender_user_id",
           "type": "uuid",
@@ -1959,6 +1756,55 @@
         }
       },
       "indexes": {
+        "cards_dm_messages_thread_seq_key": {
+          "name": "cards_dm_messages_thread_seq_key",
+          "columns": [
+            {
+              "expression": "thread_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "seq",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "cards_dm_messages_client_key": {
+          "name": "cards_dm_messages_client_key",
+          "columns": [
+            {
+              "expression": "thread_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "sender_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "client_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "client_id IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "cards_dm_messages_thread_created_idx": {
           "name": "cards_dm_messages_thread_created_idx",
           "columns": [
@@ -2025,7 +1871,126 @@
           "withCheck": "true"
         }
       },
-      "checkConstraints": {},
+      "checkConstraints": {
+        "cards_dm_messages_seq_check": {
+          "name": "cards_dm_messages_seq_check",
+          "value": "seq > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "cards.dm_read_state": {
+      "name": "dm_read_state",
+      "schema": "cards",
+      "columns": {
+        "thread_id": {
+          "name": "thread_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_read_seq": {
+          "name": "last_read_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_read_at": {
+          "name": "last_read_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "cards_dm_read_state_user_idx": {
+          "name": "cards_dm_read_state_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "last_read_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "cards_dm_read_state_thread_fkey": {
+          "name": "cards_dm_read_state_thread_fkey",
+          "tableFrom": "dm_read_state",
+          "tableTo": "dm_threads",
+          "schemaTo": "cards",
+          "columnsFrom": [
+            "thread_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cards_dm_read_state_user_fkey": {
+          "name": "cards_dm_read_state_user_fkey",
+          "tableFrom": "dm_read_state",
+          "tableTo": "users",
+          "schemaTo": "auth",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "cards_dm_read_state_pkey": {
+          "name": "cards_dm_read_state_pkey",
+          "columns": [
+            "thread_id",
+            "user_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "service role full access on dm_read_state": {
+          "name": "service role full access on dm_read_state",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "service_role"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "cards_dm_read_state_seq_check": {
+          "name": "cards_dm_read_state_seq_check",
+          "value": "last_read_seq >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "cards.dm_threads": {
@@ -2044,6 +2009,31 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
+        },
+        "message_count": {
+          "name": "message_count",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_message_at": {
+          "name": "last_message_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_message_preview": {
+          "name": "last_message_preview",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_message_sender_user_id": {
+          "name": "last_message_sender_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -2075,6 +2065,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "cards_dm_threads_last_message_idx": {
+          "name": "cards_dm_threads_last_message_idx",
+          "columns": [
+            {
+              "expression": "last_message_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2090,6 +2095,20 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cards_dm_threads_last_sender_fkey": {
+          "name": "cards_dm_threads_last_sender_fkey",
+          "tableFrom": "dm_threads",
+          "tableTo": "users",
+          "schemaTo": "auth",
+          "columnsFrom": [
+            "last_message_sender_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -2115,7 +2134,12 @@
           "withCheck": "true"
         }
       },
-      "checkConstraints": {},
+      "checkConstraints": {
+        "cards_dm_threads_message_count_check": {
+          "name": "cards_dm_threads_message_count_check",
+          "value": "message_count >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "cards.group_invitations": {
@@ -2499,6 +2523,18 @@
           "primaryKey": false,
           "notNull": true
         },
+        "seq": {
+          "name": "seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "sender_user_id": {
           "name": "sender_user_id",
           "type": "uuid",
@@ -2520,6 +2556,55 @@
         }
       },
       "indexes": {
+        "cards_group_messages_group_seq_key": {
+          "name": "cards_group_messages_group_seq_key",
+          "columns": [
+            {
+              "expression": "group_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "seq",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "cards_group_messages_client_key": {
+          "name": "cards_group_messages_client_key",
+          "columns": [
+            {
+              "expression": "group_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "sender_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "client_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "client_id IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "cards_group_messages_group_created_idx": {
           "name": "cards_group_messages_group_created_idx",
           "columns": [
@@ -2586,7 +2671,126 @@
           "withCheck": "true"
         }
       },
-      "checkConstraints": {},
+      "checkConstraints": {
+        "cards_group_messages_seq_check": {
+          "name": "cards_group_messages_seq_check",
+          "value": "seq > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "cards.group_read_state": {
+      "name": "group_read_state",
+      "schema": "cards",
+      "columns": {
+        "group_id": {
+          "name": "group_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_read_seq": {
+          "name": "last_read_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_read_at": {
+          "name": "last_read_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "cards_group_read_state_user_idx": {
+          "name": "cards_group_read_state_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "last_read_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "cards_group_read_state_group_fkey": {
+          "name": "cards_group_read_state_group_fkey",
+          "tableFrom": "group_read_state",
+          "tableTo": "groups",
+          "schemaTo": "cards",
+          "columnsFrom": [
+            "group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cards_group_read_state_user_fkey": {
+          "name": "cards_group_read_state_user_fkey",
+          "tableFrom": "group_read_state",
+          "tableTo": "users",
+          "schemaTo": "auth",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "cards_group_read_state_pkey": {
+          "name": "cards_group_read_state_pkey",
+          "columns": [
+            "group_id",
+            "user_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "service role full access on group_read_state": {
+          "name": "service role full access on group_read_state",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "service_role"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "cards_group_read_state_seq_check": {
+          "name": "cards_group_read_state_seq_check",
+          "value": "last_read_seq >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "cards.groups": {
@@ -2624,6 +2828,31 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'private'"
+        },
+        "message_count": {
+          "name": "message_count",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_message_at": {
+          "name": "last_message_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_message_preview": {
+          "name": "last_message_preview",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_message_sender_user_id": {
+          "name": "last_message_sender_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -2667,6 +2896,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "cards_groups_last_message_idx": {
+          "name": "cards_groups_last_message_idx",
+          "columns": [
+            {
+              "expression": "last_message_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2682,6 +2926,20 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cards_groups_last_sender_fkey": {
+          "name": "cards_groups_last_sender_fkey",
+          "tableFrom": "groups",
+          "tableTo": "users",
+          "schemaTo": "auth",
+          "columnsFrom": [
+            "last_message_sender_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -2703,6 +2961,10 @@
         "cards_groups_visibility_check": {
           "name": "cards_groups_visibility_check",
           "value": "visibility IN ('private', 'open')"
+        },
+        "cards_groups_message_count_check": {
+          "name": "cards_groups_message_count_check",
+          "value": "message_count >= 0"
         }
       },
       "isRLSEnabled": false

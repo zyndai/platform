@@ -10,7 +10,7 @@
     when the owner signed in with the LinkedIn account matching the Card). Stored apart from the
     owner-editable card JSON so an owner cannot award themselves a badge.
 
-Behind FEATURE_NETWORK_CONTROLS (needs packages/db 0024).
+Behind FEATURE_NETWORK_CONTROLS (needs packages/db 0025).
 """
 from __future__ import annotations
 

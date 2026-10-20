@@ -60,6 +60,14 @@ def _supabase():
 def _is_missing_table(err: APIError) -> bool:
     return getattr(err, "code", None) == "PGRST205"
 
+
+def _is_missing_relation(err: Exception) -> bool:
+    return (
+        getattr(err, "code", None) in {"PGRST205", "42P01"}
+        or "Could not find the table" in str(err)
+        or "does not exist" in str(err)
+    )
+
 def _post_group_system_note(sb, group_id: str, note: str) -> None:
     """Best-effort system message into the group chat. Failure is swallowed."""
     try:
@@ -341,6 +349,30 @@ async def list_my_groups(user: dict = Depends(get_current_user)):
     """Return all groups the caller belongs to, newest activity first."""
     sb = _supabase()
     try:
+        rows = (
+            sb.table("persona_group_inbox")
+            .select("*")
+            .eq("user_id", user["id"])
+            .order("last_activity_at", desc=True)
+            .limit(50)
+            .execute()
+            .data
+            or []
+        )
+    except APIError as e:
+        if not _is_missing_relation(e):
+            raise
+        rows = []
+
+    if rows:
+        for row in rows:
+            row.pop("user_id", None)
+            row.pop("last_read_at", None)
+        return {"groups": rows}
+
+    # Pre-migration fallback. Keeps the page usable between code deploy and
+    # the expand-only migration being applied.
+    try:
         memberships = (
             sb.table("persona_group_members")
             .select("group_id, role, joined_at")
@@ -351,11 +383,11 @@ async def list_my_groups(user: dict = Depends(get_current_user)):
         if _is_missing_table(e):
             return {"groups": []}
         raise
-    rows = memberships.data or []
-    if not rows:
+    membership_rows = memberships.data or []
+    if not membership_rows:
         return {"groups": []}
 
-    ids = [r["group_id"] for r in rows]
+    ids = [r["group_id"] for r in membership_rows]
     groups = (
         sb.table("persona_groups")
         .select("id, slug, name, description, avatar_url, visibility, created_at, updated_at, archived_at")
@@ -364,10 +396,18 @@ async def list_my_groups(user: dict = Depends(get_current_user)):
         .order("updated_at", desc=True)
         .execute()
     )
-    role_by_id = {r["group_id"]: r["role"] for r in rows}
+    role_by_id = {r["group_id"]: r["role"] for r in membership_rows}
     out = []
     for g in groups.data or []:
-        out.append({**g, "my_role": role_by_id.get(g["id"])})
+        out.append({
+            **g,
+            "my_role": role_by_id.get(g["id"]),
+            "unread_count": 0,
+            "last_message_at": None,
+            "last_message_preview": None,
+            "last_message_sender_name": None,
+            "last_activity_at": g.get("updated_at") or g.get("created_at"),
+        })
     return {"groups": out}
 
 # ── Discoverable groups (phase 5) ──────────────────────────────────────
@@ -890,6 +930,36 @@ async def remove_member(
     return {"status": "removed"}
 
 # ── Messages ────────────────────────────────────────────────────────────
+def _mark_group_read(sb, group_id: str, user_id: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    sb.table("persona_group_reads").upsert(
+        {
+            "group_id": group_id,
+            "user_id": user_id,
+            "last_read_at": now,
+            "updated_at": now,
+        },
+        on_conflict="group_id,user_id",
+    ).execute()
+
+
+@router.post("/{group_id}/read")
+async def mark_group_read(
+    group_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Advance this member's read cursor after a live message arrives."""
+    sb = _supabase()
+    _require_member(sb, group_id, user["id"])
+    try:
+        await asyncio.to_thread(_mark_group_read, sb, group_id, user["id"])
+    except APIError as e:
+        if _is_missing_relation(e):
+            return {"status": "unavailable"}
+        raise
+    return {"status": "ok"}
+
+
 @router.get("/{group_id}/messages")
 async def list_messages(
     group_id: str,
@@ -912,6 +982,14 @@ async def list_messages(
     rows = q.execute()
     # Reverse so the client gets oldest-first (chat reading order).
     out = list(reversed(rows.data or []))
+
+    # Opening a room is the read action. Best-effort so a pre-migration deploy
+    # still returns messages; the explicit POST endpoint covers live arrivals.
+    try:
+        await asyncio.to_thread(_mark_group_read, sb, group_id, user["id"])
+    except Exception as exc:
+        logger.debug("[groups] couldn't mark %s read: %s", group_id, exc)
+
     return {
         "messages": out,
         "count": len(out),

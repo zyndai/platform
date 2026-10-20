@@ -38,32 +38,77 @@ def test_requester_cannot_decide_their_own_request(monkeypatch, action):
     assert error.value.status_code == 403
 
 
-@pytest.mark.parametrize("status", ["pending", "declined", "blocked", "revoked"])
-def test_dm_requires_an_accepted_connection(monkeypatch, status):
-    monkeypatch.setattr(network, "_connection_row", lambda _: {
-        "requester_user_id": USER, "recipient_user_id": PARTNER, "status": status,
-    })
+def test_dm_send_is_one_rpc_and_carries_the_idempotency_key(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(network, "_rpc_result", lambda name, params: seen.update(name=name, params=params) or {"message": {"id": "m"}})
+    assert network.send_message(USER, "connection", "hello", "client-id") == {"message": {"id": "m"}}
+    assert seen == {
+        "name": "network_send_dm",
+        "params": {
+            "p_user": USER, "p_connection": "connection",
+            "p_client_id": "client-id", "p_content": "hello",
+        },
+    }
+
+
+def test_dm_page_is_one_rpc_with_a_cursor(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(network, "_rpc_result", lambda name, params: seen.update(name=name, params=params) or {"messages": []})
+    network.list_messages(USER, "connection", 25, 10, 20)
+    assert seen == {
+        "name": "network_dm_messages",
+        "params": {
+            "p_user": USER, "p_connection": "connection",
+            "p_before_seq": 10, "p_after_seq": 20, "p_limit": 25,
+        },
+    }
+
+
+def test_group_messages_are_one_rpc(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(network, "_rpc_result", lambda name, params: seen.update(name=name, params=params) or {"messages": []})
+    network.list_group_messages(USER, "group", 50)
+    assert seen["name"] == "network_group_messages"
+    assert seen["params"]["p_group"] == "group"
+    assert seen["params"]["p_limit"] == 50
+
+
+def test_read_mark_is_one_rpc(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(network, "_rpc_result", lambda name, params: seen.update(name=name, params=params) or {"status": "ok"})
+    network.mark_read(USER, "dm", "connection", 7)
+    assert seen == {
+        "name": "network_mark_read",
+        "params": {"p_user": USER, "p_kind": "dm", "p_id": "connection", "p_seq": 7},
+    }
+
+
+def test_rpc_error_becomes_http_exception(monkeypatch):
+    sb = MagicMock()
+    sb.rpc.return_value.execute.return_value.data = {"error": "Connection not found", "status_code": 404}
+    monkeypatch.setattr(network, "_sb", lambda: sb)
     with pytest.raises(HTTPException) as error:
         network.send_message(USER, "connection", "hello")
-    assert error.value.status_code == 409
-
-
-def test_dm_is_hidden_from_non_participants(monkeypatch):
-    monkeypatch.setattr(network, "_connection_row", lambda _: {
-        "requester_user_id": PARTNER, "recipient_user_id": "someone-else", "status": "accepted",
-    })
-    with pytest.raises(HTTPException) as error:
-        network.list_messages(USER, "connection")
     assert error.value.status_code == 404
+    assert error.value.detail == "Connection not found"
 
 
-def test_dm_returns_latest_window_in_chronological_order(monkeypatch):
-    monkeypatch.setattr(network, "_accepted_connection", lambda *_: {})
-    monkeypatch.setattr(network, "_thread_for_connection", lambda _: {"id": "thread"})
-    _, queries = database(monkeypatch, dm_messages=[{"id": "new"}, {"id": "old"}])
-    result = network.list_messages(USER, "connection", 2)
-    queries["dm_messages"].order.assert_any_call("created_at", desc=True)
-    assert result["messages"] == [{"id": "old"}, {"id": "new"}]
+def test_inbox_is_one_rpc_for_connections_groups_and_invitations(monkeypatch):
+    calls = []
+    payload = {
+        "connections": [{"id": "connection"}],
+        "groups": [{"id": "group"}],
+        "invitations": [{"id": "invite"}],
+    }
+    monkeypatch.setattr(network, "_rpc_result", lambda name, params: calls.append((name, params)) or payload)
+    assert network.list_connections(USER) == {"connections": [{"id": "connection"}]}
+    assert network.list_groups(USER) == {"groups": [{"id": "group"}]}
+    assert network.list_incoming_invitations(USER) == {"invitations": [{"id": "invite"}]}
+    assert calls == [
+        ("network_inbox", {"p_user": USER}),
+        ("network_inbox", {"p_user": USER}),
+        ("network_inbox", {"p_user": USER}),
+    ]
 
 
 def test_connection_note_is_returned_to_the_recipient(monkeypatch):
@@ -130,15 +175,11 @@ def test_archived_groups_cannot_be_read_or_messaged(monkeypatch):
 
 
 def test_incoming_invitations_are_read_only_named_and_hide_archived_groups(monkeypatch):
-    _, queries = database(
-        monkeypatch,
-        group_invitations=[{"id": "live", "group_id": "group"}, {"id": "archived", "group_id": "old-group"}],
-        groups=[{"id": "group", "name": "API builders"}],
-    )
+    monkeypatch.setattr(network, "get_inbox", lambda _: {
+        "invitations": [{"id": "live", "group_id": "group", "group": {"id": "group", "name": "API builders"}}],
+    })
     result = network.list_incoming_invitations(USER)
     assert result == {"invitations": [{"id": "live", "group_id": "group", "group": {"id": "group", "name": "API builders"}}]}
-    queries["group_invitations"].update.assert_not_called()
-    assert queries["group_invitations"].gt.call_args.args[0] == "expires_at"
 
 
 def test_group_invitation_does_not_add_membership_and_expires_only_stale_pending_rows(monkeypatch):
@@ -159,17 +200,6 @@ def test_ordinary_group_members_cannot_invite(monkeypatch):
     with pytest.raises(HTTPException) as error:
         network.invite_to_group(USER, "group", PARTNER, None)
     assert error.value.status_code == 403
-
-
-def test_simultaneous_dm_thread_creation_returns_the_winning_thread(monkeypatch):
-    _, queries = database(monkeypatch, dm_threads=[])
-    queries["dm_threads"].execute.side_effect = [
-        SimpleNamespace(data=[]), SimpleNamespace(data=[]), SimpleNamespace(data=[{"id": "thread"}]),
-    ]
-    assert network._thread_for_connection("connection") == {"id": "thread"}
-    queries["dm_threads"].upsert.assert_called_once_with(
-        {"connection_id": "connection"}, on_conflict="connection_id", ignore_duplicates=True,
-    )
 
 
 # ── contact links are for accepted connections only ───────────────────────────────
@@ -206,3 +236,29 @@ def test_partner_links_are_shared_once_accepted_and_blanks_dropped(monkeypatch):
     _partner_sb(monkeypatch)
     partner = network._partner_card(_partner_row("accepted"), USER)
     assert partner["links"] == {"linkedin": "https://linkedin.com/in/bob"}
+
+
+def test_the_inbox_carries_links_only_for_accepted_partners(monkeypatch):
+    from unittest.mock import MagicMock
+
+    chain = MagicMock()
+    for method in ("select", "in_"):
+        getattr(chain, method).return_value = chain
+    chain.execute.return_value = MagicMock(data=[
+        {"id": "c-bob", "card": {"identity": {"links": {"linkedin": "https://linkedin.com/in/bob", "x": " "}}}},
+        {"id": "c-cy", "card": {"identity": {"links": {"github": "https://github.com/cy"}}}},
+    ])
+    sb = MagicMock()
+    sb.table.return_value = chain
+    monkeypatch.setattr(network, "_sb", lambda: sb)
+    inbox = [
+        {"id": "1", "status": "accepted", "partner": {"card_id": "c-bob", "handle": "bob"}},
+        {"id": "2", "status": "pending", "partner": {"card_id": "c-cy", "handle": "cy"}},
+        {"id": "3", "status": "accepted", "partner": {"card_id": "c-gone", "handle": "gone"}},
+    ]
+    out = network._with_accepted_links(inbox)
+    assert out[0]["partner"]["links"] == {"linkedin": "https://linkedin.com/in/bob"}
+    assert "links" not in out[1]["partner"]          # pending: nothing shared
+    assert "links" not in out[2]["partner"]          # card not found: nothing invented
+    chain.in_.assert_called_once_with("id", ["c-bob", "c-gone"])   # one lookup, accepted partners only
+    assert network._with_accepted_links([{"status": "pending", "partner": {"card_id": "x"}}])[0]["partner"] == {"card_id": "x"}

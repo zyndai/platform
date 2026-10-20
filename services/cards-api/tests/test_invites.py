@@ -198,7 +198,11 @@ def test_a_broken_inviter_card_does_not_break_the_claim(world):
     assert invites.deliver_for_card(card_id, OWNER) == 0
 
 
-def test_opening_connections_delivers_invitations_waiting_for_your_card(world):
+def test_opening_connections_delivers_invitations_waiting_for_your_card(world, monkeypatch):
+    # The inbox is one RPC on the real database; stand in for it with the rows of the fake.
+    monkeypatch.setattr(network, "get_inbox", lambda uid: {"connections": [
+        network._serialize_connection(r, uid) for r in world.rows("connections")
+        if uid in (r["requester_user_id"], r["recipient_user_id"])]})
     invite()
     claim(world)
     listed = network.list_connections(OWNER)

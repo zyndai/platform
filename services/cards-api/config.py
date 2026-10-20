@@ -39,9 +39,9 @@ MAINTENANCE_READONLY: bool = os.getenv("MAINTENANCE_READONLY", "false").lower() 
 WRITES_OWNER_USER_ID: bool = SUPABASE_DB_SCHEMA == "cards"
 FEATURE_S12_INTROS: bool = os.getenv("FEATURE_S12_INTROS", "false").lower() in ("1", "true", "yes")
 # A2: invite someone who has no claimed Card yet. Creates an unclaimed Card about a third party
-# from public LinkedIn data and needs cards.connection_invites (packages/db 0023). Off by default.
+# from public LinkedIn data and needs cards.connection_invites (packages/db 0024). Off by default.
 # Saved searches, reports, blocks, match preferences, request limits and verification badges
-# (A3, A6, A8). They need packages/db migration 0024 (cards.saved_searches, card_reports,
+# (A3, A6, A8). They need packages/db migration 0025 (cards.saved_searches, card_reports,
 # card_verifications, match_preferences). Off by default.
 FEATURE_NETWORK_CONTROLS: bool = os.getenv("FEATURE_NETWORK_CONTROLS", "false").lower() in ("1", "true", "yes")
 FEATURE_A2_INVITE_TO_CLAIM: bool = os.getenv("FEATURE_A2_INVITE_TO_CLAIM", "false").lower() in ("1", "true", "yes")

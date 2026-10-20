@@ -626,8 +626,8 @@ Nothing is deployed and no flag is on anywhere except the dev compose file (see 
 | F5-F8 + Simplify (one tool, one shape) | `memory/.../people_{search,results}.py`, `card_directory.py`, cards-api `/internal/cards-for-users`, `/v1/service/outside-people` | none |
 | F4 per-fact matching | `memory/app/services/matching.py` | `FEATURE_FACT_MATCHING` |
 | A1 two-way match | `cards-api/services/two_way.py` | none (needs the searcher's Card) |
-| A2 invite to claim (**schema**) | `packages/db` 0023, `cards-api/services/invites.py`, `memory/.../invite_refs.py` | Cards `FEATURE_A2_INVITE_TO_CLAIM`, Memory `FEATURE_INVITE_TO_CLAIM` |
-| A3 saved searches, A4 digest, A5 brief, A6 trust (partial), A8 match controls (**schema**) | `packages/db` 0024, `cards-api/services/{saved_searches,digest_network,connection_brief,trust,match_prefs}.py` | Cards `FEATURE_NETWORK_CONTROLS` |
+| A2 invite to claim (**schema**) | `packages/db` 0024, `cards-api/services/invites.py`, `memory/.../invite_refs.py` | Cards `FEATURE_A2_INVITE_TO_CLAIM`, Memory `FEATURE_INVITE_TO_CLAIM` |
+| A3 saved searches, A4 digest, A5 brief, A6 trust (partial), A8 match controls (**schema**) | `packages/db` 0025, `cards-api/services/{saved_searches,digest_network,connection_brief,trust,match_prefs}.py` | Cards `FEATURE_NETWORK_CONTROLS` |
 | A7 group search | `cards-api/services/network.search_group`, `find_people(group_id=)` | none |
 
 Tests at the end of the branch: memory 663 unit tests pass; memory integration: the same 6 failures that
@@ -671,6 +671,6 @@ the ASGI ones): the repo's docker compose, or a local Postgres plus any Redis.
 5. **Phase 5:** run `scripts/dedupe_memory.py` (dry run) on a restored copy, review `dedupe_report.json` with a
    person, apply with `--apply --confirm-database <name>`, then `python -m app.jobs recompute`. Undo with
    `--undo <run_id>`.
-6. **Cards migrations 0023 and 0024:** apply with `packages/db` (README step 6) only on a human's say-so, then set
+6. **Cards migrations 0024 and 0025** (dev's own 0023, messaging v2, is already on aafo): apply with `packages/db` (README step 6) only on a human's say-so, then set
    `FEATURE_A2_INVITE_TO_CLAIM` / `FEATURE_NETWORK_CONTROLS` (and Memory's `FEATURE_INVITE_TO_CLAIM`). Review the
    `claim_card_by_owner` change that records `owner_user_id` (aafo-issued principals only).

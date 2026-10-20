@@ -6,6 +6,7 @@ import {
   briefIsEmpty,
   cardsNetworkRequest,
   connectionRequestNotice,
+  markNetworkRead,
   sharedSummary,
   type CardConnection,
   type ConnectionBrief,
@@ -62,6 +63,9 @@ export function NetworkClient({ token, userId }: { token: string; userId: string
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const actionInFlight = useRef(false);
+  // Keep the shared read cursor current while the legacy UI is still the
+  // fallback. The v2 UI marks read explicitly on focus/visibility.
+  const readSeq = useRef<Record<string, number>>({});
   const selectedConnection = connections.find((row) => row.id === connectionId);
   const selectedGroup = groups.find((row) => row.id === groupId);
   const connectionStatus = selectedConnection?.status;
@@ -121,7 +125,15 @@ export function NetworkClient({ token, userId }: { token: string; userId: string
       loading = true;
       try {
         const result = await cardsNetworkRequest<{ messages: CardMessage[] }>(`/connections/${connectionId}/messages`, token, "GET", undefined, controller.signal);
-        if (!controller.signal.aborted) setMessages(result.messages);
+        if (!controller.signal.aborted) {
+          setMessages(result.messages);
+          const latest = result.messages[result.messages.length - 1];
+          const key = `dm:${connectionId}`;
+          if (latest?.seq && document.visibilityState === "visible" && latest.seq > (readSeq.current[key] ?? 0)) {
+            readSeq.current[key] = latest.seq;
+            void markNetworkRead(token, "dm", connectionId!, latest.seq).catch(() => { /* retried by the next poll */ });
+          }
+        }
       } catch (error) {
         if (!controller.signal.aborted) setNotice(error instanceof Error ? error.message : "Could not load messages");
       } finally { loading = false; }
@@ -165,6 +177,12 @@ export function NetworkClient({ token, userId }: { token: string; userId: string
         if (!controller.signal.aborted) {
           setMembers(memberResult.members);
           setGroupMessages(messageResult.messages);
+          const latest = messageResult.messages[messageResult.messages.length - 1];
+          const key = `group:${groupId}`;
+          if (latest?.seq && document.visibilityState === "visible" && latest.seq > (readSeq.current[key] ?? 0)) {
+            readSeq.current[key] = latest.seq;
+            void markNetworkRead(token, "group", groupId!, latest.seq).catch(() => { /* retried by the next poll */ });
+          }
         }
       } catch (error) {
         if (!controller.signal.aborted) setNotice(error instanceof Error ? error.message : "Could not load the group");

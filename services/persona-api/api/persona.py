@@ -14,6 +14,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
+from postgrest.exceptions import APIError
 from pydantic import BaseModel, Field
 from typing import Optional, Any, List
 
@@ -745,6 +746,16 @@ def _caller_identities(user_id: str) -> tuple[list[str], dict]:
     return identities, persona
 
 
+def _is_missing_relation(exc: Exception) -> bool:
+    code = getattr(exc, "code", None)
+    message = str(exc)
+    return (
+        code in {"PGRST205", "42P01"}
+        or "Could not find the table" in message
+        or "does not exist" in message
+    )
+
+
 def _list_threads_for_identities(
     sb,
     identities: list[str],
@@ -766,7 +777,33 @@ def _list_threads_for_identities(
     if before:
         query = query.lt("updated_at", before)
     result = query.execute()
-    return result.data or []
+    rows = result.data or []
+    for row in rows:
+        row.setdefault("unread_count", 0)
+        row.setdefault("last_message_preview", None)
+        row.setdefault("last_message_at", None)
+        row["last_activity_at"] = (
+            row.get("last_message_at") or row.get("updated_at") or row.get("created_at")
+        )
+    return rows
+
+
+def _list_thread_inbox(
+    sb,
+    user_id: str,
+    limit: int,
+    before: str | None,
+) -> list[dict]:
+    query = (
+        sb.table("dm_thread_inbox")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("last_activity_at", desc=True)
+        .limit(limit)
+    )
+    if before:
+        query = query.lt("last_activity_at", before)
+    return query.execute().data or []
 
 
 @router.get("/threads")
@@ -779,20 +816,33 @@ async def list_threads(
     if not caller.user_id:
         raise HTTPException(status_code=400, detail="A user identity is required")
 
+    sb = _supabase()
     identities, persona = await asyncio.to_thread(_caller_identities, caller.user_id)
-    rows = await asyncio.to_thread(
-        _list_threads_for_identities,
-        _supabase(),
-        identities,
-        limit,
-        before,
-    )
+    try:
+        rows = await asyncio.to_thread(_list_thread_inbox, sb, caller.user_id, limit, before)
+    except APIError as exc:
+        # Code can reach dev before the expand-only migration is applied.
+        # Keep the inbox usable (without unread metadata) during that window.
+        if not _is_missing_relation(exc):
+            raise
+        rows = await asyncio.to_thread(
+            _list_threads_for_identities,
+            sb,
+            identities,
+            limit,
+            before,
+        )
+
+    for row in rows:
+        row.pop("user_id", None)
+        row.pop("last_read_at", None)
+
     return {
         "threads": rows,
         "agent_id": persona.get("agent_id") if persona.get("deployed") else None,
         "name": persona.get("name") if persona.get("deployed") else None,
         "has_more": len(rows) == limit,
-        "next_before": rows[-1].get("updated_at") if rows and len(rows) == limit else None,
+        "next_before": rows[-1].get("last_activity_at") if rows and len(rows) == limit else None,
     }
 
 
@@ -832,6 +882,19 @@ def _list_messages(
     return list(reversed(result.data or []))
 
 
+def _mark_thread_read(sb, thread_id: str, user_id: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    sb.table("dm_thread_reads").upsert(
+        {
+            "thread_id": thread_id,
+            "user_id": user_id,
+            "last_read_at": now,
+            "updated_at": now,
+        },
+        on_conflict="thread_id,user_id",
+    ).execute()
+
+
 @router.get("/threads/{thread_id}/messages")
 async def list_thread_messages(
     thread_id: str,
@@ -843,15 +906,42 @@ async def list_thread_messages(
     if not caller.user_id:
         raise HTTPException(status_code=400, detail="A user identity is required")
 
-    thread = await asyncio.to_thread(_thread_for_participant, _supabase(), thread_id, caller.user_id)
+    sb = _supabase()
+    thread = await asyncio.to_thread(_thread_for_participant, sb, thread_id, caller.user_id)
     if thread.get("status") in BLOCKED_MESSAGE_THREAD_STATES:
         raise HTTPException(status_code=404, detail="Thread not found")
-    rows = await asyncio.to_thread(_list_messages, _supabase(), thread_id, limit, before)
+    rows = await asyncio.to_thread(_list_messages, sb, thread_id, limit, before)
+
+    # Opening a conversation is the read action. Best-effort so a pre-migration
+    # deploy still returns messages; the explicit POST endpoint below covers
+    # live arrivals while the thread is open.
+    try:
+        await asyncio.to_thread(_mark_thread_read, sb, thread_id, caller.user_id)
+    except Exception as exc:
+        logger.debug("[threads] couldn't mark %s read: %s", thread_id, exc)
+
     return {
         "messages": rows,
         "has_more": len(rows) == limit,
         "next_before": rows[0].get("created_at") if rows and len(rows) == limit else None,
     }
+
+
+@router.post("/threads/{thread_id}/read")
+async def mark_thread_read(
+    thread_id: str,
+    caller: Caller = Depends(thread_participant),
+):
+    """Advance this user's read cursor after a live message arrives."""
+    if not caller.user_id:
+        raise HTTPException(status_code=400, detail="A user identity is required")
+    try:
+        await asyncio.to_thread(_mark_thread_read, _supabase(), thread_id, caller.user_id)
+    except APIError as exc:
+        if _is_missing_relation(exc):
+            return {"status": "unavailable"}
+        raise
+    return {"status": "ok"}
 
 
 @router.get("/threads/{thread_id}")

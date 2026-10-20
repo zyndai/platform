@@ -75,6 +75,7 @@ def person_from_card(row: dict) -> dict:
         "url": row.get("url") or "",
         "skills": list(row.get("skills") or [])[:8],
         "linkedin_url": row.get("linkedin_url") or "",
+        "verified": list(row.get("verified") or []),
     }
 
 
@@ -95,6 +96,7 @@ def person_from_zynd(row: dict, card: dict, card_url: str) -> dict:
         "url": card_url,
         "skills": [],
         "linkedin_url": "",
+        "verified": [],
     }
 
 
@@ -115,6 +117,7 @@ def person_from_external(row: dict, index: int) -> dict:
         "url": row.get("linkedin_url") or "",
         "skills": [],
         "linkedin_url": row.get("linkedin_url") or "",
+        "verified": [],
     }
 
 
@@ -144,6 +147,7 @@ def _absorb(base: dict, other: dict) -> None:
         base["next_action"] = other["next_action"]
     if other.get("skills") and not base.get("skills"):
         base["skills"] = other["skills"]
+    base["verified"] = sorted(set(base.get("verified") or []) | set(other.get("verified") or []))
     if "zynd" in other["sources"] or "zynd" in base["sources"]:
         base["score"] = round(min(max(base["score"], other["score"]) + ZYND_BONUS, 1.0), 3)
     else:
@@ -169,3 +173,25 @@ def merge_people(people: list[dict]) -> list[dict]:
 
 def strong_count(people: list[dict]) -> int:
     return sum(1 for p in people if p["score"] >= STRONG_MATCH)
+
+
+_WORD = __import__("re").compile(r"[a-z0-9][a-z0-9+#.-]*")
+
+
+def apply_preferences(people: list[dict], prefs: dict) -> list[dict]:
+    """Drop people the searcher hid and people matching a topic they muted (A8). "Less like this"
+    is applied by Cards while ranking, so it is not repeated here."""
+    hidden = {h.lower() for h in prefs.get("hide_person") or []}
+    muted = [set(_WORD.findall(topic.lower())) for topic in prefs.get("mute_topic") or [] if topic.strip()]
+    if not hidden and not muted:
+        return people
+    kept = []
+    for person in people:
+        if (person.get("handle") or "").lower() in hidden:
+            continue
+        words = set(_WORD.findall(" ".join([person.get("name") or "", person.get("headline") or "",
+                                            " ".join(person.get("skills") or []), " ".join(person.get("why") or [])]).lower()))
+        if any(topic and topic <= words for topic in muted):
+            continue
+        kept.append(person)
+    return kept

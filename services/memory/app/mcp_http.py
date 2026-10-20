@@ -551,6 +551,7 @@ async def find_people(
     target: str,
     k: int = 10,
     sources: str = "all",
+    group_id: str = "",
     uid: str = Depends(_uid),
 ) -> dict:
     """Find people matching a TARGET PROFILE — complementary people, not people
@@ -571,10 +572,17 @@ async def find_people(
     Pass a natural-language target description (e.g. "seed-stage investor who
     backs dev-tools in India"). sources is "all" unless the user explicitly restricts it
     to "cards", "zynd" and/or "quickenrich". A source that failed, or is not configured,
-    is listed in warnings; the others are still returned."""
+    is listed in warnings; the others are still returned.
+
+    Pass group_id (from list_card_groups) to search only that group's members, e.g. an event
+    or community; nothing outside the group is searched. Results already respect the user's
+    match controls (see tune_matches): hidden people and muted topics are left out. Each person
+    carries `verified` (identities proven, e.g. "linkedin") and `why`, which says how current an
+    approved fact is."""
     wanted, explicit = people_search.requested_sources(sources)
     return await people_search.find(
-        await _get_pool(), uid, target, limit=max(1, min(k, 20)), wanted=wanted, explicit=explicit)
+        await _get_pool(), uid, target, limit=max(1, min(k, 20)), wanted=wanted, explicit=explicit,
+        group_id=(group_id or "").strip())
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
@@ -702,6 +710,60 @@ async def invite_to_claim(invite_ref: str, message: str = "", uid: str = Depends
         return {"ok": False, "error": "Unknown or expired invite_ref: run find_people again and use its invite_ref"}
     return await cards_network_tools.create_invite(
         await _get_pool(), uid, person["linkedin_url"], person["name"], person["headline"], _clip(message, 500))
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+async def saved_searches(action: str = "list", q: str = "", role: str = "", location: str = "",
+                         skills: str = "", label: str = "", search_id: str = "",
+                         uid: str = Depends(_uid)) -> dict:
+    """Saved people searches: get notified when a NEW matching Card appears.
+    action "add" saves a search (q, role, location, skills; label is a short name) — what already
+    matches is not reported, only new people; "list" shows them; "remove" stops one (search_id).
+    New matches show up as notes on the user's Cards home and in their notification email."""
+    pool = await _get_pool()
+    if action == "add":
+        return await cards_network_tools.add_saved_search(pool, uid, _clip(q, 200), _clip(role, 100),
+                                                          _clip(location, 100), _clip(skills, 200), _clip(label, 80))
+    if action == "remove":
+        return await cards_network_tools.remove_saved_search(pool, uid, search_id.strip())
+    return await cards_network_tools.saved_searches(pool, uid)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+async def tune_matches(action: str, value: str = "", uid: str = Depends(_uid)) -> dict:
+    """Tune who find_people shows the user. action: "hide_person" (value = Card handle: never show
+    them again), "mute_topic" (value = a topic to leave out, e.g. "crypto trading"), "less_like_this"
+    (value = a Card handle: rank people like them lower), "undo_hide_person" / "undo_mute_topic" /
+    "undo_less_like_this" to reverse one, or "show" to list the current controls."""
+    pool = await _get_pool()
+    if action == "show":
+        return await cards_network_tools.preferences(pool, uid)
+    undo = action.startswith("undo_")
+    kind = action.removeprefix("undo_")
+    if kind not in ("hide_person", "mute_topic", "less_like_this"):
+        return {"ok": False, "error": "action must be hide_person, mute_topic, less_like_this, an undo_ of those, or show"}
+    return await cards_network_tools.change_preference(pool, uid, kind, _clip(value, 100), remove=undo)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False})
+async def report_or_block_card(handle: str, action: str = "report", reason: str = "other",
+                               details: str = "", uid: str = Depends(_uid)) -> dict:
+    """Report or block a Card. action "report" (reason: spam, impersonation, harassment, inaccurate
+    or other; details optional) sends it to a person for review and changes nothing automatically.
+    action "block" ends any connection with them, stops them contacting the user, and hides them from
+    searches. Only do this when the user asks; blocking cannot be undone from here."""
+    pool = await _get_pool()
+    if action == "block":
+        return await cards_network_tools.block_card(pool, uid, handle.strip().lstrip("@"))
+    return await cards_network_tools.report_card(pool, uid, handle.strip().lstrip("@"), reason, _clip(details, 1000))
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+async def connection_brief(connection_id: str, uid: str = Depends(_uid)) -> dict:
+    """For an ACCEPTED connection: what each person is working on now, what they have in common and
+    a few things to bring up, from what both approved onto their Cards. Use before the user writes
+    to someone they are connected with."""
+    return await cards_network_tools.brief(await _get_pool(), uid, connection_id)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})

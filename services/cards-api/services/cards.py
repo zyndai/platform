@@ -1009,9 +1009,13 @@ def claim_card_by_owner(handle: str, principal: dict) -> tuple[bool, str]:
     if owner_user_id and config.WRITES_OWNER_USER_ID:
         update["owner_user_id"] = owner_user_id      # Cards networking identifies owners by this
     sb.table("agent_profile_cards").update(update).eq("handle", handle).execute()
-    if owner_user_id:
+    card_id = row.get("id")
+    if card_id:
+        from services import trust
+        trust.record_verification(card_id, "linkedin")        # claim required the matching LinkedIn sign-in
+    if owner_user_id and card_id:
         from services import invites
-        invites.deliver_for_card(row["id"], owner_user_id)   # invitations that were waiting for this Card
+        invites.deliver_for_card(card_id, owner_user_id)     # invitations that were waiting for this Card
     return True, "claimed"
 
 

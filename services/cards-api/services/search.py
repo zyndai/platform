@@ -1,11 +1,12 @@
 import json
 import logging
+from datetime import datetime, timezone
 
 import config
 from models.card import AgentProfileCard
 from services import cards as cards_service
 from services.embed import card_search_text, embed_text
-from services.two_way import TWO_WAY_BOOST, kinds_of, two_way_match
+from services.two_way import LESS_LIKE_PENALTY, TWO_WAY_BOOST, kinds_of, too_much_like, two_way_match
 from services.search_text import (
     contains_all,
     location_terms,
@@ -47,6 +48,16 @@ def _cosine(a: list[float], b: list[float]) -> float:
     if na == 0 or nb == 0:
         return 0.0
     return dot / (na * nb)
+
+
+def _age_days(fact: dict) -> int | None:
+    """Days since the owner approved this fact (how current it is), or None when unknown."""
+    from services.card_view import _parse_ts
+
+    approved = _parse_ts(fact.get("approved_at") if isinstance(fact, dict) else None)
+    if approved is None:
+        return None
+    return max((datetime.now(timezone.utc) - approved).days, 0)
 
 
 def _skill_matches(wanted: str, skill_name: str) -> bool:
@@ -101,14 +112,20 @@ def search_agents(
     limit: int = 10,
     include_unclaimed: bool = False,
     searcher: AgentProfileCard | None = None,
+    less_like: list[AgentProfileCard] | None = None,
+    candidate_rows: list[dict] | None = None,
 ) -> list[dict]:
+    """Score published cards against a query.
+
+    candidate_rows scopes the search to those rows (a group's members) instead of every card;
+    less_like are Cards the searcher asked to see less of."""
     # Stopwords out, whole words only: "in", "who" and "ai" used to substring-match nearly
     # every card ("ai" is inside "maintain").
     q_terms = query_terms(q)
     if q and not q_terms and not any((role, location, skills, industry, availability)):
         return []   # "who is in the": nothing to look for, and embedding it would match noise
     query_vec = embed_text(q) if q else []
-    rows = _candidates(q, query_vec, include_unclaimed)
+    rows = candidate_rows if candidate_rows is not None else _candidates(q, query_vec, include_unclaimed)
     skill_list = [s.strip() for s in skills.split(",") if s.strip()] if skills else []
     industry_norm = _norm(industry)
     role_norm = _norm(role)
@@ -165,6 +182,8 @@ def search_agents(
                         reasons.append({
                             "type": "memory",
                             "text": fact_object(fact),
+                            "source": fact.get("source") or "",
+                            "age_days": _age_days(fact),
                         })
                 else:
                     reasons.append("Approved fact")
@@ -203,6 +222,10 @@ def search_agents(
                 score += TWO_WAY_BOOST
                 reasons.append("Wants to meet people like you: " + ", ".join(fits[:2]))
 
+        if less_like and any(too_much_like(d, card) for d in less_like):
+            score -= LESS_LIKE_PENALTY
+            reasons.append("Similar to people you asked to see less of")
+
         if experience_min is not None and card.experience_years and card.experience_years >= experience_min:
             score += 0.15
             reasons.append(f"{card.experience_years} years experience")
@@ -219,7 +242,7 @@ def search_agents(
                 "availability": card.availability,
                 "experience_years": card.experience_years,
                 "linkedin_url": (card.identity.links or {}).get("linkedin") or "",
-                "match_score": round(min(score, 1.0), 3),
+                "match_score": round(max(min(score, 1.0), 0.0), 3),
                 "match_reasons": reasons[:6],
                 "url": f"{config.SITE_BASE_URL}/p/{card.handle}" if card.handle else f"{config.SITE_BASE_URL}/profile/{card.id}",
             }

@@ -21,6 +21,7 @@ from app.services import card_directory, people_discovery, people_results
 from app.services.export import active_context
 from app.services.matching import match_users, search_by_query
 from app.services.people_query import TargetQuery, parse_target, parse_target_heuristic
+from app.tools import cards_network
 
 logger = logging.getLogger("zynd.find_people")
 
@@ -78,8 +79,38 @@ async def _zynd_people(
     return people
 
 
+async def _preferences(pool: asyncpg.Pool, uid: str) -> dict:
+    """The searcher's match controls (A8). Never fatal: without them the search is just untuned."""
+    try:
+        result = await cards_network.preferences(pool, uid)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("match preferences unavailable: %s", exc)
+        return {}
+    prefs = result.get("preferences") if isinstance(result, dict) and result.get("ok") else None
+    return prefs if isinstance(prefs, dict) else {}
+
+
+async def _group_people(
+    pool: asyncpg.Pool, uid: str, group_id: str, text: str, query: TargetQuery, limit: int,
+) -> tuple[list[dict], str | None]:
+    """A7: search only the Cards of one group's members. Cards enforces that the caller is a member."""
+    result = await cards_network.group_search(
+        pool, uid, group_id, text, query.role_noun, query.locality or query.location,
+        ",".join(query.topics)[:200], limit)
+    if not result.get("ok"):
+        return [], "group_unavailable: " + str(result.get("error") or "not a member of that group")[:120]
+    return [
+        {**row, "claimed": True, "why": people_discovery._why(row.get("match_reasons")),
+         "linkedin_url": people_discovery._linkedin_url(row.get("linkedin_url")),
+         "url": people_discovery.card_url(row.get("handle") or ""),
+         "match_score": row.get("match_score")}
+        for row in people_discovery.shape_cards(result.get("results") or [], limit * 2)
+    ], None
+
+
 async def find(
     pool: asyncpg.Pool, uid: str, target: str, *, limit: int, wanted: set[str], explicit: set[str],
+    group_id: str = "",
 ) -> dict:
     target = (target or "").strip()
     like_me = target.lower() in LIKE_ME
@@ -97,12 +128,26 @@ async def find(
         text = target
         query = await parse_target(target)
 
+    prefs = await _preferences(pool, uid)
+    if group_id:
+        # Scoped to one group (an event, a community): its members' Cards only, no other source.
+        found, warning = await _group_people(pool, uid, group_id, text, query, limit)
+        people = people_results.apply_preferences(
+            people_results.merge_people([people_results.person_from_card(r) for r in found]), prefs)
+        result = {"target": target, "mode": "group", "group_id": group_id,
+                  "parsed": {k: v for k, v in query.as_dict().items() if v and k not in ("raw", "titles")},
+                  "people": people[:limit], "sources": ["group"], "searched": ["group"]}
+        if warning:
+            result["warnings"] = [warning]
+        return result
+
     # Ask for more than `limit` from each source so merging and ranking have something to choose from.
     pool_size = min(limit * 2, 30)
     own = await _own_handle(pool, uid)       # the searcher's Card: never a result, and what two-way matching reads
     coros: dict[str, object] = {}
     if "cards" in wanted:
-        coros["cards"] = people_discovery.search_cards(text, pool_size, query=query, as_handle=own or "")
+        coros["cards"] = people_discovery.search_cards(
+            text, pool_size, query=query, as_handle=own or "", less_like=prefs.get("less_like_this"))
     if "zynd" in wanted:
         coros["zynd"] = _zynd_people(pool, uid, text, like_me, pool_size, warnings, query)
     results = dict(zip(coros, await asyncio.gather(*coros.values(), return_exceptions=True)))
@@ -121,7 +166,7 @@ async def find(
         else:
             people.extend(outcome)
 
-    people = people_results.merge_people(people)
+    people = people_results.apply_preferences(people_results.merge_people(people), prefs)
     if own:
         people = [p for p in people if (p["handle"] or "").lower() != own.lower()]
 

@@ -18,6 +18,7 @@ SEARCHABLE_ATTRIBUTES = [
     {"name": "availability", "type": "string", "description": "fulltime | contract | freelance | open"},
     {"name": "experience_min", "type": "integer", "description": "Minimum years of experience"},
     {"name": "include_unclaimed", "type": "boolean", "description": "Include unclaimed (scraped) cards; default false for agent callers"},
+    {"name": "less_like", "type": "string", "description": "Comma-separated Card handles the searcher wants to see less of"},
     {"name": "as_handle", "type": "string", "description": "The searcher's own Card handle: results who want to meet people like them rank higher"},
 ]
 
@@ -50,9 +51,12 @@ async def search_agents(
     limit: int = Query(10, ge=1, le=50),
     include_unclaimed: bool = Query(False),
     as_handle: str = Query("", max_length=64),
+    less_like: str = Query("", max_length=700),
 ):
     keep_unclaimed = include_unclaimed or not config.FEATURE_S03_UNCLAIMED_TIERING
     searcher = await asyncio.to_thread(cards_service.get_card_by_handle, as_handle.strip().lstrip("@")) if as_handle.strip() else None
+    disliked = [c for c in (await asyncio.to_thread(cards_service.get_card_by_handle, h.strip().lstrip("@"))
+                            for h in less_like.split(",")[:10] if h.strip()) if c] if less_like.strip() else []
     results = await asyncio.to_thread(
         search_service.search_agents,
         q,
@@ -65,6 +69,7 @@ async def search_agents(
         limit,
         keep_unclaimed,
         searcher,
+        disliked or None,
     )
     claimed = cards_service.claimed_by_handles([r["handle"] for r in results if r.get("handle")])
     kept = []
@@ -74,6 +79,11 @@ async def search_agents(
         if keep_unclaimed or r.get("claimed") is True:
             kept.append(r)
     results = kept
+    from services import trust
+    verified = trust.verified_by_card_ids([r["agent_id"] for r in results if r.get("agent_id")])
+    for r in results:
+        if verified:
+            r["verified"] = verified.get(r.get("agent_id"), [])
     _record_search(request, results, role=role, location=location, skills=skills,
                    industry=industry, availability=availability, has_query=bool(q.strip()))
     return {

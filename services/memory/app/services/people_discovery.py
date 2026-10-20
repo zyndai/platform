@@ -112,6 +112,17 @@ def _na(value: object) -> str:
     return "" if text.upper() == "N/A" else text
 
 
+def _age_phrase(days: object) -> str:
+    """" (this week)" style hint of how current an approved fact is; "" when unknown."""
+    if not isinstance(days, int) or days < 0:
+        return ""
+    if days <= 7:
+        return " (this week)"
+    if days <= 30:
+        return f" ({days // 7} weeks ago)"
+    return f" ({days // 30} months ago)"
+
+
 def _why(reasons: object) -> list[str]:
     """Cards' match_reasons are strings or {"type": "memory", "text": ...}; show both as text."""
     out: list[str] = []
@@ -119,7 +130,7 @@ def _why(reasons: object) -> list[str]:
         if isinstance(reason, str):
             text = reason
         elif isinstance(reason, dict) and isinstance(reason.get("text"), str):
-            text = f"Approved fact: {reason['text']}"
+            text = f"Approved fact: {reason['text']}{_age_phrase(reason.get('age_days'))}"
         else:
             continue
         text = _public_text(text, 120)
@@ -128,12 +139,16 @@ def _why(reasons: object) -> list[str]:
     return out[:4]
 
 
-def cards_search_params(target: str, limit: int, query: TargetQuery, as_handle: str = "") -> dict:
+def cards_search_params(
+    target: str, limit: int, query: TargetQuery, as_handle: str = "", less_like: list[str] | None = None,
+) -> dict:
     """/v1/agents/search params: the free text plus the parsed filters Cards can score on, and
     the searcher's own handle so people who want to meet someone like them rank higher."""
     params: dict = {"q": (target or "").strip(), "limit": limit, "include_unclaimed": "true"}
     if as_handle:
         params["as_handle"] = as_handle
+    if less_like:
+        params["less_like"] = ",".join(h for h in less_like if _HANDLE.fullmatch(h))[:700]
     if query.role:
         params["role"] = query.role_noun
     if query.locality or query.location:
@@ -145,6 +160,7 @@ def cards_search_params(target: str, limit: int, query: TargetQuery, as_handle: 
 
 async def search_cards(
     target: str, limit: int, *, query: TargetQuery | None = None, as_handle: str = "",
+    less_like: list[str] | None = None,
 ) -> tuple[list[dict], str | None]:
     """Claimed and unclaimed published cards. Unclaimed rows carry no contact fields."""
     q = (target or "").strip()
@@ -154,7 +170,7 @@ async def search_cards(
     url = f"{settings.cards_api_base_url.rstrip('/')}/v1/agents/search"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
-            resp = await client.get(url, params=cards_search_params(q, limit, query, as_handle))
+            resp = await client.get(url, params=cards_search_params(q, limit, query, as_handle, less_like))
             resp.raise_for_status()
             payload = resp.json()
     except Exception as exc:
@@ -164,6 +180,11 @@ async def search_cards(
     if not isinstance(rows, list):
         return [], "cards_unavailable"
 
+    return shape_cards(rows, limit), None
+
+
+def shape_cards(rows: list, limit: int) -> list[dict]:
+    """Public, sanitized view of Cards-API search results (also used for group-scoped search)."""
     out: list[dict] = []
     seen: set[str] = set()
     for row in rows:
@@ -186,6 +207,7 @@ async def search_cards(
             ][:8],
             "match_score": row.get("match_score") if isinstance(row.get("match_score"), (int, float)) else None,
             "why": _why(row.get("match_reasons")),
+            "verified": [v for v in (row.get("verified") or []) if v in ("linkedin", "github", "work_email")],
             "linkedin_url": _linkedin_url(row.get("linkedin_url")),
             "url": _card_url(handle, row.get("url")),
             "connection_eligible": False,
@@ -193,7 +215,7 @@ async def search_cards(
         out.append(item)
         if len(out) >= limit:
             break
-    return out, None
+    return out
 
 
 def _qe_headers() -> dict:

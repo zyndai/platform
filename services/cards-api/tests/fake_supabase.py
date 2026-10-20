@@ -110,8 +110,8 @@ class _Query:
             items = payload if isinstance(payload, list) else [payload]
             out = []
             for item in items:
-                key = on_conflict
-                hit = next((r for r in rows if key and r.get(key) == item.get(key)), None)
+                keys = [k.strip() for k in (on_conflict or "").split(",") if k.strip()]
+                hit = next((r for r in rows if keys and all(r.get(k) == item.get(k) for k in keys)), None)
                 if hit is None:
                     out.append(self.db.new_row(self.name, item))
                 elif not ignore:
@@ -151,6 +151,12 @@ class FakeSupabase:
             row.setdefault("expires_at", (datetime.now(timezone.utc) + timedelta(days=60)).isoformat())
             row.setdefault("delivered_at", None)
             row.setdefault("connection_id", None)
+        if name == "saved_searches":
+            row.setdefault("active", True)
+            row.setdefault("seen_handles", [])
+            row.setdefault("last_notified_at", None)
+        if name == "card_reports":
+            row.setdefault("status", "open")
         if name == "connections":
             row.setdefault("status", "pending")
             row.setdefault("decided_at", None)

@@ -22,7 +22,8 @@ def zynd(uid, similarity=0.7):
 @pytest.fixture
 def world():
     """Patch every collaborator of the search; tests set what each returns."""
-    state = {"cards": ([], None), "zynd": [], "directory": {}, "external": ([], None), "own": None}
+    state = {"cards": ([], None), "zynd": [], "directory": {}, "external": ([], None), "own": None,
+             "prefs": {}, "group": {"ok": True, "results": []}}
 
     async def directory(pool, ids):
         if state["directory"] is None:        # Cards unreachable
@@ -41,11 +42,16 @@ def world():
         patch("app.services.people_search.people_discovery.search_quickenrich",
               AsyncMock(side_effect=lambda *a, **k: state["external"])),
         patch("app.services.people_search.card_directory.cards_for_users", AsyncMock(side_effect=directory)),
+        patch("app.services.people_search.cards_network.preferences",
+              AsyncMock(side_effect=lambda *a, **k: {"ok": True, "preferences": state["prefs"]})),
+        patch("app.services.people_search.cards_network.group_search",
+              AsyncMock(side_effect=lambda *a, **k: state["group"])),
         patch("app.services.people_search.active_context", AsyncMock(return_value=[
             {"predicate": "is_building", "object": "AI agents"}, {"predicate": "has_skill", "object": "Python"}])),
     ]
     mocks = [p.start() for p in patches]
-    state["mocks"] = dict(zip(["pool", "cards_search", "zynd_search", "match", "external_search", "directory_call", "ctx"], mocks))
+    state["mocks"] = dict(zip(["pool", "cards_search", "zynd_search", "match", "external_search", "directory_call",
+                               "prefs", "group", "ctx"], mocks))
     yield state
     for p in patches:
         p.stop()
@@ -64,7 +70,7 @@ async def test_one_list_of_people_with_one_shape(world):
     assert not {"zynd_users", "cards", "quickenrich"} & set(result)     # the three source lists are gone
     ada, sam = result["people"]
     assert set(ada) == {"handle", "name", "headline", "location", "why", "sources", "claimed", "score",
-                        "next_action", "url", "skills", "linkedin_url"}
+                        "next_action", "url", "skills", "linkedin_url", "verified"}
     assert (ada["handle"], ada["next_action"], ada["claimed"]) == ("ada", "connect", True)
     assert (sam["next_action"], sam["claimed"]) == ("view_profile", False)   # nobody to connect to yet
     assert result["parsed"]["role"] == "investor" and result["parsed"]["country_code"] == "IN"
@@ -229,3 +235,52 @@ async def test_a_searcher_without_a_card_searches_one_way(world):
     world["cards"] = ([card("investor", 0.7)], None)
     await run()
     assert world["mocks"]["cards_search"].await_args.kwargs["as_handle"] == ""
+
+
+
+# ── match controls (A8), group scope (A7), verification (A6) ──────────────────────
+
+async def test_hidden_people_and_muted_topics_never_come_back(world):
+    world["prefs"] = {"hide_person": ["spammy"], "mute_topic": ["crypto trading"], "less_like_this": ["boring"]}
+    world["cards"] = ([card("spammy", 0.9), card("coin", 0.8, headline="Crypto trading desk lead"),
+                       card("fine", 0.7), card("coins", 0.7, headline="Crypto fan")], None)
+    result = await run()
+    assert sorted(p["handle"] for p in result["people"]) == ["coins", "fine"]       # "crypto" alone is not the muted topic
+
+
+async def test_less_like_this_goes_to_cards_which_ranks_by_it(world):
+    world["prefs"] = {"less_like_this": ["boring", "dull"]}
+    world["cards"] = ([card("a")], None)
+    await run()
+    assert world["mocks"]["cards_search"].await_args.kwargs["less_like"] == ["boring", "dull"]
+
+
+async def test_a_preferences_outage_leaves_the_search_untuned(world):
+    world["mocks"]["prefs"].side_effect = RuntimeError("cards down")
+    world["cards"] = ([card("a")], None)
+    assert [p["handle"] for p in (await run())["people"]] == ["a"]
+
+
+async def test_group_scope_searches_only_that_group_and_nothing_else(world):
+    world["group"] = {"ok": True, "results": [
+        {"handle": "mem1", "name": "Mem One", "headline": "Founder", "location": "", "skills": ["AI"],
+         "match_score": 0.7, "match_reasons": ["Matches your search terms"], "verified": ["linkedin"]},
+        {"handle": "../bad", "name": "Nope"}]}
+    result = await m.find_people("founders", uid="caller", group_id="g1")
+    assert result["mode"] == "group" and result["searched"] == ["group"]
+    (p,) = result["people"]
+    assert (p["handle"], p["claimed"], p["next_action"], p["verified"]) == ("mem1", True, "connect", ["linkedin"])
+    for name in ("cards_search", "zynd_search", "external_search"):
+        world["mocks"][name].assert_not_awaited()
+    assert world["mocks"]["group"].await_args.args[2] == "g1"
+
+
+async def test_group_scope_reports_a_group_the_caller_cannot_search(world):
+    world["group"] = {"ok": False, "error": "Group not found"}
+    result = await m.find_people("founders", uid="caller", group_id="nope")
+    assert result["people"] == [] and result["warnings"][0].startswith("group_unavailable")
+
+
+async def test_verified_badges_travel_with_a_card_and_merge(world):
+    world["cards"] = ([card("ada", 0.8, verified=["linkedin"])], None)
+    assert (await run())["people"][0]["verified"] == ["linkedin"]

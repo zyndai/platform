@@ -89,3 +89,16 @@ def two_way_match(searcher_kinds: set[str], candidate: AgentProfileCard) -> list
     if not searcher_kinds:
         return []
     return sorted(wanted_kinds(candidate) & searcher_kinds)
+
+
+LESS_LIKE_PENALTY = 0.2
+
+
+def too_much_like(disliked: AgentProfileCard, candidate: AgentProfileCard) -> bool:
+    """True when `candidate` is the kind of person the searcher asked to see less of: the same
+    kind of person (headline words) who also shares a skill or an industry with the disliked Card."""
+    if candidate.handle == disliked.handle or not (kinds_of(disliked) & kinds_of(candidate)):
+        return False
+    skills = lambda c: {x.name.strip().lower() for x in c.skills if x.name.strip()}
+    industries = lambda c: {i.strip().lower() for i in c.industries if i.strip()}
+    return bool(skills(disliked) & skills(candidate) or industries(disliked) & industries(candidate))

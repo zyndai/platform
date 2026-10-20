@@ -113,7 +113,7 @@ def test_the_search_endpoint_resolves_as_handle_to_a_card(monkeypatch):
     seen = {}
     me = card("me", "Founder")
     monkeypatch.setattr(agents_api.cards_service, "get_card_by_handle", lambda h: seen.setdefault("h", h) and me)
-    monkeypatch.setattr(agents_api.search_service, "search_agents", lambda *a: seen.update(searcher=a[-1]) or [])
+    monkeypatch.setattr(agents_api.search_service, "search_agents", lambda *a: seen.update(searcher=a[-2]) or [])
     app = FastAPI()
     app.include_router(agents_api.router, prefix="/v1/agents")
     client = TestClient(app)

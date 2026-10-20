@@ -169,6 +169,13 @@
       "when": 1792451996223,
       "tag": "0023_connection_invites",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1792486572705,
+      "tag": "0024_networking_controls",
+      "breakpoints": true
     }
   ]
 }

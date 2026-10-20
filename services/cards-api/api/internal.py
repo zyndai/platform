@@ -141,6 +141,15 @@ def clear_suggested_posts_route(
     return clear_suggested_posts(handle=handle)
 
 
+@router.post("/saved-searches/run")
+async def run_saved_searches(authorization: str | None = Header(default=None)):
+    """A3: re-run every active saved search and nudge owners about new strong matches. A no-op
+    (enabled: false) unless FEATURE_NETWORK_CONTROLS is on."""
+    _require_cron(authorization)
+    from services import saved_searches
+    return await asyncio.to_thread(saved_searches.run_all)
+
+
 @router.post("/purge-card-events")
 def purge_card_events(authorization: str | None = Header(default=None)):
     """S04: drop card_events older than 180 days. Flag off → 204."""

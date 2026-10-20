@@ -29,7 +29,8 @@ _EXPECTED_TOOLS = {
     "report_user_info", "get_my_context", "export_my_context",
     "find_similar_users", "find_people", "confirm_fact_tool", "forget_fact_tool",
     "publish_page", "list_my_pages", "disconnect",
-    "list_card_connections", "request_card_connection", "invite_to_claim", "respond_card_connection",
+    "list_card_connections", "request_card_connection", "invite_to_claim", "saved_searches", "tune_matches",
+    "report_or_block_card", "connection_brief", "respond_card_connection",
     "read_card_dm", "send_card_dm", "list_card_groups", "create_card_group",
     "find_card_group_people", "invite_card_group_member", "list_card_group_invitations",
     "respond_card_group_invitation", "read_card_group_messages", "send_card_group_message",
@@ -46,7 +47,7 @@ def test_consolidated_tools_registered():
 
 def test_tool_count_includes_cards_owner_and_discovery():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert len(names) == 29   # find_people is the one people-search tool
+    assert len(names) == 33   # find_people is the one people-search tool
 
 
 @pytest.mark.parametrize("owner_enabled", [False, True])

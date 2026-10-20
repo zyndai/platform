@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, index, pgPolicy, pgTable, text, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { boolean, check, index, pgPolicy, pgTable, text, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { authUsers, fk, serviceRole, tstz } from '../../lib/shared';
 import { cards } from './_schema';
 import { agentProfileCards } from './cards';
@@ -193,5 +193,96 @@ export const cardConnectionInvites = cards.table(
       .on(t.inviterUserId, t.targetCardId)
       .where(sql`status = 'pending'`),
     serviceOnly('connection_invites'),
+  ],
+);
+
+// owner: cards — saved people searches (A3). A cron in cards-api re-runs each active search and
+// turns new strong matches into owner nudges. `search_key` is a hash of the normalized filters so
+// the same search cannot be saved twice; `seen_handles` is what has already been reported.
+export const cardSavedSearches = cards.table(
+  'saved_searches',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    searchKey: text('search_key').notNull(),
+    label: text('label').notNull().default(''),
+    q: text('q').notNull().default(''),
+    role: text('role').notNull().default(''),
+    location: text('location').notNull().default(''),
+    skills: text('skills').notNull().default(''),
+    active: boolean('active').notNull().default(true),
+    seenHandles: text('seen_handles').array().notNull().default(sql`'{}'::text[]`),
+    createdAt: tstz('created_at').notNull().defaultNow(),
+    lastCheckedAt: tstz('last_checked_at'),
+    lastNotifiedAt: tstz('last_notified_at'),
+  },
+  (t) => [
+    fk('cards_saved_searches_user_fkey', t.userId, authUsers.id, 'cascade'),
+    unique('cards_saved_searches_user_key').on(t.userId, t.searchKey),
+    index('cards_saved_searches_active_idx').on(t.active, t.lastCheckedAt),
+    serviceOnly('saved_searches'),
+  ],
+);
+
+// owner: cards — reports of a Card for spam, impersonation or harassment (A6). Written by
+// cards-api; reviewed by a person (no automated action is taken on a report).
+export const cardReports = cards.table(
+  'card_reports',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    reporterUserId: uuid('reporter_user_id').notNull(),
+    targetCardId: text('target_card_id').notNull(),
+    reason: text('reason').notNull(),
+    details: text('details'),
+    status: text('status').notNull().default('open'),
+    createdAt: tstz('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    fk('cards_card_reports_reporter_fkey', t.reporterUserId, authUsers.id, 'cascade'),
+    fk('cards_card_reports_target_fkey', t.targetCardId, agentProfileCards.id, 'cascade'),
+    check('cards_card_reports_reason_check', sql`reason IN ('spam', 'impersonation', 'harassment', 'inaccurate', 'other')`),
+    check('cards_card_reports_status_check', sql`status IN ('open', 'reviewed', 'dismissed')`),
+    uniqueIndex('cards_card_reports_open_key').on(t.reporterUserId, t.targetCardId).where(sql`status = 'open'`),
+    index('cards_card_reports_target_idx').on(t.targetCardId, t.status),
+    serviceOnly('card_reports'),
+  ],
+);
+
+// owner: cards — match controls (A8): hide a person, mute a topic, "less like this".
+export const cardMatchPreferences = cards.table(
+  'match_preferences',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    kind: text('kind').notNull(),
+    value: text('value').notNull(),
+    createdAt: tstz('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    fk('cards_match_preferences_user_fkey', t.userId, authUsers.id, 'cascade'),
+    check('cards_match_preferences_kind_check', sql`kind IN ('hide_person', 'mute_topic', 'less_like_this')`),
+    unique('cards_match_preferences_key').on(t.userId, t.kind, t.value),
+    index('cards_match_preferences_user_idx').on(t.userId),
+    serviceOnly('match_preferences'),
+  ],
+);
+
+// owner: cards — which identities of a Card's owner have been verified (A6). Written only by
+// cards-api when it has proof (today: the owner signed in with the LinkedIn account that
+// matches the Card's LinkedIn profile); never part of the owner-editable card JSON, so an owner
+// cannot award themselves a badge.
+export const cardVerifications = cards.table(
+  'card_verifications',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    cardId: text('card_id').notNull(),
+    provider: text('provider').notNull(),
+    verifiedAt: tstz('verified_at').notNull().defaultNow(),
+  },
+  (t) => [
+    fk('cards_card_verifications_card_fkey', t.cardId, agentProfileCards.id, 'cascade'),
+    check('cards_card_verifications_provider_check', sql`provider IN ('linkedin', 'github', 'work_email')`),
+    unique('cards_card_verifications_key').on(t.cardId, t.provider),
+    serviceOnly('card_verifications'),
   ],
 );

@@ -1,5 +1,16 @@
 import { sql } from 'drizzle-orm';
-import { check, index, pgPolicy, pgTable, text, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  bigint,
+  check,
+  index,
+  pgPolicy,
+  pgTable,
+  primaryKey,
+  text,
+  unique,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { authUsers, fk, serviceRole, tstz } from '../../lib/shared';
 import { cards } from './_schema';
 import { agentProfileCards } from './cards';
@@ -7,6 +18,11 @@ import { agentProfileCards } from './cards';
 // owner: cards — Cards-native connections, direct messages, groups, and group invitations.
 // All writes go through cards-api so the API can enforce the verified-card and
 // accepted-connection rules. The tables are service-role-only by design.
+//
+// Messaging v2 adds a per-conversation sequence (`seq`), idempotent sends
+// (`client_id`), inbox summaries, and per-user read cursors. The sequence is
+// assigned by a database trigger under the parent row lock, so it is stable,
+// gap-free per conversation, and safe to use as a pagination cursor.
 
 const serviceOnly = (table: string) => pgPolicy(`service role full access on ${table}`, {
   as: 'permissive',
@@ -49,13 +65,20 @@ export const cardDmThreads = cards.table(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     connectionId: uuid('connection_id').notNull(),
+    messageCount: bigint('message_count', { mode: 'number' }).notNull().default(0),
+    lastMessageAt: tstz('last_message_at'),
+    lastMessagePreview: text('last_message_preview'),
+    lastMessageSenderUserId: uuid('last_message_sender_user_id'),
     createdAt: tstz('created_at').notNull().defaultNow(),
     updatedAt: tstz('updated_at').notNull().defaultNow(),
   },
   (t) => [
     fk('cards_dm_threads_connection_fkey', t.connectionId, cardConnections.id, 'cascade'),
+    fk('cards_dm_threads_last_sender_fkey', t.lastMessageSenderUserId, authUsers.id, 'set null'),
     unique('cards_dm_threads_connection_key').on(t.connectionId),
+    check('cards_dm_threads_message_count_check', sql`message_count >= 0`),
     index('cards_dm_threads_updated_idx').on(t.updatedAt),
+    index('cards_dm_threads_last_message_idx').on(t.lastMessageAt.desc().nullsLast()),
     serviceOnly('dm_threads'),
   ],
 );
@@ -65,6 +88,8 @@ export const cardDmMessages = cards.table(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     threadId: uuid('thread_id').notNull(),
+    seq: bigint('seq', { mode: 'number' }).notNull(),
+    clientId: uuid('client_id'),
     senderUserId: uuid('sender_user_id').notNull(),
     content: text('content').notNull(),
     createdAt: tstz('created_at').notNull().defaultNow(),
@@ -72,8 +97,31 @@ export const cardDmMessages = cards.table(
   (t) => [
     fk('cards_dm_messages_thread_fkey', t.threadId, cardDmThreads.id, 'cascade'),
     fk('cards_dm_messages_sender_fkey', t.senderUserId, authUsers.id, 'cascade'),
+    check('cards_dm_messages_seq_check', sql`seq > 0`),
+    uniqueIndex('cards_dm_messages_thread_seq_key').on(t.threadId, t.seq),
+    uniqueIndex('cards_dm_messages_client_key')
+      .on(t.threadId, t.senderUserId, t.clientId)
+      .where(sql`client_id IS NOT NULL`),
     index('cards_dm_messages_thread_created_idx').on(t.threadId, t.createdAt),
     serviceOnly('dm_messages'),
+  ],
+);
+
+export const cardDmReadState = cards.table(
+  'dm_read_state',
+  {
+    threadId: uuid('thread_id').notNull(),
+    userId: uuid('user_id').notNull(),
+    lastReadSeq: bigint('last_read_seq', { mode: 'number' }).notNull().default(0),
+    lastReadAt: tstz('last_read_at').notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ name: 'cards_dm_read_state_pkey', columns: [t.threadId, t.userId] }),
+    fk('cards_dm_read_state_thread_fkey', t.threadId, cardDmThreads.id, 'cascade'),
+    fk('cards_dm_read_state_user_fkey', t.userId, authUsers.id, 'cascade'),
+    check('cards_dm_read_state_seq_check', sql`last_read_seq >= 0`),
+    index('cards_dm_read_state_user_idx').on(t.userId, t.lastReadAt.desc()),
+    serviceOnly('dm_read_state'),
   ],
 );
 
@@ -85,14 +133,21 @@ export const cardGroups = cards.table(
     description: text('description'),
     ownerUserId: uuid('owner_user_id').notNull(),
     visibility: text('visibility').notNull().default('private'),
+    messageCount: bigint('message_count', { mode: 'number' }).notNull().default(0),
+    lastMessageAt: tstz('last_message_at'),
+    lastMessagePreview: text('last_message_preview'),
+    lastMessageSenderUserId: uuid('last_message_sender_user_id'),
     createdAt: tstz('created_at').notNull().defaultNow(),
     updatedAt: tstz('updated_at').notNull().defaultNow(),
     archivedAt: tstz('archived_at'),
   },
   (t) => [
     fk('cards_groups_owner_fkey', t.ownerUserId, authUsers.id, 'cascade'),
+    fk('cards_groups_last_sender_fkey', t.lastMessageSenderUserId, authUsers.id, 'set null'),
     check('cards_groups_visibility_check', sql`visibility IN ('private', 'open')`),
+    check('cards_groups_message_count_check', sql`message_count >= 0`),
     index('cards_groups_owner_idx').on(t.ownerUserId, t.updatedAt),
+    index('cards_groups_last_message_idx').on(t.lastMessageAt.desc().nullsLast()),
     serviceOnly('groups'),
   ],
 );
@@ -151,6 +206,8 @@ export const cardGroupMessages = cards.table(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     groupId: uuid('group_id').notNull(),
+    seq: bigint('seq', { mode: 'number' }).notNull(),
+    clientId: uuid('client_id'),
     senderUserId: uuid('sender_user_id').notNull(),
     content: text('content').notNull(),
     createdAt: tstz('created_at').notNull().defaultNow(),
@@ -158,7 +215,30 @@ export const cardGroupMessages = cards.table(
   (t) => [
     fk('cards_group_messages_group_fkey', t.groupId, cardGroups.id, 'cascade'),
     fk('cards_group_messages_sender_fkey', t.senderUserId, authUsers.id, 'cascade'),
+    check('cards_group_messages_seq_check', sql`seq > 0`),
+    uniqueIndex('cards_group_messages_group_seq_key').on(t.groupId, t.seq),
+    uniqueIndex('cards_group_messages_client_key')
+      .on(t.groupId, t.senderUserId, t.clientId)
+      .where(sql`client_id IS NOT NULL`),
     index('cards_group_messages_group_created_idx').on(t.groupId, t.createdAt),
     serviceOnly('group_messages'),
+  ],
+);
+
+export const cardGroupReadState = cards.table(
+  'group_read_state',
+  {
+    groupId: uuid('group_id').notNull(),
+    userId: uuid('user_id').notNull(),
+    lastReadSeq: bigint('last_read_seq', { mode: 'number' }).notNull().default(0),
+    lastReadAt: tstz('last_read_at').notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ name: 'cards_group_read_state_pkey', columns: [t.groupId, t.userId] }),
+    fk('cards_group_read_state_group_fkey', t.groupId, cardGroups.id, 'cascade'),
+    fk('cards_group_read_state_user_fkey', t.userId, authUsers.id, 'cascade'),
+    check('cards_group_read_state_seq_check', sql`last_read_seq >= 0`),
+    index('cards_group_read_state_user_idx').on(t.userId, t.lastReadAt.desc()),
+    serviceOnly('group_read_state'),
   ],
 );

@@ -15,14 +15,21 @@ connection requests, DMs, groups, or the Cards MCP network tools.
 - Cards web and authenticated MCP use the same Cards API and tables.
 - Invitations expire after seven days. Acceptance checks expiry, connection
   status, membership, and group capacity in one transaction.
-- Cards web refreshes requests/invitations every five seconds and open chats
-  every three seconds. Message reads show the latest 100 messages.
+- Messaging v2 (migration `0023`) adds a per-conversation `seq`, idempotent
+  `client_id` sends, read cursors, inbox summaries, and Realtime Broadcast on
+  private `cards:dm:*`, `cards:group:*`, and `cards:user:*` topics. The inbox,
+  a message page, a send, and a read receipt are each one service-only RPC.
+- The v2 web UI is behind the server-side `FEATURE_NETWORK_V2` flag (or the
+  `/network?v2=1` preview query). The old UI remains the fallback until the
+  migration and Realtime policy are verified. The old endpoints keep their
+  response shapes for the authenticated MCP tools.
 
 ## Surfaces
 
-- Cards web: `/network`
+- Cards web: `/network` (legacy) and `/network?v2=1` (preview)
 - Card profile: `Request connection`
-- Cards API: `/cards/network/*`
+- Cards API: `/cards/network/*`, including `GET /inbox`, message cursors
+  (`before_seq` / `after_seq`), idempotent `client_id` sends, and `POST /read`
 - Authenticated MCP: `list_card_connections`, `request_card_connection`,
   `respond_card_connection`, `read_card_dm`, `send_card_dm`, and the
   `card_group` tools.
@@ -37,8 +44,10 @@ membership, invitation, and group-message tables. `0020_network_atomic_operation
 adds service-only functions for atomic group creation and invitation decisions.
 `0021_reconcile_owner_metadata` tracks the existing owner-digest columns without
 resetting their values. `0022_reconcile_cards_live_contracts` reconciles the
-reviewed older drift while preserving the live analytics view. These migrations
-must be applied before deploying this API.
+reviewed older drift while preserving the live analytics view.
+`0023_network_messaging_v2` adds message sequences, idempotency keys, read
+cursors, inbox summaries, and Realtime Broadcast triggers. **Apply `0023`
+before deploying the v2 API code**; the new endpoints call its RPCs.
 
 Test the full Cards migration history and concurrent invitation decisions on a
 disposable local Postgres with pgvector (never set this to Supabase):
@@ -47,6 +56,32 @@ disposable local Postgres with pgvector (never set this to Supabase):
 cd packages/db
 CARDS_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5559/postgres npm test
 ```
+
+## Messaging v2 (migration 0023)
+
+- `dm_messages` / `group_messages` get a per-conversation `seq` assigned under
+  the parent row lock, plus a nullable `client_id` unique per sender and
+  conversation. Retries return the stored row instead of inserting twice.
+- `dm_read_state` / `group_read_state` hold `last_read_seq`. Unread is
+  `message_count - last_read_seq`, so the inbox does not count history.
+- `dm_threads` / `groups` carry the last-message summary; triggers keep it
+  current for every writer, including MCP.
+- `cards.network_inbox`, `network_dm_messages`, `network_send_dm`,
+  `network_group_messages`, `network_send_group_message`,
+  `network_mark_read`, and `network_group_members` are service-only.
+- Database triggers publish private Realtime events. The browser subscribes
+  with the user JWT; `cards.network_can_subscribe` authorizes the topic.
+  Browser roles still have no table grants in `cards`; the only new grant is
+  schema usage for that boolean function.
+- Before applying, audit existing policies on `realtime.messages`
+  (`select * from pg_policies where schemaname = 'realtime' and tablename = 'messages'`).
+  A broad `USING (true)` policy from another feature would bypass the
+  `cards:*` topic checks; remove or scope it first. Also confirm Realtime
+  private channels are enabled in the project.
+- `realtime.send` failures are caught and logged. Realtime is delivery, not
+  storage; clients catch up with `after_seq` on reconnect.
+- Apply `0023` before deploying API code that calls the new RPCs. The API and
+  old endpoints remain backward compatible.
 
 ## Dev rollout and rollback
 
@@ -59,6 +94,12 @@ CARDS_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5559/postgres n
 - Record the pre-merge `dev` commit and the squash commit. If testing finds a
   problem, revert the squash commit and redeploy dev. Keep the additive network
   tables/functions and their data; reverting code must not drop user messages.
+- Messaging v2 rollout order: (1) apply `0023` after review, (2) deploy
+  cards-api, (3) deploy cards-web with `FEATURE_NETWORK_V2=false`, (4) verify
+  `/network?v2=1`, (5) set `FEATURE_NETWORK_V2=true` and restart cards-web.
+  Rollback is step 5 reversed; the additive tables and message data stay.
+  Do **not** deploy cards-api before `0023`, because the old endpoints now
+  read through `network_inbox`.
 
 ### Shared database preflight — 2026-10-17
 

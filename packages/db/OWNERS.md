@@ -19,7 +19,7 @@ every service listed as a reader.
 | `chat_messages`, `brief_todos`, `published_pages` | persona | — |
 | `cards.agent_profile_cards`, `cards.x_accounts`, `cards.x_mentions`, `cards.x_conversations`, `cards.keyword_posts`, `cards.takedown_requests` | cards | — (service role only; cards-web goes through cards-api) |
 | `cards.visitor_preferences`, `cards.profile_visits` | cards | cards-api only; consent-bound owner reads |
-| `cards.connections`, `cards.dm_threads`, `cards.dm_messages`, `cards.groups`, `cards.group_members`, `cards.group_invitations`, `cards.group_messages` | cards | cards-api only; Cards web/MCP use Cards HTTP |
+| `cards.connections`, `cards.dm_threads`, `cards.dm_messages`, `cards.dm_read_state`, `cards.groups`, `cards.group_members`, `cards.group_read_state`, `cards.group_invitations`, `cards.group_messages` | cards | cards-api only; Cards web/MCP use Cards HTTP. Read cursors are service-role only |
 | `identity.*` (empty today; Zynd Account tables in Stage 2) | shared | persona, cards |
 | `persona_intro_requests`, `persona_intro_rules`, `persona_intro_audit` | persona | cards-api via Persona HTTP; persona-web (requests only, participant RLS) |
 | `cards.intro_requests` | cards | cards-api; minimal Persona status projection and activity events |
@@ -36,6 +36,10 @@ every service listed as a reader.
 | `cards.s10_set_visitor_privacy`, `cards.s10_record_named_visit` | cards | cards 0016 | cards-api only |
 | `cards.s10_named_visitors` | cards | cards 0018 | cards-api only; consent-bound public profile links |
 | `cards.network_create_group`, `cards.network_respond_invitation` | cards | cards 0020 | cards-api only; transactional membership checks |
+| `cards.network_inbox`, `cards.network_dm_messages`, `cards.network_send_dm`, `cards.network_group_messages`, `cards.network_send_group_message`, `cards.network_mark_read`, `cards.network_group_members`, `cards.network_card_payload` | cards | cards 0023 | cards-api only; one round-trip inbox/message operations |
+| `cards.network_can_subscribe` | cards | cards 0023 | Supabase Realtime RLS only; boolean authorization for `cards:*` private topics |
+| `realtime.messages` policy `cards network can receive broadcasts` | cards | cards 0023 | Supabase Realtime private `cards:*` topics; review alongside any other `realtime.messages` policy |
+| message/connection/invitation/member triggers in `cards` | cards | cards 0023 | sequence assignment, inbox summaries, read-state init, and Realtime Broadcast |
 | `cards.v_funnel_daily`, `cards.v_funnel_daily_totals`, `cards.purge_card_events` | cards | cards 0022 | Cards analytics/retention; deployed daily-view contract preserved |
 | publication `supabase_realtime` (9 persona tables) | persona | persona 0000 | persona-web realtime |
 | extension `vector` (schema `extensions`) | cards | cards 0000 | — |

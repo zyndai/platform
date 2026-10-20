@@ -14,17 +14,27 @@ export interface CardConnection {
   incoming: boolean;
   created_at: string;
   decided_at?: string | null;
+  updated_at?: string;
   request_message?: string | null;
   partner: CardSummary;
+  thread_id?: string | null;
+  last_message_at?: string | null;
+  last_message_preview?: string | null;
+  last_message_sender_user_id?: string | null;
+  unread_count?: number;
 }
 
 export interface CardMessage {
   id: string;
   thread_id?: string;
   group_id?: string;
+  seq?: number;
+  client_id?: string | null;
   sender_user_id: string;
   content: string;
   created_at: string;
+  pending?: boolean;
+  failed?: boolean;
 }
 
 export interface CardGroup {
@@ -36,12 +46,18 @@ export interface CardGroup {
   my_role?: "owner" | "member";
   created_at: string;
   updated_at: string;
+  thread_id?: string | null;
+  last_message_at?: string | null;
+  last_message_preview?: string | null;
+  last_message_sender_user_id?: string | null;
+  unread_count?: number;
 }
 
 export interface CardGroupMember {
   id: string;
   user_id: string;
   role: "owner" | "member";
+  joined_at?: string;
   card?: CardSummary | null;
 }
 
@@ -56,6 +72,31 @@ export interface CardGroupInvitation {
   expires_at: string;
   group?: { id: string; name: string; description?: string | null };
 }
+
+export interface CardInbox {
+  connections: CardConnection[];
+  groups: CardGroup[];
+  invitations: CardGroupInvitation[];
+  server_time?: string;
+}
+
+export interface CardMessagePage {
+  thread_id?: string;
+  group_id?: string;
+  messages: CardMessage[];
+  has_more: boolean;
+  latest_seq: number;
+  peer_last_read_seq?: number;
+}
+
+export interface CardMessageResult {
+  message: CardMessage;
+  duplicate?: boolean;
+}
+
+export type NetworkConversation =
+  | { kind: "dm"; id: string; connection: CardConnection }
+  | { kind: "group"; id: string; group: CardGroup };
 
 const API = (process.env.NEXT_PUBLIC_API_URL || "https://api.zynd.ai").replace(/\/$/, "");
 
@@ -82,6 +123,72 @@ export async function cardsNetworkRequest<T>(
     throw new Error(detail);
   }
   return response.json() as Promise<T>;
+}
+
+function messageQuery(limit: number, beforeSeq?: number | null, afterSeq?: number | null): string {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (beforeSeq != null) params.set("before_seq", String(beforeSeq));
+  if (afterSeq != null) params.set("after_seq", String(afterSeq));
+  return params.toString();
+}
+
+export function fetchInbox(token: string, signal?: AbortSignal): Promise<CardInbox> {
+  return cardsNetworkRequest<CardInbox>("/inbox", token, "GET", undefined, signal);
+}
+
+export function fetchDmMessages(
+  token: string,
+  connectionId: string,
+  options: { limit?: number; beforeSeq?: number | null; afterSeq?: number | null; signal?: AbortSignal } = {},
+): Promise<CardMessagePage> {
+  const query = messageQuery(options.limit ?? 40, options.beforeSeq, options.afterSeq);
+  return cardsNetworkRequest<CardMessagePage>(`/connections/${connectionId}/messages?${query}`, token, "GET", undefined, options.signal);
+}
+
+export function fetchGroupMessages(
+  token: string,
+  groupId: string,
+  options: { limit?: number; beforeSeq?: number | null; afterSeq?: number | null; signal?: AbortSignal } = {},
+): Promise<CardMessagePage> {
+  const query = messageQuery(options.limit ?? 40, options.beforeSeq, options.afterSeq);
+  return cardsNetworkRequest<CardMessagePage>(`/groups/${groupId}/messages?${query}`, token, "GET", undefined, options.signal);
+}
+
+export function sendDm(
+  token: string,
+  connectionId: string,
+  content: string,
+  clientId: string,
+): Promise<CardMessageResult> {
+  return cardsNetworkRequest<CardMessageResult>(`/connections/${connectionId}/messages`, token, "POST", {
+    content,
+    client_id: clientId,
+  });
+}
+
+export function sendGroupMessage(
+  token: string,
+  groupId: string,
+  content: string,
+  clientId: string,
+): Promise<CardMessageResult> {
+  return cardsNetworkRequest<CardMessageResult>(`/groups/${groupId}/messages`, token, "POST", {
+    content,
+    client_id: clientId,
+  });
+}
+
+export function markNetworkRead(
+  token: string,
+  kind: "dm" | "group",
+  id: string,
+  seq: number,
+): Promise<{ status: string; last_read_seq: number }> {
+  return cardsNetworkRequest<{ status: string; last_read_seq: number }>("/read", token, "POST", {
+    kind,
+    id,
+    seq,
+  });
 }
 
 export function connectionRequestNotice(result: { connection: CardConnection; existing: boolean }): string {

@@ -124,9 +124,12 @@ a disposable local database with permission to create/drop scratch databases.
   all of them back. So `CREATE INDEX CONCURRENTLY` can't be used: for a big
   table, build the index by hand in a quiet window and record it in a
   migration with `CREATE INDEX IF NOT EXISTS`.
-- A new Postgres schema is not exposed by default. The cards schema only
-  grants the service role, and it must be listed in the project's API
-  **Exposed schemas** setting before cards-api can query it.
+- A new Postgres schema is not exposed by default. The cards schema grants the
+  service role; since cards 0023, `authenticated` also has schema usage plus
+  execute on the boolean `cards.network_can_subscribe` function for Realtime
+  topic authorization. Browser roles still have no table grants. The schema
+  must be listed in the project's API **Exposed schemas** setting before
+  cards-api can query it.
 - Changes to `persona_agents` or `search_personas_fts` also need memory's
   owner: memory reads them (`OWNERS.md`).
 - The old SQL folders (`services/persona-api/db`,

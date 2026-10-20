@@ -119,6 +119,25 @@ SECTIONS = {
 }
 
 
+# Photos are also written by the LinkedIn avatar self-heal, so the stored value
+# can move while the editor is open.
+AVATAR_FIELDS = ("avatar_url", "avatar_bg_url")
+
+
+def expected_after_avatar_drift(patch: dict, expected: dict, visible: dict) -> dict:
+    """Accept server-side drift in a photo field the owner is replacing.
+
+    A photo the owner didn't touch still conflicts, so a save can't put a stale
+    one back over the self-healed value.
+    """
+    new, old = patch.get("identity"), expected.get("identity")
+    if not isinstance(new, dict) or not isinstance(old, dict):
+        return expected
+    current = visible.get("identity") or {}
+    adopted = {**old, **{f: current.get(f) for f in AVATAR_FIELDS if new.get(f) != old.get(f)}}
+    return {**expected, "identity": adopted}
+
+
 @router.patch("/by-handle/{handle}/sections/{section}")
 async def save_section(handle: str, section: str, body: Section, authorization: str | None = Header(default=None)):
     email = email_for(authorization)
@@ -141,9 +160,10 @@ async def save_section(handle: str, section: str, body: Section, authorization: 
         # Sparse legacy JSON and cleaned work-history descriptions may differ
         # from the serialized editor model. Translate its acknowledged values
         # to raw JSON, then still compare under the SQL row lock.
-        if any(visible.get(key) != value for key, value in body.expected.items()):
+        acknowledged = expected_after_avatar_drift(body.patch, body.expected, visible)
+        if any(visible.get(key) != value for key, value in acknowledged.items()):
             raise HTTPException(409, "Section changed in another session. Reload before saving.")
-        return {key: row["card"].get(key, value) for key, value in body.expected.items()}
+        return {key: row["card"].get(key, value) for key, value in acknowledged.items()}
     expected = await asyncio.to_thread(stored_expectations)
     result = await asyncio.to_thread(rpc, "s10_save_section", {"p_email": email, "p_handle": handle, "p_patch": normalized, "p_expected": expected})
     # The transaction clears the stale vector. FTS already reflects the saved

@@ -157,6 +157,51 @@ def test_sparse_section_expectation_is_translated_without_losing_lock_check(clie
     assert operation.call_args.args[1]["p_expected"] == {"identity": {"name": "Alice"}}
 
 
+def _identity_save(client, monkeypatch, stored, patch_identity, expected_identity):
+    raw = {"id": "c1", "identity": stored}
+    sb = MagicMock()
+    q = sb.table.return_value
+    for method in ("select", "eq", "ilike", "limit"):
+        getattr(q, method).return_value = q
+    q.execute.return_value.data = [{"card": raw, "handle": "alice"}]
+    monkeypatch.setattr(config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(routes, "ping_revalidate", lambda *args: None)
+    operation = MagicMock(return_value={**AgentProfileCard.model_validate(raw).model_dump(mode="json"), "updated_at": "2026-10-12T00:00:00Z"})
+    monkeypatch.setattr(routes, "rpc", operation)
+    # The editor sends the full serialized identity, defaults included.
+    full = lambda identity: AgentProfileCard.model_validate({"id": "c1", "identity": identity}).model_dump(mode="json")["identity"]
+    response = client.patch("/cards/by-handle/alice/sections/identity", headers={"Authorization": "Bearer owner"}, json={"patch": {"identity": full(patch_identity)}, "expected": {"identity": full(expected_identity)}})
+    return response, operation
+
+
+def test_replacing_photo_survives_avatar_self_heal(client, monkeypatch):
+    # The editor loaded a LinkedIn photo that the self-heal has since cleared.
+    response, operation = _identity_save(
+        client, monkeypatch, {"name": "Alice", "avatar_url": ""},
+        {"name": "Alice", "avatar_url": "https://cdn.example/new.jpg"},
+        {"name": "Alice", "avatar_url": "https://media.licdn.com/old"})
+    assert response.status_code == 200
+    assert operation.call_args.args[1]["p_expected"] == {"identity": {"name": "Alice", "avatar_url": ""}}
+
+
+def test_untouched_photo_still_conflicts_with_self_heal(client, monkeypatch):
+    response, operation = _identity_save(
+        client, monkeypatch, {"name": "Alice", "avatar_url": "https://media.licdn.com/healed"},
+        {"name": "Alicia", "avatar_url": "https://media.licdn.com/old"},
+        {"name": "Alice", "avatar_url": "https://media.licdn.com/old"})
+    assert response.status_code == 409
+    operation.assert_not_called()
+
+
+def test_other_identity_drift_still_conflicts_when_photo_replaced(client, monkeypatch):
+    response, operation = _identity_save(
+        client, monkeypatch, {"name": "Renamed elsewhere", "avatar_url": ""},
+        {"name": "Alice", "avatar_url": "https://cdn.example/new.jpg"},
+        {"name": "Alice", "avatar_url": "https://media.licdn.com/old"})
+    assert response.status_code == 409
+    operation.assert_not_called()
+
+
 def test_rpc_conflict_returns_409(monkeypatch):
     sb = MagicMock()
     sb.rpc.return_value.execute.side_effect = APIError({"code": "40001", "message": "changed", "details": None, "hint": None})

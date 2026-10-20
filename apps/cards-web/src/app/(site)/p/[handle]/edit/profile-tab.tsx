@@ -18,20 +18,16 @@ function PlatformIcon({ platform }: { platform: string }) {
 }
 
 async function uploadAvatar(file: File, handle: string): Promise<string> {
-  try {
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return URL.createObjectURL(file);
-    const ext = file.name.split(".").pop() ?? "jpg";
-    // Storage RLS scopes writes to the uploader's own folder — see
-    // ZYND_DB_UNIFY_PLAN.md §5.5.
-    const path = `${user.id}/${handle}-${Date.now()}.${ext}`;
-    const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: true });
-    if (error) return URL.createObjectURL(file);
-    return supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
-  } catch {
-    return URL.createObjectURL(file);
-  }
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Sign in again to change your photo.");
+  const ext = file.name.split(".").pop() ?? "jpg";
+  // Storage RLS scopes writes to the uploader's own folder — see
+  // ZYND_DB_UNIFY_PLAN.md §5.5.
+  const path = `${user.id}/${handle}-${Date.now()}.${ext}`;
+  const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: true });
+  if (error) throw error;
+  return supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
 }
 
 export function ProfileTab({ form, set, handle, token, autosave }: {
@@ -39,6 +35,7 @@ export function ProfileTab({ form, set, handle, token, autosave }: {
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
   // A preview built from the owner's latest public memory. It replaces the
   // About text only when the owner clicks "Use this draft".
   const [aboutDraft, setAboutDraft] = useState<
@@ -77,9 +74,18 @@ export function ProfileTab({ form, set, handle, token, autosave }: {
                 const file = e.target.files?.[0];
                 if (!file) return;
                 setUploading(true);
-                set("avatar", await uploadAvatar(file, handle));
-                setUploading(false);
+                setUploadError("");
+                try {
+                  // A failed upload must not fall back to a blob: URL; it would be saved to the card.
+                  set("avatar", await uploadAvatar(file, handle));
+                } catch (err) {
+                  setUploadError(err instanceof Error && err.message ? `Couldn't upload that photo: ${err.message}` : "Couldn't upload that photo. Try again.");
+                } finally {
+                  setUploading(false);
+                  e.target.value = "";
+                }
               }} />
+            {uploadError && <p className="pe-error" role="alert">{uploadError}</p>}
           </div>
           <div className="pe-grid">
             <Field label="Full name" htmlFor="pe-name">

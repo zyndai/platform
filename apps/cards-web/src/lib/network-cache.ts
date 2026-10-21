@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import type { AgentSources } from "./agent-stream";
 import type {
   CardGroupMember,
   CardInbox,
@@ -207,9 +208,43 @@ export function removeCachedMessage(kind: NetworkThreadKind, id: string, clientI
   });
 }
 
+// ── Where an assistant reply came from (dev only) ───────────────────────────
+//
+// Sent by cards-api with `agent_stream` when it runs with
+// FEATURE_AGENT_DEBUG_SOURCES, keyed by job id, which the finished reply
+// carries as its `client_id`. Deliberately outside `state`: it is session
+// memory, so it survives switching conversations but is never written to
+// IndexedDB and is gone on reload.
+
+const SOURCES_LIMIT = 100;
+const NO_SOURCES: Record<string, AgentSources> = {};
+let agentSources = NO_SOURCES;
+const sourceListeners = new Set<() => void>();
+
+function emitSources() {
+  for (const listener of sourceListeners) listener();
+}
+
+function subscribeSources(listener: () => void): () => void {
+  sourceListeners.add(listener);
+  return () => sourceListeners.delete(listener);
+}
+
+export function rememberAgentSources(jobId: string, sources: AgentSources) {
+  const kept = Object.entries(agentSources).filter(([id]) => id !== jobId).slice(-(SOURCES_LIMIT - 1));
+  agentSources = Object.fromEntries([...kept, [jobId, sources]]);
+  emitSources();
+}
+
+export function useAgentSources(): Record<string, AgentSources> {
+  return useSyncExternalStore(subscribeSources, () => agentSources, () => NO_SOURCES);
+}
+
 export function clearNetworkCache() {
   state = EMPTY_STATE;
   currentUserId = null;
+  agentSources = NO_SOURCES;
+  emitSources();
   hydratePromise = null;
   if (persistTimer != null && typeof window !== "undefined") window.clearTimeout(persistTimer);
   persistTimer = null;

@@ -17,6 +17,7 @@ import {
   type Project,
 } from "@/lib/cards";
 import { createClient } from "@/lib/supabase/server";
+import { imgProxyUrl } from "@/lib/avatar";
 import { pageMetadata } from "@/lib/seo";
 import { SkillMatrix } from "./skill-matrix";
 import { withShareRef } from "@/lib/attr";
@@ -35,10 +36,11 @@ import { HeroAskPanel } from "./hero-agent-bar";
 import { ProjectsCard } from "./projects-card";
 import { MemoryCard } from "./memory-card";
 import { ClaimBanner } from "./claim-banner";
-import { RequestConnection } from "@/components/network/RequestConnection";
+import { ConnectionButton } from "@/components/network/ConnectionButton";
 import { memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
 import { readEdition } from "@/lib/editions";
 import { EditionHero } from "./edition-banner";
+import { EditionSignals } from "./edition-signals";
 import { cleanTopic, publicTopics } from "@/lib/profile-quality";
 import { BeaconCard } from "@/components/BeaconCard";
 import { BookingAvailability } from "@/components/BookingAvailability";
@@ -83,15 +85,6 @@ function githubAvatar(url: string | null | undefined, size = 400): string | null
   } catch {
     return null;
   }
-}
-
-function imgProxy(src: string | null | undefined, fallback?: string | null, handle?: string | null): string | undefined {
-  const qs = new URLSearchParams();
-  if (src) qs.set("url", src);
-  if (fallback) qs.set("fallback", fallback);
-  if (handle) qs.set("handle", handle);
-  if (!qs.has("url") && !qs.has("fallback")) return undefined;
-  return `/api/img?${qs.toString()}`;
 }
 
 function usernameFromUrl(url: string | null | undefined): string | null {
@@ -433,7 +426,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
   const rawAvatar = safeUrl(identity.avatar_url);
   const ghAvatar = githubAvatar(identity.links?.github);
   const avatarUrl = rawAvatar ?? ghAvatar;
-  const heroAvatarSrc = imgProxy(rawAvatar, ghAvatar, card.handle || handle);
+  const heroAvatarSrc = imgProxyUrl(rawAvatar, ghAvatar, card.handle || handle);
   const linkedinLinked = !!identity.links?.linkedin;
   const skills = card.skills.filter(s => cleanTopic(s.name)).sort((a, b) => b.evidence_count - a.evidence_count);
 
@@ -621,6 +614,9 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
     // Auth check is best-effort
   }
 
+  // The Connect / Message button: for visitors to a claimed Card (never the owner, never an unclaimed one).
+  const showConnect = claimed && !isOwner;
+
   const showLinkedin = !!(linkedinHandle || linkedinUrl || liJobs.length > 0);
   const showX = !!(v.x.handle || v.x.followers != null);
   const showGithub = cardHasGithub;
@@ -632,8 +628,8 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
   const ghFollowing = ghExtras?.following ?? null;
   const ghBio = ghExtras?.bio;
   const ghContribTotal = contributions?.total ?? (typeof v.github.commits === "number" ? v.github.commits : null);
-  const linkedinAvatarSrc = imgProxy(safeUrl(card.linkedin_stats?.avatar) ?? rawAvatar, ghAvatar, card.handle || handle);
-  const xAvatarSrc = imgProxy(safeUrl(card.x_stats?.avatar) ?? rawAvatar, ghAvatar, card.handle || handle);
+  const linkedinAvatarSrc = imgProxyUrl(safeUrl(card.linkedin_stats?.avatar) ?? rawAvatar, ghAvatar, card.handle || handle);
+  const xAvatarSrc = imgProxyUrl(safeUrl(card.x_stats?.avatar) ?? rawAvatar, ghAvatar, card.handle || handle);
   const xImpressions = v.x.impressions != null && String(v.x.impressions).trim() !== "—" ? v.x.impressions : null;
   const showMemory = claimed && memoryTotal > 0;
   const showBooking = claimed && bookingLinks.length > 0;
@@ -691,6 +687,31 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
         .pf-book-cta { transition: background .15s, transform .15s, box-shadow .15s; }
         .pf-book-cta:hover { background:#f8fafc !important; text-decoration:none !important; transform:translateY(-1px); box-shadow:0 8px 20px rgba(15,23,42,0.18); }
         .pf-hero-h { font-size:0.78rem; color:#e0e7ff; font-weight:600; line-height:1.35; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+        /* Connect / Message pill under the name (components/network/ConnectionButton): a white pill on the purple hero, like "Open chat" */
+        .pf-connect { display:flex; flex-direction:column; align-items:flex-start; gap:6px; max-width:100%; }
+        .pf-connect-anchor { position:relative; display:inline-flex; max-width:100%; }
+        .pf-connect-pill { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-width:104px; min-height:34px; padding:7px 14px; border:0; border-radius:999px; background:#fff; color:#4f46e5; font:inherit; font-size:0.75rem; font-weight:800; line-height:1; white-space:nowrap; text-decoration:none; cursor:pointer; transition:transform .15s, box-shadow .15s, opacity .15s; }
+        a.pf-connect-pill:hover, button.pf-connect-pill:not([aria-disabled="true"]):not(:disabled):hover { transform:translateY(-1px); box-shadow:0 8px 18px rgba(15,23,42,0.22); text-decoration:none; }
+        .pf-connect-pill:focus-visible { outline:2px solid #fff; outline-offset:2px; }
+        .pf-connect-pill[aria-disabled="true"], .pf-connect-pill:disabled { opacity:.62; cursor:default; }
+        .pf-connect-pill[aria-busy="true"] { opacity:.4; }
+        .pf-connect-note { max-width:100%; font-size:0.68rem; font-weight:600; line-height:1.4; color:rgba(255,255,255,0.88); overflow-wrap:anywhere; }
+        .pf-connect-note a { color:#fff; text-decoration:underline; }
+        .pf-connect-pop { position:absolute; z-index:40; top:calc(100% + 8px); box-sizing:border-box; padding:12px; border:1px solid #e5e7eb; border-radius:14px; background:#fff; color:#0f172a; box-shadow:0 18px 40px rgba(15,23,42,0.28); text-align:left; }
+        .pf-connect-pop-text { margin:0 0 8px; font-size:0.72rem; line-height:1.4; color:#64748b; }
+        .pf-connect-pop-note { display:block; width:100%; box-sizing:border-box; min-height:72px; padding:9px 10px; border:1px solid #d4d4d8; border-radius:10px; background:#fff; color:#0f172a; font:inherit; font-size:0.8rem; resize:vertical; }
+        .pf-connect-pop-note:focus-visible { outline:2px solid #6d64f6; outline-offset:1px; }
+        .pf-connect-pop-actions { display:flex; align-items:center; gap:8px; margin-top:8px; }
+        .pf-connect-send { border:0; border-radius:999px; padding:8px 14px; background:#6d64f6; color:#fff; font:inherit; font-size:0.75rem; font-weight:800; cursor:pointer; }
+        .pf-connect-send:disabled { opacity:.6; cursor:default; }
+        .pf-connect-cancel { border:0; background:transparent; padding:8px 6px; color:#64748b; font:inherit; font-size:0.75rem; font-weight:700; cursor:pointer; }
+        .pf-connect-pop-error { margin:8px 0 0; font-size:0.72rem; line-height:1.4; color:#b91c1c; }
+        /* On an edition card the identity card is white, so the button takes the edition accent and sits at the end of the actions */
+        .pf-connect.is-edition { align-items:flex-end; }
+        .pf-connect.is-edition .pf-connect-pill { min-height:44px; padding:13px 22px; border-radius:12px; background:var(--ed-accent, #6C5CE7); color:#fff; font:700 15px/1 var(--ed-ui), system-ui, sans-serif; box-shadow:0 12px 24px -14px rgba(108,92,231,0.9); }
+        .pf-connect.is-edition .pf-connect-pill:focus-visible { outline-color:var(--ed-accent, #6C5CE7); }
+        .pf-connect.is-edition .pf-connect-note { color:var(--ed-soft, #5B5B7E); text-align:right; }
+        .pf-connect.is-edition .pf-connect-note a { color:var(--ed-accent, #6C5CE7); }
         /* Desktop grid layout — defined in CSS so @media can override without fighting inline styles */
         .pf-main-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; align-items: stretch; }
         .pf-hero { grid-column: span 4; padding: 18px; height: 100%; }
@@ -753,6 +774,12 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
           .pf-hero { height: auto; padding: 16px; }
           .pf-hero-avatar { width: 72px !important; height: 72px !important; }
           .pf-hero-name { font-size: clamp(1.1rem, 4.5vw, 1.45rem) !important; }
+          /* Connect pill: a thumb-sized target; on an edition card it spans the actions like the buttons beside it */
+          .pf-connect-pill { min-height: 40px; }
+          .pf-connect.is-edition { align-items: stretch; }
+          .pf-connect.is-edition .pf-connect-anchor { display: flex; }
+          .pf-connect.is-edition .pf-connect-pill { flex: 1; }
+          .pf-connect.is-edition .pf-connect-note { text-align: left; }
           .pf-right-stack { height: auto; gap: 12px; }
           .pf-code { overflow-x: auto; -webkit-overflow-scrolling: touch; font-size: 0.65rem !important; }
           .pf-code > div { word-break: break-word; overflow-wrap: anywhere; }
@@ -791,7 +818,6 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             <ClaimBanner handle={card.handle ?? handle} name={identity.name} />
           )}
 
-          {claimed && !isOwner && <RequestConnection handle={card.handle ?? handle} />}
           {/* ── HEADER ── */}
           <header className="pf-header flex justify-between items-center pb-5">
             <div className="pf-mono text-[0.75rem] text-slate-500">
@@ -845,6 +871,8 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
               handle={card.handle ?? card.id}
               verified={linkedinLinked}
               canChat={claimed}
+              connect={showConnect ? <ConnectionButton key={card.handle ?? handle} handle={card.handle ?? handle} name={identity.name || undefined} variant="edition" /> : null}
+              about={isBlank(card.summary) ? "" : card.summary}
               links={{ x: safeUrl(identity.links?.x), github: safeUrl(identity.links?.github), linkedin: safeUrl(identity.links?.linkedin) }}
               updatedLabel={syncedAt}
             />
@@ -887,6 +915,11 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                       <BadgeCheck size={22} color="#FBBF24" fill="#FBBF24" stroke="#6d64f6" strokeWidth={1.5} aria-label="LinkedIn linked" />
                     )}
                   </div>
+                  {showConnect && (
+                    <div style={{ marginTop: 10 }}>
+                      <ConnectionButton key={card.handle ?? handle} handle={card.handle ?? handle} name={identity.name || undefined} />
+                    </div>
+                  )}
                 </div>
               </div>
               {!isBlank(identity.headline) && (
@@ -935,12 +968,18 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             </div>
             )}
 
-            {/* ── RIGHT STACK: Dossier + Signals (8 col) ── */}
+            {/* ── RIGHT STACK: Dossier + Signals (8 col); edition cards draw their own ── */}
+            {edition && (
+              <EditionSignals
+                signals={obsessions.map((obs) => ({ key: obs.key, label: obs.label, items: obs.items.filter((item) => !isBlank(item)) }))}
+              />
+            )}
+            {!edition && (
             <div className="pf-right-stack">
 
               {/* Dossier */}
               {!isBlank(card.summary) && (
-                <div className={`${card_} tc`} data-ed-section="about">
+                <div className={`${card_} tc`}>
                   <div>
                     <div className={label_}>
                       <span>┌ ABOUT</span>
@@ -964,7 +1003,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
               {obsessions.length > 0 && (
                 <div className="pf-obs-row" style={{ "--obs-cols": `repeat(${obsessions.length}, 1fr)` } as React.CSSProperties}>
                   {obsessions.map((obs) => (
-                    <div key={obs.key} data-ed-section={obs.key} className={`pf-obs-card ${obs.card} rounded-[20px] p-[18px] flex flex-col justify-between`}>
+                    <div key={obs.key} className={`pf-obs-card ${obs.card} rounded-[20px] p-[18px] flex flex-col justify-between`}>
                       <div className={`${label_} pf-mono`} style={{ color: "inherit", opacity: 0.8 }}>
                         <span>┌ {obs.label.toUpperCase()}</span>
                         <span className={`${obs.chip} text-[0.6rem] px-2 py-0.5 rounded-full font-mono font-bold`}>
@@ -983,6 +1022,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                 </div>
               )}
             </div>
+            )}
 
             {/* ── AI FACT + WORK EXP: equal height, fact card fills ── */}
             {claimed && card.beacon && Date.parse(card.beacon.created_at) <= nowMs && Date.parse(card.beacon.expires_at) > nowMs && <BeaconCard key={card.beacon.expires_at} beacon={card.beacon} />}
@@ -1057,6 +1097,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             {showLinkedin && (
               <div
                 className="pf-social-card"
+                data-ed-card="linkedin"
                 style={{ background: "#0A66C2", borderRadius: 20, padding: 16, color: "#fff", overflow: "hidden" }}
               >
                 <div className="pf-mono pf-social-head flex justify-between items-center" style={{ fontSize: "0.65rem", fontWeight: 700, minHeight: 18 }}>
@@ -1114,6 +1155,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             {showX && (
               <div
                 className="pf-social-card"
+                data-ed-card="x"
                 style={{ background: "#090a0f", borderRadius: 20, padding: 16, color: "#fff", overflow: "hidden" }}
               >
                 <div className="pf-mono pf-social-head flex justify-between items-center" style={{ fontSize: "0.65rem", fontWeight: 700, minHeight: 18 }}>
@@ -1174,6 +1216,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             {showBooking && (
               <div
                 className="pf-book-card pf-social-card"
+                data-ed-card="booking"
                 style={{ background: "linear-gradient(160deg, #2563eb 0%, #1d4ed8 48%, #1e3a8a 100%)", borderRadius: 20, padding: 16, color: "#fff" }}
               >
                 <div className="pf-mono flex justify-between items-center" style={{ fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.08em", position: "relative", minHeight: 18 }}>
@@ -1245,7 +1288,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
                       <FallbackAvatar
-                        src={imgProxy(githubAvatar(githubUrl, 80) ?? `https://github.com/${encodeURIComponent(ghLogin || githubHandle)}.png?size=80`, undefined, card.handle || handle) ?? ""}
+                        src={imgProxyUrl(githubAvatar(githubUrl, 80) ?? `https://github.com/${encodeURIComponent(ghLogin || githubHandle)}.png?size=80`, undefined, card.handle || handle) ?? ""}
                         alt=""
                         initials={initials}
                         size={44}

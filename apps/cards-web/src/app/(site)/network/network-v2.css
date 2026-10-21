@@ -276,6 +276,9 @@
 }
 
 .nv2-avatar img {
+  position: absolute;
+  inset: 0;
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -469,6 +472,11 @@
 
 .nv2-msg-row:not(.is-mine) .nv2-msg-meta {
   justify-content: flex-start;
+}
+
+.nv2-msg-row.is-mine .nv2-msg-sender {
+  margin: 0 4px 3px 0;
+  text-align: right;
 }
 
 .nv2-seen {
@@ -904,16 +912,25 @@
   max-width: min(82%, 720px);
 }
 
+/* The owner's photo with a bot badge, so an assistant reply reads as theirs. */
 .nv2-agent-avatar {
-  display: inline-grid;
-  place-items: center;
+  position: relative;
+  display: inline-flex;
   flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
-  border: 1px solid rgba(167, 139, 250, 0.35);
-  border-radius: 10px;
-  background: rgba(139, 92, 246, 0.16);
-  color: #c4b5fd;
+}
+
+.nv2-agent-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #0a0d16;
+  border-radius: 50%;
+  background: #6d28d9;
+  color: #ede9fe;
 }
 
 .nv2-msg-sender.is-agent {
@@ -921,6 +938,10 @@
   align-items: center;
   gap: 4px;
   color: #c4b5fd;
+}
+
+.nv2-msg-row.is-mine .nv2-msg-sender.is-agent {
+  justify-content: flex-end;
 }
 
 .nv2-agent-handle {
@@ -931,6 +952,18 @@
 .nv2-bubble.is-agent {
   border-color: rgba(167, 139, 250, 0.24);
   background: #141a2a;
+}
+
+/* Your own assistant: on your side, but a dark violet glass bubble with a
+   bright rim rather than the solid gradient of something you typed. */
+.nv2-bubble.is-agent.is-own {
+  border-color: rgba(196, 181, 253, 0.5);
+  border-radius: 16px 16px 5px 16px;
+  background:
+    linear-gradient(135deg, rgba(124, 58, 237, 0.34), rgba(79, 70, 229, 0.22)),
+    #161033;
+  color: #f5f3ff;
+  box-shadow: 0 6px 20px rgba(76, 29, 149, 0.22);
 }
 
 .nv2-bubble.is-remembered {
@@ -1021,6 +1054,11 @@
 @keyframes nv2-typing {
   0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
   30% { opacity: 1; transform: translateY(-2px); }
+}
+
+.nv2-typing-row.is-mine,
+.nv2-agent-error.is-mine {
+  align-self: flex-end;
 }
 
 .nv2-agent-error {
@@ -1126,4 +1164,414 @@
   .nv2-remember-button {
     opacity: 1;
   }
+}
+
+/* "Start a connection": name-or-handle combobox. Same dark menu as .nv2-mention-menu. */
+.nv2-combo {
+  position: relative;
+}
+
+.nv2-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.nv2-combo-menu {
+  position: absolute;
+  z-index: 6;
+  top: calc(100% + 2px);
+  right: 0;
+  left: 0;
+  max-height: 272px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  border-radius: 13px;
+  background: #111522;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.nv2-combo-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Still showing the answer for older text while the new one loads. */
+.nv2-combo-list.is-stale {
+  opacity: 0.55;
+}
+
+.nv2-combo-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 9px;
+  color: #e5e7eb;
+  cursor: pointer;
+}
+
+.nv2-combo-option.is-active {
+  background: rgba(139, 92, 246, 0.18);
+}
+
+.nv2-combo-option[aria-disabled="true"] {
+  cursor: default;
+}
+
+.nv2-combo-option[aria-disabled="true"] .nv2-combo-main {
+  opacity: 0.55;
+}
+
+.nv2-combo-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nv2-combo-name,
+.nv2-combo-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv2-combo-name {
+  color: #f4f4f5;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.nv2-combo-sub {
+  color: #8b93a1;
+  font-size: 11px;
+}
+
+.nv2-combo-tag {
+  flex: 0 0 auto;
+  color: #a78bfa;
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.nv2-combo-tag strong {
+  color: #ddd6fe;
+  font-weight: 800;
+}
+
+.nv2-combo-tag.is-muted {
+  color: #8b93a1;
+}
+
+.nv2-combo-empty {
+  padding: 9px 10px;
+  color: #8b93a1;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.nv2-combo-chip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+  padding: 7px 8px;
+  border: 1px solid rgba(139, 92, 246, 0.45);
+  border-radius: 10px;
+  background: rgba(139, 92, 246, 0.12);
+}
+
+/* Markdown in Card assistant replies. .nv2-bubble is pre-wrap for plain text;
+   the markdown container resets that so block elements own their spacing. */
+.nv2-md {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.nv2-md > :first-child {
+  margin-top: 0;
+}
+
+.nv2-md > :last-child {
+  margin-bottom: 0;
+}
+
+.nv2-md p {
+  margin: 0 0 6px;
+}
+
+/* globals.css and zynd-ui.css style bare h1/h2 as uppercase gradient display
+   headings (with !important) and h3 in the accent colour; none of that belongs
+   in a chat bubble. */
+.nv2-md h1,
+.nv2-md h2,
+.nv2-md h3,
+.nv2-md h4,
+.nv2-md h5,
+.nv2-md h6 {
+  margin: 10px 0 4px;
+  background: none;
+  color: inherit;
+  -webkit-text-fill-color: currentColor;
+  font-family: inherit !important;
+  font-size: 14px;
+  font-weight: 700 !important;
+  line-height: 1.35;
+  letter-spacing: normal !important;
+  text-transform: none !important;
+}
+
+.nv2-md h1,
+.nv2-md h2 {
+  font-size: 15px;
+}
+
+.nv2-md ul,
+.nv2-md ol {
+  margin: 4px 0 6px;
+  padding-left: 20px;
+}
+
+.nv2-md ul {
+  list-style: disc;
+}
+
+.nv2-md ol {
+  list-style: decimal;
+}
+
+.nv2-md li {
+  margin: 2px 0;
+}
+
+.nv2-md li > p {
+  margin: 0;
+}
+
+.nv2-md li > ul,
+.nv2-md li > ol {
+  margin: 2px 0;
+}
+
+.nv2-md li.task-list-item {
+  list-style: none;
+}
+
+.nv2-md input[type="checkbox"] {
+  margin: 0 6px 0 -18px;
+  vertical-align: middle;
+  accent-color: #8b5cf6;
+}
+
+.nv2-md strong {
+  font-weight: 700;
+}
+
+.nv2-md del {
+  opacity: 0.7;
+}
+
+.nv2-md a {
+  color: #c4b5fd;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.nv2-md a:hover {
+  color: #ddd6fe;
+}
+
+.nv2-bubble.is-own .nv2-md a {
+  color: #fff;
+}
+
+.nv2-md code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.nv2-md pre {
+  max-width: 100%;
+  margin: 6px 0;
+  padding: 9px 11px;
+  overflow-x: auto;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.34);
+  overflow-wrap: normal;
+  white-space: pre;
+}
+
+.nv2-md pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.nv2-md blockquote {
+  margin: 6px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid rgba(167, 139, 250, 0.55);
+  color: #c7cbd6;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.nv2-bubble.is-own .nv2-md blockquote {
+  border-left-color: rgba(221, 214, 254, 0.7);
+  color: #e4defc;
+}
+
+.nv2-md hr {
+  margin: 10px 0;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.nv2-md-scroll {
+  max-width: 100%;
+  margin: 6px 0;
+  overflow-x: auto;
+}
+
+.nv2-md table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.nv2-md th,
+.nv2-md td {
+  padding: 4px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  /* Break between words, not inside them: a narrow table scrolls instead. */
+  overflow-wrap: normal;
+  text-align: left;
+  vertical-align: top;
+}
+
+.nv2-md th {
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 700;
+}
+
+/* A reply still being written: a caret after the last word. The markdown is
+   block-level, so the caret rides on the last block (or the last list item). */
+.nv2-md.is-streaming > :last-child:not(ul):not(ol)::after,
+.nv2-md.is-streaming > :is(ul, ol):last-child > li:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  background: currentColor;
+  vertical-align: text-bottom;
+  animation: nv2-caret 1s steps(2, start) infinite;
+}
+
+@keyframes nv2-caret {
+  to { visibility: hidden; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nv2-md.is-streaming > :last-child:not(ul):not(ol)::after,
+  .nv2-md.is-streaming > :is(ul, ol):last-child > li:last-child::after {
+    animation: none;
+  }
+}
+
+.nv2-typing-activity {
+  color: #8b93a1;
+}
+
+/* Dev-only "where did this come from" panel under an assistant reply. */
+.nv2-sources {
+  margin: 4px 0 0 4px;
+  color: #8b93a1;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.nv2-msg-row.is-mine .nv2-sources {
+  margin: 4px 4px 0 0;
+}
+
+.nv2-sources > summary {
+  display: inline-block;
+  color: #a78bfa;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.nv2-sources-body {
+  margin-top: 4px;
+  padding: 7px 10px;
+  border: 1px dashed rgba(167, 139, 250, 0.3);
+  border-radius: 10px;
+  background: rgba(10, 13, 22, 0.55);
+  overflow-wrap: anywhere;
+}
+
+.nv2-sources-body section + section {
+  margin-top: 6px;
+}
+
+.nv2-sources-body h4 {
+  margin: 0 0 2px;
+  color: #c4b5fd;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.nv2-sources-body p {
+  margin: 0;
+}
+
+.nv2-sources-body ul,
+.nv2-sources-body ol {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.nv2-sources-body q {
+  display: block;
+  color: #b4bcc9;
+  quotes: "\201c" "\201d";
+}
+
+.nv2-sources-items {
+  color: #b4bcc9;
+  list-style: square;
+}
+
+.nv2-sources-body code {
+  color: #ddd6fe;
+  font-size: 10.5px;
+}
+
+.nv2-sources-args,
+.nv2-sources-result {
+  display: block;
+}
+
+.nv2-sources-result {
+  color: #b4bcc9;
+}
+
+.nv2-sources-body li.is-failed .nv2-sources-result {
+  color: #fca5a5;
 }

@@ -3,6 +3,11 @@ import type { CardConnection, CardGroup, CardGroupInvitation, CardGroupMember, C
 
 export const NETWORK_USER = "11111111-1111-4111-8111-111111111111";
 const BOB = "22222222-2222-4222-8222-222222222222";
+// A 1x1 transparent PNG, standing in for whatever /api/img would proxy.
+const PIXEL = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64",
+);
 const DM_THREAD = "66666666-6666-4666-8666-666666666666";
 const GROUP_ID = "55555555-5555-4555-8555-555555555555";
 let nextGroupId = 0;
@@ -12,7 +17,7 @@ export async function mockNetwork(page: Page) {
     connections: [{
       id: "33333333-3333-4333-8333-333333333333", status: "pending", incoming: true,
       created_at: new Date().toISOString(), request_message: "Can we discuss Python APIs?",
-      partner: { card_id: "bob-card", handle: "bob", name: "Bob" },
+      partner: { card_id: "bob-card", handle: "bob", name: "Bob", avatar_url: "https://avatars.githubusercontent.com/u/2?v=4" },
       thread_id: null, last_message_at: null, last_message_preview: null,
       last_message_sender_user_id: null, unread_count: 0,
     }] as CardConnection[],
@@ -21,8 +26,28 @@ export async function mockNetwork(page: Page) {
     messages: [] as CardMessage[],
     groupMessages: [] as CardMessage[],
     members: [] as CardGroupMember[],
-    people: [{ card_id: "bob-card", handle: "bob", name: "Bob", user_id: BOB }] as (CardSummary & { user_id: string })[],
+    people: [{
+      card_id: "bob-card", handle: "bob", name: "Bob", user_id: BOB,
+      avatar_url: "https://avatars.githubusercontent.com/u/2?v=4",
+    }] as (CardSummary & { user_id: string })[],
+    // Claimed Cards the "Start a connection" search can find (GET /people/suggest).
+    directory: [
+      { card_id: "bob-card", handle: "bob", name: "Bob", headline: "Backend engineer" },
+      { card_id: "dana-card", handle: "dana", name: "Dana Whitfield", headline: "Product designer" },
+      { card_id: "dan-card", handle: "dan", name: "Dan Smith", headline: "Founder" },
+      { card_id: "cora-card", handle: "cora", name: "Cora Connected", headline: "Investor" },
+      { card_id: "colin-card", handle: "colin", name: "Colin Park", headline: "Editor" },
+    ] as CardSummary[],
     sentInvitations: [] as string[],
+    // The viewer has a claimed, published Card of their own (false: the status endpoint says can_connect=false).
+    viewerHasCard: true,
+    // The Card the viewer owns: its status answer is { self: true } and the profile shows no button.
+    selfHandle: "owner",
+    failNextStatus: false,
+    failNextSuggest: false,
+    suggestCalls: [] as string[],
+    // Milliseconds to hold back the answer to a given search text, to prove stale answers are dropped.
+    suggestDelay: {} as Record<string, number>,
     failNextRequest: false,
     failNextMessage: false,
     dmSeq: 0,
@@ -33,7 +58,19 @@ export async function mockNetwork(page: Page) {
     agentPreference: true,
     memorySeq: 0,
     messageCalls: [] as string[],
+    avatarRequests: [] as string[],
   };
+
+  // /api/img would fetch the real CDN. Serve a pixel instead, and a 404 for
+  // URLs marked "expired" so the initials fallback can be exercised.
+  await page.route(/\/api\/img\?/, async route => {
+    const url = route.request().url();
+    state.avatarRequests.push(url);
+    if (new URL(url).searchParams.get("url")?.includes("expired")) {
+      return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "image unavailable" }) });
+    }
+    return route.fulfill({ status: 200, contentType: "image/png", body: PIXEL });
+  });
 
   const lastDm = (connection: CardConnection) => {
     const rows = state.messages.filter((message) => message.thread_id === connection.thread_id);
@@ -62,12 +99,49 @@ export async function mockNetwork(page: Page) {
     };
   };
 
+  // What the API reports about the viewer's connection with one Card (mirrors services/network.py).
+  const connectionWith = (handle: string) => {
+    const row = state.connections.find(connection => connection.partner.handle === handle);
+    return row ? { id: row.id, status: row.status, incoming: row.incoming } : null;
+  };
+  const connectBlocker = (connection: ReturnType<typeof connectionWith>): string | null => {
+    if (connection) {
+      if (connection.status === "accepted") return "You are already connected.";
+      if (connection.status === "pending") return connection.incoming ? "They already sent you a request." : "Your request is waiting for their answer.";
+      if (connection.status === "declined") return connection.incoming ? "You declined this request." : "This request was not accepted.";
+      if (connection.status === "revoked") return "This connection was ended.";
+      return "Connecting with this person is not available.";
+    }
+    return state.viewerHasCard ? null : "Claim and publish your own Card to connect with people.";
+  };
+
   await page.route("**/cards/network/**", async route => {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace("/cards/network", "");
     const post = request.method() === "POST";
     const body = post ? request.postDataJSON() : {};
     const json = (data: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
+
+    if (path === "/people/suggest") {
+      const q = (new URL(request.url()).searchParams.get("q") || "").toLowerCase();
+      state.suggestCalls.push(q);
+      if (state.failNextSuggest) { state.failNextSuggest = false; return json({ detail: "Search unavailable" }, 503); }
+      if (state.suggestDelay[q]) await new Promise(resolve => setTimeout(resolve, state.suggestDelay[q]));
+      return json({
+        people: state.directory
+          .filter(person => `${person.handle} ${person.name}`.toLowerCase().includes(q))
+          .map(person => ({ ...person, connection: connectionWith(person.handle!) })),
+      });
+    }
+
+    if (path === "/connections/status") {
+      const handle = new URL(request.url()).searchParams.get("handle") || "";
+      if (state.failNextStatus) { state.failNextStatus = false; return json({ detail: "Status unavailable" }, 503); }
+      if (handle === state.selfHandle) return json({ self: true });
+      const connection = connectionWith(handle);
+      const reason = connectBlocker(connection);
+      return json({ connection, can_connect: reason === null, reason });
+    }
 
     if (path === "/inbox") {
       return json({
@@ -193,10 +267,14 @@ export async function mockNetwork(page: Page) {
           created_at: new Date().toISOString(),
         };
         state.groupMessages.push(message);
+        // Tagging @alice queues the signed-in user's own assistant.
+        const queued = [/@bob\b/i.test(body.content) ? BOB : null, /@alice\b/i.test(body.content) ? NETWORK_USER : null]
+          .filter((id): id is string => id !== null);
         return json({
           message,
           duplicate: false,
-          agent_replies: /@bob\b/i.test(body.content) ? 1 : 0,
+          agent_replies: queued.length,
+          agent_reply_users: queued,
         });
       }
       state.messageCalls.push(request.url());

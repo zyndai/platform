@@ -9,6 +9,11 @@ connection requests, DMs, groups, or the Cards MCP network tools.
   account.
 - A connection starts as `pending`; only the receiving Card can accept or
   decline it.
+- There is one connection row per pair of people, and a decided one is final:
+  a second request returns the existing row whatever its status, and only
+  `pending` can be accepted or declined. So `declined`, `revoked` and
+  `blocked` can never become a new request, and the UI does not offer one
+  (status reports `can_connect: false` with a reason).
 - DMs are available only after `accepted`.
 - Group invitations are sent only to accepted connections and do not create
   membership until the invitee accepts.
@@ -26,10 +31,23 @@ connection requests, DMs, groups, or the Cards MCP network tools.
 
 ## Surfaces
 
-- Cards web: `/network` (legacy) and `/network?v2=1` (preview)
-- Card profile: `Request connection`
+- Cards web: `/network` (legacy) and `/network?v2=1` (preview). v2 also takes
+  `?c=<connection id>`, which opens that conversation once the inbox loads
+  (an accepted DM, or the Requests tab for a pending request); the signed-out
+  redirect keeps it in `next`. The legacy inbox ignores it.
+- Card profile: a Connect / Message button in the hero (under the name; at the
+  top of the actions on an edition card). It shows what can work for the viewer:
+  Connect (with an optional note), Requested, Accept, or Message
+  (`/network?c=<id>`). Never shown on your own Card.
+- Start a connection (v2): a name-or-handle combobox over
+  `GET /people/suggest?q=`; typing an exact handle and sending still works.
 - Cards API: `/cards/network/*`, including `GET /inbox`, message cursors
   (`before_seq` / `after_seq`), idempotent `client_id` sends, and `POST /read`
+- Cards API people lookup: `GET /people/suggest?q=` (claimed, published Cards
+  by handle or name, with the caller's connection to each; public Card data
+  only) and `GET /connections/status?handle=` (`{self}` or `{connection,
+  can_connect, reason}`; it reports state and never 409s for a caller with no
+  Card)
 - Cards API group memory: `GET/POST /groups/{id}/memory` (summary, facts,
   semantic search, Remember) and `GET/PUT /agent-preferences`
 - Authenticated MCP: `list_card_connections`, `request_card_connection`,
@@ -56,6 +74,9 @@ additive and was applied to aafo on **2026-10-21** together with the pending
 `0024` and `0025` Cards migrations. `0027_group_memory_followups` fixes the
 read cursor for assistant replies, stuck-job recovery, retry state, memory
 broadcast noise, and assistant-reply remembering.
+`0028_agent_reply_limit` raises the stored length of an assistant reply from
+4000 to 8000 characters. It was applied to aafo on **2026-10-21**; see
+[Long replies, streaming and sources](#long-replies-streaming-and-sources-migration-0028).
 
 Test the full Cards migration history and concurrent invitation decisions on a
 disposable local Postgres with pgvector (never set this to Supabase):
@@ -110,11 +131,21 @@ CARDS_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5559/postgres n
   summary/facts, and only that member's approved public memory facts. It can
   call tools for semantic group-memory search, more recent messages, another
   member's public memory, group facts, and the member list.
-- Replies are stored with `sender_kind='agent'` and `agent_for_user_id`; the UI
-  labels them **AI assistant for @handle**. Agent messages never trigger more
+- Replies are stored with `sender_kind='agent'` and `agent_for_user_id`. The UI
+  puts a reply on its owner's side: your own assistant is on the right under a
+  **Your AI assistant** label in its own bubble style, and everyone else's is on
+  the left as **AI assistant for <name> @handle** with the owner's photo and a
+  bot badge. Replies render as markdown (no raw HTML; remote images show as
+  links); human messages stay plain text. Agent messages never trigger more
   agent jobs.
-- Realtime events: `agent_typing` (`pending`, `running`, `done`, `failed`) and
-  `memory` (summary/fact saved, message remembered).
+- Avatars in the network UI go through the first-party `/api/img` proxy (the
+  same one the profile page uses), pass the Card handle so an expired LinkedIn
+  photo triggers a refresh, and fall back to the initial if the image still
+  fails. The inbox and member payloads come from SQL (`network_card_payload`),
+  so a GitHub fallback photo there would need a migration.
+- Realtime events: `agent_typing` (`pending`, `running`, `done`, `failed`),
+  `agent_stream` (the reply as it is being written, below) and `memory`
+  (summary/fact saved, message remembered).
 - Flags: `FEATURE_GROUP_MEMORY` and `FEATURE_GROUP_AGENT_REPLIES`, both off by
   default. They require `packages/db` cards migration `0026`. Apply the
   migration only with explicit approval; the migration is additive and does not
@@ -126,6 +157,117 @@ CARDS_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5559/postgres n
 - `FEATURE_GROUP_MEMORY` gates the memory endpoints; the web UI still renders
   the current conversation if memory is disabled. `FEATURE_GROUP_AGENT_REPLIES`
   gates mention queueing and the worker.
+
+## Long replies, streaming and sources (migration 0028)
+
+The assistant stays terse by default and can write a full answer when asked,
+and the group watches that answer being written.
+
+**Short by default, long when asked.** A tagged message gets one to four plain
+sentences. If it asks for a plan, steps, a strategy, a comparison or a detailed
+explanation, the assistant writes a complete answer in Markdown (headings,
+numbered or bulleted lists, bold), and the web UI renders it. The prompt tells
+the model its word budget (`GROUP_AGENT_MAX_REPLY_CHARS / 6`). Replies are no
+longer stripped of Markdown; only whitespace is tidied. Anything over the cap is
+cut at the last paragraph break, else the last sentence end, else the last word,
+never mid-word. Group summaries (memory) are still cleaned to plain text.
+
+**Configuration** (`services/cards-api`, also in `.env.example` and
+`.env.prod.example`):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `GROUP_AGENT_MAX_TOKENS` | `1800` | Model output ceiling per call. |
+| `GROUP_AGENT_MAX_REPLY_CHARS` | `4000` | Longest stored reply. **Keep at 4000 until 0028 is applied, then set 8000.** |
+| `GROUP_AGENT_LLM_TIMEOUT` | `120` | Seconds per model call (was 60); a long answer takes about a minute. |
+| `FEATURE_GROUP_AGENT_STREAMING` | `true` | Stream the reply to the group. Does nothing without `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`. `false` goes back to one plain model call and no `agent_stream` events. |
+| `FEATURE_AGENT_DEBUG_SOURCES` | `false` | **Dev only.** Adds the context and tool calls behind a reply to `agent_stream`. |
+
+**Migration `0028_agent_reply_limit`** replaces
+`cards.network_send_agent_group_message` with its `0026` definition (`0027` did
+not touch it) changing only `left(btrim(...), 4000)` to `8000`. Signature,
+service-only grants and `client_id` idempotency are unchanged; human DMs and
+group messages keep their 4000 limit, and so do group facts and summaries. It is
+expand-only, was rehearsed on a disposable local Postgres 17 with pgvector (the
+test in `packages/db/test/cards-network-sql.test.ts` fails against `0027` and
+passes against `0028`). Rollout:
+
+1. Apply `0028` with explicit approval (`npm run db:migrate -- --project cards`
+   from `packages/db`, dry run first). **Done 2026-10-21.**
+2. Set `GROUP_AGENT_MAX_REPLY_CHARS=8000` and restart cards-api.
+
+Never raise the cap before step 1: the function would cut the stored reply at
+4000, mid-word, after the stream already showed more. The code defaults to 4000
+precisely so it can ship before or after the migration.
+Rollback: set `GROUP_AGENT_MAX_REPLY_CHARS=4000` and restart, then run the
+rollback SQL in the header of `0028_agent_reply_limit.sql` (the `0026` body).
+Replies already stored keep their length; only new writes are capped again.
+
+**Streaming (`agent_stream`).** The worker calls the model with `stream=true`
+and, while text is generated, POSTs snapshots to Supabase Realtime's REST
+broadcast endpoint (`{SUPABASE_URL}/realtime/v1/api/broadcast`, service key as
+`apikey` and bearer, one private message on topic `cards:group:<group_id>`, no
+`realtime:` prefix). They reach the same members who may subscribe to the topic
+(`network_can_subscribe`) and receive the saved message. A tool step ends in
+tool calls and continues as before; if streaming is unsupported or fails before
+any output, the worker falls back to the plain call.
+
+| Field | Meaning |
+|---|---|
+| `job_id` | The job. The saved reply carries it as its `client_id`, which is how the UI matches them. |
+| `group_id`, `user_id`, `message_id` | The group, the member whose assistant is writing, and the tagged message. |
+| `attempt`, `seq` | Ordering. A retried job has a higher `attempt`; `seq` restarts within it. A stale snapshot is ignored. |
+| `text` | The **full** text so far, never a delta, so a dropped or repeated snapshot costs nothing. An empty `text` after text was shown is a reset (the step turned out to be tool calls). |
+| `done` | `true` on the last snapshot, whose `text` is exactly what is about to be saved. |
+| `status` | `thinking`, `tool`, `writing` or `done`. |
+| `sources` | Only with `FEATURE_AGENT_DEBUG_SOURCES`; see below. |
+
+Snapshots are throttled to one per 200 ms (a snapshot is skipped while one is in
+flight), with forced ones for status changes and the final text. It is best
+effort: a failed POST is logged, three failures in a row stop broadcasting for
+that job, and nothing fails the job. The durable write is unchanged (same
+`client_id` = job id), so a reload or a missed stream still shows the final
+message. Streaming itself needs no migration.
+
+**Web.** `ConversationPane` subscribes to `agent_stream` and keeps one stream
+per job (`src/lib/agent-stream.ts`, pure; its `node:test` file runs with
+`npx tsx --test src/lib/agent-stream.test.ts` from `apps/cards-web`, like
+`profile-quality.test.ts`). A streaming bubble
+sits at the bottom on the owner's side like a finished reply, with a caret and
+"Writing…", replacing that user's "is thinking" row once there is text (a tool
+step shows "Looking things up…"). It is dropped as soon as a message with the
+same `client_id` is in the conversation, whether that arrived as the realtime
+`message` event or in a fetched page (both carry `client_id`), and a snapshot
+that straggles in afterwards never brings it back. A retry (`agent_typing`
+`pending`) or a failure clears it; a failure keeps the existing error line. At
+the bottom the view follows the stream; scrolled up, the "New messages" pill
+shows.
+
+**Where did this come from (dev only).** With `FEATURE_AGENT_DEBUG_SOURCES=true`,
+tool-step snapshots and the final snapshot carry `sources`: what the assistant
+was given (number of recent messages, whether a group summary existed with a
+short preview, saved facts, the tagged member's public facts, each with short
+previews) and each tool call with its arguments and a one-line result summary.
+The trace is capped at about 6 KB. The UI shows it as a collapsed "Sources
+(dev)" panel under the streaming bubble and under the saved reply. **Never
+enable this in production:** every member of the group receives it, including
+the tagged member's approved public facts and the group summary. With the flag
+off no `sources` leave the server. Sources are not stored anywhere: no schema
+change, and in the browser they live in memory only (`network-cache`, outside
+what is written to IndexedDB), so they survive switching conversations but not a
+reload.
+
+**Not verified against a real Supabase project.** The request shape was taken
+from `@supabase/realtime-js` 2.117.2 (`RealtimeChannel.js`) and is covered by
+unit tests with a fake HTTP transport and by Playwright with injected events
+(local e2e runs have no Realtime socket, so `use-network-realtime` also accepts
+a `zynd:test-broadcast` window event while `NEXT_PUBLIC_DISABLE_REALTIME=true`).
+Before relying on it in dev, confirm that the project's Realtime accepts the
+service key on `/realtime/v1/api/broadcast` (a legacy JWT key works; a newer
+non-JWT secret key may not) and that private messages from it reach the
+`cards network can receive broadcasts` policy's subscribers. If it does not, the
+log shows `agent_stream broadcast failed` three times per reply and replies
+arrive as before.
 
 ## Dev rollout and rollback
 
@@ -152,6 +294,13 @@ CARDS_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5559/postgres n
   the typing indicator. Rollback is the reverse flag order; the additive
   tables and saved facts stay. The client cache needs no flag and ships with
   the v2 UI.
+- Streaming and long replies: deploy cards-api and cards-web together (an
+  older web ignores `agent_stream` and shows the saved reply as before; an
+  older API sends nothing). The kill switch is
+  `FEATURE_GROUP_AGENT_STREAMING=false` on cards-api. Long replies need no
+  code flag: raise `GROUP_AGENT_MAX_REPLY_CHARS` to 8000 only after `0028` is
+  applied (see above). Leave `FEATURE_AGENT_DEBUG_SOURCES` off everywhere
+  except a dev box you control.
 
 ### Shared database preflight — 2026-10-17
 
@@ -227,6 +376,19 @@ that Cards migration was pending. Post-application verification:
 - Cards API and Cards web were not deployed by this migration step. Apply the
   code in the rollout order above; the migration is additive and the currently
   deployed API keeps working.
+
+### Live application — 2026-10-21 (assistant reply limit, 0028)
+
+Applied `0028_agent_reply_limit` to aafo through the session pooler, with the
+owner's approval, after the code (#84) was merged to `dev`. The dry run listed
+only that Cards migration as pending; identity and persona had none.
+
+- Cards is applied through `0028`; nothing is pending in any history.
+- Full drift check against a clean replay: **No drift: 1,504 catalog entries
+  match.** The count is unchanged because the function is replaced, not added.
+- cards-api still runs with `GROUP_AGENT_MAX_REPLY_CHARS=4000` until that env
+  var is raised to 8000 and the service restarted; until then nothing changes
+  for users.
 
 ### Live application — 2026-10-21 (group memory, 0026)
 

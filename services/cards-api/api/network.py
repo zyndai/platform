@@ -207,6 +207,26 @@ def connections(authorization: str | None = Header(default=None), x_zynd_user: s
     return network.list_connections(_uid(authorization, x_zynd_user))
 
 
+@router.get("/network/connections/status")
+def connection_status(
+    handle: str = Query(..., min_length=1, max_length=128),
+    authorization: str | None = Header(default=None),
+    x_zynd_user: str | None = Header(default=None),
+):
+    """Where the caller stands with one Card: none / pending / accepted ... and whether they can connect."""
+    return network.connection_status(_uid(authorization, x_zynd_user), handle)
+
+
+@router.get("/network/people/suggest")
+def suggest_people(
+    q: str = Query("", max_length=64),
+    authorization: str | None = Header(default=None),
+    x_zynd_user: str | None = Header(default=None),
+):
+    """Typeahead for starting a connection: claimed Cards matching a handle or name."""
+    return network.suggest_people(_uid(authorization, x_zynd_user), q)
+
+
 @router.post("/network/connections")
 def request_connection(body: ConnectionCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.request_connection(_uid(authorization, x_zynd_user), body.target_handle, body.message)

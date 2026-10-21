@@ -54,6 +54,22 @@ GROUP_MEMORY_RECENT_MESSAGES: int = int(os.getenv("GROUP_MEMORY_RECENT_MESSAGES"
 GROUP_MEMORY_SEARCH_LIMIT: int = int(os.getenv("GROUP_MEMORY_SEARCH_LIMIT", "8"))
 GROUP_AGENT_POLL_SECONDS: float = float(os.getenv("GROUP_AGENT_POLL_SECONDS", "2"))
 GROUP_AGENT_MAX_STEPS: int = int(os.getenv("GROUP_AGENT_MAX_STEPS", "4"))
+# Reply budget. Short chat replies stay the default; this is the ceiling for a
+# plan / comparison / detailed answer. The reply cap must not exceed what
+# cards.network_send_agent_group_message stores: 4000 until packages/db cards
+# 0028 is applied, 8000 after. Raise it only once the migration is live.
+GROUP_AGENT_MAX_TOKENS: int = int(os.getenv("GROUP_AGENT_MAX_TOKENS", "1800"))
+GROUP_AGENT_MAX_REPLY_CHARS: int = int(os.getenv("GROUP_AGENT_MAX_REPLY_CHARS", "4000"))
+# Per model call. A long answer at ~40 tokens/s takes about a minute.
+GROUP_AGENT_LLM_TIMEOUT: float = float(os.getenv("GROUP_AGENT_LLM_TIMEOUT", "120"))
+# Stream the reply to the group as it is written (Supabase Realtime REST
+# broadcast, event "agent_stream"). Best effort: the durable message is still
+# written once at the end. A no-op without SUPABASE_URL + SUPABASE_SERVICE_KEY.
+FEATURE_GROUP_AGENT_STREAMING: bool = os.getenv("FEATURE_GROUP_AGENT_STREAMING", "true").lower() in ("1", "true", "yes")
+# Dev only. Adds the context the assistant was given and every tool call it
+# made to agent_stream payloads, which every member of the group receives.
+# Never enable in production. Nothing is stored.
+FEATURE_AGENT_DEBUG_SOURCES: bool = os.getenv("FEATURE_AGENT_DEBUG_SOURCES", "false").lower() in ("1", "true", "yes")
 PERSONA_API_URL: str = os.getenv("PERSONA_API_URL", "http://127.0.0.1:8000")
 PERSONA_SITE_URL: str = os.getenv("PERSONA_SITE_URL", "https://persona.zynd.ai")
 CARDS_INTRO_SERVICE_TOKEN: str = os.getenv("CARDS_INTRO_SERVICE_TOKEN", "")

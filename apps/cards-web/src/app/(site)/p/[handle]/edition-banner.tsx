@@ -1,8 +1,9 @@
-import { BadgeCheck, Github, Linkedin, MapPin, UserRound } from "lucide-react";
+import { BadgeCheck, FileText, Github, Linkedin, MapPin, UserRound } from "lucide-react";
 import { EthMark } from "@/components/editions/eth-mark";
 import { EDITION_FONT_VARS } from "@/components/editions/fonts";
 import { MumbaiSkyline } from "@/components/editions/mumbai-skyline";
 import { EDITION_NAME, HERE_FOR_LABEL, type CardEdition } from "@/lib/editions";
+import { EditionAboutText } from "./edition-about";
 import { EditionIdentityActions } from "./edition-actions";
 import { EditionQrButton } from "./edition-qr";
 import "@/components/editions/edition.css";
@@ -27,6 +28,10 @@ interface Props {
   verified: boolean;
   /** Claimed cards have the profile chat. */
   canChat: boolean;
+  /** The Connect / Message button, for visitors only. Sits at the top of the actions. */
+  connect?: React.ReactNode;
+  /** The card's About text; shown inside the identity card so the signal cards below size to their own content. */
+  about: string;
   links: { x: string | null; github: string | null; linkedin: string | null };
   updatedLabel: string | null;
 }
@@ -42,7 +47,7 @@ function XGlyph() {
 /** Top of a card on the Mumbai Builder Week edition: the artwork, then an
  *  identity card that takes the place of the classic purple hero. */
 export function EditionHero(props: Props) {
-  const { edition, name, nameLines, headline, location, role, chips, avatarSrc, initials, url, permalink, handle, verified, canChat, links, updatedLabel } = props;
+  const { edition, name, nameLines, headline, location, role, chips, avatarSrc, initials, url, permalink, handle, verified, canChat, connect, about, links, updatedLabel } = props;
   const hereFor = edition.here_for ? HERE_FOR_LABEL[edition.here_for] : null;
   const socials = [
     { href: links.x, label: "X", icon: <XGlyph /> },
@@ -57,7 +62,7 @@ export function EditionHero(props: Props) {
         <div className="ed-hero-title">
           <span className="ed-hero-mark"><EthMark size={22} /></span>
           <span>
-            <span className="ed-hero-name">MUMBAI BUILDER WEEK</span>
+            <span className="ed-hero-name">MUMBAI BUILDER WEEK<span className="ed-hero-short"> ’26</span></span>
             <span className="ed-hero-year">2026 ✦</span>
             <span className="ed-hero-line">BUILDERS, IN PERSON,<br />IN MUMBAI</span>
           </span>
@@ -91,11 +96,22 @@ export function EditionHero(props: Props) {
               {chips.map((chip) => <span key={chip} className="ed-tag">{chip}</span>)}
             </div>
           )}
+          {about && (
+            <div className="ed-id-about">
+              <div className="ed-id-about-label"><FileText size={15} aria-hidden /> About</div>
+              <EditionAboutText text={about} />
+            </div>
+          )}
         </div>
 
+        {/* One column of equal-width rows, so every action lines up:
+            Connect / Ask Agent + handle / socials + Show my QR. */}
         <div className="ed-id-side">
-          <EditionIdentityActions handle={handle} permalink={permalink} canChat={canChat} />
-          <div className="ed-id-row">
+          {connect && <div className="ed-act-row ed-act-connect">{connect}</div>}
+          <div className="ed-act-row">
+            <EditionIdentityActions handle={handle} permalink={permalink} canChat={canChat} />
+          </div>
+          <div className="ed-act-row">
             {socials.map((s) => (
               <a key={s.label} className="ed-social" href={s.href} target="_blank" rel="noreferrer" aria-label={s.label}>{s.icon}</a>
             ))}

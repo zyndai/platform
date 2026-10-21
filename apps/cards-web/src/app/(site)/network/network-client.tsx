@@ -16,6 +16,7 @@ import {
   type CardMessage,
   type CardSummary,
 } from "@/lib/cards-network";
+import { cardAvatarSrc } from "@/lib/avatar";
 
 type Tab = "connections" | "groups";
 
@@ -27,9 +28,13 @@ const panelStyle: React.CSSProperties = {
 };
 
 function Avatar({ card }: { card?: CardSummary | null }) {
-  return card?.avatar_url ? (
+  // Through the first-party proxy, and back to the initial if it still fails
+  // (expired LinkedIn URL, blocked CDN).
+  const src = cardAvatarSrc(card);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  return src && failedSrc !== src ? (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={card.avatar_url} alt="" style={{ width: 40, height: 40, borderRadius: "50%", objectFit: "cover" }} />
+    <img src={src} alt="" onError={() => setFailedSrc(src)} style={{ display: "block", width: 40, height: 40, borderRadius: "50%", objectFit: "cover" }} />
   ) : (
     <span style={{ width: 40, height: 40, borderRadius: "50%", display: "grid", placeItems: "center", background: "#6366f1", color: "white", fontWeight: 800 }}>
       {(card?.name || "?").slice(0, 1).toUpperCase()}

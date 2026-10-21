@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Bookmark,
@@ -23,6 +23,7 @@ import {
 import {
   cardsNetworkRequest,
   connectionRequestNotice,
+  connectionState,
   fetchAgentPreference,
   fetchDmMessages,
   fetchGroupMemory,
@@ -34,6 +35,7 @@ import {
   sendDm,
   sendGroupMessage,
   setAgentPreference as saveAgentPreference,
+  suggestPeople,
   type CardAgentPreference,
   type CardConnection,
   type CardGroup,
@@ -44,8 +46,20 @@ import {
   type CardInbox,
   type CardMessage,
   type CardSummary,
+  type ConnectionStatus,
   type NetworkConversation,
+  type PersonSuggestion,
 } from "@/lib/cards-network";
+import {
+  activityLabel,
+  applyAgentStream,
+  clearUserStreams,
+  dropFinishedStreams,
+  parseAgentStream,
+  pruneStaleStreams,
+  visibleStreams,
+  type AgentStreams,
+} from "@/lib/agent-stream";
 import {
   cacheInbox,
   cacheMembers,
@@ -59,8 +73,10 @@ import {
   invalidateCachedMembers,
   markCachedMessageRemembered,
   mergeMessages,
+  rememberAgentSources,
   removeCachedMessage,
   threadKey,
+  useAgentSources,
   useNetworkCache,
   type NetworkThreadKind,
 } from "@/lib/network-cache";
@@ -68,6 +84,8 @@ import {
   useNetworkRealtime,
   type NetworkRealtimeEvent,
 } from "@/lib/use-network-realtime";
+import { cardAvatarSrc } from "@/lib/avatar";
+import { AgentBubble, plainPreview } from "./agent-message";
 import "./network-v2.css";
 
 type Tab = "all" | "dms" | "groups" | "requests";
@@ -125,6 +143,24 @@ function isAgentMessage(message: CardMessage): boolean {
   return message.sender_kind === "agent";
 }
 
+// The database writes assistant previews as "AI: <text>" (migration 0026), and
+// the sender is the member the assistant answered for.
+const AGENT_PREVIEW_PREFIX = "AI: ";
+
+function agentPreview(content: string): string {
+  return `${AGENT_PREVIEW_PREFIX}${previewText(content)}`;
+}
+
+/** The inbox row's last-message line: "You: …", "Your AI: …" or "AI: …". */
+function inboxPreviewLine(preview: string, senderUserId: string | null | undefined, userId: string): string {
+  const own = senderUserId === userId;
+  if (preview.startsWith(AGENT_PREVIEW_PREFIX)) {
+    const text = plainPreview(preview.slice(AGENT_PREVIEW_PREFIX.length));
+    return `${own ? "Your AI" : "AI"}: ${text}`;
+  }
+  return own ? `You: ${preview}` : preview;
+}
+
 function activeMention(value: string, caret: number): { start: number; query: string } | null {
   const before = value.slice(0, caret);
   const match = before.match(/(?:^|\s)@([A-Za-z0-9_.-]*)$/);
@@ -153,16 +189,43 @@ function Avatar({
   small?: boolean;
 }) {
   const label = (card?.name || name || "?").slice(0, 1).toUpperCase();
+  // Photos go through our /api/img proxy: LinkedIn CDN URLs expire and are
+  // often blocked when hotlinked. If the proxy has nothing either, the
+  // initial stays. Tracking the failed src (not a boolean) means a card whose
+  // photo gets refreshed tries the new URL.
+  const src = cardAvatarSrc(card);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   return (
     <span
       className={`nv2-avatar${group ? " is-group" : ""}${small ? " is-small" : ""}`}
       style={{ width: size, height: size, fontSize: Math.round(size * 0.38) }}
       aria-hidden="true"
     >
-      {card?.avatar_url ? (
+      {src && failedSrc !== src ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={card.avatar_url} alt="" />
+        <img src={src} alt="" onError={() => setFailedSrc(src)} />
       ) : label}
+    </span>
+  );
+}
+
+/** The line above an assistant reply: whose assistant it is. */
+function AgentSender({ own, card }: { own: boolean; card?: CardSummary | null }) {
+  return (
+    <div className="nv2-msg-sender is-agent">
+      <Bot size={11} />
+      {own ? "Your AI assistant" : `AI assistant for ${card?.name || "Member"}`}
+      {!own && card?.handle && <span className="nv2-agent-handle">@{card.handle}</span>}
+    </div>
+  );
+}
+
+/** The owner's photo with a small bot badge: whose assistant this is. */
+function AgentAvatar({ card, name, size = 26 }: { card?: CardSummary | null; name?: string; size?: number }) {
+  return (
+    <span className="nv2-agent-avatar" aria-hidden="true">
+      <Avatar card={card} name={name} size={size} small />
+      <span className="nv2-agent-badge"><Bot size={9} strokeWidth={2.4} /></span>
     </span>
   );
 }
@@ -183,11 +246,14 @@ function asMessage(value: unknown): CardMessage | null {
 export function NetworkV2({
   token,
   userId,
+  initialConnectionId = null,
   groupMemoryEnabled = false,
   groupAgentRepliesEnabled = false,
 }: {
   token: string;
   userId: string;
+  /** `?c=` from the URL: a connection to open once the inbox is known (applied once). */
+  initialConnectionId?: string | null;
   groupMemoryEnabled?: boolean;
   groupAgentRepliesEnabled?: boolean;
 }) {
@@ -211,6 +277,8 @@ export function NetworkV2({
   const prefetching = useRef(new Set<string>());
   const prefetchedInitial = useRef(false);
   const inboxRef = useRef<CardInbox | null>(cachedInbox);
+  const [inboxFresh, setInboxFresh] = useState(false);
+  const deepLinkApplied = useRef(false);
 
   const setInbox = useCallback((updater: InboxUpdater) => {
     const current = inboxRef.current;
@@ -224,6 +292,7 @@ export function NetworkV2({
     try {
       const data = await fetchInbox(token, signal);
       setInbox(data);
+      setInboxFresh(true);
       setLoadError("");
     } catch (error) {
       if (!signal?.aborted) setLoadError(error instanceof Error ? error.message : "Could not load your network");
@@ -365,6 +434,44 @@ export function NetworkV2({
     }
   }, [token]);
 
+  // Open a connection from outside the list (the ?c= link, the new-connection dialog): an accepted one
+  // becomes the open conversation; a pending one sends you to the Requests tab, where it can be
+  // answered. Only state setters, so this stays stable.
+  const openConnection = useCallback((id: string, status: ConnectionStatus) => {
+    if (status === "accepted") {
+      setTab((current) => (current === "requests" ? "all" : current));
+      setSelectedKind("dm");
+      setSelectedId(id);
+      setMobileOpen(true);
+    } else if (status === "pending") {
+      setTab("requests");
+      setMobileOpen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!initialConnectionId || deepLinkApplied.current || !inbox) return;
+    const connection = inbox.connections.find((row) => row.id === initialConnectionId);
+    // A cached inbox can be stale: trust it for an accepted conversation, but wait for the fresh one
+    // before deciding that a pending request, or an id it does not know, is what the link meant.
+    if (connection?.status !== "accepted" && !inboxFresh) return;
+    deepLinkApplied.current = true;
+    // One-shot reaction to the inbox arriving, guarded by the ref above; there is no render-time
+    // equivalent because it also rewrites the address bar.
+    if (connection && (connection.status === "accepted" || connection.status === "pending")) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      openConnection(connection.id, connection.status);
+    } else {
+      setNotice("That conversation is not available.");
+    }
+    // Drop ?c= so a reload does not re-open it over whatever is open by then.
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("c");
+      window.history.replaceState(null, "", url);
+    } catch { /* The address bar is cosmetic here. */ }
+  }, [initialConnectionId, inbox, inboxFresh, openConnection]);
+
   function selectConversation(kind: "dm" | "group", id: string) {
     setSelectedKind(kind);
     setSelectedId(id);
@@ -406,8 +513,10 @@ export function NetworkV2({
   const onInboxActivity = useCallback((kind: "dm" | "group", id: string, message: CardMessage, unreadDelta: number) => {
     setInbox((current) => {
       if (!current) return current;
-      const preview = message.sender_kind === "agent"
-        ? `AI: ${previewText(message.content)}`
+      // Same shape the database trigger writes, so the next inbox refresh
+      // replaces it with an identical string.
+      const preview = isAgentMessage(message)
+        ? agentPreview(message.content)
         : previewText(message.content);
       if (kind === "dm") {
         return {
@@ -648,9 +757,9 @@ export function NetworkV2({
                       const preview = previewText(item.kind === "dm" ? item.connection.last_message_preview : item.group.last_message_preview);
                       const unreadCount = item.kind === "dm" ? item.connection.unread_count ?? 0 : item.group.unread_count ?? 0;
                       const lastAt = item.kind === "dm" ? item.connection.last_message_at : item.group.last_message_at;
-                      const mine = !preview.startsWith("AI: ") && (item.kind === "dm"
-                        ? item.connection.last_message_sender_user_id === userId
-                        : item.group.last_message_sender_user_id === userId);
+                      const lastSender = item.kind === "dm"
+                        ? item.connection.last_message_sender_user_id
+                        : item.group.last_message_sender_user_id;
                       return (
                         <button
                           type="button"
@@ -668,7 +777,7 @@ export function NetworkV2({
                               <span className="nv2-item-time">{relativeTime(lastAt)}</span>
                             </span>
                             <span className="nv2-item-preview">
-                              <span>{preview ? `${mine ? "You: " : ""}${preview}` : item.kind === "group" ? item.group.description || "No messages yet" : `@${item.connection.partner.handle || "card"}`}</span>
+                              <span>{preview ? inboxPreviewLine(preview, lastSender, userId) : item.kind === "group" ? item.group.description || "No messages yet" : `@${item.connection.partner.handle || "card"}`}</span>
                               {unreadCount > 0 && <span className="nv2-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
                             </span>
                           </span>
@@ -717,6 +826,13 @@ export function NetworkV2({
           token={token}
           onClose={() => setComposer(null)}
           onNotice={setNotice}
+          onOpenDm={(connectionId) => {
+            setComposer(null);
+            const row = inboxRef.current?.connections.find((connection) => connection.id === connectionId);
+            openConnection(connectionId, row?.status === "pending" ? "pending" : "accepted");
+            // Connected a moment ago on another device, say: the inbox does not know it yet.
+            if (!row) void loadInbox();
+          }}
           onCreated={(groupId) => {
             setComposer(null);
             void loadInbox();
@@ -788,6 +904,10 @@ function ConversationPane({
   const [remembering, setRemembering] = useState<string | null>(null);
   const [typingAgents, setTypingAgents] = useState<Record<string, "pending" | "running">>({});
   const [agentErrors, setAgentErrors] = useState<Record<string, string>>({});
+  // Assistant replies still being written, by job id; the finished reply
+  // arrives separately as a message whose client_id is that job id.
+  const [streams, setStreams] = useState<AgentStreams>({});
+  const agentSources = useAgentSources();
   const [agentPreference, setAgentPreference] = useState<CardAgentPreference | null>(null);
   const [agentPreferenceBusy, setAgentPreferenceBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -1039,6 +1159,7 @@ function ConversationPane({
       setMessages((current) => mergeMessages(current, [message]));
       setLatestSeq((current) => Math.max(current, message.seq ?? 0));
       cacheThreadMessage(kind, conversationId, message);
+      if (isAgentMessage(message)) setStreams((current) => dropFinishedStreams(current, [message]));
       if (isAgentMessage(message) && message.agent_for_user_id) {
         markTyping(message.agent_for_user_id, "done");
         setAgentErrors((current) => {
@@ -1080,14 +1201,23 @@ function ConversationPane({
       const status = String(event.payload.status || "");
       if (target && ["pending", "running", "done", "failed"].includes(status)) {
         markTyping(target, status as "pending" | "running" | "done" | "failed");
+        // A retry starts the reply over and a failure ends it: either way what
+        // was streamed so far is void.
+        if (status === "pending" || status === "failed") setStreams((current) => clearUserStreams(current, target));
       }
+    } else if (event.event === "agent_stream") {
+      const snapshot = parseAgentStream(event.payload);
+      if (!snapshot) return;
+      if (snapshot.sources) rememberAgentSources(snapshot.jobId, snapshot.sources);
+      setStreams((current) => applyAgentStream(current, snapshot, Date.now()));
+      if (snapshot.text.trim() && !atBottomRef.current) setHasNew(true);
     }
   }, [conversationId, isDm, kind, markRemembered, markTyping, memoryOpen, onInboxActivity, scheduleRead, scrollToBottom, userId]);
 
   useNetworkRealtime({
     token,
     topic: isDm ? (threadId ? `cards:dm:${threadId}` : null) : `cards:group:${conversationId}`,
-    events: ["message", "read", "memory", "agent_typing"],
+    events: ["message", "read", "memory", "agent_typing", "agent_stream"],
     onEvent: handleRealtime,
     onReconnect: () => void load(undefined, latestSeq),
   });
@@ -1303,6 +1433,9 @@ function ConversationPane({
   }
 
   const memberByUser = useMemo(() => new Map((members ?? []).map((member) => [member.user_id, member])), [members]);
+  // Who a user id is here: the other person in a DM, a member in a group.
+  const cardForUser = (id: string): CardSummary | null | undefined =>
+    isDm ? (id === userId ? undefined : connection?.partner) : memberByUser.get(id)?.card;
   const grouped = useMemo(() => {
     const result: { key: string; label: string; messages: CardMessage[] }[] = [];
     for (const message of messages) {
@@ -1313,6 +1446,32 @@ function ConversationPane({
     }
     return result;
   }, [messages]);
+
+  const liveStreams = useMemo(() => visibleStreams(streams, messages), [streams, messages]);
+  const streamedChars = liveStreams.reduce((total, stream) => total + stream.text.length, 0);
+  // Keep the newest words in view while you are at the bottom; otherwise the
+  // "New messages" pill (set when the snapshot arrives) says there is more.
+  useEffect(() => {
+    if (streamedChars === 0 || !atBottomRef.current) return;
+    scrollToBottom("auto");
+  }, [streamedChars, scrollToBottom]);
+  const hasStreams = Object.keys(streams).length > 0;
+  useEffect(() => {
+    if (!hasStreams) return;
+    const timer = window.setInterval(() => setStreams((current) => pruneStaleStreams(current, Date.now())), 15_000);
+    return () => window.clearInterval(timer);
+  }, [hasStreams]);
+  // What a not-yet-writing assistant is doing ("Searching group memory…").
+  const activityByUser = useMemo(() => {
+    const byUser: Record<string, string> = {};
+    for (const stream of Object.values(streams).sort((a, b) => a.updatedAt - b.updatedAt)) {
+      const label = activityLabel(stream);
+      if (label) byUser[stream.userId] = label;
+      else delete byUser[stream.userId];
+    }
+    return byUser;
+  }, [streams]);
+  const streamingUsers = useMemo(() => new Set(liveStreams.map((stream) => stream.userId)), [liveStreams]);
 
   const title = isDm ? connection?.partner.name || "Direct message" : group?.name || "Group";
   const subtitle = isDm
@@ -1454,11 +1613,14 @@ function ConversationPane({
                 <div className="nv2-day">{day.label}</div>
                 {day.messages.map((message) => {
                   const agent = isAgentMessage(message);
-                  const mine = !agent && message.sender_user_id === userId;
-                  const sender = memberByUser.get(message.sender_user_id);
-                  const senderName = agent
-                    ? `AI assistant for ${sender?.card?.name || "Member"}`
-                    : sender?.card?.name || "Member";
+                  // An assistant reply sits on the side of the member it
+                  // answered for: your own assistant is on your side, and
+                  // someone else's is on theirs.
+                  const agentOwnerId = message.agent_for_user_id || message.sender_user_id;
+                  const ownAgent = agent && agentOwnerId === userId;
+                  const mine = agent ? ownAgent : message.sender_user_id === userId;
+                  const senderCard = cardForUser(agent ? agentOwnerId : message.sender_user_id);
+                  const senderName = senderCard?.name || "Member";
                   return (
                     <div
                       key={message.client_id ?? message.id}
@@ -1466,27 +1628,28 @@ function ConversationPane({
                     >
                       {!mine && (
                         agent ? (
-                          <span className="nv2-agent-avatar" aria-hidden="true"><Bot size={14} /></span>
+                          <AgentAvatar card={senderCard} name={senderCard?.name || "Member"} />
                         ) : (
-                          <Avatar
-                            card={isDm ? connection?.partner : sender?.card}
-                            name={isDm ? connection?.partner.name : sender?.card?.name || "Member"}
-                            size={26}
-                            small
-                          />
+                          <Avatar card={senderCard} name={senderCard?.name || "Member"} size={26} small />
                         )
                       )}
                       <div className="nv2-msg-stack">
-                        {!mine && !isDm && (
-                          <div className={`nv2-msg-sender${agent ? " is-agent" : ""}`}>
-                            {agent && <Bot size={11} />}
-                            {senderName}
-                            {agent && sender?.card?.handle && <span className="nv2-agent-handle">@{sender.card.handle}</span>}
+                        {agent
+                          ? <AgentSender own={ownAgent} card={senderCard} />
+                          : !mine && !isDm && <div className="nv2-msg-sender">{senderName}</div>}
+                        {agent ? (
+                          <AgentBubble
+                            content={message.content}
+                            own={ownAgent}
+                            pending={message.pending}
+                            remembered={message.remembered}
+                            sources={message.client_id ? agentSources[message.client_id] : undefined}
+                          />
+                        ) : (
+                          <div className={`nv2-bubble${message.pending ? " is-pending" : ""}${message.remembered ? " is-remembered" : ""}`}>
+                            {renderMessageContent(message.content)}
                           </div>
                         )}
-                        <div className={`nv2-bubble${message.pending ? " is-pending" : ""}${agent ? " is-agent" : ""}${message.remembered ? " is-remembered" : ""}`}>
-                          {renderMessageContent(message.content)}
-                        </div>
                         <div className="nv2-msg-meta">
                           <span>{formatTime(message.created_at)}</span>
                           {message.pending && <span>Sending…</span>}
@@ -1506,7 +1669,7 @@ function ConversationPane({
                               Remember
                             </button>
                           )}
-                          {mine && isDm && !message.pending && (message.seq ?? 0) > 0 && peerReadSeq >= (message.seq ?? 0) && (
+                          {mine && !agent && isDm && !message.pending && (message.seq ?? 0) > 0 && peerReadSeq >= (message.seq ?? 0) && (
                             <span className="nv2-seen">Seen</span>
                           )}
                         </div>
@@ -1516,25 +1679,48 @@ function ConversationPane({
                 })}
               </div>
             ))}
-            {Object.entries(typingAgents).map(([agentUserId]) => {
-              const member = memberByUser.get(agentUserId);
-              const name = member?.card?.name || "a group member";
-              const handle = member?.card?.handle;
+            {liveStreams.map((stream) => {
+              const own = stream.userId === userId;
+              const card = cardForUser(stream.userId);
               return (
-                <div className="nv2-typing-row" key={`typing-${agentUserId}`} aria-live="polite">
-                  <span className="nv2-agent-avatar" aria-hidden="true"><Bot size={14} /></span>
+                <div
+                  className={`nv2-msg-row is-agent${own ? " is-mine" : ""}`}
+                  key={`stream-${stream.jobId}`}
+                  aria-busy={!stream.done}
+                >
+                  {!own && <AgentAvatar card={card} name={card?.name || "Member"} />}
+                  <div className="nv2-msg-stack">
+                    <AgentSender own={own} card={card} />
+                    <AgentBubble content={stream.text} own={own} streaming sources={agentSources[stream.jobId]} />
+                    <div className="nv2-msg-meta"><span>{stream.done ? "Saving…" : "Writing…"}</span></div>
+                  </div>
+                </div>
+              );
+            })}
+            {Object.entries(typingAgents).filter(([agentUserId]) => !streamingUsers.has(agentUserId)).map(([agentUserId]) => {
+              const own = agentUserId === userId;
+              const card = cardForUser(agentUserId);
+              const name = card?.name || "a group member";
+              const handle = card?.handle;
+              return (
+                <div className={`nv2-typing-row${own ? " is-mine" : ""}`} key={`typing-${agentUserId}`} aria-live="polite">
+                  {own
+                    ? <Bot size={13} aria-hidden="true" />
+                    : <AgentAvatar card={card} name={name} size={22} />}
                   <span>
-                    AI assistant for {name}{handle ? ` (@${handle})` : ""}
+                    {own ? "Your AI assistant" : `AI assistant for ${name}${handle ? ` (@${handle})` : ""}`}
+                    {activityByUser[agentUserId] && <span className="nv2-typing-activity"> · {activityByUser[agentUserId]}</span>}
                     <span className="nv2-typing-dots" aria-label="is thinking"><i /><i /><i /></span>
                   </span>
                 </div>
               );
             })}
             {Object.entries(agentErrors).map(([agentUserId, message]) => {
-              const member = memberByUser.get(agentUserId);
+              const own = agentUserId === userId;
+              const card = cardForUser(agentUserId);
               return (
-                <div className="nv2-agent-error" key={`agent-error-${agentUserId}`} role="status">
-                  <Bot size={12} /> {message}{member?.card?.handle ? ` (@${member.card.handle})` : ""}
+                <div className={`nv2-agent-error${own ? " is-mine" : ""}`} key={`agent-error-${agentUserId}`} role="status">
+                  <Bot size={12} /> {message}{card?.handle ? ` (@${card.handle})` : ""}
                 </div>
               );
             })}
@@ -1673,15 +1859,20 @@ function ComposerModal({
   token,
   onClose,
   onNotice,
+  onOpenDm,
   onCreated,
 }: {
   mode: "connection" | "group";
   token: string;
   onClose: () => void;
   onNotice: (notice: string) => void;
+  /** Open an existing conversation (or, for a pending request, the Requests tab) instead of sending. */
+  onOpenDm: (connectionId: string) => void;
   onCreated: (groupId?: string) => void;
 }) {
   const [handle, setHandle] = useState("");
+  const [picked, setPicked] = useState<PersonSuggestion | null>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
   const [requestMessage, setRequestMessage] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -1695,7 +1886,7 @@ function ComposerModal({
     try {
       if (mode === "connection") {
         const result = await cardsNetworkRequest<{ connection: CardConnection; existing: boolean }>(
-          "/connections", token, "POST", { target_handle: handle.trim(), message: requestMessage },
+          "/connections", token, "POST", { target_handle: (picked?.handle || handle).trim(), message: requestMessage },
         );
         onNotice(connectionRequestNotice(result));
         onCreated();
@@ -1719,7 +1910,7 @@ function ComposerModal({
         <div className="nv2-modal-head">
           <div>
             <h2>{mode === "connection" ? "Start a connection" : "Create a group"}</h2>
-            <p>{mode === "connection" ? "Use the recipient's verified Card handle. DMs open after they accept." : "Small private groups work best. Invitees choose whether to join."}</p>
+            <p>{mode === "connection" ? "Search by name or Card handle. DMs open after they accept." : "Small private groups work best. Invitees choose whether to join."}</p>
           </div>
           <button type="button" className="nv2-icon-button" aria-label="Close" onClick={onClose}>
             <X size={16} />
@@ -1727,15 +1918,24 @@ function ComposerModal({
         </div>
         {mode === "connection" ? (
           <>
-            <input
-              className="nv2-field"
-              value={handle}
-              onChange={(event) => setHandle(event.target.value)}
-              placeholder="Card handle, e.g. alice"
-              aria-label="Card handle"
-              maxLength={128}
+            <PersonCombobox
+              token={token}
+              query={handle}
+              onQueryChange={setHandle}
+              picked={picked}
+              onPick={(person) => {
+                setPicked(person);
+                if (person) {
+                  setHandle(person.handle || "");
+                  noteRef.current?.focus();
+                } else {
+                  setHandle("");
+                }
+              }}
+              onOpenDm={onOpenDm}
             />
             <textarea
+              ref={noteRef}
               className="nv2-field"
               value={requestMessage}
               onChange={(event) => setRequestMessage(event.target.value)}
@@ -1744,7 +1944,7 @@ function ComposerModal({
               maxLength={2000}
               rows={3}
             />
-            <button type="button" className="nv2-primary" disabled={busy || !handle.trim()} onClick={() => void submit()}>
+            <button type="button" className="nv2-primary" disabled={busy || !(picked || handle.trim())} onClick={() => void submit()}>
               <Send size={15} /> {busy ? "Sending…" : "Send request"}
             </button>
           </>
@@ -1774,6 +1974,228 @@ function ComposerModal({
         )}
         {error && <p className="nv2-error" role="alert" style={{ marginTop: 10 }}>{error}</p>}
       </div>
+    </div>
+  );
+}
+
+const SUGGEST_DEBOUNCE_MS = 200;
+const SUGGEST_MIN_CHARS = 2;
+
+/** How a suggestion row reads and what choosing it does. Connected people get Message and an
+ *  incoming request gets Review; a request already sent, or a closed connection, cannot be acted on
+ *  here, because sending again could never succeed. */
+function suggestionTag(person: PersonSuggestion): { label: string; action?: string; selectable: boolean } | null {
+  switch (connectionState(person.connection)) {
+    case "connected": return { label: "Connected", action: "Message", selectable: true };
+    case "wants-to-connect": return { label: "Wants to connect", action: "Review", selectable: true };
+    case "requested": return { label: "Requested", selectable: false };
+    case "closed": return { label: "Unavailable", selectable: false };
+    default: return null;
+  }
+}
+
+/** Name-or-handle search for "Start a connection": a combobox over GET /network/people/suggest.
+ *  Choosing a person pins them as a chip; typing an exact handle and sending still works unchanged. */
+function PersonCombobox({
+  token,
+  query,
+  onQueryChange,
+  picked,
+  onPick,
+  onOpenDm,
+}: {
+  token: string;
+  query: string;
+  onQueryChange: (value: string) => void;
+  picked: PersonSuggestion | null;
+  onPick: (person: PersonSuggestion | null) => void;
+  onOpenDm: (connectionId: string) => void;
+}) {
+  const listId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const timer = useRef<number | null>(null);
+  const inflight = useRef<AbortController | null>(null);
+  const [results, setResults] = useState<PersonSuggestion[]>([]);
+  const [phase, setPhase] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+
+  useEffect(() => () => {
+    if (timer.current) window.clearTimeout(timer.current);
+    inflight.current?.abort();
+  }, []);
+
+  const term = query.trim().replace(/^@+/, "");
+  const listVisible = menuOpen && results.length > 0;
+
+  function search(value: string) {
+    if (timer.current) window.clearTimeout(timer.current);
+    inflight.current?.abort();       // a slow answer for older text must not replace a newer one
+    const text = value.trim().replace(/^@+/, "");
+    setActive(-1);
+    if (text.length < SUGGEST_MIN_CHARS) {
+      setResults([]);
+      setPhase("idle");
+      setMenuOpen(false);
+      return;
+    }
+    setPhase("loading");
+    setMenuOpen(true);
+    timer.current = window.setTimeout(async () => {
+      const controller = new AbortController();
+      inflight.current = controller;
+      try {
+        const { people } = await suggestPeople(token, text, controller.signal);
+        if (controller.signal.aborted) return;
+        setResults(people);
+        setPhase("done");
+      } catch {
+        if (controller.signal.aborted) return;
+        setResults([]);
+        setPhase("error");
+      }
+    }, SUGGEST_DEBOUNCE_MS);
+  }
+
+  function choose(person: PersonSuggestion) {
+    if (phase === "loading") return;   // the list on screen is for older text; wait for the new answer
+    const tag = suggestionTag(person);
+    if (tag && !tag.selectable) return;
+    if (tag && person.connection) {
+      onOpenDm(person.connection.id);
+      return;
+    }
+    if (!person.handle) return;
+    onPick(person);
+    setMenuOpen(false);
+    setActive(-1);
+  }
+
+  function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (results.length === 0) return;
+      event.preventDefault();
+      setMenuOpen(true);
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      setActive((current) => (current < 0 ? (step > 0 ? 0 : results.length - 1) : (current + step + results.length) % results.length));
+    } else if (event.key === "Enter") {
+      if (listVisible && active >= 0) {
+        event.preventDefault();
+        choose(results[active]);
+        return;
+      }
+      // Nothing highlighted: an exact handle among the matches is that person, anything else is left
+      // for the Send button to submit as typed.
+      const exact = results.find((person) => person.handle?.toLowerCase() === term.toLowerCase());
+      if (exact) {
+        event.preventDefault();
+        choose(exact);
+      }
+    } else if (event.key === "Escape" && menuOpen) {
+      event.preventDefault();
+      event.stopPropagation();
+      setMenuOpen(false);
+      setActive(-1);
+    }
+  }
+
+  function clearPick() {
+    onPick(null);
+    setResults([]);
+    setPhase("idle");
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  const status = picked
+    ? `Selected ${picked.name}, @${picked.handle}`
+    : !menuOpen ? ""
+    : phase === "loading" ? "Searching"
+    : phase === "error" ? "Search is unavailable"
+    : results.length === 0 ? "No matching Cards"
+    : `${results.length} matching Card${results.length === 1 ? "" : "s"}`;
+
+  return (
+    <div className="nv2-combo">
+      <span className="nv2-visually-hidden" role="status">{status}</span>
+      {picked && (
+        <div className="nv2-combo-chip">
+          <Avatar card={picked} size={30} small />
+          <span className="nv2-combo-main">
+            <span className="nv2-combo-name">{picked.name}</span>
+            <span className="nv2-combo-sub">@{picked.handle}{picked.headline ? ` · ${picked.headline}` : ""}</span>
+          </span>
+          <button type="button" className="nv2-small-button" aria-label={`Choose someone else instead of ${picked.name}`} onClick={clearPick}>
+            <X size={13} />
+          </button>
+        </div>
+      )}
+      {!picked && (
+        <input
+          ref={inputRef}
+          className="nv2-field"
+          role="combobox"
+          aria-expanded={listVisible}
+          aria-controls={listVisible ? listId : undefined}
+          aria-autocomplete="list"
+          aria-activedescendant={listVisible && active >= 0 ? `${listId}-${active}` : undefined}
+          value={query}
+          onChange={(event) => {
+            onQueryChange(event.target.value);
+            search(event.target.value);
+          }}
+          onFocus={() => setMenuOpen(term.length >= SUGGEST_MIN_CHARS && phase !== "idle")}
+          onBlur={() => setMenuOpen(false)}
+          onKeyDown={onKeyDown}
+          placeholder="Search by name or Card handle"
+          aria-label="Card handle"
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={128}
+        />
+      )}
+      {menuOpen && !picked && (
+        <div className="nv2-combo-menu">
+          {results.length > 0 ? (
+            <ul id={listId} className={`nv2-combo-list${phase === "loading" ? " is-stale" : ""}`} role="listbox" aria-label="Matching Cards" aria-busy={phase === "loading"}>
+              {results.map((person, index) => {
+                const tag = suggestionTag(person);
+                const selectable = !tag || tag.selectable;
+                return (
+                  <li
+                    key={person.card_id}
+                    id={`${listId}-${index}`}
+                    role="option"
+                    aria-selected={index === active}
+                    aria-disabled={selectable ? undefined : true}
+                    className={`nv2-combo-option${index === active ? " is-active" : ""}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setActive(index)}
+                    onClick={() => choose(person)}
+                  >
+                    <Avatar card={person} size={30} small />
+                    <span className="nv2-combo-main">
+                      <span className="nv2-combo-name">{person.name}</span>
+                      <span className="nv2-combo-sub">@{person.handle}{person.headline ? ` · ${person.headline}` : ""}</span>
+                    </span>
+                    {tag && (
+                      <span className={`nv2-combo-tag${selectable ? "" : " is-muted"}`}>
+                        {tag.label}{tag.action && <> · <strong>{tag.action}</strong></>}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <div className="nv2-combo-empty">
+              {phase === "loading" ? "Searching…"
+                : phase === "error" ? "Couldn't search right now. If you know the exact Card handle, you can still send it."
+                : `No Card matches "${term}". If you know the exact handle, you can still send it.`}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -40,7 +40,8 @@ every service listed as a reader.
 | `cards.network_create_group`, `cards.network_respond_invitation` | cards | cards 0020 | cards-api only; transactional membership checks |
 | `cards.network_inbox`, `cards.network_dm_messages`, `cards.network_send_dm`, `cards.network_group_messages`, `cards.network_send_group_message`, `cards.network_mark_read`, `cards.network_group_members`, `cards.network_card_payload` | cards | cards 0023 | cards-api only; one round-trip inbox/message operations |
 | `cards.network_can_subscribe` | cards | cards 0023 | Supabase Realtime RLS only; boolean authorization for `cards:*` private topics |
-| `cards.network_send_agent_group_message`, `cards.network_enqueue_group_agent_replies`, `cards.network_claim_group_agent_job`, `cards.network_finish_group_agent_job` | cards | cards 0026 | cards-api only; Card assistant replies and durable mention jobs |
+| `cards.network_send_agent_group_message` | cards | cards 0028 (0026 before; reply limit 4000 -> 8000) | cards-api only; writes the Card assistant's reply, `client_id` = job id |
+| `cards.network_enqueue_group_agent_replies`, `cards.network_claim_group_agent_job`, `cards.network_finish_group_agent_job` | cards | cards 0026 (claim/finish: 0027) | cards-api only; durable mention jobs |
 | `cards.network_group_memory_search`, `cards.network_group_memory_list`, `cards.network_group_memory_remember`, `cards.network_group_memory_add_fact`, `cards.network_group_memory_set_summary`, `cards.network_groups_needing_summary` | cards | cards 0026 | cards-api only; group-scoped summary/facts and semantic search |
 | group memory/agent job triggers in `cards` | cards | cards 0026 | memory saved, message remembered, agent typing broadcasts |
 | `realtime.messages` policy `cards network can receive broadcasts` | cards | cards 0023 | Supabase Realtime private `cards:*` topics; review alongside any other `realtime.messages` policy |

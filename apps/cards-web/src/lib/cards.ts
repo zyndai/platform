@@ -18,9 +18,13 @@ export interface Skill {
   name: string;
   level: string;
   evidence_count: number;
+  evidence?: { label: string; url: string; kind?: string }[];
 }
 
+export interface Beacon { text: string; created_at: string; expires_at: string; }
+
 export interface Project {
+  demo_url?: string | null;
   name: string;
   description: string;
   url: string;
@@ -79,6 +83,7 @@ export interface Endorsement {
 }
 
 export interface AgentProfileCard {
+  beacon?: Beacon | null;
   id: string;
   schema_version: string;
   status: string;
@@ -154,6 +159,7 @@ export interface CardFact {
 }
 
 export interface CardView {
+  beacon?: Beacon | null;
   handle: string;
   claimed: boolean;
   identity: Identity;

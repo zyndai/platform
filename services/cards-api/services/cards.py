@@ -88,7 +88,8 @@ def clean_excerpt(text: str, limit: int = 500) -> str:
     t = t.replace("\u00a0", " ")
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r"\n{3,}", "\n\n", t)
-    return t.strip()[:limit]
+    t = t.strip()
+    return t if len(t) <= limit else t[:max(0, limit - 1)].rstrip() + "…"
 
 
 def is_thin_excerpt(text: str) -> bool:
@@ -150,6 +151,7 @@ def assemble_card(
     linkedin_stats: dict | None = None,
     contribution_stats: dict | None = None,
     work_experience: list[dict] | None = None,
+    x_scraped: bool | None = None,
 ) -> AgentProfileCard:
     card_id = new_card_id()
     now = utcnow()
@@ -181,11 +183,13 @@ def assemble_card(
             Source(
                 platform="x",
                 url=f"https://x.com/{x_handle}",
-                scraped_at=now,
-                method="pending",
+                scraped_at=now if (x_scraped if x_scraped is not None else bool(x_stats)) else "",
+                method="http_fetch" if (x_scraped if x_scraped is not None else bool(x_stats)) else "unavailable",
             )
         )
     synth.sources = sources
+    from services.skill_evidence import attach_evidence
+    attach_evidence(synth, github_data)
 
     # If X scraper didn't return handle but we have x_handle, fill it in
     if x_stats and not x_stats.get("handle") and x_handle:
@@ -420,6 +424,10 @@ def _row_to_card(row: dict) -> AgentProfileCard:
         data["writing_samples"] = cleaned
     jobs = data.get("work_experience")
     if isinstance(jobs, list):
+        from services.profile_dates import experience_years
+        tenure = experience_years(jobs)
+        if tenure is not None:
+            data["experience_years"] = tenure
         from scraping import linkedin as linkedin_scraper
         for job in jobs:
             if isinstance(job, dict) and job.get("description"):
@@ -940,6 +948,8 @@ def _public_card_payload(row: dict) -> dict:
     from services.signals import derive_public_signals
 
     card = derive_public_signals(_row_to_card(row))
+    from services.beacons import active_beacon
+    card.beacon = active_beacon(card)
     return {
         **card.model_dump(mode="json"),
         "claimed": _claimed_from_row(row),

@@ -8,6 +8,7 @@ import {
 } from "@/lib/cards";
 import { logAgentFetch } from "@/lib/track";
 import { ownerHomeEnabled } from "@/lib/owner-home";
+import { cleanTopic, publicTopics } from "@/lib/profile-quality";
 
 export const revalidate = 60;
 
@@ -28,6 +29,7 @@ function liveFactsFromMemory(raw: Array<Record<string, unknown>> | null | undefi
     const text = String(f.object || f.value || "").trim();
     const type = String(f.predicate || f.type || "").trim();
     if (!text) continue;
+    if (["has_skill", "has_expertise_in", "is_learning"].includes(type) && !cleanTopic(text)) continue;
     const approved = typeof f.approved_at === "string" ? f.approved_at : null;
     let expires_at: string | null = null;
     const days = HALF[type];
@@ -94,7 +96,6 @@ export async function GET(req: Request, { params }: Params) {
   const image = /^https?:\/\//.test(identity.avatar_url || "") ? identity.avatar_url : undefined;
 
   const skills = view?.skills ?? card.skills;
-  const knowsAboutSkills = skills.map((s) => s.name).filter(Boolean);
   const credentials = skills
     .filter((s) => s.name && s.level)
     .map((s) => ({
@@ -103,12 +104,11 @@ export async function GET(req: Request, { params }: Params) {
       competencyRequired: s.level,
     }));
 
-  const facts: CardFact[] = view?.facts?.length
+  const facts: CardFact[] = view
     ? view.facts.filter((f) => f && f.text)
     : liveFactsFromMemory(card.zynd_memory as Array<Record<string, unknown>> | null);
 
-  const expertise = facts.filter((f) => f.type === "has_expertise_in" || f.type === "is_learning").map((f) => f.text);
-  const knowsAbout = [...new Set([...knowsAboutSkills, ...expertise])];
+  const knowsAbout = publicTopics(skills, facts);
 
   const affiliationOrgs = facts
     .filter((f) => f.type === "is_affiliated_with" && f.text)
@@ -123,6 +123,8 @@ export async function GET(req: Request, { params }: Params) {
     }));
 
   const worksFor = [...currentJobs, ...affiliationOrgs.filter((o) => !currentJobs.some((j) => j.name === o.name))];
+  const beacon = view?.beacon ?? card.beacon;
+  const activeBeacon = beacon && Date.parse(beacon.created_at) <= Date.now() && Date.parse(beacon.expires_at) > Date.now() ? beacon : null;
 
   const jobFromFacts = facts.find((f) => f.type === "is_affiliated_with")?.text;
   const jobTitle = identity.headline || jobFromFacts || undefined;
@@ -143,6 +145,7 @@ export async function GET(req: Request, { params }: Params) {
     ...(worksFor.length ? { worksFor } : {}),
     "zynd:handle": handle,
     "zynd:card_id": card.id,
+    ...(activeBeacon ? { "zynd:beacon": activeBeacon } : {}),
     ...(card.citation_snippet ? { "zynd:citation": card.citation_snippet } : {}),
     ...(facts.length
       ? {

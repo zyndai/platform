@@ -25,6 +25,8 @@ _APPROVE_AS: dict[str, str] = {
 }
 
 _PUBLIC_LABELS: dict[str, str] = {
+    "is_founder_of": "Founded",
+    "has_experience_in": "Experience",
     "is_building": "Currently building",
     "is_working_on": "Working on",
     "is_creating": "Creating",
@@ -45,6 +47,28 @@ _GENERIC_TOKENS = frozenset({
     "work", "stuff", "thing", "things", "test", "tmp", "temp", "misc", "other",
     "none", "null", "undefined", "unknown", "n/a", "na", "todo", "wip",
 })
+
+# Placeholders are invalid facts, regardless of whether soft inbox triage is enabled.
+PLACEHOLDER_TOKENS = frozenset({"general", "misc", "miscellaneous", "other", "none", "null", "undefined", "unknown", "n/a"})
+TOPIC_PREDICATES = frozenset({"has_skill", "has_expertise_in", "is_learning", "uses_tool"})
+
+
+def is_atomic_topic(value: str) -> bool:
+    text = canonicalize(value)
+    return bool(text and text.casefold() not in PLACEHOLDER_TOKENS
+                and len(text) <= 100 and len(text.split()) <= 8
+                and not re.search(r"[!?;\n]|\.\s|https?://|\b(?:founder of|founded|organized|worked at)\b", text, re.I))
+
+
+def historical_learning(value: str) -> tuple[str, str] | None:
+    """Correct only explicit historical statements, never infer a role from a topic."""
+    text = canonicalize(value)
+    founder = re.match(r"^(?:co[- ]?founder\s+(?:of|at)|founder\s+(?:of|at)|founded|co[- ]?founded)\s+(.+)$", text, re.I)
+    if founder:
+        return "is_founder_of", founder.group(1).split(",", 1)[0].strip()
+    if re.match(r"^(?:organized|organised|previously worked|worked at|formerly)\b", text, re.I):
+        return "has_experience_in", text
+    return None
 
 _INTERNAL_JARGON = frozenset({
     "worker trees", "worktree", "worktrees", "agent manager", "session goal",
@@ -136,10 +160,18 @@ def assess(
         )
 
     lower = cleaned.lower()
+    historical = historical_learning(cleaned) if intended_predicate == "is_learning" else None
     reason = ""
     group: Group = "right"
 
-    if len(cleaned) < 2 or lower in _GENERIC_TOKENS:
+    if lower in PLACEHOLDER_TOKENS:
+        group, reason = "noise", "placeholder"
+    elif historical:
+        suggested = historical[0]
+        group, reason = "look", "historical_role"
+    elif intended_predicate in TOPIC_PREDICATES and not is_atomic_topic(cleaned):
+        group, reason = "noise", "narrative_topic"
+    elif len(cleaned) < 2 or lower in _GENERIC_TOKENS:
         group, reason = "noise", "short_or_generic"
     elif _REPO_RE.search(cleaned) or _PATH_RE.search(cleaned):
         group, reason = "noise", "repo_or_path"
@@ -161,9 +193,9 @@ def assess(
         group, reason = "noise", "code_shaped"
 
     # Hard-drop only empty / clearly junk; keep noise visible in the queue.
-    drop = reason in ("empty",) or (group == "noise" and reason == "code_shaped" and len(cleaned) < 4)
+    drop = reason in ("empty", "placeholder", "narrative_topic") or (group == "noise" and reason == "code_shaped" and len(cleaned) < 4)
 
-    label = public_label_for(suggested, cleaned)
+    label = public_label_for(suggested, historical[1] if historical else cleaned)
     return QualityResult(
         value=cleaned,
         group=group,

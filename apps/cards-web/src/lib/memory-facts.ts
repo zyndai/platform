@@ -9,6 +9,8 @@ export type MemoryFact = {
 };
 
 export const MEMORY_GROUPS: Record<string, { label: string; icon: string }> = {
+  is_founder_of: { label: "Founded", icon: "🏢" },
+  has_experience_in: { label: "Experience", icon: "📋" },
   is_building: { label: "Currently building", icon: "⚙️" },
   is_working_on: { label: "Working on", icon: "⚙️" },
   is_creating: { label: "Creating", icon: "✨" },
@@ -24,6 +26,8 @@ export const MEMORY_GROUPS: Record<string, { label: string; icon: string }> = {
 };
 
 export const MEMORY_GROUP_ORDER = [
+  "is_founder_of",
+  "has_experience_in",
   "is_building",
   "is_working_on",
   "is_creating",

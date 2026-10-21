@@ -39,6 +39,9 @@ import { RequestConnection } from "@/components/network/RequestConnection";
 import { memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
 import { readEdition } from "@/lib/editions";
 import { EditionBanner } from "./edition-banner";
+import { cleanTopic, publicTopics } from "@/lib/profile-quality";
+import { BeaconCard } from "@/components/BeaconCard";
+import { BookingAvailability } from "@/components/BookingAvailability";
 
 interface PageProps {
   params: Promise<{ handle: string }>;
@@ -302,10 +305,7 @@ function buildJsonLd(card: AgentProfileCard, view?: CardView | null) {
     .filter((v) => /^https?:\/\//.test(v));
   const image = /^https?:\/\//.test(identity.avatar_url || "") ? identity.avatar_url : undefined;
   const facts = (view?.facts ?? []) as CardFact[];
-  const expertise = facts
-    .filter((f) => f.type === "has_expertise_in" || f.type === "is_learning")
-    .map((f) => f.text);
-  const knowsAbout = [...new Set([...card.skills.map((s) => s.name), ...expertise])].filter(Boolean);
+  const knowsAbout = publicTopics(view?.skills ?? card.skills, facts);
   const worksFor = facts
     .filter((f) => f.type === "is_affiliated_with" && f.text)
     .map((f) => ({ "@type": "Organization", name: f.text }));
@@ -435,7 +435,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
   const avatarUrl = rawAvatar ?? ghAvatar;
   const heroAvatarSrc = imgProxy(rawAvatar, ghAvatar, card.handle || handle);
   const linkedinLinked = !!identity.links?.linkedin;
-  const skills = card.skills.slice().sort((a, b) => b.evidence_count - a.evidence_count);
+  const skills = card.skills.filter(s => cleanTopic(s.name)).sort((a, b) => b.evidence_count - a.evidence_count);
 
   /* Résumé-relevant slice of the card, handed to the Export / Share menu.
      Unclaimed cards get no résumé export: nothing but the owner should be
@@ -490,6 +490,8 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
   ].filter((l): l is { label: string; url: string } => !!l.url);
 
   const MEMORY_GROUPS: Record<string, { label: string; icon: string }> = {
+    is_founder_of: { label: "Founded", icon: "🏢" },
+    has_experience_in: { label: "Experience", icon: "📋" },
     is_building: { label: "Currently building", icon: "⚙️" },
     is_working_on: { label: "Working on", icon: "⚙️" },
     is_learning: { label: "Learning", icon: "📚" },
@@ -500,7 +502,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
     is_affiliated_with: { label: "Works at", icon: "🏢" },
     is_located_in: { label: "Based in", icon: "📍" },
   };
-  const GROUP_ORDER = ["is_building", "is_working_on", "is_learning", "is_seeking", "open_to", "has_expertise_in", "uses_tool", "is_affiliated_with", "is_located_in"];
+  const GROUP_ORDER = ["is_founder_of", "has_experience_in", "is_building", "is_working_on", "is_learning", "is_seeking", "open_to", "has_expertise_in", "uses_tool", "is_affiliated_with", "is_located_in"];
   const ENUM_LABELS: Record<string, string> = {
     co_founder: "a co-founder", technical_feedback: "technical feedback",
     early_users: "early users", mentoring: "mentoring", being_mentored: "being mentored",
@@ -527,6 +529,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
       const family = memoryFactFamily(predicate);
       const meta = MEMORY_GROUPS[family];
       if (!meta || !object) return;
+      if (["has_skill", "has_expertise_in", "is_learning"].includes(predicate) && !cleanTopic(object)) return;
       if (expires_at) {
         const end = Date.parse(expires_at);
         if (!Number.isNaN(end) && end <= nowMs) return;
@@ -541,7 +544,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
       byPredicate.set(family, list);
     };
 
-    if (cardView?.facts?.length) {
+    if (cardView) {
       for (const f of cardView.facts) {
         pushFact(f.type, f.text, f.source || "", f.confidence ?? 0, f.approved_at || "", f.expires_at || "");
       }
@@ -635,8 +638,6 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
   const showMemory = claimed && memoryTotal > 0;
   const showBooking = claimed && bookingLinks.length > 0;
   const socialSlots = [showLinkedin, showX, showMemory, showBooking].filter(Boolean).length;
-  const weekLabels = ["S", "M", "T", "W", "T", "F", "S"];
-  const todayIdx = new Date().getDay();
 
   /* ── shared card style ─────────────────────────────────── */
   const card_ = "bg-white border border-[#e2e8f0] rounded-[20px] p-5 flex flex-col justify-between";
@@ -979,6 +980,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             </div>
 
             {/* ── AI FACT + WORK EXP: equal height, fact card fills ── */}
+            {claimed && card.beacon && Date.parse(card.beacon.created_at) <= nowMs && Date.parse(card.beacon.expires_at) > nowMs && <BeaconCard key={card.beacon.expires_at} beacon={card.beacon} />}
             <div className="pf-span-12 pf-ai-work">
             {claimed && (() => {
               const q = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
@@ -1195,24 +1197,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                   <span className="pf-mono" style={{ background: "rgba(255,255,255,0.12)", borderRadius: 8, padding: "5px 8px", fontSize: "0.6rem", fontWeight: 700 }}>1:1</span>
                 </div>
 
-                <div className="pf-mono pf-book-week" style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginTop: 10 }}>
-                  {weekLabels.map((d, i) => (
-                    <div
-                      key={`${d}-${i}`}
-                      style={{
-                        textAlign: "center",
-                        fontSize: "0.58rem",
-                        fontWeight: 700,
-                        padding: "7px 0",
-                        borderRadius: 8,
-                        background: i === todayIdx ? "#fff" : "rgba(255,255,255,0.1)",
-                        color: i === todayIdx ? "#1d4ed8" : "rgba(255,255,255,0.85)",
-                      }}
-                    >
-                      {d}
-                    </div>
-                  ))}
-                </div>
+                <BookingAvailability url={bookingLinks[0].url} name={firstName} />
                 </div>
 
                 {/* One link: the usual CTA. Both: one button per provider. */}

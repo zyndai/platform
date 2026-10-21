@@ -73,7 +73,7 @@ def test_stopwords_alone_match_nothing(cards):
 def test_stopwords_no_longer_inflate_a_match(cards):
     cards += [
         _card("noise", headline="People who live in the city"),       # only stopword overlap
-        _card("real", headline="Investor", summary="Backs AI developer tools in India"),
+        _card("real", headline="Investor", location="India", summary="Backs AI developer tools in India"),
     ]
     assert handles(q="investor who backs AI tools in India") == ["real"]
 
@@ -97,7 +97,7 @@ def test_skill_filter_is_whole_word_go_is_not_django(cards):
     cards += [_card("py", headline="Backend", skills=["Django"]), _card("gopher", headline="Backend", skills=["Go"])]
     ranked = search_service.search_agents(q="backend", skills="go", include_unclaimed=True)
     scores = {r["handle"]: r["match_score"] for r in ranked}
-    assert scores["gopher"] > scores["py"]
+    assert "gopher" in scores and "py" not in scores
 
 
 def test_role_filter_matches_plural_headlines(cards):
@@ -111,7 +111,7 @@ def test_location_filter_knows_bengaluru_is_bangalore(cards):
               _card("nyc", headline="Founder", location="New York")]
     ranked = {r["handle"]: r["match_score"] for r in
               search_service.search_agents(q="founder", location="Bangalore", include_unclaimed=True)}
-    assert ranked["blr"] > ranked["nyc"]
+    assert "blr" in ranked and "nyc" not in ranked
 
 
 def test_location_filter_does_not_match_substrings(cards):
@@ -119,4 +119,4 @@ def test_location_filter_does_not_match_substrings(cards):
               _card("b", headline="Founder", location="Pune, India")]
     ranked = {r["handle"]: r["match_score"] for r in
               search_service.search_agents(q="founder", location="India", include_unclaimed=True)}
-    assert ranked["b"] > ranked["a"]
+    assert "b" in ranked and "a" not in ranked

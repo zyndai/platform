@@ -384,6 +384,15 @@ export function OwnerHome({
               ))}
             </section>
           )}
+          {!!data.possible_duplicates?.length && (
+            <section className="oh-panel oh-wide">
+              <h2>Another claimed card shares your social profile</h2>
+              <p>Review these possible duplicates. Matching links do not establish ownership; contact support if they belong to a different account.</p>
+              {data.possible_duplicates.map(d => (
+                <p key={d.handle}><Link href={`/p/${encodeURIComponent(d.handle)}`}>{d.name || d.handle} · @{d.handle}</Link><br /><small>Shared links: {d.matched_socials.join(", ")}</small></p>
+              ))}
+            </section>
+          )}
           {!!data.unclaimed_duplicates?.length && (
             <section className="oh-panel oh-wide">
               <h2>Another card shares your LinkedIn profile</h2>

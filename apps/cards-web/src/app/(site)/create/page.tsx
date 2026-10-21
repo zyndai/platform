@@ -20,6 +20,7 @@ import { claimHeaders, forgetClaimToken, saveClaimToken } from "@/lib/claim-toke
 import { appendAttrToForm, attrPublishFields } from "@/lib/attr";
 import { track } from "@/lib/track";
 import { featureS08OnboardingV2 } from "@/lib/s08";
+import { cardDeclarations } from "@/lib/profile-quality";
 import { T, ZC_CSS, ZC_FONTS } from "./zc-theme";
 
 const { SANS, DISPLAY, MONO } = ZC_FONTS;
@@ -526,9 +527,13 @@ function CreateProfilePageContent() {
   const fileRef    = useRef<HTMLInputElement>(null);
   const inputRef   = useRef<HTMLInputElement>(null);
   const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollDeadline = useRef(0);
+  const activeJob = useRef<string | null>(null);
+  const polling = useRef(false);
   const customRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => () => {
+    activeJob.current = null;
     if (pollRef.current) clearInterval(pollRef.current);
   }, []);
 
@@ -705,11 +710,11 @@ function CreateProfilePageContent() {
     if (resume) form.append("resume", resume);
     appendAttrToForm(form);
     try {
-      const res = await fetch(`${CARDS_API}/onboard/start`, { method: "POST", body: form });
+      const res = await fetch(`${CARDS_API}/onboard/start`, { method: "POST", body: form, signal: AbortSignal.timeout(15000) });
       if (!res.ok) throw new Error((await res.text()) || `Status ${res.status}`);
       const data = await res.json();
       setJobId(data.job_id);
-      pollRef.current = setInterval(() => pollJob(data.job_id), 1500);
+      beginPolling(data.job_id);
       // Kick once immediately so a fast mock/fixture doesn't wait 1.5s.
       void pollJob(data.job_id);
     } catch (err) {
@@ -733,11 +738,40 @@ function CreateProfilePageContent() {
     setPhase("review");
   }
 
+  function beginPolling(id: string) {
+    if (pollRef.current) clearInterval(pollRef.current);
+    activeJob.current = id;
+    pollDeadline.current = Date.now() + 210000;
+    polling.current = false;
+    jobDoneRef.current = false;
+    setJobDone(false);
+    pendingCardRef.current = null;
+    setUrlWarnings([]);
+    pollRef.current = setInterval(() => void pollJob(id), 1500);
+  }
+
   async function pollJob(id: string) {
+    if (activeJob.current !== id || polling.current) return;
+    if (Date.now() >= pollDeadline.current) {
+      if (pollRef.current) clearInterval(pollRef.current);
+      setError("Building your card took too long. Your links and answers are kept; retry or use fewer sources.");
+      setPhase("error");
+      return;
+    }
+    polling.current = true;
     try {
-      const res = await fetch(`${CARDS_API}/onboard/${id}`);
+      const res = await fetch(`${CARDS_API}/onboard/${id}`, { signal: AbortSignal.timeout(10000) });
+      if (activeJob.current !== id) return;
+      if (res.status === 404 || res.status === 410) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        setError("This build expired or the server restarted. Your inputs are kept; please retry.");
+        setPhase("error");
+        return;
+      }
       if (!res.ok) return;
       const status: OnboardStatus = await res.json();
+      if (activeJob.current !== id) return;
+      if (status.url_warnings?.length) setUrlWarnings(status.url_warnings);
       if (status.status === "ready" && status.card) {
         if (pollRef.current) clearInterval(pollRef.current);
         pendingCardRef.current = status.card;
@@ -768,7 +802,8 @@ function CreateProfilePageContent() {
         setError(status.error || "Unknown error");
         setPhase("error");
       }
-    } catch { /* transient */ }
+    } catch { /* transient; the overall deadline still bounds retries */ }
+    finally { if (activeJob.current === id) polling.current = false; }
   }
 
   function advanceQuestion() {
@@ -896,8 +931,7 @@ function CreateProfilePageContent() {
 
   // Seed the memory layer from the claimed card, then pull the snapshot onto
   // the card so the public profile shows what the person is currently up to.
-  // working_on → "Currently building", can_help_with → "Expert in",
-  // love_talking_about → "Learning", skills as expertise fallback.
+  // Seed supported work/expertise facts. Interests do not assert active learning.
   async function syncMemoryOnClaim(supabaseToken: string, handle: string) {
     try {
       const ex = await fetch(`${ZYND_API}/token/exchange`, {
@@ -907,19 +941,7 @@ function CreateProfilePageContent() {
       if (!ex.ok) return;
       const { token: zyndToken } = await ex.json();
       if (!zyndToken) return;
-      const declarations: { predicate: string; value: string }[] = [];
-      const push = (predicate: string, values: string[] | undefined, cap = 5) => {
-        for (const v of (values ?? []).slice(0, cap)) {
-          const t = v.trim();
-          if (t && t.length <= 120) declarations.push({ predicate, value: t });
-        }
-      };
-      push("is_building", card?.working_on);
-      push("has_expertise_in", card?.can_help_with);
-      push("is_learning", card?.love_talking_about);
-      if (!(card?.can_help_with ?? []).length) push("has_expertise_in", card?.skills.map((s) => s.name));
-      const location = card?.identity?.location?.trim();
-      if (location) declarations.push({ predicate: "is_located_in", value: location });
+      const declarations = card ? cardDeclarations(card) : [];
       if (declarations.length) {
         await fetch(`${ZYND_API}/me/findability/declare-batch`, {
           method: "POST",
@@ -983,11 +1005,11 @@ function CreateProfilePageContent() {
     if (resumeFile) form.append("resume", resumeFile);
     appendAttrToForm(form);
     try {
-      const res = await fetch(`${CARDS_API}/onboard/start`, { method: "POST", body: form });
+      const res = await fetch(`${CARDS_API}/onboard/start`, { method: "POST", body: form, signal: AbortSignal.timeout(15000) });
       if (!res.ok) throw new Error((await res.text()) || `Status ${res.status}`);
       const data = await res.json();
       setJobId(data.job_id);
-      pollRef.current = setInterval(() => pollJob(data.job_id), 1500);
+      beginPolling(data.job_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Re-extract failed");
       setPhase("error");
@@ -1016,11 +1038,11 @@ function CreateProfilePageContent() {
     if (resumeFile) form.append("resume", resumeFile);
     appendAttrToForm(form);
     try {
-      const res = await fetch(`${CARDS_API}/onboard/start`, { method: "POST", body: form });
+      const res = await fetch(`${CARDS_API}/onboard/start`, { method: "POST", body: form, signal: AbortSignal.timeout(15000) });
       if (!res.ok) throw new Error((await res.text()) || `Status ${res.status}`);
       const data = await res.json();
       setJobId(data.job_id);
-      pollRef.current = setInterval(() => pollJob(data.job_id), 1500);
+      beginPolling(data.job_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Re-extract failed");
       setPhase("error");

@@ -1,6 +1,8 @@
 "use client";
 
 import { SkillBrandIcon } from "./skill-icon";
+import { useState } from "react";
+import type { Skill } from "@/lib/cards";
 
 const LEVEL_META: Record<string, { label: string; color: string; bar: string; glow: string; bars: number }> = {
   expert: { label: "Expert", color: "#D97706", bar: "#F59E0B", glow: "rgba(245,158,11,.4)", bars: 3 },
@@ -10,7 +12,8 @@ const LEVEL_META: Record<string, { label: string; color: string; bar: string; gl
 };
 const levelMeta = (l: string) => LEVEL_META[l.toLowerCase()] ?? LEVEL_META.intermediate;
 
-export function SkillMatrix({ skills, embedded = false }: { skills: { name: string; level: string }[]; embedded?: boolean }) {
+export function SkillMatrix({ skills, embedded = false }: { skills: Skill[]; embedded?: boolean }) {
+  const [selected, setSelected] = useState<Skill | null>(null);
   const body = (
     <>
       {!embedded && (
@@ -23,8 +26,11 @@ export function SkillMatrix({ skills, embedded = false }: { skills: { name: stri
         {skills.map((skill) => {
           const meta = levelMeta(skill.level);
           return (
-            <div
+            <button
+              type="button"
               key={skill.name}
+              onClick={() => setSelected(skill)}
+              aria-label={`View evidence for ${skill.name}`}
               className="flex flex-col items-center text-center px-2 py-2.5 rounded-xl bg-white border border-[#e2e8f0]"
             >
               <SkillBrandIcon name={skill.name} size={28} />
@@ -43,10 +49,18 @@ export function SkillMatrix({ skills, embedded = false }: { skills: { name: stri
                   ))}
                 </span>
               </span>
-            </div>
+            </button>
           );
         })}
       </div>
+      {selected && (
+        <section aria-label={`${selected.name} evidence`} style={{ marginTop: 12, padding: 16, background: "#f8fafc", color: "#0f172a", borderRadius: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><strong>{selected.name} · Public evidence</strong><button type="button" onClick={() => setSelected(null)} aria-label="Close skill evidence">Close</button></div>
+          {selected.evidence?.length ? <ul>{selected.evidence.map(proof => (
+            /^https?:\/\//i.test(proof.url) && <li key={proof.url}><a href={proof.url} target="_blank" rel="noreferrer" className="underline" style={{ color: "#4338ca", overflowWrap: "anywhere" }}>{proof.label}</a></li>
+          ))}</ul> : <p>No public evidence links have been added for this skill yet.</p>}
+        </section>
+      )}
     </>
   );
 

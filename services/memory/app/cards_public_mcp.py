@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from datetime import datetime, timezone
 from collections import defaultdict
 from typing import Any
 
@@ -263,6 +264,21 @@ def _with_cache_control(data: dict, ttl: int) -> dict:
     return out
 
 
+def _bounded_ttl(data: dict, ttl: int) -> int:
+    """Never cache a current broadcast or fact beyond its explicit expiry."""
+    now = datetime.now(timezone.utc)
+    values = [*(data.get("facts") or []), data.get("beacon")]
+    for item in values:
+        if not isinstance(item, dict) or not item.get("expires_at"):
+            continue
+        try:
+            stamp = datetime.fromisoformat(item["expires_at"].replace("Z", "+00:00"))
+            ttl = min(ttl, max(0, int((stamp - now).total_seconds())))
+        except (ValueError, TypeError):
+            ttl = 0
+    return ttl
+
+
 async def get_card_impl(handle: str) -> dict:
     _require_enabled()
     h = (handle or "").strip().lstrip("@")
@@ -272,7 +288,7 @@ async def get_card_impl(handle: str) -> dict:
     ttl = max(0, settings.s11_get_card_cache_ttl_seconds)
     cached = _cache.get(h)
     if cached and cached[0] > now:
-        return _with_cache_control(cached[1], ttl)
+        return _with_cache_control(cached[1], _bounded_ttl(cached[1], ttl))
     try:
         data = await _http_get(f"/cards/by-handle/{h}/view")
     except httpx.HTTPStatusError as e:
@@ -286,6 +302,7 @@ async def get_card_impl(handle: str) -> dict:
         data["cite_as"] = _cite(h)
     if not isinstance(data, dict):
         data = {"value": data}
+    ttl = _bounded_ttl(data, ttl)
     if ttl:
         # Store without cache_control so TTL annotation stays fresh on read.
         _cache[h] = (now + ttl, dict(data))

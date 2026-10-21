@@ -777,7 +777,7 @@ async def _fetch_posts(url: str) -> tuple[str, int, str | None, list[dict]]:
         lines.append(line)
         posts.append({
             "platform": "linkedin",
-            "excerpt": _strip_md(content)[:500],
+            "excerpt": _strip_md(content) if len(_strip_md(content)) <= 500 else _strip_md(content)[:499].rstrip() + "…",
             "url": post_url,
             "posted_at": posted,
         })
@@ -824,7 +824,7 @@ def _parse_jina_activity(markdown: str) -> tuple[str, int, list[dict]]:
         lines.append(f"- {content[:600]} {current_url}")
         posts.append({
             "platform": "linkedin",
-            "excerpt": cleaned[:500],
+            "excerpt": cleaned if len(cleaned) <= 500 else cleaned[:499].rstrip() + "…",
             "url": current_url,
             "posted_at": "",
         })

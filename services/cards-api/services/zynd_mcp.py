@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 class MemoryUnavailable(Exception):
     """The memory layer could not be reached or returned an unexpected status."""
 
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
 
 def _base() -> str:
     return config.MEMORY_LAYER_URL.rstrip("/")
@@ -49,7 +53,7 @@ async def _request(method: str, path: str, json_body: dict | None = None,
             detail = resp.json().get("detail")
         except ValueError:
             pass
-        raise MemoryUnavailable(detail or f"memory layer returned {resp.status_code}")
+        raise MemoryUnavailable(detail or f"memory layer returned {resp.status_code}", resp.status_code)
     try:
         return resp.json()
     except ValueError as exc:

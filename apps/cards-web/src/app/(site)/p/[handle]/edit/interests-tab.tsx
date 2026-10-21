@@ -54,6 +54,8 @@ export function InterestsTab({ form, set }: { form: EditForm; set: SetField }) {
                 <button type="button" className="pe-icon-btn is-danger" onClick={() => set("skills", form.skills.filter((_, j) => j !== i))} aria-label={`Remove ${skill.name}`}>
                   <X size={15} />
                 </button>
+                <input type="url" style={{ flex: "1 0 100%", fontSize: 12 }} value={skill.evidence?.[0]?.url ?? ""} placeholder="Public evidence URL (optional)" aria-label={`${skill.name} evidence URL`}
+                  onChange={e => editSkill(i, { evidence: e.target.value.trim() ? [{ label: skill.evidence?.[0]?.label ?? `${skill.name} source`, url: e.target.value, kind: "owner" }, ...(skill.evidence?.slice(1) ?? [])] : [] })} />
               </div>
             ))}
           </div>

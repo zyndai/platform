@@ -40,6 +40,9 @@ PREDICATE_HALFLIFE_DAYS: dict[str, int | None] = {
     "is_processing": 45,
     "is_rediscovering": 365,
     "has_unsolved_problem": None,
+    # Historical accomplishments remain true as current interests change.
+    "is_founder_of": None,
+    "has_experience_in": None,
     # 7. Relationships & responsibilities
     "has_collaborator": None,
     "is_responsible_for": None,
@@ -171,6 +174,7 @@ INFERRABLE_PREDICATES: frozenset[str] = ALLOWED_PREDICATES - SYSTEM_PREDICATES -
 # v2 — the ONLY predicates used for matching / public discovery (the "findability card").
 # Everything else (beliefs, frustrations, life-stage, etc.) is private memory, never matched.
 FINDABILITY_PREDICATES: frozenset[str] = frozenset({
+    "is_founder_of", "has_experience_in",
     "is_building", "is_learning", "has_expertise_in",
     "is_seeking", "open_to", "is_affiliated_with", "is_located_in",
     # Public card sections only. Neither is matched on (see MATCHING_PREDICATES).
@@ -223,6 +227,8 @@ def decay_fn_for(predicate: str) -> str:
 # about me?"). The graph stores machine predicates; this renders them so the user
 # never sees raw keys like "has_expertise_in -> ai".
 PREDICATE_PHRASE: dict[str, str] = {
+    "is_founder_of": "You founded {obj}",
+    "has_experience_in": "Your experience: {obj}",
     "is_building": "You're building {obj}",
     "is_working_on": "You're working on {obj}",
     "is_creating": "You're creating {obj}",

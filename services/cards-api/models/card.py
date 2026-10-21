@@ -1,8 +1,24 @@
 from urllib.parse import urlparse
+from datetime import datetime, timedelta
 
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_serializer, model_validator
+from services.profile_quality import clean_topic, clean_topics
+
+
+class TopicFields(BaseModel):
+    @field_validator("skills", mode="before", check_fields=False)
+    @classmethod
+    def _valid_skills(cls, value):
+        return clean_topics(value) if isinstance(value, list) else value
+
+    @field_validator("can_help_with", "love_talking_about", mode="before", check_fields=False)
+    @classmethod
+    def _valid_topics(cls, value):
+        if not isinstance(value, list):
+            return value
+        return list(dict.fromkeys(text for item in value if (text := clean_topic(item))))
 
 
 def _clean(value):
@@ -92,10 +108,25 @@ class Identity(BaseModel):
         return data
 
 
+class SkillEvidence(BaseModel):
+    label: str = Field(default="Public source", max_length=200)
+    url: str
+    kind: str = "source"
+
+    @field_validator("url")
+    @classmethod
+    def _public_link(cls, value):
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("Evidence must be an http(s) URL without credentials")
+        return value
+
+
 class Skill(BaseModel):
     name: str
     level: str = "intermediate"
     evidence_count: int = 0
+    evidence: list[SkillEvidence] = Field(default_factory=list, max_length=5)
 
     @field_validator("level", mode="before")
     @classmethod
@@ -117,6 +148,12 @@ class Project(BaseModel):
     source: str = "github"
     stars: int | None = None
     tech: list[str] = Field(default_factory=list)
+    demo_url: str | None = None
+
+    @field_validator("demo_url", mode="before")
+    @classmethod
+    def _demo_url(cls, value):
+        return normalize_booking_url(value)
 
     @field_validator("stars", mode="before")
     @classmethod
@@ -164,6 +201,22 @@ class Review(BaseModel):
     reviewed_at: str = ""
 
 
+class Beacon(BaseModel):
+    text: str = Field(min_length=1, max_length=280)
+    created_at: datetime
+    expires_at: datetime
+
+    @model_validator(mode="after")
+    def _seven_days(self):
+        if not self.text.strip():
+            raise ValueError("Beacon text is required")
+        if self.created_at.tzinfo is None or self.expires_at.tzinfo is None:
+            raise ValueError("Beacon timestamps require a timezone")
+        if not self.created_at < self.expires_at <= self.created_at + timedelta(days=7):
+            raise ValueError("Beacons expire within seven days")
+        return self
+
+
 class CardFact(BaseModel):
     text: str = ""
     type: str = ""
@@ -173,7 +226,7 @@ class CardFact(BaseModel):
     confidence: float | None = None
 
 
-class CardView(BaseModel):
+class CardView(TopicFields):
     """Canonical public card: identity + approved live memory facts."""
 
     handle: str = ""
@@ -192,9 +245,10 @@ class CardView(BaseModel):
     calendly_url: str | None = None
     google_calendar_url: str | None = None
     links: dict[str, str] = Field(default_factory=dict)
+    beacon: Beacon | None = None
 
 
-class AgentProfileCard(BaseModel):
+class AgentProfileCard(TopicFields):
     id: str
     schema_version: str = "1.0"
     status: str = "draft"
@@ -238,6 +292,7 @@ class AgentProfileCard(BaseModel):
     # Kept so old /p/<handle> links still resolve — get_card_by_handle falls
     # back to this list before 404ing.
     previous_handles: list[str] = Field(default_factory=list)
+    beacon: Beacon | None = None
 
     @field_validator("experience_years", mode="before")
     @classmethod
@@ -255,7 +310,7 @@ class AgentProfileCard(BaseModel):
         return normalize_booking_url(v)
 
 
-class CardSynthesis(BaseModel):
+class CardSynthesis(TopicFields):
     """The subset the LLM produces; id/status/timestamps are assembled server-side."""
 
     identity: Identity = Field(default_factory=Identity)

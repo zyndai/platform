@@ -4,15 +4,17 @@ from app.taxonomy import (ALLOWED_PREDICATES, INFERRABLE_PREDICATES, SYSTEM_PRED
                           decay_fn_for)
 
 
-def test_thirtyseven_predicates():
-    assert len(ALLOWED_PREDICATES) == 37
+def test_predicates_include_durable_history():
+    assert len(ALLOWED_PREDICATES) == 39
     assert "uses_tool" in ALLOWED_PREDICATES
+    assert decay_fn_for("is_founder_of") == "none"
+    assert decay_fn_for("has_experience_in") == "none"
 
 
 def test_system_and_declared_only_excluded_from_extraction():
     assert "is_resolved" in SYSTEM_PREDICATES and "is_resolved" not in INFERRABLE_PREDICATES
     assert "open_to" in DECLARED_ONLY and "open_to" not in INFERRABLE_PREDICATES
-    assert len(INFERRABLE_PREDICATES) == 35
+    assert len(INFERRABLE_PREDICATES) == 37
 
 
 def test_findability_is_subset_of_all():

@@ -39,7 +39,7 @@ export const TABS: { key: TabKey; label: string; short: string }[] = [
 const ANCHOR_TAB: Record<string, TabKey> = {
   identity: "profile", avatar: "profile", presence: "profile", links: "profile", style: "profile",
   summary: "profile", settings: "profile",
-  signals: "interests", skills: "interests",
+  signals: "interests", skills: "interests", beacon: "interests",
   career: "imported", projects: "imported", stats: "imported",
   inbox: "ai", memory: "ai", "connect-mcp": "ai",
 };

@@ -55,7 +55,10 @@ def register(mcp, uid_dep) -> None:
                 "next_actions": ["Ask the owner to confirm in the Zynd card UI"],
             }
         from app.mcp_http import _get_pool
-        result = await approve(await _get_pool(), uid, predicate, object)
+        try:
+            result = await approve(await _get_pool(), uid, predicate, object)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc), "next_actions": ["Correct the category in your Cards review inbox"]}
         if not result:
             return {"ok": False, "error": "not_found"}
         return {"ok": True, "data": {"status": result.get("status")}}

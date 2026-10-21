@@ -197,7 +197,7 @@ async def _fetch_tweets(handle: str) -> tuple[str, list[dict]]:
         lines.append(f"- [{posted}] {text[:600]}{url}" if posted else f"- {text[:600]}{url}")
         posts.append({
             "platform": "x",
-            "excerpt": html.unescape(text)[:500],
+            "excerpt": html.unescape(text) if len(html.unescape(text)) <= 500 else html.unescape(text)[:499].rstrip() + "…",
             "url": f"https://x.com/{handle}/status/{tid}" if tid else "",
             "posted_at": posted,
         })

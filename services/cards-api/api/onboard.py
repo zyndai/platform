@@ -23,6 +23,29 @@ from services.jobs import create_job, get_job, set_error, set_ready, utcnow
 from synthesis.synthesize import synthesize_card
 
 router = APIRouter()
+SOURCE_TIMEOUT_SECONDS = 60
+PIPELINE_TIMEOUT_SECONDS = 180
+
+
+def _source_warning(job_id: str, url: str, code: str = "inaccessible") -> None:
+    job = get_job(job_id)
+    if job and not any(w["url"] == url for w in job.url_warnings):
+        job.url_warnings.append({
+            "url": url, "code": code,
+            "message": "This source timed out. Retry it or continue with other sources." if code == "timeout" else
+                       "This profile could not be read. Check that it is public, replace the URL, or continue with other sources.",
+        })
+
+
+async def _fetch_source(job_id: str, url: str) -> tuple[str, str, dict | None]:
+    try:
+        result = await asyncio.wait_for(_safe_fetch_url(url), SOURCE_TIMEOUT_SECONDS)
+        if not result[1]:
+            _source_warning(job_id, url)
+        return result
+    except TimeoutError:
+        _source_warning(job_id, url, "timeout")
+        return _classify_url(url), "", None
 
 
 class PublishRequest(BaseModel):
@@ -83,6 +106,13 @@ async def _safe_fetch_url(url: str) -> tuple[str, str, dict | None]:
 
 async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -> None:
     try:
+        await asyncio.wait_for(_build_pipeline(job_id, urls, resume_text), PIPELINE_TIMEOUT_SECONDS)
+    except TimeoutError:
+        set_error(job_id, "Building your card took too long. Your inputs are kept; retry or use fewer sources.")
+
+
+async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None) -> None:
+    try:
         github_handle: str | None = None
         x_handle: str | None = None
         github_data = None
@@ -94,8 +124,9 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
             github_handle = _handle_from_url(github_urls[0])
             if github_handle:
                 try:
-                    github_data = await github_scraper.fetch_github(github_handle)
+                    github_data = await asyncio.wait_for(github_scraper.fetch_github(github_handle), SOURCE_TIMEOUT_SECONDS)
                 except Exception as exc:
+                    _source_warning(job_id, github_urls[0], "timeout" if isinstance(exc, TimeoutError) else "failed")
                     logger.warning("github scrape skipped handle=%s err=%s", github_handle, exc)
                     github_data = None
                     github_handle = None
@@ -119,10 +150,11 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
         for u in other_urls:
             if website_scraper.is_linktree(u):
                 try:
-                    links = await website_scraper.fetch_linktree_links(u)
+                    links = await asyncio.wait_for(website_scraper.fetch_linktree_links(u), SOURCE_TIMEOUT_SECONDS)
                     logger.info("linktree %s -> %d links", u, len(links))
                     expanded.extend(links)
                 except Exception as exc:
+                    _source_warning(job_id, u, "timeout" if isinstance(exc, TimeoutError) else "failed")
                     logger.warning("linktree expand failed url=%s err=%s", u, exc)
             else:
                 expanded.append(u)
@@ -136,7 +168,7 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
         linkedin_url_used: str | None = None
         x_url_used: str | None = None
         if expanded:
-            results = await asyncio.gather(*[_safe_fetch_url(u) for u in expanded])
+            results = await asyncio.gather(*[_fetch_source(job_id, u) for u in expanded])
             for (orig_url, (kind, text, stats)) in zip(expanded, results):
                 if not text:
                     continue
@@ -163,7 +195,11 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
             "website": "\n\n".join(website_texts) or None,
         }
 
-        synth = synthesize_card(
+        if not any([github_data, resume_text, *website_texts, *x_texts, *linkedin_texts]):
+            set_error(job_id, "None of these sources could be read. Use a public profile URL or upload a résumé, then retry.")
+            return
+
+        synth = await asyncio.to_thread(synthesize_card,
             github_data,
             resume_text,
             website_text="\n\n".join(website_texts) or None,
@@ -205,6 +241,7 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
             linkedin_stats=linkedin_stats_data,
             contribution_stats=github_data.get("contribution_stats") if github_data else None,
             work_experience=work_experience_raw or None,
+            x_scraped=bool(x_texts),
         )
 
         # Set handles before set_ready so publish sees them immediately
@@ -215,7 +252,8 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
             job.linkedin_url = linkedin_url_used
         set_ready(job_id, card, scrape_raw=scrape_raw)
     except Exception as exc:
-        set_error(job_id, str(exc))
+        logger.warning("onboarding pipeline failed job=%s type=%s", job_id, type(exc).__name__)
+        set_error(job_id, "We couldn't finish building your card. Your inputs are kept; please try again.")
 
 
 @router.get("/claim-candidates")

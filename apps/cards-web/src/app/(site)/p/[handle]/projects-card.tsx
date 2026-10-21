@@ -3,6 +3,7 @@
 import { SkillBrandIcon } from "./skill-icon";
 
 type Project = {
+  demo_url?: string | null;
   name: string;
   url?: string | null;
   description?: string | null;
@@ -83,6 +84,7 @@ export function ProjectsCard({
                   {proj.stars != null && proj.stars > 0 && (
                     <span className="pf-mono" style={{ color: "#c2410c", fontSize: "0.58rem", fontWeight: 800 }}>★ {compact(proj.stars)}</span>
                   )}
+                  {safeUrl(proj.demo_url) && <a href={safeUrl(proj.demo_url)!} target="_blank" rel="noreferrer" style={{ color: "#4338ca", fontSize: ".72rem" }}>Live demo ↗</a>}
                 </div>
                 {desc && (
                   <p className="pf-proj-desc" style={{ margin: "2px 0 0", fontSize: "0.7rem", color: "#64748b", lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{desc}</p>

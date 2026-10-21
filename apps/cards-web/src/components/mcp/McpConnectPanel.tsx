@@ -17,9 +17,10 @@ const CLIENTS: { name: string; steps: string; config: (url: string) => string; n
   { name: "Cursor", steps: "Merge this into ~/.cursor/mcp.json using Settings → MCP, then authorize in your browser.", config: (url) => JSON.stringify({ mcpServers: { zynd: { url } } }, null, 2), note: "Cursor CLI can run agent mcp login zynd where supported." },
   { name: "Kilo CLI", steps: "Merge this into your Kilo MCP settings, then run kilo mcp auth zynd.", config: (url) => JSON.stringify({ mcp: { zynd: { type: "remote", url } } }, null, 2) },
   { name: "OpenCode v2", steps: "Merge this into opencode.json, then run opencode mcp auth zynd.", config: (url) => JSON.stringify({ mcp: { servers: { zynd: { type: "remote", url } } } }, null, 2), note: "OpenCode v1 uses mcp.zynd instead." },
+  { name: "Antigravity", steps: "Merge this into ~/.gemini/config/mcp_config.json (older versions: ~/.gemini/antigravity/mcp_config.json). In Antigravity open Customizations → Installed MCP Servers, click Refresh, then Authenticate for zynd.", config: (url) => JSON.stringify({ mcpServers: { zynd: { serverUrl: url } } }, null, 2), note: "Not tested with Zynd sign-in yet. If Antigravity asks for a client ID or secret, stop: Zynd doesn't need one." },
 ];
 // Unverified OAuth callback and refresh: no setup offered.
-const UNSUPPORTED = ["Windsurf", "Cline", "Antigravity", "OpenClaw", "Hermes"];
+const UNSUPPORTED = ["Windsurf", "Cline", "OpenClaw", "Hermes"];
 
 export function McpConnectPanel({ onConnected }: { onConnected?: (connected: boolean) => void } = {}) {
   const [clients, setClients] = useState<McpClientRow[]>([]);

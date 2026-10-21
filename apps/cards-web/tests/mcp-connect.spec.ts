@@ -48,9 +48,14 @@ test.describe("MCP OAuth setup", () => {
       expect(JSON.parse(await panel.locator("pre").innerText())).toEqual({ mcp: { zynd: { type: "remote", url: "http://127.0.0.1:3030/mcp" } } });
       await clients.getByRole("button", { name: "ChatGPT" }).click();
       await expect(panel.locator("pre")).toHaveText("http://127.0.0.1:3030/mcp");
+      await clients.getByRole("button", { name: "Antigravity" }).click();
+      const antigravityConfig = await panel.locator("pre").innerText();
+      expect(JSON.parse(antigravityConfig)).toEqual({ mcpServers: { zynd: { serverUrl: "http://127.0.0.1:3030/mcp" } } });
+      expect(antigravityConfig).not.toMatch(/authorization|bearer|token|secret|headers|oauth|clientId/i);
       // Unverified clients get no setup to copy, only a warning.
-      await expect(clients.getByRole("button", { name: "Antigravity" })).toHaveCount(0);
-      await expect(panel.getByText(/Not supported: .*Antigravity/)).toBeVisible();
+      await expect(clients.getByRole("button", { name: "Windsurf" })).toHaveCount(0);
+      await expect(panel.getByText(/Not supported: .*Windsurf/)).toBeVisible();
+      await expect(panel.getByText(/Not supported: .*Antigravity/)).toHaveCount(0);
       await panel.getByRole("button", { name: "Disconnect", exact: true }).first().click();
       await expect(panel.getByRole("button", { name: "Disconnect", exact: true })).toHaveCount(2);
       await expect(panel.getByText("memory:write, cards:read")).toBeVisible();

@@ -504,8 +504,12 @@ test("v2 follows a streaming reply at the bottom and offers the New messages pil
   await expect(page.getByRole("button", { name: /New messages/ })).toHaveCount(0);
 
   // Scrolled up: the view stays put and the pill says there is more.
-  await messages.evaluate((el) => { el.scrollTop = 0; });
-  await expect.poll(() => messages.evaluate((el) => el.scrollTop)).toBe(0);
+  // Wait for the scroll event itself: that is what tells the pane the reader left the bottom.
+  await messages.evaluate((el) => new Promise<void>((resolve) => {
+    el.addEventListener("scroll", () => resolve(), { once: true });
+    el.scrollTop = 0;
+  }));
+  expect(await messages.evaluate((el) => el.scrollTop)).toBe(0);
   await broadcast(page, topic, "agent_stream", snapshot(3, "Plan:\n\n" + lines(34)));
   await expect(messages.locator(".nv2-bubble.is-streaming li")).toHaveCount(34);
   const pill = page.getByRole("button", { name: /New messages/ });

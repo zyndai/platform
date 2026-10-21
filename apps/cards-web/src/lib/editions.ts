@@ -3,6 +3,8 @@
  *  (services/cards-api/models/card.py → Edition). */
 
 export const EDITION_IDS = ["mumbai-26"] as const;
+// Moods are no longer offered (the edition has one look) but stay valid so
+// cards saved with one keep reading as the edition; the API accepts the same set.
 export const EDITION_MOODS = ["night", "dusk", "monsoon"] as const;
 export const HERE_FOR = ["hacking", "speaking", "building", "hiring", "raising", "investing", "exploring"] as const;
 
@@ -18,12 +20,6 @@ export interface CardEdition {
 
 export const EDITION_NAME: Record<EditionId, string> = {
   "mumbai-26": "Mumbai Builder Week ’26",
-};
-
-export const MOOD_LABEL: Record<EditionMood, string> = {
-  night: "Night",
-  dusk: "Dusk",
-  monsoon: "Monsoon",
 };
 
 export const HERE_FOR_LABEL: Record<HereFor, string> = {

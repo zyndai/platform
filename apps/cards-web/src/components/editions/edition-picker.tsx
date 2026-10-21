@@ -2,11 +2,8 @@
 
 import { Check } from "lucide-react";
 import { EDITION_FONT_VARS } from "./fonts";
-import { MumbaiScene } from "./mumbai-scene";
-import {
-  EDITION_MOODS, EDITION_NAME, HERE_FOR, HERE_FOR_LABEL, MOOD_LABEL, isEditionPickable,
-  type CardEdition,
-} from "@/lib/editions";
+import { MumbaiSkyline } from "./mumbai-skyline";
+import { EDITION_NAME, HERE_FOR, HERE_FOR_LABEL, isEditionPickable, type CardEdition } from "@/lib/editions";
 import "./edition.css";
 
 interface Person {
@@ -40,7 +37,7 @@ function MiniPerson({ person }: { person: Person }) {
   );
 }
 
-/** Classic or the limited-edition look, plus the edition's mood and "here for". */
+/** Classic or the limited-edition look, plus the edition's optional "here for". */
 export function EditionPicker({ value, onChange, person }: Props) {
   // A card already on the edition keeps it after picking closes; it just can't be newly chosen.
   const canPickMumbai = value?.id === "mumbai-26" || isEditionPickable("mumbai-26");
@@ -58,30 +55,18 @@ export function EditionPicker({ value, onChange, person }: Props) {
         <button type="button" className="ed-tile" aria-pressed={!!mumbai} disabled={!canPickMumbai}
           onClick={() => onChange(mumbai ?? { id: "mumbai-26", mood: "night", here_for: null })}>
           <span className="ed-mini ed-mini-edition" aria-hidden>
-            <MumbaiScene mood={mumbai?.mood ?? "night"} idPrefix="ed-pick-tile" focus="bottom" />
+            <MumbaiSkyline idPrefix="ed-pick-tile" focus="bottom" simple />
             <MiniPerson person={person} />
           </span>
           <span className="ed-tile-tag">{canPickMumbai ? "Limited edition · Nov 2026" : "Edition closed"}</span>
           <span className="ed-tile-title">{EDITION_NAME["mumbai-26"]}</span>
-          <span className="ed-tile-sub">Mumbai night-sky artwork, a “Here for” tag and a full-screen QR for meeting people in person.</span>
+          <span className="ed-tile-sub">Mumbai skyline artwork, a “Here for” tag and a full-screen QR for meeting people in person.</span>
           {mumbai && <span className="ed-tile-check" aria-hidden><Check size={14} /></span>}
         </button>
       </div>
 
       {mumbai && (
         <>
-          <div>
-            <div className="ed-pick-label">Mood</div>
-            <div className="ed-moods" role="group" aria-label="Mood">
-              {EDITION_MOODS.map((mood) => (
-                <button key={mood} type="button" className="ed-mood" aria-pressed={mumbai.mood === mood}
-                  onClick={() => onChange({ ...mumbai, mood })}>
-                  <span className="ed-mood-art" aria-hidden><MumbaiScene mood={mood} idPrefix={`ed-pick-${mood}`} focus="center" /></span>
-                  <span>{MOOD_LABEL[mood]}</span>
-                </button>
-              ))}
-            </div>
-          </div>
           <div>
             <div className="ed-pick-label">Here for</div>
             <div className="ed-here" role="group" aria-label="Here for">

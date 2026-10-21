@@ -317,7 +317,8 @@ def test_identity_save_can_pick_and_clear_an_edition(client, monkeypatch):
         {"name": "Alice", "edition": edition},
         {"name": "Alice"})
     assert response.status_code == 200
-    assert operation.call_args.args[1]["p_patch"]["identity"]["edition"] == edition
+    # Stored normalized: an edition picked without a banner gets the default one.
+    assert operation.call_args.args[1]["p_patch"]["identity"]["edition"] == {**edition, "banner": "waterfront"}
 
     response, operation = _identity_save(
         client, monkeypatch, {"name": "Alice", "edition": edition},

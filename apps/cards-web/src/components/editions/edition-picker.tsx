@@ -3,7 +3,7 @@
 import { Check } from "lucide-react";
 import { EDITION_FONT_VARS } from "./fonts";
 import { EditionBannerImage } from "./banner-image";
-import { EDITION_NAME, HERE_FOR, HERE_FOR_LABEL, isEditionPickable, type CardEdition } from "@/lib/editions";
+import { BANNER_LABEL, EDITION_BANNERS, EDITION_NAME, HERE_FOR, HERE_FOR_LABEL, isEditionPickable, type CardEdition } from "@/lib/editions";
 import "./edition.css";
 
 interface Person {
@@ -53,9 +53,9 @@ export function EditionPicker({ value, onChange, person }: Props) {
           {!value && <span className="ed-tile-check" aria-hidden><Check size={14} /></span>}
         </button>
         <button type="button" className="ed-tile" aria-pressed={!!mumbai} disabled={!canPickMumbai}
-          onClick={() => onChange(mumbai ?? { id: "mumbai-26", mood: "night", here_for: null })}>
-          <span className="ed-mini ed-mini-edition" aria-hidden>
-            <EditionBannerImage sizes="420px" />
+          onClick={() => onChange(mumbai ?? { id: "mumbai-26", mood: "night", banner: "waterfront", here_for: null })}>
+          <span className="ed-mini ed-mini-edition" data-banner={mumbai?.banner ?? "waterfront"} aria-hidden>
+            <EditionBannerImage banner={mumbai?.banner ?? "waterfront"} sizes="420px" />
             <MiniPerson person={person} />
           </span>
           <span className="ed-tile-tag">{canPickMumbai ? "Limited edition · Nov 2026" : "Edition closed"}</span>
@@ -67,6 +67,21 @@ export function EditionPicker({ value, onChange, person }: Props) {
 
       {mumbai && (
         <>
+          <div>
+            <div className="ed-pick-label">Banner</div>
+            <div className="ed-banners" role="group" aria-label="Banner">
+              {EDITION_BANNERS.map((banner) => (
+                <button key={banner} type="button" className="ed-banner-opt" aria-pressed={mumbai.banner === banner}
+                  onClick={() => onChange({ ...mumbai, banner })}>
+                  <span className="ed-banner-thumb" data-banner={banner} aria-hidden>
+                    <EditionBannerImage banner={banner} sizes="260px" />
+                  </span>
+                  <span className="ed-banner-name">{BANNER_LABEL[banner].name}</span>
+                  <span className="ed-banner-hint">{BANNER_LABEL[banner].hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
           <div>
             <div className="ed-pick-label">Here for</div>
             <div className="ed-here" role="group" aria-label="Here for">

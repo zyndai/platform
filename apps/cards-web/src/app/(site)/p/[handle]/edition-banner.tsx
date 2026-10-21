@@ -61,9 +61,9 @@ export function EditionHero(props: Props) {
   const hasFocus = chips.length > 0 || !!hereFor;
 
   return (
-    <section className={`ed ed-hero ${EDITION_FONT_VARS}`} aria-label={`${EDITION_NAME[edition.id]} card`}>
+    <section className={`ed ed-hero ${EDITION_FONT_VARS}`} data-banner={edition.banner} aria-label={`${EDITION_NAME[edition.id]} card`}>
       <div className="ed-hero-art">
-        <EditionBannerImage className="ed-hero-img" priority sizes="(max-width: 820px) 600px, min(100vw, 1252px)" />
+        <EditionBannerImage banner={edition.banner} className="ed-hero-img" priority sizes="(max-width: 820px) 600px, min(100vw, 1252px)" />
         {/* Over the clear sky at the top centre: the artwork's crystals sit at the sides. */}
         <div className="ed-hero-title">
           <span className="ed-hero-name">

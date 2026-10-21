@@ -22,7 +22,24 @@ export async function mockNetwork(page: Page) {
     groupMessages: [] as CardMessage[],
     members: [] as CardGroupMember[],
     people: [{ card_id: "bob-card", handle: "bob", name: "Bob", user_id: BOB }] as (CardSummary & { user_id: string })[],
+    // Claimed Cards the "Start a connection" search can find (GET /people/suggest).
+    directory: [
+      { card_id: "bob-card", handle: "bob", name: "Bob", headline: "Backend engineer" },
+      { card_id: "dana-card", handle: "dana", name: "Dana Whitfield", headline: "Product designer" },
+      { card_id: "dan-card", handle: "dan", name: "Dan Smith", headline: "Founder" },
+      { card_id: "cora-card", handle: "cora", name: "Cora Connected", headline: "Investor" },
+      { card_id: "colin-card", handle: "colin", name: "Colin Park", headline: "Editor" },
+    ] as CardSummary[],
     sentInvitations: [] as string[],
+    // The viewer has a claimed, published Card of their own (false: the status endpoint says can_connect=false).
+    viewerHasCard: true,
+    // The Card the viewer owns: its status answer is { self: true } and the profile shows no button.
+    selfHandle: "owner",
+    failNextStatus: false,
+    failNextSuggest: false,
+    suggestCalls: [] as string[],
+    // Milliseconds to hold back the answer to a given search text, to prove stale answers are dropped.
+    suggestDelay: {} as Record<string, number>,
     failNextRequest: false,
     failNextMessage: false,
     dmSeq: 0,
@@ -62,12 +79,49 @@ export async function mockNetwork(page: Page) {
     };
   };
 
+  // What the API reports about the viewer's connection with one Card (mirrors services/network.py).
+  const connectionWith = (handle: string) => {
+    const row = state.connections.find(connection => connection.partner.handle === handle);
+    return row ? { id: row.id, status: row.status, incoming: row.incoming } : null;
+  };
+  const connectBlocker = (connection: ReturnType<typeof connectionWith>): string | null => {
+    if (connection) {
+      if (connection.status === "accepted") return "You are already connected.";
+      if (connection.status === "pending") return connection.incoming ? "They already sent you a request." : "Your request is waiting for their answer.";
+      if (connection.status === "declined") return connection.incoming ? "You declined this request." : "This request was not accepted.";
+      if (connection.status === "revoked") return "This connection was ended.";
+      return "Connecting with this person is not available.";
+    }
+    return state.viewerHasCard ? null : "Claim and publish your own Card to connect with people.";
+  };
+
   await page.route("**/cards/network/**", async route => {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace("/cards/network", "");
     const post = request.method() === "POST";
     const body = post ? request.postDataJSON() : {};
     const json = (data: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
+
+    if (path === "/people/suggest") {
+      const q = (new URL(request.url()).searchParams.get("q") || "").toLowerCase();
+      state.suggestCalls.push(q);
+      if (state.failNextSuggest) { state.failNextSuggest = false; return json({ detail: "Search unavailable" }, 503); }
+      if (state.suggestDelay[q]) await new Promise(resolve => setTimeout(resolve, state.suggestDelay[q]));
+      return json({
+        people: state.directory
+          .filter(person => `${person.handle} ${person.name}`.toLowerCase().includes(q))
+          .map(person => ({ ...person, connection: connectionWith(person.handle!) })),
+      });
+    }
+
+    if (path === "/connections/status") {
+      const handle = new URL(request.url()).searchParams.get("handle") || "";
+      if (state.failNextStatus) { state.failNextStatus = false; return json({ detail: "Status unavailable" }, 503); }
+      if (handle === state.selfHandle) return json({ self: true });
+      const connection = connectionWith(handle);
+      const reason = connectBlocker(connection);
+      return json({ connection, can_connect: reason === null, reason });
+    }
 
     if (path === "/inbox") {
       return json({

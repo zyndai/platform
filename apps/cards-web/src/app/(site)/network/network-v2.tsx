@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Bookmark,
@@ -23,6 +23,7 @@ import {
 import {
   cardsNetworkRequest,
   connectionRequestNotice,
+  connectionState,
   fetchAgentPreference,
   fetchDmMessages,
   fetchGroupMemory,
@@ -34,6 +35,7 @@ import {
   sendDm,
   sendGroupMessage,
   setAgentPreference as saveAgentPreference,
+  suggestPeople,
   type CardAgentPreference,
   type CardConnection,
   type CardGroup,
@@ -44,7 +46,9 @@ import {
   type CardInbox,
   type CardMessage,
   type CardSummary,
+  type ConnectionStatus,
   type NetworkConversation,
+  type PersonSuggestion,
 } from "@/lib/cards-network";
 import {
   cacheInbox,
@@ -183,11 +187,14 @@ function asMessage(value: unknown): CardMessage | null {
 export function NetworkV2({
   token,
   userId,
+  initialConnectionId = null,
   groupMemoryEnabled = false,
   groupAgentRepliesEnabled = false,
 }: {
   token: string;
   userId: string;
+  /** `?c=` from the URL: a connection to open once the inbox is known (applied once). */
+  initialConnectionId?: string | null;
   groupMemoryEnabled?: boolean;
   groupAgentRepliesEnabled?: boolean;
 }) {
@@ -211,6 +218,8 @@ export function NetworkV2({
   const prefetching = useRef(new Set<string>());
   const prefetchedInitial = useRef(false);
   const inboxRef = useRef<CardInbox | null>(cachedInbox);
+  const [inboxFresh, setInboxFresh] = useState(false);
+  const deepLinkApplied = useRef(false);
 
   const setInbox = useCallback((updater: InboxUpdater) => {
     const current = inboxRef.current;
@@ -224,6 +233,7 @@ export function NetworkV2({
     try {
       const data = await fetchInbox(token, signal);
       setInbox(data);
+      setInboxFresh(true);
       setLoadError("");
     } catch (error) {
       if (!signal?.aborted) setLoadError(error instanceof Error ? error.message : "Could not load your network");
@@ -364,6 +374,44 @@ export function NetworkV2({
       prefetching.current.delete(key);
     }
   }, [token]);
+
+  // Open a connection from outside the list (the ?c= link, the new-connection dialog): an accepted one
+  // becomes the open conversation; a pending one sends you to the Requests tab, where it can be
+  // answered. Only state setters, so this stays stable.
+  const openConnection = useCallback((id: string, status: ConnectionStatus) => {
+    if (status === "accepted") {
+      setTab((current) => (current === "requests" ? "all" : current));
+      setSelectedKind("dm");
+      setSelectedId(id);
+      setMobileOpen(true);
+    } else if (status === "pending") {
+      setTab("requests");
+      setMobileOpen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!initialConnectionId || deepLinkApplied.current || !inbox) return;
+    const connection = inbox.connections.find((row) => row.id === initialConnectionId);
+    // A cached inbox can be stale: trust it for an accepted conversation, but wait for the fresh one
+    // before deciding that a pending request, or an id it does not know, is what the link meant.
+    if (connection?.status !== "accepted" && !inboxFresh) return;
+    deepLinkApplied.current = true;
+    // One-shot reaction to the inbox arriving, guarded by the ref above; there is no render-time
+    // equivalent because it also rewrites the address bar.
+    if (connection && (connection.status === "accepted" || connection.status === "pending")) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      openConnection(connection.id, connection.status);
+    } else {
+      setNotice("That conversation is not available.");
+    }
+    // Drop ?c= so a reload does not re-open it over whatever is open by then.
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("c");
+      window.history.replaceState(null, "", url);
+    } catch { /* The address bar is cosmetic here. */ }
+  }, [initialConnectionId, inbox, inboxFresh, openConnection]);
 
   function selectConversation(kind: "dm" | "group", id: string) {
     setSelectedKind(kind);
@@ -717,6 +765,13 @@ export function NetworkV2({
           token={token}
           onClose={() => setComposer(null)}
           onNotice={setNotice}
+          onOpenDm={(connectionId) => {
+            setComposer(null);
+            const row = inboxRef.current?.connections.find((connection) => connection.id === connectionId);
+            openConnection(connectionId, row?.status === "pending" ? "pending" : "accepted");
+            // Connected a moment ago on another device, say: the inbox does not know it yet.
+            if (!row) void loadInbox();
+          }}
           onCreated={(groupId) => {
             setComposer(null);
             void loadInbox();
@@ -1673,15 +1728,20 @@ function ComposerModal({
   token,
   onClose,
   onNotice,
+  onOpenDm,
   onCreated,
 }: {
   mode: "connection" | "group";
   token: string;
   onClose: () => void;
   onNotice: (notice: string) => void;
+  /** Open an existing conversation (or, for a pending request, the Requests tab) instead of sending. */
+  onOpenDm: (connectionId: string) => void;
   onCreated: (groupId?: string) => void;
 }) {
   const [handle, setHandle] = useState("");
+  const [picked, setPicked] = useState<PersonSuggestion | null>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
   const [requestMessage, setRequestMessage] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -1695,7 +1755,7 @@ function ComposerModal({
     try {
       if (mode === "connection") {
         const result = await cardsNetworkRequest<{ connection: CardConnection; existing: boolean }>(
-          "/connections", token, "POST", { target_handle: handle.trim(), message: requestMessage },
+          "/connections", token, "POST", { target_handle: (picked?.handle || handle).trim(), message: requestMessage },
         );
         onNotice(connectionRequestNotice(result));
         onCreated();
@@ -1719,7 +1779,7 @@ function ComposerModal({
         <div className="nv2-modal-head">
           <div>
             <h2>{mode === "connection" ? "Start a connection" : "Create a group"}</h2>
-            <p>{mode === "connection" ? "Use the recipient's verified Card handle. DMs open after they accept." : "Small private groups work best. Invitees choose whether to join."}</p>
+            <p>{mode === "connection" ? "Search by name or Card handle. DMs open after they accept." : "Small private groups work best. Invitees choose whether to join."}</p>
           </div>
           <button type="button" className="nv2-icon-button" aria-label="Close" onClick={onClose}>
             <X size={16} />
@@ -1727,15 +1787,24 @@ function ComposerModal({
         </div>
         {mode === "connection" ? (
           <>
-            <input
-              className="nv2-field"
-              value={handle}
-              onChange={(event) => setHandle(event.target.value)}
-              placeholder="Card handle, e.g. alice"
-              aria-label="Card handle"
-              maxLength={128}
+            <PersonCombobox
+              token={token}
+              query={handle}
+              onQueryChange={setHandle}
+              picked={picked}
+              onPick={(person) => {
+                setPicked(person);
+                if (person) {
+                  setHandle(person.handle || "");
+                  noteRef.current?.focus();
+                } else {
+                  setHandle("");
+                }
+              }}
+              onOpenDm={onOpenDm}
             />
             <textarea
+              ref={noteRef}
               className="nv2-field"
               value={requestMessage}
               onChange={(event) => setRequestMessage(event.target.value)}
@@ -1744,7 +1813,7 @@ function ComposerModal({
               maxLength={2000}
               rows={3}
             />
-            <button type="button" className="nv2-primary" disabled={busy || !handle.trim()} onClick={() => void submit()}>
+            <button type="button" className="nv2-primary" disabled={busy || !(picked || handle.trim())} onClick={() => void submit()}>
               <Send size={15} /> {busy ? "Sending…" : "Send request"}
             </button>
           </>
@@ -1774,6 +1843,228 @@ function ComposerModal({
         )}
         {error && <p className="nv2-error" role="alert" style={{ marginTop: 10 }}>{error}</p>}
       </div>
+    </div>
+  );
+}
+
+const SUGGEST_DEBOUNCE_MS = 200;
+const SUGGEST_MIN_CHARS = 2;
+
+/** How a suggestion row reads and what choosing it does. Connected people get Message and an
+ *  incoming request gets Review; a request already sent, or a closed connection, cannot be acted on
+ *  here, because sending again could never succeed. */
+function suggestionTag(person: PersonSuggestion): { label: string; action?: string; selectable: boolean } | null {
+  switch (connectionState(person.connection)) {
+    case "connected": return { label: "Connected", action: "Message", selectable: true };
+    case "wants-to-connect": return { label: "Wants to connect", action: "Review", selectable: true };
+    case "requested": return { label: "Requested", selectable: false };
+    case "closed": return { label: "Unavailable", selectable: false };
+    default: return null;
+  }
+}
+
+/** Name-or-handle search for "Start a connection": a combobox over GET /network/people/suggest.
+ *  Choosing a person pins them as a chip; typing an exact handle and sending still works unchanged. */
+function PersonCombobox({
+  token,
+  query,
+  onQueryChange,
+  picked,
+  onPick,
+  onOpenDm,
+}: {
+  token: string;
+  query: string;
+  onQueryChange: (value: string) => void;
+  picked: PersonSuggestion | null;
+  onPick: (person: PersonSuggestion | null) => void;
+  onOpenDm: (connectionId: string) => void;
+}) {
+  const listId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const timer = useRef<number | null>(null);
+  const inflight = useRef<AbortController | null>(null);
+  const [results, setResults] = useState<PersonSuggestion[]>([]);
+  const [phase, setPhase] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+
+  useEffect(() => () => {
+    if (timer.current) window.clearTimeout(timer.current);
+    inflight.current?.abort();
+  }, []);
+
+  const term = query.trim().replace(/^@+/, "");
+  const listVisible = menuOpen && results.length > 0;
+
+  function search(value: string) {
+    if (timer.current) window.clearTimeout(timer.current);
+    inflight.current?.abort();       // a slow answer for older text must not replace a newer one
+    const text = value.trim().replace(/^@+/, "");
+    setActive(-1);
+    if (text.length < SUGGEST_MIN_CHARS) {
+      setResults([]);
+      setPhase("idle");
+      setMenuOpen(false);
+      return;
+    }
+    setPhase("loading");
+    setMenuOpen(true);
+    timer.current = window.setTimeout(async () => {
+      const controller = new AbortController();
+      inflight.current = controller;
+      try {
+        const { people } = await suggestPeople(token, text, controller.signal);
+        if (controller.signal.aborted) return;
+        setResults(people);
+        setPhase("done");
+      } catch {
+        if (controller.signal.aborted) return;
+        setResults([]);
+        setPhase("error");
+      }
+    }, SUGGEST_DEBOUNCE_MS);
+  }
+
+  function choose(person: PersonSuggestion) {
+    if (phase === "loading") return;   // the list on screen is for older text; wait for the new answer
+    const tag = suggestionTag(person);
+    if (tag && !tag.selectable) return;
+    if (tag && person.connection) {
+      onOpenDm(person.connection.id);
+      return;
+    }
+    if (!person.handle) return;
+    onPick(person);
+    setMenuOpen(false);
+    setActive(-1);
+  }
+
+  function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (results.length === 0) return;
+      event.preventDefault();
+      setMenuOpen(true);
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      setActive((current) => (current < 0 ? (step > 0 ? 0 : results.length - 1) : (current + step + results.length) % results.length));
+    } else if (event.key === "Enter") {
+      if (listVisible && active >= 0) {
+        event.preventDefault();
+        choose(results[active]);
+        return;
+      }
+      // Nothing highlighted: an exact handle among the matches is that person, anything else is left
+      // for the Send button to submit as typed.
+      const exact = results.find((person) => person.handle?.toLowerCase() === term.toLowerCase());
+      if (exact) {
+        event.preventDefault();
+        choose(exact);
+      }
+    } else if (event.key === "Escape" && menuOpen) {
+      event.preventDefault();
+      event.stopPropagation();
+      setMenuOpen(false);
+      setActive(-1);
+    }
+  }
+
+  function clearPick() {
+    onPick(null);
+    setResults([]);
+    setPhase("idle");
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  const status = picked
+    ? `Selected ${picked.name}, @${picked.handle}`
+    : !menuOpen ? ""
+    : phase === "loading" ? "Searching"
+    : phase === "error" ? "Search is unavailable"
+    : results.length === 0 ? "No matching Cards"
+    : `${results.length} matching Card${results.length === 1 ? "" : "s"}`;
+
+  return (
+    <div className="nv2-combo">
+      <span className="nv2-visually-hidden" role="status">{status}</span>
+      {picked && (
+        <div className="nv2-combo-chip">
+          <Avatar card={picked} size={30} small />
+          <span className="nv2-combo-main">
+            <span className="nv2-combo-name">{picked.name}</span>
+            <span className="nv2-combo-sub">@{picked.handle}{picked.headline ? ` · ${picked.headline}` : ""}</span>
+          </span>
+          <button type="button" className="nv2-small-button" aria-label={`Choose someone else instead of ${picked.name}`} onClick={clearPick}>
+            <X size={13} />
+          </button>
+        </div>
+      )}
+      {!picked && (
+        <input
+          ref={inputRef}
+          className="nv2-field"
+          role="combobox"
+          aria-expanded={listVisible}
+          aria-controls={listVisible ? listId : undefined}
+          aria-autocomplete="list"
+          aria-activedescendant={listVisible && active >= 0 ? `${listId}-${active}` : undefined}
+          value={query}
+          onChange={(event) => {
+            onQueryChange(event.target.value);
+            search(event.target.value);
+          }}
+          onFocus={() => setMenuOpen(term.length >= SUGGEST_MIN_CHARS && phase !== "idle")}
+          onBlur={() => setMenuOpen(false)}
+          onKeyDown={onKeyDown}
+          placeholder="Search by name or Card handle"
+          aria-label="Card handle"
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={128}
+        />
+      )}
+      {menuOpen && !picked && (
+        <div className="nv2-combo-menu">
+          {results.length > 0 ? (
+            <ul id={listId} className={`nv2-combo-list${phase === "loading" ? " is-stale" : ""}`} role="listbox" aria-label="Matching Cards" aria-busy={phase === "loading"}>
+              {results.map((person, index) => {
+                const tag = suggestionTag(person);
+                const selectable = !tag || tag.selectable;
+                return (
+                  <li
+                    key={person.card_id}
+                    id={`${listId}-${index}`}
+                    role="option"
+                    aria-selected={index === active}
+                    aria-disabled={selectable ? undefined : true}
+                    className={`nv2-combo-option${index === active ? " is-active" : ""}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setActive(index)}
+                    onClick={() => choose(person)}
+                  >
+                    <Avatar card={person} size={30} small />
+                    <span className="nv2-combo-main">
+                      <span className="nv2-combo-name">{person.name}</span>
+                      <span className="nv2-combo-sub">@{person.handle}{person.headline ? ` · ${person.headline}` : ""}</span>
+                    </span>
+                    {tag && (
+                      <span className={`nv2-combo-tag${selectable ? "" : " is-muted"}`}>
+                        {tag.label}{tag.action && <> · <strong>{tag.action}</strong></>}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <div className="nv2-combo-empty">
+              {phase === "loading" ? "Searching…"
+                : phase === "error" ? "Couldn't search right now. If you know the exact Card handle, you can still send it."
+                : `No Card matches "${term}". If you know the exact handle, you can still send it.`}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

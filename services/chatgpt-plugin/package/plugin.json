@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "zynd",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Recall private facts on explicit request and propose exact memory or card facts for signed-in Zynd web review.",
   "author": {"name": "ZYND", "url": "https://cards.zynd.ai"},
   "homepage": "https://cards.zynd.ai",
@@ -11,11 +11,14 @@
       "interface": {
         "displayName": "Zynd",
         "shortDescription": "Your context and public card",
-        "longDescription": "On explicit request, recall relevant private facts, inspect your public card or private pending facts, and create one exact temporary proposal. Save privately at https://cards.zynd.ai; publish only through a separate confirmation there of exact public wording. Connection scopes allow recall, proposals and card review, never direct saving or publication. Draft contract; installed-client behavior is not yet verified.",
+        "longDescription": "Recall your private Zynd facts when you ask, see what is public on your Zynd card and which facts are pending review, and propose a new fact. A proposal is only a draft: you save it privately or publish it yourself after signing in at https://cards.zynd.ai, and the plugin cannot save or publish for you.",
         "developerName": "ZYND",
         "category": "Productivity",
         "capabilities": ["Recall private facts on request", "Propose exact facts for web review", "Inspect public card and private pending facts"],
         "websiteURL": "https://cards.zynd.ai",
+        "supportURL": "https://cards.zynd.ai/support",
+        "privacyPolicyURL": "https://cards.zynd.ai/privacy",
+        "termsOfServiceURL": "https://cards.zynd.ai/terms",
         "defaultPrompt": [
           "What does ZYND remember about my current project?",
           "Show me facts pending review for my public card.",
@@ -45,7 +48,7 @@
         "commerce": false
       },
       "publication": {
-        "release_notes": "Draft 0.2.0: explicit recall and temporary proposals with separate signed-in web save/publication. Anticipated six-tool contract and reduced scopes; backend availability and installed-client behavior remain unverified. Not for public submission."
+        "release_notes": "0.2.1: adds support, privacy policy and terms of service links. Recall private facts on request and propose exact facts for review; saving and publishing happen only through signed-in confirmation at https://cards.zynd.ai."
       }
     }
   }

@@ -93,13 +93,45 @@ class PackageTests(unittest.TestCase):
             path = root / "plugin.json"
             data = json.loads(path.read_text())
             extension = data["extensions"]["com.openai"]
-            for key in ("supportURL", "privacyPolicyURL", "termsOfServiceURL"):
-                extension["interface"][key] = "https://zynd.ai/verified-example"
             extension["review"]["demo_recording_url"] = "https://zynd.ai/example-recording"
             extension["publication"]["countries"] = ["US"]
             path.write_text(json.dumps(data))
             with self.assertRaisesRegex(ValueError, "external reviewer account"):
                 validate(root, submission=True)
+
+    def test_listing_urls_required_on_review_origin(self):
+        for key in ("supportURL", "privacyPolicyURL", "termsOfServiceURL"):
+            with self.subTest(missing=key), self.fixture() as root:
+                path = root / "plugin.json"
+                data = json.loads(path.read_text())
+                del data["extensions"]["com.openai"]["interface"][key]
+                path.write_text(json.dumps(data))
+                with self.assertRaisesRegex(ValueError, key):
+                    validate(root)
+            with self.subTest(off_origin=key), self.fixture() as root:
+                path = root / "plugin.json"
+                data = json.loads(path.read_text())
+                data["extensions"]["com.openai"]["interface"][key] = "https://example.com/page"
+                path.write_text(json.dumps(data))
+                with self.assertRaisesRegex(ValueError, "must be on"):
+                    validate(root)
+
+    def test_listing_text_cannot_call_itself_an_unverified_draft(self):
+        for field in ("longDescription", "shortDescription"):
+            with self.subTest(field=field), self.fixture() as root:
+                path = root / "plugin.json"
+                data = json.loads(path.read_text())
+                data["extensions"]["com.openai"]["interface"][field] += " Draft contract; installed-client behavior is not yet verified."
+                path.write_text(json.dumps(data))
+                with self.assertRaisesRegex(ValueError, "unverified draft"):
+                    validate(root)
+        with self.fixture() as root:
+            path = root / "plugin.json"
+            data = json.loads(path.read_text())
+            data["extensions"]["com.openai"]["publication"]["release_notes"] = "Not for public submission."
+            path.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, "unverified draft"):
+                validate(root)
 
     def test_official_schemas_validate_projection_independently(self):
         from build import validate_official_schemas
@@ -122,7 +154,7 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(fetch.call_count, 2)
 
     def test_submission_needs_real_metadata(self):
-        with self.assertRaisesRegex(ValueError, "supportURL"):
+        with self.assertRaisesRegex(ValueError, "walkthrough"):
             validate(submission=True)
 
     def test_missing_file(self):

@@ -44,7 +44,7 @@ export function useNetworkRealtime({
   // Local/e2e runs turn the socket off (NEXT_PUBLIC_DISABLE_REALTIME) because
   // the fake Supabase URL has no Realtime. Tests can still deliver a broadcast
   // by dispatching a `zynd:test-broadcast` event on window. The flag is never
-  // set in production, so this listener does not exist there.
+  // set in production, so no listener is registered there.
   useEffect(() => {
     if (!enabled || !topic || process.env.NEXT_PUBLIC_DISABLE_REALTIME !== "true") return;
     const names = eventKey.split("|");

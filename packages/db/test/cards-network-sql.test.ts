@@ -350,7 +350,8 @@ test('Cards network migrations preserve invitation and membership invariants', {
       // Exactly the limit is stored untouched; one more is cut to the limit.
       const exact = await reply('a'.repeat(8000));
       assert.equal(exact.message.content.length, 8000);
-      const over = await reply('b'.repeat(8001));
+      const overKey = randomUUID();
+      const over = await reply('b'.repeat(8001), overKey);
       assert.equal(over.message.content.length, 8000);
       assert.ok(over.message.content === 'b'.repeat(8000));
       // Padding is trimmed before the cut, so it never eats into the limit.
@@ -369,10 +370,14 @@ test('Cards network migrations preserve invitation and membership invariants', {
       const stored = (await readGroup(guest, groupId)).messages.find((message: { id: string }) => message.id === over.message.id);
       assert.equal(stored.content.length, 8000);
       const broadcast = (await client.query(
-        "select length(payload->'message'->>'content') as n from realtime.messages where topic=$1 and event='message' and payload->'message'->>'id'=$2",
+        `select length(payload->'message'->>'content') as n, payload->'message'->>'client_id' as client_id
+         from realtime.messages where topic=$1 and event='message' and payload->'message'->>'id'=$2`,
         [`cards:group:${groupId}`, over.message.id],
       )).rows[0];
       assert.equal(broadcast.n, 8000);
+      // The web UI matches a streaming bubble to its saved reply by client_id (= the job id).
+      assert.equal(stored.client_id, overKey);
+      assert.equal(broadcast.client_id, overKey);
 
       // The inbox line is still one short preview, whatever the length.
       const preview = (await inbox(owner)).groups.find((row: { id: string }) => row.id === groupId).last_message_preview as string;

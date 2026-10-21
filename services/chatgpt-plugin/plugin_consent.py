@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -15,6 +16,30 @@ from app.taxonomy import FINDABILITY_PREDICATES, decay_fn_for
 PROPOSAL_TTL = 24 * 3600
 PREVIEW_TTL = 15 * 60
 MAX_TEXT = 2000
+
+
+# The skills tell the model never to propose credentials; this is the server-side
+# backstop so a key or password can never become a draft the owner might save.
+_SECRET_PATTERNS = [re.compile(p) for p in (
+    r"\bsk-[A-Za-z0-9_-]{10,}",                                  # OpenAI-style keys
+    r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_\w{20,}",
+    r"\bAKIA[0-9A-Z]{16}\b",                                     # AWS access key id
+    r"\bAIza[0-9A-Za-z_-]{30,}",                                 # Google API key
+    r"\bxox[abprs]-[A-Za-z0-9-]{10,}",                           # Slack tokens
+    r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.",           # JWTs
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+    r"(?i)\b(?:password|passcode|passwd|pwd)\s*(?:is|[:=])\s*\S",
+    r"(?i)\b(?:api[_ -]?key|access[_ -]?key|secret[_ -]?key|client[_ -]?secret|auth[_ -]?token)\s*(?:is|[:=])\s*\S",
+    r"(?i)\bbearer\s+[A-Za-z0-9._~+/-]{16,}",
+)]
+_LONG_TOKEN = re.compile(r"[A-Za-z0-9_-]{32,}")
+
+
+def looks_like_secret(text: str) -> bool:
+    """True for recognizable credentials, or any 32+ character run mixing letters and digits."""
+    if any(p.search(text) for p in _SECRET_PATTERNS):
+        return True
+    return any(re.search(r"[A-Za-z]", m) and re.search(r"\d", m) for m in _LONG_TOKEN.findall(text))
 
 
 class ConsentError(Exception):
@@ -52,6 +77,8 @@ async def create_proposal(
         raise ConsentError(422, "unsupported action")
     if not text or not text.strip() or len(text) > MAX_TEXT:
         raise ConsentError(422, "fact must contain 1 to 2000 characters")
+    if looks_like_secret(text):
+        raise ConsentError(422, "this looks like a password, key or token; Zynd does not store secrets")
     connection_jti = source_connection_id or connection_jti
     if not connection_jti or not await _connection_valid(pool, uid, connection_jti):
         raise ConsentError(403, "connection revoked")

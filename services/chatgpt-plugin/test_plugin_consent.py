@@ -180,3 +180,40 @@ async def test_web_gate_requires_real_supabase_link(monkeypatch):
         assert err.value.status_code == 403
         get_pool.return_value.fetchrow.assert_awaited_once()
         assert "supabase_user_id" in get_pool.return_value.fetchrow.await_args.args[0]
+
+
+# Fake credentials only. Negative review case "Secret proposal": even if the model
+# tries, a key or password must never become a draft that could later be saved.
+@pytest.mark.parametrize("text", [
+    "My key is sk-proj-abc123DEF456ghi789JKL012",
+    "ghp_" + "a1B2" * 9,
+    "AWS access key AKIAIOSFODNN7EXAMPLE",
+    "Slack bot token xoxb-1234567890-abcdefghij",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJlMTIz",
+    "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "API key: 1234abcd",
+    "My password is hunter2",
+    "Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345",
+    "Use 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 next time",
+])
+async def test_secrets_are_never_drafted(text):
+    pool, redis = Pool(), Redis()
+    with pytest.raises(consent.ConsentError) as err:
+        await consent.create_proposal(pool, redis, OWNER, "save_memory", text, source_connection_id=JTI)
+    assert err.value.status_code == 422
+    assert redis.data == {} and redis.sets == {}
+
+
+@pytest.mark.parametrize("text", [
+    "I am building the Atlas project.",
+    "My current project is Atlas, a data pipeline for customer analytics.",
+    "I prefer concise release notes.",
+    "I use a password manager for every account.",
+    "My API keys live in a vault, never in chat.",
+    "The token budget for the Atlas pipeline is 2 million per day.",
+    "My card is at https://cards.zynd.ai/p/atmegabuzz",
+])
+async def test_ordinary_facts_are_still_drafted(text):
+    pool, redis = Pool(), Redis()
+    proposal = await consent.create_proposal(pool, redis, OWNER, "save_memory", text, source_connection_id=JTI)
+    assert proposal["status"] == "pending_review"

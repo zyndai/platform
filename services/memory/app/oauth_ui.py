@@ -179,23 +179,6 @@ _LOGIN_BODY = """<div class="wrap">
           var item = document.createElement('li'); item.textContent = text; permissions.appendChild(item);
         });
         document.getElementById('allow').textContent = 'Allow memory and card access';
-      } else if (r.data.scope !== 'user') {
-        var granted = r.data.scope.split(' ');
-        var plugin = {
-          'memory:recall': 'Recall private facts from your memory when you ask about them.',
-          'memory:propose': 'Draft new private facts for you to review on ZYND. Nothing is saved until you approve it.',
-          'cards:review': 'Read your public card and pending facts, and queue facts for your review. It cannot publish anything.'
-        };
-        var lines = granted.filter(function(s){ return plugin[s]; }).map(function(s){ return plugin[s]; });
-        if (lines.length && lines.length === granted.length) {
-          document.getElementById('permission-summary').textContent = 'This connection has limited access to your ZYND account. The app can:';
-          var list = document.getElementById('permissions');
-          list.textContent = '';
-          lines.concat(['No access to your integrations, messages, or other ZYND tools.']).forEach(function(text) {
-            var item = document.createElement('li'); item.textContent = text; list.appendChild(item);
-          });
-          document.getElementById('allow').textContent = 'Allow limited access';
-        }
       }
       document.getElementById('signin').hidden = true;
       document.getElementById('consent').hidden = false;

@@ -4,15 +4,15 @@ import test from "node:test";
 import { isEditionPickable, readEdition } from "./editions.ts";
 
 test("a stored edition is read with defaults filled in", () => {
-  assert.deepEqual(readEdition({ id: "mumbai-26" }), { id: "mumbai-26", mood: "night", here_for: null });
+  assert.deepEqual(readEdition({ id: "mumbai-26" }), { id: "mumbai-26", mood: "night", banner: "waterfront", here_for: null });
   assert.deepEqual(
-    readEdition({ id: "mumbai-26", mood: "dusk", here_for: "hacking" }),
-    { id: "mumbai-26", mood: "dusk", here_for: "hacking" },
+    readEdition({ id: "mumbai-26", mood: "dusk", banner: "gateway", here_for: "hacking" }),
+    { id: "mumbai-26", mood: "dusk", banner: "gateway", here_for: "hacking" },
   );
 });
 
 test("anything the page can't render reads as the classic card", () => {
-  for (const raw of [undefined, null, "", "mumbai-26", [], {}, { id: "devcon-9" }, { id: "mumbai-26", mood: "neon" }, { id: "mumbai-26", here_for: "partying" }]) {
+  for (const raw of [undefined, null, "", "mumbai-26", [], {}, { id: "devcon-9" }, { id: "mumbai-26", mood: "neon" }, { id: "mumbai-26", here_for: "partying" }, { id: "mumbai-26", banner: "devcon" }]) {
     assert.equal(readEdition(raw), null, JSON.stringify(raw));
   }
 });

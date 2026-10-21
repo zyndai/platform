@@ -57,6 +57,26 @@ test.describe("limited-edition card style", () => {
     await expect(page.getByRole("button", { name: "Save changes" }).first()).toBeDisabled();
   });
 
+  test("the owner picks a banner and the card shows that artwork", async ({ page, context, request }) => {
+    // #given an owner on the edition, with the waterfront banner by default
+    await signIn(context);
+    await page.goto("/p/owner/edit");
+    const style = page.locator("#style");
+    await style.getByRole("button", { name: /Mumbai Builder Week/ }).click();
+    await expect(style.getByRole("button", { name: /^Waterfront/ })).toHaveAttribute("aria-pressed", "true");
+
+    // #when they pick the Gateway artwork and save
+    await style.getByRole("button", { name: /^Gateway/ }).click();
+    await page.getByRole("button", { name: "Save changes" }).first().click();
+    await expect(page.getByText("Changes saved", { exact: true })).toBeVisible();
+
+    // #then it is stored and the public card draws the Gateway banner
+    const card = await (await request.get("http://127.0.0.1:3030/cards/by-handle/owner")).json();
+    expect(card.identity.edition.banner).toBe("gateway");
+    await page.goto("/p/owner?preview=visitor");
+    await expect(page.locator('.ed-hero[data-banner="gateway"] img.ed-hero-img')).toHaveAttribute("src", /gateway-1400\.webp/);
+  });
+
   test("switching back to classic removes the edition", async ({ page, context, request }) => {
     // #given an owner whose card uses the edition
     await signIn(context);
@@ -157,7 +177,7 @@ test.describe("limited-edition card style", () => {
 
     // #then the published card carries the edition
     const body = (await publishRequest).postDataJSON();
-    expect(body.card.identity.edition).toEqual({ id: "mumbai-26", mood: "night", here_for: "building" });
+    expect(body.card.identity.edition).toEqual({ id: "mumbai-26", mood: "night", banner: "waterfront", here_for: "building" });
   });
 
   test("mobile: banner and QR fit the screen", async ({ browser }) => {

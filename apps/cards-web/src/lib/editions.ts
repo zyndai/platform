@@ -7,16 +7,25 @@ export const EDITION_IDS = ["mumbai-26"] as const;
 // cards saved with one keep reading as the edition; the API accepts the same set.
 export const EDITION_MOODS = ["night", "dusk", "monsoon"] as const;
 export const HERE_FOR = ["hacking", "speaking", "building", "hiring", "raising", "investing", "exploring"] as const;
+// The banner artwork; cards saved before the choice existed get the first.
+export const EDITION_BANNERS = ["waterfront", "gateway"] as const;
 
 export type EditionId = (typeof EDITION_IDS)[number];
 export type EditionMood = (typeof EDITION_MOODS)[number];
 export type HereFor = (typeof HERE_FOR)[number];
+export type EditionBanner = (typeof EDITION_BANNERS)[number];
 
 export interface CardEdition {
   id: EditionId;
   mood: EditionMood;
+  banner: EditionBanner;
   here_for: HereFor | null;
 }
+
+export const BANNER_LABEL: Record<EditionBanner, { name: string; hint: string }> = {
+  waterfront: { name: "Waterfront", hint: "Sunset over the skyline" },
+  gateway: { name: "Gateway", hint: "The Gateway of India at night" },
+};
 
 export const EDITION_NAME: Record<EditionId, string> = {
   "mumbai-26": "Mumbai Builder Week ’26",
@@ -48,9 +57,10 @@ function isOneOf<T extends string>(options: readonly T[], value: unknown): value
  *  treats an unknown or malformed edition as no edition. */
 export function readEdition(raw: unknown): CardEdition | null {
   if (!raw || typeof raw !== "object") return null;
-  const { id, mood, here_for } = raw as Record<string, unknown>;
+  const { id, mood, banner, here_for } = raw as Record<string, unknown>;
   if (!isOneOf(EDITION_IDS, id)) return null;
   if (mood != null && !isOneOf(EDITION_MOODS, mood)) return null;
+  if (banner != null && !isOneOf(EDITION_BANNERS, banner)) return null;
   if (here_for != null && !isOneOf(HERE_FOR, here_for)) return null;
-  return { id, mood: mood ?? "night", here_for: here_for ?? null };
+  return { id, mood: mood ?? "night", banner: banner ?? "waterfront", here_for: here_for ?? null };
 }

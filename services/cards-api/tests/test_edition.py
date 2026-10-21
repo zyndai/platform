@@ -33,7 +33,7 @@ def test_known_edition_round_trips_through_card_json():
         "identity": {"name": "Asha", "edition": {"id": "mumbai-26", "mood": "dusk", "here_for": "hacking"}},
     })
     dumped = card.model_dump(mode="json")["identity"]["edition"]
-    assert dumped == {"id": "mumbai-26", "mood": "dusk", "here_for": "hacking"}
+    assert dumped == {"id": "mumbai-26", "mood": "dusk", "banner": "waterfront", "here_for": "hacking"}
     assert AgentProfileCard.model_validate(card.model_dump(mode="json")).identity.edition == card.identity.edition
 
 
@@ -62,3 +62,15 @@ def test_unknown_or_malformed_edition_reads_as_classic_card():
 def test_card_view_exposes_edition_for_the_public_page():
     view = CardView.model_validate({"identity": {"edition": {"id": "mumbai-26", "mood": "monsoon"}}})
     assert view.model_dump(mode="json")["identity"]["edition"]["mood"] == "monsoon"
+
+
+def test_edition_keeps_the_banner_the_owner_picked():
+    # #given an owner who picked the Gateway artwork
+    edition = Identity.model_validate({"edition": {"id": "mumbai-26", "banner": "gateway"}}).edition
+    # #then it is kept, and older editions without a banner get the waterfront
+    assert edition is not None and edition.banner == "gateway"
+    assert Identity.model_validate({"edition": {"id": "mumbai-26"}}).edition.banner == "waterfront"
+
+
+def test_unknown_banner_reads_as_classic_card():
+    assert Identity.model_validate({"edition": {"id": "mumbai-26", "banner": "devcon"}}).edition is None

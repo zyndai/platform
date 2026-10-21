@@ -61,6 +61,18 @@
 .ed-hero-short { display: none; }
 .ed-hero-line { font-size: 11px; font-weight: 700; letter-spacing: .2em; opacity: .8; }
 
+/* The Gateway artwork is a night scene: crop to the moon and the Gateway's
+ * domes above the identity card, and set the title on dark glass. */
+.ed-hero[data-banner="gateway"] .ed-hero-art { background: #2A2370; }
+.ed-hero[data-banner="gateway"] .ed-hero-img { object-position: 50% 40%; }
+/* The Gateway sits left of centre in this piece: the title takes the sky on the right. */
+.ed-hero[data-banner="gateway"] .ed-hero-title {
+  left: auto; right: 3%; top: 10%; transform: none;
+  padding: 12px 24px; border-radius: 16px; color: #FFFFFF; text-shadow: none;
+  background: rgba(22, 16, 70, .5); border: 1px solid rgba(255, 255, 255, .18);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+
 /* Identity card: two bands on one column grid, so every edge lines up.
  *   photo + who | actions
  *   ───────────────────────
@@ -299,6 +311,9 @@
   .ed-hero-mark svg { width: 10px; height: 16px; }
   .ed-hero-short { display: inline; }
   .ed-hero-year, .ed-hero-line { display: none; }
+  /* Gateway: keep the Gateway and the moon in the window (cover scales by height). */
+  .ed-hero[data-banner="gateway"] .ed-hero-img { object-position: 12% 50%; }
+  .ed-hero[data-banner="gateway"] .ed-hero-title { left: 50%; right: auto; top: 12px; transform: translateX(-50%); padding: 7px 12px 7px 10px; border-radius: 999px; background: rgba(22, 16, 70, .6); }
 
   .ed-id { margin: -44px 8px 0; padding: 16px; }
   /* Photo beside "I'm / name / headline"; the meta line runs full width under both. */
@@ -339,6 +354,7 @@
 }
 .ed-qr-art { position: absolute; top: 0; left: 0; right: 0; height: 34vh; min-height: 200px; overflow: hidden; }
 .ed-qr-art > img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover; object-position: 52% 55%; }
+.ed-qr-overlay[data-banner="gateway"] .ed-qr-art > img { object-position: 22% 45%; }
 .ed-qr-art::after { content: ""; position: absolute; inset: auto 0 0; height: 40%; background: linear-gradient(transparent, #F3F1FB); }
 .ed-qr-close {
   position: fixed; top: 16px; right: 16px; z-index: 2; cursor: pointer;
@@ -416,6 +432,20 @@
 .ed-tile-sub { font-size: 13px; color: var(--ed-soft); }
 .ed-mini { position: relative; height: 112px; border-radius: 12px; overflow: hidden; }
 .ed-mini > img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover; object-position: 52% 55%; }
+.ed-mini[data-banner="gateway"] > img { object-position: 28% 40%; }
+.ed-banners { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ed-banner-opt {
+  display: flex; flex-direction: column; gap: 4px; padding: 6px 6px 10px; text-align: left; cursor: pointer;
+  border-radius: 14px; background: #fff; border: 1.5px solid var(--ed-line); color: var(--ed-ink);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.ed-banner-opt:hover { border-color: #C9C2F2; }
+.ed-banner-opt[aria-pressed="true"] { border-color: var(--ed-accent); box-shadow: 0 0 0 3px rgba(108, 92, 231, .16); }
+.ed-banner-thumb { position: relative; height: 76px; margin-bottom: 4px; border-radius: 10px; overflow: hidden; background: var(--ed-tint); }
+.ed-banner-thumb > img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover; object-position: 52% 55%; }
+.ed-banner-thumb[data-banner="gateway"] > img { object-position: 28% 40%; }
+.ed-banner-name { padding: 0 4px; font: 700 14px/1.2 var(--ed-ui), system-ui, sans-serif; }
+.ed-banner-hint { padding: 0 4px; font-size: 12px; color: var(--ed-soft); }
 .ed-mini-classic { background: linear-gradient(160deg, #EEF0FF, #F8F7FF); border: 1px solid #ECEAF8; }
 .ed-mini-person {
   position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 1;
@@ -446,6 +476,6 @@
   .ed-pick-tiles { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .ed-btn, .ed-qr-btn, .ed-tile, .ed-social, .ed-read-more svg { transition: none; }
+  .ed-btn, .ed-qr-btn, .ed-tile, .ed-social, .ed-read-more svg, .ed-banner-opt { transition: none; }
   .ed-spin { animation: none; }
 }

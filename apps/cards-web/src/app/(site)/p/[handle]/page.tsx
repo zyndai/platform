@@ -38,7 +38,7 @@ import { ClaimBanner } from "./claim-banner";
 import { RequestConnection } from "@/components/network/RequestConnection";
 import { memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
 import { readEdition } from "@/lib/editions";
-import { EditionBanner } from "./edition-banner";
+import { EditionHero } from "./edition-banner";
 import { cleanTopic, publicTopics } from "@/lib/profile-quality";
 import { BeaconCard } from "@/components/BeaconCard";
 import { BookingAvailability } from "@/components/BookingAvailability";
@@ -783,7 +783,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
         }
       `}</style>
 
-      <div className="pf-page" style={{ backgroundColor: edition ? "#F3F1FB" : "#f5f6f8", minHeight: "100vh" }}>
+      <div className={edition ? "pf-page ed-page" : "pf-page"} style={{ backgroundColor: edition ? "#F3F1FB" : "#f5f6f8", minHeight: "100vh" }}>
         <div className="pf-inner" style={{ maxWidth: 1300, margin: "0 auto", padding: "24px 24px 56px" }}>
 
           {/* ── UNCLAIMED BANNER ── */}
@@ -830,30 +830,35 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
           </header>
 
           {edition && (
-            <EditionBanner
+            <EditionHero
               edition={edition}
               name={identity.name || card.handle || "Profile"}
+              nameLines={nameLines}
               headline={isBlank(identity.headline) ? "" : identity.headline}
               location={isBlank(identity.location) ? "" : identity.location}
+              role={nowJob ? [nowJob.title, nowJob.company].filter(Boolean).join(" · ") : ""}
+              chips={[...helpWith, ...(card.industries ?? []).filter((x) => !isBlank(x))].slice(0, 6)}
               avatarSrc={heroAvatarSrc ?? null}
               initials={initials}
               url={canonical}
               permalink={permalink}
               handle={card.handle ?? card.id}
               verified={linkedinLinked}
+              canChat={claimed}
+              links={{ x: safeUrl(identity.links?.x), github: safeUrl(identity.links?.github), linkedin: safeUrl(identity.links?.linkedin) }}
+              updatedLabel={syncedAt}
             />
           )}
 
           {/* ── MAIN GRID ── */}
           <div className="pf-main-grid">
 
-            {/* ── HERO CARD (4 col) ── */}
+            {/* ── HERO CARD (4 col): the edition's identity card above replaces it ── */}
+            {!edition && (
             <div
               className="pf-hero"
-              style={{ background: edition ? "linear-gradient(160deg, #23256A 0%, #121338 100%)" : "#6d64f6", borderRadius: 20, color: "#fff", display: "flex", flexDirection: "column", minHeight: 0 }}
+              style={{ background: "#6d64f6", borderRadius: 20, color: "#fff", display: "flex", flexDirection: "column", minHeight: 0 }}
             >
-              {/* The edition banner above already shows the photo, name, headline and location. */}
-              {!edition && <>
               <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
                 {heroAvatarSrc ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -893,7 +898,6 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                   {!isBlank(identity.location) && <div style={{ fontWeight: 500, opacity: 0.85 }}>{identity.location}</div>}
                 </div>
               )}
-              </>}
               {helpWith.length > 0 && (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 10 }}>
                   {helpWith.map((item) => (
@@ -929,13 +933,14 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                 </div>
               </div>
             </div>
+            )}
 
             {/* ── RIGHT STACK: Dossier + Signals (8 col) ── */}
             <div className="pf-right-stack">
 
               {/* Dossier */}
               {!isBlank(card.summary) && (
-                <div className={`${card_} tc`}>
+                <div className={`${card_} tc`} data-ed-section="about">
                   <div>
                     <div className={label_}>
                       <span>┌ ABOUT</span>
@@ -959,7 +964,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
               {obsessions.length > 0 && (
                 <div className="pf-obs-row" style={{ "--obs-cols": `repeat(${obsessions.length}, 1fr)` } as React.CSSProperties}>
                   {obsessions.map((obs) => (
-                    <div key={obs.key} className={`pf-obs-card ${obs.card} rounded-[20px] p-[18px] flex flex-col justify-between`}>
+                    <div key={obs.key} data-ed-section={obs.key} className={`pf-obs-card ${obs.card} rounded-[20px] p-[18px] flex flex-col justify-between`}>
                       <div className={`${label_} pf-mono`} style={{ color: "inherit", opacity: 0.8 }}>
                         <span>┌ {obs.label.toUpperCase()}</span>
                         <span className={`${obs.chip} text-[0.6rem] px-2 py-0.5 rounded-full font-mono font-bold`}>

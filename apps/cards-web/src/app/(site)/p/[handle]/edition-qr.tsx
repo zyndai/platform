@@ -5,7 +5,8 @@ import { createPortal } from "react-dom";
 import { Download, Loader2, QrCode, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { EDITION_FONT_VARS } from "@/components/editions/fonts";
-import { MumbaiScene, sceneEdgeColors } from "@/components/editions/mumbai-scene";
+import { EthMark } from "@/components/editions/eth-mark";
+import { MumbaiSkyline, SKYLINE_EDGES } from "@/components/editions/mumbai-skyline";
 import { withShareRef } from "@/lib/attr";
 import { HERE_FOR_LABEL, type CardEdition } from "@/lib/editions";
 import { track } from "@/lib/track";
@@ -74,11 +75,10 @@ export function EditionQrButton({ edition, url, permalink, handle, name, headlin
     try {
       const css = getComputedStyle(overlay);
       const png = await renderWallpaper({
-        scene, qr, edges: sceneEdgeColors(edition.mood), avatarSrc, initials, name, headline, hereFor, permalink,
+        scene, qr, edges: SKYLINE_EDGES, avatarSrc, initials, name, headline, hereFor, permalink,
         fonts: {
-          display: css.getPropertyValue("--ed-display").trim() || "Georgia, serif",
           ui: css.getPropertyValue("--ed-ui").trim() || "system-ui, sans-serif",
-          pixel: css.getPropertyValue("--ed-pixel").trim() || "ui-monospace, monospace",
+          mono: css.getPropertyValue("--ed-mono").trim() || "ui-monospace, monospace",
         },
       });
       const outcome = await saveWallpaper(png, `zynd-${handle}-mumbai-26-wallpaper.png`);
@@ -142,8 +142,9 @@ export function EditionQrButton({ edition, url, permalink, handle, name, headlin
       </button>
       {open && createPortal(
         <div ref={overlayRef} className={`ed ed-qr-overlay ${EDITION_FONT_VARS}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
-          <MumbaiScene mood={edition.mood} idPrefix="ed-qr" className="ed-qr-bg" focus="bottom" />
-          <div className="ed-qr-scrim" aria-hidden />
+          <div className="ed-qr-art" aria-hidden>
+            <MumbaiSkyline idPrefix="ed-qr" className="ed-qr-bg" focus="bottom" />
+          </div>
           <button ref={closeRef} type="button" className="ed-qr-close" onClick={() => setOpen(false)} aria-label="Close QR code">
             <X size={20} />
           </button>
@@ -153,7 +154,7 @@ export function EditionQrButton({ edition, url, permalink, handle, name, headlin
               <img className="ed-qr-avatar" src={avatarSrc} alt="" />
             ) : (
               <span className="ed-qr-avatar" aria-hidden
-                style={{ display: "flex", alignItems: "center", justifyContent: "center", font: "700 34px/1 var(--ed-display), Georgia, serif" }}>
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", font: "800 34px/1 var(--ed-ui), system-ui, sans-serif" }}>
                 {initials}
               </span>
             )}
@@ -161,7 +162,7 @@ export function EditionQrButton({ edition, url, permalink, handle, name, headlin
             {headline && <div className="ed-qr-headline">{headline}</div>}
             {hereFor && <span className="ed-chip">Here for · {hereFor}</span>}
             <div className="ed-qr-panel">
-              <QRCodeSVG value={qrValue} size={300} level="M" marginSize={4} fgColor="#121338" bgColor="#ffffff"
+              <QRCodeSVG value={qrValue} size={300} level="M" marginSize={4} fgColor="#1E1B4B" bgColor="#ffffff"
                 title={`QR code for ${permalink}`} />
               <span className="ed-qr-url">{permalink}</span>
             </div>
@@ -171,7 +172,7 @@ export function EditionQrButton({ edition, url, permalink, handle, name, headlin
               {wallpaper === "working" ? "Making your wallpaper…" : "Save as phone wallpaper"}
             </button>
             {wallpaper === "error" && <div className="ed-qr-hint" role="alert">Couldn’t make the wallpaper. Take a screenshot of this screen instead.</div>}
-            <span className="ed-pixel-badge">MUMBAI ’26 · LIMITED EDITION</span>
+            <span className="ed-edition-badge"><EthMark size={14} /> MUMBAI BUILDER WEEK ’26</span>
           </div>
         </div>,
         document.body,

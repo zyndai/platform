@@ -8,7 +8,7 @@ export const WALLPAPER_H = 2532;
 
 export interface WallpaperInput {
   scene: SVGSVGElement;
-  /** Sky and water colours the art is extended with above and below. */
+  /** Sky colour the art is extended with above its top edge. */
   edges: { sky: string; water: string };
   qr: SVGSVGElement;
   avatarSrc: string | null;
@@ -17,8 +17,8 @@ export interface WallpaperInput {
   headline: string;
   hereFor: string | null;
   permalink: string;
-  /** Resolved CSS font stacks for the edition's display, UI and pixel faces. */
-  fonts: { display: string; ui: string; pixel: string };
+  /** Resolved CSS font stacks for the edition's UI and mono faces. */
+  fonts: { ui: string; mono: string };
 }
 
 function svgToImage(svg: SVGSVGElement, width: number, height: number): Promise<HTMLImageElement> {
@@ -74,12 +74,37 @@ function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxWidth: number
   return `${t.trimEnd()}…`;
 }
 
+// Official Ethereum mark geometry (256 x 417), as in components/editions/eth-mark.tsx.
+const ETH_FACES: [string, string][] = [
+  ["#4B3FC9", "m127.961 0-2.795 9.5v275.668l2.795 2.79 127.962-75.638z"],
+  ["#8F86F2", "M127.962 0 0 212.32l127.962 75.639V154.158z"],
+  ["#5A4FD6", "m127.961 312.187-1.575 1.92v98.199l1.575 4.601 128.038-180.32z"],
+  ["#8F86F2", "M127.962 416.905v-104.72L0 236.585z"],
+  ["#2E2499", "m127.961 287.958 127.96-75.637-127.96-58.162z"],
+  ["#6C62E0", "m0 212.32 127.96 75.638v-133.8z"],
+];
+
+function drawEthMark(ctx: CanvasRenderingContext2D, x: number, y: number, height: number) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(height / 417, height / 417);
+  for (const [fill, d] of ETH_FACES) {
+    ctx.fillStyle = fill;
+    ctx.fill(new Path2D(d));
+  }
+  ctx.restore();
+}
+
+const INK = "#1E1B4B";
+const SOFT = "#5B5B7E";
+const PAGE = "#F3F1FB";
+
 export async function renderWallpaper(input: WallpaperInput): Promise<Blob> {
   const { fonts } = input;
   await Promise.all([
-    document.fonts.load(`700 96px ${fonts.display}`),
-    document.fonts.load(`600 44px ${fonts.ui}`),
-    document.fonts.load(`500 40px ${fonts.pixel}`),
+    document.fonts.load(`800 92px ${fonts.ui}`),
+    document.fonts.load(`500 42px ${fonts.ui}`),
+    document.fonts.load(`700 30px ${fonts.mono}`),
   ]);
 
   const canvas = document.createElement("canvas");
@@ -91,59 +116,47 @@ export async function renderWallpaper(input: WallpaperInput): Promise<Blob> {
   const H = WALLPAPER_H;
   const cx = W / 2;
 
-  // The art is wide (1600 x 640) and the screen is tall: draw it as a band at
-  // 1.5x, which keeps the moon and the whole Gateway in frame, and extend its
-  // sky and water above and below instead of cropping it into a sliver.
+  // The art is wide (1600 x 500) and the screen is tall: draw it as a band at
+  // 1.5x so the skyline and Sea Link stay in frame, with the sky extended above
+  // (the lock-screen clock sits there) and the water fading into the page below.
   const ART_SCALE = 1.5;
   const artW = 1600 * ART_SCALE;
-  const artH = 640 * ART_SCALE;
-  const artTop = 250;
-  const waterline = artTop + 520 * ART_SCALE;
+  const artH = 500 * ART_SCALE;
+  const artTop = 230;
+  const artBottom = artTop + artH;
 
   const [scene, qr, photo] = await Promise.all([
     svgToImage(input.scene, artW, artH),
     svgToImage(input.qr, 560, 560),
     input.avatarSrc ? loadPhoto(input.avatarSrc) : Promise.resolve(null),
   ]);
+  const page = ctx.createLinearGradient(0, 0, 0, H);
+  page.addColorStop(0, PAGE);
+  page.addColorStop(1, "#E9E6FB");
+  ctx.fillStyle = page;
+  ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = input.edges.sky;
   ctx.fillRect(0, 0, W, artTop + 2);
-  ctx.fillStyle = input.edges.water;
-  ctx.fillRect(0, artTop + artH - 2, W, H - artTop - artH + 2);
   ctx.drawImage(scene, (W - artW) / 2, artTop, artW, artH);
-  // The moon's glow is cut off at the art's top edge; fade that edge into the sky.
-  const seam = ctx.createLinearGradient(0, artTop, 0, artTop + 220);
-  seam.addColorStop(0, input.edges.sky);
-  seam.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = seam;
-  ctx.fillRect(0, artTop, W, 220);
-  // Stars in the extended sky, placed by a fixed sequence so every export matches.
-  let seed = 7;
-  const next = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  ctx.fillStyle = "#ffffff";
-  for (let i = 0; i < 40; i++) {
-    ctx.globalAlpha = 0.3 + next() * 0.6;
-    ctx.beginPath();
-    ctx.arc(next() * W, next() * artTop, 1 + next() * 2.2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  // Darken the water so the name and QR read clearly; the sky stays bright.
-  const scrim = ctx.createLinearGradient(0, waterline - 160, 0, H);
-  scrim.addColorStop(0, "rgba(9,11,42,0)");
-  scrim.addColorStop(0.25, "rgba(9,11,42,0.55)");
-  scrim.addColorStop(1, "rgba(9,11,42,0.9)");
-  ctx.fillStyle = scrim;
-  ctx.fillRect(0, waterline - 160, W, H - waterline + 160);
+  const fade = ctx.createLinearGradient(0, artBottom - 220, 0, artBottom);
+  fade.addColorStop(0, "rgba(243,241,251,0)");
+  fade.addColorStop(1, PAGE);
+  ctx.fillStyle = fade;
+  ctx.fillRect(0, artBottom - 220, W, 222);
 
-  // The photo sits on the waterline, like the card banner; the sky above it is
-  // left to the lock-screen clock.
-  const avatarR = 104;
-  const avatarY = waterline + 40;
+  // The photo sits where the water fades out, like the card's identity card.
+  const avatarR = 112;
+  const avatarY = artBottom - 10;
   ctx.save();
+  ctx.shadowColor = "rgba(30,27,75,0.35)";
+  ctx.shadowBlur = 40;
+  ctx.shadowOffsetY = 16;
   ctx.beginPath();
-  ctx.arc(cx, avatarY, avatarR + 18, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(95,227,214,0.18)";
+  ctx.arc(cx, avatarY, avatarR + 9, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffffff";
   ctx.fill();
+  ctx.restore();
+  ctx.save();
   ctx.beginPath();
   ctx.arc(cx, avatarY, avatarR, 0, Math.PI * 2);
   ctx.clip();
@@ -151,44 +164,39 @@ export async function renderWallpaper(input: WallpaperInput): Promise<Blob> {
     const side = Math.min(photo.naturalWidth, photo.naturalHeight);
     ctx.drawImage(photo, (photo.naturalWidth - side) / 2, (photo.naturalHeight - side) / 2, side, side, cx - avatarR, avatarY - avatarR, avatarR * 2, avatarR * 2);
   } else {
-    ctx.fillStyle = "#121338";
+    ctx.fillStyle = "#6C5CE7";
     ctx.fillRect(cx - avatarR, avatarY - avatarR, avatarR * 2, avatarR * 2);
-    ctx.fillStyle = "#FFF8F0";
-    ctx.font = `700 84px ${fonts.display}`;
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `800 84px ${fonts.ui}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(input.initials, cx, avatarY + 4);
   }
   ctx.restore();
-  ctx.beginPath();
-  ctx.arc(cx, avatarY, avatarR, 0, Math.PI * 2);
-  ctx.lineWidth = 7;
-  ctx.strokeStyle = "#5FE3D6";
-  ctx.stroke();
 
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
-  ctx.fillStyle = "#FFF8F0";
-  fitFont(ctx, input.name, 700, fonts.display, 96, 56, W - 140);
-  ctx.fillText(ellipsize(ctx, input.name, W - 140), cx, avatarY + avatarR + 110);
+  ctx.fillStyle = INK;
+  fitFont(ctx, input.name, 800, fonts.ui, 92, 54, W - 140);
+  ctx.fillText(ellipsize(ctx, input.name, W - 140), cx, avatarY + avatarR + 112);
 
-  let y = avatarY + avatarR + 176;
+  let y = avatarY + avatarR + 180;
   if (input.headline) {
-    ctx.font = `500 44px ${fonts.ui}`;
-    ctx.fillStyle = "rgba(255,248,240,0.84)";
+    ctx.font = `500 42px ${fonts.ui}`;
+    ctx.fillStyle = SOFT;
     ctx.fillText(ellipsize(ctx, input.headline, W - 160), cx, y);
-    y += 40;
+    y += 38;
   }
   if (input.hereFor) {
     const label = `Here for · ${input.hereFor}`;
-    ctx.font = `600 40px ${fonts.ui}`;
+    ctx.font = `700 38px ${fonts.ui}`;
     const chipW = ctx.measureText(label).width + 72;
-    roundRect(ctx, cx - chipW / 2, y + 22, chipW, 76, 38);
+    roundRect(ctx, cx - chipW / 2, y + 22, chipW, 74, 37);
     ctx.fillStyle = "#6C5CE7";
     ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.fillText(label, cx, y + 74);
-    y += 98;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(label, cx, y + 72);
+    y += 96;
   }
 
   // QR on plain white with its quiet zone: no artwork behind the code.
@@ -197,7 +205,7 @@ export async function renderWallpaper(input: WallpaperInput): Promise<Blob> {
   const panelH = 690;
   const panelY = y + 50;
   ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.45)";
+  ctx.shadowColor = "rgba(30,27,75,0.22)";
   ctx.shadowBlur = 60;
   ctx.shadowOffsetY = 24;
   roundRect(ctx, cx - panelW / 2, panelY, panelW, panelH, 56);
@@ -205,26 +213,29 @@ export async function renderWallpaper(input: WallpaperInput): Promise<Blob> {
   ctx.fill();
   ctx.restore();
   ctx.drawImage(qr, cx - qrSide / 2, panelY + 40, qrSide, qrSide);
-  ctx.fillStyle = "#121338";
-  fitFont(ctx, input.permalink, 600, `ui-monospace, "SFMono-Regular", Menlo, monospace`, 40, 26, panelW - 80);
-  ctx.fillText(input.permalink, cx, panelY + panelH - 52);
+  ctx.fillStyle = INK;
+  fitFont(ctx, input.permalink, 700, fonts.mono, 38, 24, panelW - 80);
+  ctx.fillText(input.permalink, cx, panelY + panelH - 50);
 
   ctx.font = `500 36px ${fonts.ui}`;
-  ctx.fillStyle = "rgba(255,248,240,0.75)";
-  ctx.fillText("Scan to open my Zynd card", cx, panelY + panelH + 70);
+  ctx.fillStyle = SOFT;
+  ctx.fillText("Scan to open my Zynd card", cx, panelY + panelH + 72);
 
-  const badge = "MUMBAI ’26 · LIMITED EDITION";
-  ctx.font = `500 32px ${fonts.pixel}`;
-  const badgeW = ctx.measureText(badge).width + 64;
-  const badgeY = panelY + panelH + 110;
-  roundRect(ctx, cx - badgeW / 2, badgeY, badgeW, 64, 32);
-  ctx.fillStyle = "rgba(18,19,56,0.4)";
+  const badge = "MUMBAI BUILDER WEEK ’26";
+  ctx.font = `700 30px ${fonts.mono}`;
+  const markH = 40;
+  const badgeW = ctx.measureText(badge).width + 64 + 40;
+  const badgeY = panelY + panelH + 116;
+  roundRect(ctx, cx - badgeW / 2, badgeY, badgeW, 68, 34);
+  ctx.fillStyle = "rgba(255,255,255,0.8)";
   ctx.fill();
   ctx.lineWidth = 2;
-  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.strokeStyle = "#D7D1FF";
   ctx.stroke();
-  ctx.fillStyle = "#FFF8F0";
-  ctx.fillText(badge, cx, badgeY + 43);
+  drawEthMark(ctx, cx - badgeW / 2 + 30, badgeY + 14, markH);
+  ctx.fillStyle = INK;
+  ctx.textAlign = "left";
+  ctx.fillText(badge, cx - badgeW / 2 + 70, badgeY + 45);
 
   const png = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
   if (!png) throw new Error("wallpaper: canvas export returned no image");

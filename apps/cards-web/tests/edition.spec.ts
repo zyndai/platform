@@ -18,7 +18,7 @@ test.describe("limited-edition card style", () => {
 
     // #then the classic hero is there and nothing edition-only is
     await expect(page.getByText("I'm", { exact: true })).toBeVisible();
-    await expect(page.locator(".ed-banner")).toHaveCount(0);
+    await expect(page.locator(".ed-hero")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Show my QR" })).toHaveCount(0);
   });
 
@@ -29,24 +29,27 @@ test.describe("limited-edition card style", () => {
     const style = page.locator("#style");
     await expect(style.getByRole("button", { name: /^Classic/ })).toHaveAttribute("aria-pressed", "true");
 
-    // #when they pick the edition, a mood and a reason, and save
+    // #when they pick the edition and a reason, and save
     await style.getByRole("button", { name: /Mumbai Builder Week/ }).click();
-    await style.getByRole("button", { name: "Dusk", exact: true }).click();
+    await expect(style.getByRole("button", { name: "Dusk", exact: true })).toHaveCount(0);
     await style.getByRole("button", { name: "Speaking", exact: true }).click();
     await page.getByRole("button", { name: "Save changes" }).first().click();
     await expect(page.getByText("Changes saved", { exact: true })).toBeVisible();
 
     // #then the public card shows the edition banner with the chosen reason
     await page.goto("/p/owner?preview=visitor");
-    const banner = page.locator(".ed-banner");
-    await expect(banner).toBeVisible();
-    await expect(banner.getByText("Here for · Speaking")).toBeVisible();
-    await expect(banner.getByText("Alice Chen")).toBeVisible();
+    const hero = page.locator(".ed-hero");
+    await expect(hero).toBeVisible();
+    await expect(hero.getByText("Here for · Speaking")).toBeVisible();
+    await expect(hero.getByText("Alice Chen")).toBeVisible();
+    await expect(hero.getByText("MUMBAI BUILDER WEEK")).toBeVisible();
+    // the classic purple hero is replaced, not shown twice
+    await expect(page.locator(".pf-hero")).toHaveCount(0);
 
     // #and reopening the editor shows the saved choice without unsaved changes
     await page.goto("/p/owner/edit");
     await expect(style.getByRole("button", { name: /Mumbai Builder Week/ })).toHaveAttribute("aria-pressed", "true");
-    await expect(style.getByRole("button", { name: "Dusk", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(style.getByRole("button", { name: "Speaking", exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByRole("button", { name: "Save changes" }).first()).toBeDisabled();
   });
 
@@ -68,7 +71,7 @@ test.describe("limited-edition card style", () => {
     const card = await (await request.get("http://127.0.0.1:3030/cards/by-handle/owner")).json();
     expect(card.identity.edition ?? null).toBeNull();
     await page.goto("/p/owner?preview=visitor");
-    await expect(page.locator(".ed-banner")).toHaveCount(0);
+    await expect(page.locator(".ed-hero")).toHaveCount(0);
   });
 
   test("the QR screen opens, closes with Escape and returns focus", async ({ page, context }) => {
@@ -142,13 +145,13 @@ test.describe("limited-edition card style", () => {
 
     // #when they pick the edition and publish
     await style.getByRole("button", { name: /Mumbai Builder Week/ }).click();
-    await style.getByRole("button", { name: "Monsoon", exact: true }).click();
+    await style.getByRole("button", { name: "Building", exact: true }).click();
     const publishRequest = page.waitForRequest((r) => r.url().endsWith("/onboard/job1/publish"));
     await page.getByRole("button", { name: /Publish my card/ }).click();
 
     // #then the published card carries the edition
     const body = (await publishRequest).postDataJSON();
-    expect(body.card.identity.edition).toEqual({ id: "mumbai-26", mood: "monsoon", here_for: null });
+    expect(body.card.identity.edition).toEqual({ id: "mumbai-26", mood: "night", here_for: "building" });
   });
 
   test("mobile: banner and QR fit the screen", async ({ browser }) => {
@@ -168,7 +171,7 @@ test.describe("limited-edition card style", () => {
 
     // #then nothing scrolls sideways, before or after opening the QR
     const overflows = () => page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
-    await expect(page.locator(".ed-banner")).toBeVisible();
+    await expect(page.locator(".ed-hero")).toBeVisible();
     expect(await overflows()).toBe(false);
     await page.getByRole("button", { name: "Show my QR" }).click();
     await expect(page.getByRole("dialog").locator(".ed-qr-panel svg")).toBeVisible();

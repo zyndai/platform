@@ -171,6 +171,20 @@ def _enqueue_group_mentions(user_id: str, group_id: str, result: dict) -> None:
             return
         queued = group_memory.enqueue_agent_replies(str(message["id"]), mentioned)
         result["agent_replies"] = int(queued.get("enqueued") or 0)
+        # Return only the users that actually got a job: the RPC applies the
+        # sender skip, cooldown, opt-out, and two-agent cap.
+        try:
+            rows = (
+                config.get_supabase().table("group_agent_jobs")
+                .select("mentioned_user_id")
+                .eq("message_id", message["id"])
+                .execute()
+                .data
+                or []
+            )
+            result["agent_reply_users"] = [row["mentioned_user_id"] for row in rows]
+        except Exception:
+            result["agent_reply_users"] = []
         # The mention list is metadata for the message page; the content stays
         # untouched so the UI can render @handles in the accent colour.
         try:

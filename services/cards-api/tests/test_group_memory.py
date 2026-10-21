@@ -82,7 +82,7 @@ def test_semantic_search_uses_the_embedding_and_membership_check(monkeypatch):
 def test_remember_reads_the_message_then_calls_the_atomic_rpc(monkeypatch):
     seen = {}
     monkeypatch.setattr(group_memory, "_require_member", lambda *_: None)
-    monkeypatch.setattr(group_memory, "_message_content", lambda group, message: "Decision: ship Friday")
+    monkeypatch.setattr(group_memory, "_message_content", lambda group, message: ("Decision: ship Friday", "user"))
     monkeypatch.setattr(group_memory, "_embed", lambda text: [0.2] * 1536)
     monkeypatch.setattr(group_memory, "_rpc_result", lambda name, params: seen.update(name=name, params=params) or {"memory": {"id": "memory-1"}})
     result = group_memory.remember_message(USER, GROUP, "message-1")
@@ -90,6 +90,14 @@ def test_remember_reads_the_message_then_calls_the_atomic_rpc(monkeypatch):
     assert seen["name"] == "network_group_memory_remember"
     assert seen["params"]["p_content_hash"] == group_memory.content_hash("Decision: ship Friday")
     assert seen["params"]["p_message"] == "message-1"
+
+
+def test_agent_reply_cannot_be_remembered(monkeypatch):
+    monkeypatch.setattr(group_memory, "_require_member", lambda *_: None)
+    monkeypatch.setattr(group_memory, "_message_content", lambda group, message: ("AI reply", "agent"))
+    with pytest.raises(HTTPException) as error:
+        group_memory.remember_message(USER, GROUP, "message-1")
+    assert error.value.status_code == 422
 
 
 def test_empty_manual_fact_is_rejected_before_the_database(monkeypatch):

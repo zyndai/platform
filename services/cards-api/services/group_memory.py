@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -47,6 +48,7 @@ def _embed(content: str) -> list[float] | None:
 
 
 def _require_member(group_id: str, user_id: str) -> None:
+    group_info(group_id)   # archived groups are not readable, even by members
     rows = (
         _sb().table("group_members")
         .select("user_id")
@@ -208,7 +210,11 @@ def get_agent_preference(user_id: str) -> dict:
 def set_agent_preference(user_id: str, enabled: bool) -> dict:
     rows = (
         _sb().table("group_agent_preferences")
-        .upsert({"user_id": user_id, "enabled": bool(enabled)}, on_conflict="user_id")
+        .upsert({
+            "user_id": user_id,
+            "enabled": bool(enabled),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, on_conflict="user_id")
         .execute()
         .data
         or []
@@ -277,10 +283,10 @@ def search_memory(user_id: str, group_id: str, query: str, limit: int = 8) -> di
     return {"group_id": group_id, "query": q, "results": results or []}
 
 
-def _message_content(group_id: str, message_id: str) -> str:
+def _message_content(group_id: str, message_id: str) -> tuple[str, str]:
     rows = (
         _sb().table("group_messages")
-        .select("content")
+        .select("content,sender_kind")
         .eq("id", message_id)
         .eq("group_id", group_id)
         .limit(1)
@@ -290,12 +296,14 @@ def _message_content(group_id: str, message_id: str) -> str:
     )
     if not rows:
         raise HTTPException(404, "Message not found")
-    return (rows[0].get("content") or "").strip()
+    return (rows[0].get("content") or "").strip(), rows[0].get("sender_kind") or "user"
 
 
 def remember_message(user_id: str, group_id: str, message_id: str) -> dict:
     _require_member(group_id, user_id)
-    content = _message_content(group_id, message_id)
+    content, sender_kind = _message_content(group_id, message_id)
+    if sender_kind == "agent":
+        raise HTTPException(422, "Assistant replies cannot be saved as group facts")
     if not content:
         raise HTTPException(422, "That message has nothing to remember")
     return _rpc_result("network_group_memory_remember", {

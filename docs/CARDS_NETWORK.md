@@ -52,7 +52,10 @@ cursors, inbox summaries, and Realtime Broadcast triggers. **Apply `0023`
 before deploying the v2 API code**; the new endpoints call its RPCs.
 `0026_group_memory_agent_replies` adds group summaries/facts, message
 remembering, durable agent jobs, and the group-memory/agent RPCs. It is
-additive and is **not applied** until a human approves it.
+additive and was applied to aafo on **2026-10-21** together with the pending
+`0024` and `0025` Cards migrations. `0027_group_memory_followups` fixes the
+read cursor for assistant replies, stuck-job recovery, retry state, memory
+broadcast noise, and assistant-reply remembering.
 
 Test the full Cards migration history and concurrent invitation decisions on a
 disposable local Postgres with pgvector (never set this to Supabase):
@@ -229,12 +232,18 @@ that Cards migration was pending. Post-application verification:
 
 Applied the three pending Cards migrations through the session pooler:
 `0024_connection_invites`, `0025_networking_controls`, and
-`0026_group_memory_agent_replies`. Identity and persona had no pending
+`0026_group_memory_agent_replies`, then the follow-up
+`0027_group_memory_followups`. Identity and persona had no pending
 migrations and were untouched.
+
+`0027` fixes the tagged member's read cursor on assistant replies, reclaims
+stuck `running` jobs after five minutes, keeps retrying jobs `pending` instead
+of flashing `failed`, stops embedding backfills from re-broadcasting memory,
+and rejects remembering an assistant reply.
 
 Post-application verification:
 
-- Cards has **29** migration records; identity remains **1** and persona **9**.
+- Cards has **30** migration records; identity remains **1** and persona **9**.
 - `cards.group_memory`, `group_memory_state`, `group_message_memory`,
   `group_agent_jobs`, and `group_agent_preferences` exist.
 - `group_messages` has `sender_kind`, `agent_for_user_id`,

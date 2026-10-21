@@ -56,6 +56,7 @@ import {
   getCachedMembers,
   getCachedThread,
   hydrateNetworkCache,
+  invalidateCachedMembers,
   markCachedMessageRemembered,
   mergeMessages,
   removeCachedMessage,
@@ -113,7 +114,7 @@ function previewText(text?: string | null): string {
 }
 
 function renderMessageContent(content: string) {
-  return content.split(/(@[A-Za-z0-9_.-]{1,64})/g).map((part, index) => (
+  return content.split(/((?<![\w.])@[A-Za-z0-9_.-]{1,64})/g).map((part, index) => (
     part.startsWith("@")
       ? <span className="nv2-mention" key={`${part}-${index}`}>{part}</span>
       : <span key={`text-${index}`}>{part}</span>
@@ -277,6 +278,7 @@ export function NetworkV2({
     if (event.event === "member" && typeof event.payload.group_id === "string") {
       const groupId = event.payload.group_id;
       loadedMembers.current.delete(groupId);
+      invalidateCachedMembers(groupId);
       setMembersByGroup((current) => {
         if (!(groupId in current)) return current;
         const next = { ...current };
@@ -321,12 +323,13 @@ export function NetworkV2({
   }, [inbox, selectedId, selectedKind]);
 
   const loadMembers = useCallback(async (groupId: string) => {
-    if (memberRequests.current.has(groupId) || loadedMembers.current.has(groupId)) return;
+    if (memberRequests.current.has(groupId)) return;
     const cached = getCachedMembers(groupId);
     if (cached) {
       loadedMembers.current.add(groupId);
       setMembersByGroup((current) => ({ ...current, [groupId]: cached }));
-      return;
+      // Cached metadata paints instantly; revalidate so a member who joined
+      // since the cache was written still appears in the mention picker.
     }
     memberRequests.current.add(groupId);
     try {
@@ -335,7 +338,7 @@ export function NetworkV2({
       cacheMembers(groupId, result.members);
       setMembersByGroup((current) => ({ ...current, [groupId]: result.members }));
     } catch {
-      // Member metadata is non-fatal; the conversation still works.
+      // Member metadata is non-fatal; the cached list (if any) still works.
     } finally {
       memberRequests.current.delete(groupId);
     }
@@ -351,6 +354,9 @@ export function NetworkV2({
       const page = kind === "dm"
         ? await fetchDmMessages(token, id, { limit: 40, afterSeq: cached?.latestSeq || undefined })
         : await fetchGroupMessages(token, id, { limit: 40, afterSeq: cached?.latestSeq || undefined });
+      // If more than one page arrived, opening the thread must walk the gap
+      // backwards. Do not advance the cursor here and hide the middle.
+      if (cached?.latestSeq && page.has_more) return;
       cacheThreadPage(kind, id, page, cached?.latestSeq ? "newer" : "initial");
     } catch {
       // Prefetch is best effort; opening the conversation will retry.
@@ -1174,16 +1180,27 @@ function ConversationPane({
       cacheThreadMessage(kind, conversationId, result.message);
       onInboxActivity(isDm ? "dm" : "group", conversationId, result.message, 0);
       if (!isDm && result.agent_replies) {
-        const handles = new Set(Array.from(content.matchAll(/(?<![\w.])@([A-Za-z0-9_.-]{1,64})/g), (match) => match[1].toLowerCase()));
-        for (const member of members ?? []) {
-          const handle = member.card?.handle?.toLowerCase();
-          if (handle && handles.has(handle)) markTyping(member.user_id, "pending");
+        if (result.agent_reply_users) {
+          const queuedUsers = new Set(result.agent_reply_users);
+          for (const member of members ?? []) {
+            if (queuedUsers.has(member.user_id)) markTyping(member.user_id, "pending");
+          }
+        } else {
+          // Compatibility with an API deployed before agent_reply_users.
+          const handles = new Set(Array.from(content.matchAll(/(?<![\w.])@([A-Za-z0-9_.-]{1,64})/g), (match) => match[1].toLowerCase()));
+          for (const member of members ?? []) {
+            const handle = member.card?.handle?.toLowerCase();
+            if (handle && handles.has(handle)) markTyping(member.user_id, "pending");
+          }
         }
       }
       if (rememberAfterSend && !isDm) {
         try {
           const saved = await rememberGroupMessage(token, conversationId, result.message.id);
           markRemembered(result.message.id, saved.memory.id);
+          setMemory((current) => current
+            ? { ...current, facts: current.facts.some((fact) => fact.id === saved.memory.id) ? current.facts : [saved.memory, ...current.facts] }
+            : current);
         } catch (failure) {
           setError(failure instanceof Error ? failure.message : "Message sent, but could not save it to group memory");
         }
@@ -1226,7 +1243,12 @@ function ConversationPane({
     setMemoryError("");
     try {
       const result = await searchGroupMemory(token, group.id, query);
-      setMemoryResults(result.results);
+      if (result.error) {
+        setMemoryError(result.error);
+        setMemoryResults([]);
+      } else {
+        setMemoryResults(result.results);
+      }
     } catch (failure) {
       setMemoryError(failure instanceof Error ? failure.message : "Could not search group memory");
     } finally {

@@ -36,7 +36,7 @@ test('Cards network migrations preserve invitation and membership invariants', {
     });
     await apply();
     await apply();
-    assert.equal((await client.query('select count(*)::int as n from drizzle.__cards_migrations')).rows[0].n, 27);
+    assert.equal((await client.query('select count(*)::int as n from drizzle.__cards_migrations')).rows[0].n, 28);
     assert.equal((await client.query("select to_regclass('drizzle.__persona_migrations') as table")).rows[0].table, null);
     await client.query("set request.jwt.claim.role='service_role'");
 
@@ -281,6 +281,11 @@ test('Cards network migrations preserve invitation and membership invariants', {
       )).rows[0].result;
       assert.equal(retriedReply.duplicate, true);
       assert.equal(retriedReply.message.id, agentReply.message.id);
+      const guestRead = (await client.query(
+        'select last_read_seq from cards.group_read_state where group_id=$1 and user_id=$2',
+        [groupId, guest],
+      )).rows[0];
+      assert.ok(!guestRead || guestRead.last_read_seq < agentReply.message.seq);
 
       const queued = (await client.query(
         'select cards.network_enqueue_group_agent_replies($1,$2) as result',
@@ -290,7 +295,13 @@ test('Cards network migrations preserve invitation and membership invariants', {
       const job = (await client.query('select cards.network_claim_group_agent_job() as result')).rows[0].result;
       assert.equal(job.status, 'running');
       assert.equal(job.mentioned_user_id, guest);
-      assert.equal((await client.query('select cards.network_finish_group_agent_job($1,true,null) as result', [job.id])).rows[0].result.status, 'done');
+      const retry = (await client.query('select cards.network_finish_group_agent_job($1,false,$2) as result', [job.id, 'temporary'])).rows[0].result;
+      assert.equal(retry.status, 'pending');
+      await client.query('update cards.group_agent_jobs set available_at=now() where id=$1', [job.id]);
+      const retriedJob = (await client.query('select cards.network_claim_group_agent_job() as result')).rows[0].result;
+      assert.equal(retriedJob.id, job.id);
+      assert.equal(retriedJob.attempts, 2);
+      assert.equal((await client.query('select cards.network_finish_group_agent_job($1,true,null) as result', [retriedJob.id])).rows[0].result.status, 'done');
 
       const summary = (await client.query(
         `select cards.network_group_memory_set_summary($1,$2,$3,$4,${vector},'{}'::jsonb) as result`,

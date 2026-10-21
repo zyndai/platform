@@ -113,6 +113,13 @@ export function cacheMembers(groupId: string, members: CardGroupMember[]) {
   nextState({ members: { ...state.members, [groupId]: members } });
 }
 
+export function invalidateCachedMembers(groupId: string) {
+  if (!(groupId in state.members)) return;
+  const next = { ...state.members };
+  delete next[groupId];
+  nextState({ members: next });
+}
+
 export function cacheThreadPage(
   kind: NetworkThreadKind,
   id: string,
@@ -121,9 +128,9 @@ export function cacheThreadPage(
 ) {
   const key = threadKey(kind, id);
   const previous = state.threads[key];
-  const messages = mode === "older"
-    ? mergeMessages(page.messages, previous?.messages ?? [])
-    : mergeMessages(previous?.messages ?? [], page.messages);
+  // Server rows win over the cached copy; this matters for flags such as
+  // `remembered` that another member may have set since the cache was written.
+  const messages = mergeMessages(previous?.messages ?? [], page.messages);
   const thread: CachedThread = {
     messages,
     hasMore: mode === "newer" ? previous?.hasMore ?? false : page.has_more,
@@ -223,7 +230,7 @@ export function clearNetworkCache() {
  */
 export function hydrateNetworkCache(userId: string): Promise<void> {
   if (!userId) return Promise.resolve();
-  if (currentUserId === userId && state.userId === userId) return Promise.resolve();
+  if (currentUserId === userId && state.userId === userId) return hydratePromise ?? Promise.resolve();
   currentUserId = userId;
   state = { ...EMPTY_STATE, userId };
   hydratePromise = null;
@@ -270,15 +277,18 @@ async function persist(userId: string) {
   const threads = Object.entries(state.threads)
     .sort(([, a], [, b]) => b.updatedAt - a.updatedAt)
     .slice(0, THREAD_LIMIT)
-    .map(([key, thread]) => [
-      key,
-      {
-        ...thread,
-        messages: thread.messages
-          .filter((message) => !message.pending && !message.failed)
-          .slice(-MESSAGE_LIMIT),
-      },
-    ]);
+    .map(([key, thread]) => {
+      const clean = thread.messages.filter((message) => !message.pending && !message.failed);
+      return [
+        key,
+        {
+          ...thread,
+          messages: clean.slice(-MESSAGE_LIMIT),
+          // The persisted copy is truncated; keep "load older" available.
+          hasMore: clean.length > MESSAGE_LIMIT ? true : thread.hasMore,
+        },
+      ];
+    });
   const payload = {
     savedAt: Date.now(),
     inbox: state.inbox,

@@ -99,6 +99,7 @@ export interface CardMessageResult {
   message: CardMessage;
   duplicate?: boolean;
   agent_replies?: number;
+  agent_reply_users?: string[];
 }
 
 export interface CardGroupMemory {
@@ -121,6 +122,7 @@ export interface CardGroupMemorySearch {
   group_id: string;
   query: string;
   results: CardGroupMemory[];
+  error?: string;
 }
 
 export interface CardAgentPreference {

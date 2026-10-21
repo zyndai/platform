@@ -329,7 +329,18 @@ export function NetworkClient({ token, userId }: { token: string; userId: string
                   </div>
                   {people.length > 0 && <div style={{ marginBottom: 18 }}>{people.map((person) => <div key={person.user_id} style={rowStyle}><Avatar card={person} /><span style={{ flex: 1 }}>{person.name} <small style={{ color: "#a1a1aa" }}>@{person.handle}</small></span><button type="button" disabled={busy} onClick={() => void invite(person.handle || "")} style={smallButton}>Invite</button></div>)}</div>}
                 </>}
-                <div aria-label="Group messages" style={chatBox}>{groupMessages.map((message) => <div key={message.id} style={{ ...bubble, alignSelf: message.sender_user_id === userId ? "flex-end" : "flex-start", background: message.sender_user_id === userId ? "#3730a3" : "#1f2937" }}>{message.content}</div>)}</div>
+                <div aria-label="Group messages" style={chatBox}>{groupMessages.map((message) => {
+                  const agent = message.sender_kind === "agent";
+                  const mine = !agent && message.sender_user_id === userId;
+                  const sender = members.find((member) => member.user_id === message.sender_user_id);
+                  const label = agent
+                    ? `AI assistant${sender?.card?.handle ? ` for @${sender.card.handle}` : ""}`
+                    : null;
+                  return <div key={message.id} style={{ ...bubble, alignSelf: mine ? "flex-end" : "flex-start", background: mine ? "#3730a3" : "#1f2937" }}>
+                    {label && <div style={{ color: "#c7d2fe", fontSize: 11, fontWeight: 700, marginBottom: 4 }}>{label}</div>}
+                    {message.content}
+                  </div>;
+                })}</div>
                 <div style={{ display: "flex", gap: 10 }}>
                   <input aria-label="Group message" maxLength={4000} value={groupDraft} onChange={(event) => setGroupDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendGroupMessage(); } }} placeholder="Message the group" style={{ ...inputStyle, margin: 0 }} />
                   <button type="button" aria-label="Send group message" disabled={busy || !groupDraft.trim()} onClick={() => void sendGroupMessage()} style={primaryButton}><Send size={15} /></button>

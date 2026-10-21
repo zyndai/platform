@@ -10,6 +10,10 @@ test.describe("limited-edition card style", () => {
   test.beforeEach(async ({ request }) => {
     await request.post("http://127.0.0.1:3030/__s10/reset");
   });
+  // The fixture API is shared by every spec: leave the owner's card classic for the next one.
+  test.afterEach(async ({ request }) => {
+    await request.post("http://127.0.0.1:3030/__s10/reset");
+  });
 
   test("a classic card shows no edition banner", async ({ page }) => {
     // #given the fixture owner has never picked an edition

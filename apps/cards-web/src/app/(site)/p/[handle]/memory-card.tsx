@@ -37,6 +37,7 @@ export function MemoryCard({ firstName, groups, total, freshLabel = "LIVE" }: Me
   return (
     <div
       className="pf-social-card"
+      data-ed-card="memory"
       style={{ background: "#0f172a", borderRadius: 20, padding: 16, color: "#fff", overflow: "hidden", display: "flex", flexDirection: "column" }}
     >
       <div className="pf-mono flex justify-between items-start mb-3" style={{ fontSize: "0.65rem", fontWeight: 700 }}>

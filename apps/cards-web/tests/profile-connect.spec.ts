@@ -238,7 +238,7 @@ test.describe("on a limited-edition card", () => {
     const connect = side.getByRole("button", { name: "Connect", exact: true });
     await expect(connect).toBeVisible();
     await expect(page.locator(".pf-hero")).toHaveCount(0);
-    const chat = side.getByRole("button", { name: /Open chat/ });
+    const chat = side.getByRole("button", { name: /Ask Agent/ });
     expect((await connect.boundingBox())!.y).toBeLessThan((await chat.boundingBox())!.y);
     expect(await connect.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgb(108, 92, 231)");
   });

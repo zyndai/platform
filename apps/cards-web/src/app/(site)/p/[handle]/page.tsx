@@ -40,6 +40,7 @@ import { ConnectionButton } from "@/components/network/ConnectionButton";
 import { memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
 import { readEdition } from "@/lib/editions";
 import { EditionHero } from "./edition-banner";
+import { EditionSignals } from "./edition-signals";
 import { cleanTopic, publicTopics } from "@/lib/profile-quality";
 import { BeaconCard } from "@/components/BeaconCard";
 import { BookingAvailability } from "@/components/BookingAvailability";
@@ -871,6 +872,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
               verified={linkedinLinked}
               canChat={claimed}
               connect={showConnect ? <ConnectionButton key={card.handle ?? handle} handle={card.handle ?? handle} name={identity.name || undefined} variant="edition" /> : null}
+              about={isBlank(card.summary) ? "" : card.summary}
               links={{ x: safeUrl(identity.links?.x), github: safeUrl(identity.links?.github), linkedin: safeUrl(identity.links?.linkedin) }}
               updatedLabel={syncedAt}
             />
@@ -966,12 +968,18 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             </div>
             )}
 
-            {/* ── RIGHT STACK: Dossier + Signals (8 col) ── */}
+            {/* ── RIGHT STACK: Dossier + Signals (8 col); edition cards draw their own ── */}
+            {edition && (
+              <EditionSignals
+                signals={obsessions.map((obs) => ({ key: obs.key, label: obs.label, items: obs.items.filter((item) => !isBlank(item)) }))}
+              />
+            )}
+            {!edition && (
             <div className="pf-right-stack">
 
               {/* Dossier */}
               {!isBlank(card.summary) && (
-                <div className={`${card_} tc`} data-ed-section="about">
+                <div className={`${card_} tc`}>
                   <div>
                     <div className={label_}>
                       <span>┌ ABOUT</span>
@@ -995,7 +1003,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
               {obsessions.length > 0 && (
                 <div className="pf-obs-row" style={{ "--obs-cols": `repeat(${obsessions.length}, 1fr)` } as React.CSSProperties}>
                   {obsessions.map((obs) => (
-                    <div key={obs.key} data-ed-section={obs.key} className={`pf-obs-card ${obs.card} rounded-[20px] p-[18px] flex flex-col justify-between`}>
+                    <div key={obs.key} className={`pf-obs-card ${obs.card} rounded-[20px] p-[18px] flex flex-col justify-between`}>
                       <div className={`${label_} pf-mono`} style={{ color: "inherit", opacity: 0.8 }}>
                         <span>┌ {obs.label.toUpperCase()}</span>
                         <span className={`${obs.chip} text-[0.6rem] px-2 py-0.5 rounded-full font-mono font-bold`}>
@@ -1014,6 +1022,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                 </div>
               )}
             </div>
+            )}
 
             {/* ── AI FACT + WORK EXP: equal height, fact card fills ── */}
             {claimed && card.beacon && Date.parse(card.beacon.created_at) <= nowMs && Date.parse(card.beacon.expires_at) > nowMs && <BeaconCard key={card.beacon.expires_at} beacon={card.beacon} />}
@@ -1088,6 +1097,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             {showLinkedin && (
               <div
                 className="pf-social-card"
+                data-ed-card="linkedin"
                 style={{ background: "#0A66C2", borderRadius: 20, padding: 16, color: "#fff", overflow: "hidden" }}
               >
                 <div className="pf-mono pf-social-head flex justify-between items-center" style={{ fontSize: "0.65rem", fontWeight: 700, minHeight: 18 }}>
@@ -1145,6 +1155,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             {showX && (
               <div
                 className="pf-social-card"
+                data-ed-card="x"
                 style={{ background: "#090a0f", borderRadius: 20, padding: 16, color: "#fff", overflow: "hidden" }}
               >
                 <div className="pf-mono pf-social-head flex justify-between items-center" style={{ fontSize: "0.65rem", fontWeight: 700, minHeight: 18 }}>
@@ -1205,6 +1216,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             {showBooking && (
               <div
                 className="pf-book-card pf-social-card"
+                data-ed-card="booking"
                 style={{ background: "linear-gradient(160deg, #2563eb 0%, #1d4ed8 48%, #1e3a8a 100%)", borderRadius: 20, padding: 16, color: "#fff" }}
               >
                 <div className="pf-mono flex justify-between items-center" style={{ fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.08em", position: "relative", minHeight: 18 }}>

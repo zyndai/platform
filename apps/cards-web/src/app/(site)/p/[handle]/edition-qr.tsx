@@ -153,9 +153,9 @@ export function EditionQrButton({ edition, wide = false, url, permalink, handle,
         <QrCode size={17} aria-hidden /> Show my QR
       </button>
       {open && createPortal(
-        <div ref={overlayRef} className={`ed ed-qr-overlay ${EDITION_FONT_VARS}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <div ref={overlayRef} className={`ed ed-qr-overlay ${EDITION_FONT_VARS}`} data-banner={edition.banner} role="dialog" aria-modal="true" aria-labelledby={titleId}>
           <div className="ed-qr-art" aria-hidden>
-            <EditionBannerImage className="ed-qr-bg" sizes="(max-width: 820px) 900px, 100vw" />
+            <EditionBannerImage banner={edition.banner} className="ed-qr-bg" sizes="(max-width: 820px) 900px, 100vw" />
           </div>
           <button ref={closeRef} type="button" className="ed-qr-close" onClick={() => setOpen(false)} aria-label="Close QR code">
             <X size={20} />

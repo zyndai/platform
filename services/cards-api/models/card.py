@@ -64,6 +64,8 @@ def _coerce_industries(v):
 
 EDITION_IDS = ("mumbai-26",)
 EDITION_MOODS = ("night", "dusk", "monsoon")
+# The banner artwork the owner picked; cards saved before the choice existed get the first.
+EDITION_BANNERS = ("waterfront", "gateway")
 EDITION_HERE_FOR = ("hacking", "speaking", "building", "hiring", "raising", "investing", "exploring")
 
 
@@ -72,6 +74,7 @@ class Edition(BaseModel):
 
     id: Literal[EDITION_IDS]
     mood: Literal[EDITION_MOODS] = "night"
+    banner: Literal[EDITION_BANNERS] = "waterfront"
     here_for: Literal[EDITION_HERE_FOR] | None = None
 
 

@@ -30,7 +30,7 @@ def is_plugin(token) -> bool:
 
 
 def register(mcp, get_pool, get_arq, uid_dep) -> None:
-    @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+    @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False})
     async def recall_memories(query: str, limit: int = 5, uid: str = Depends(uid_dep)) -> dict:
         """Recall relevant private ZYND facts only when the owner asks about them."""
         query = query.strip()
@@ -53,7 +53,7 @@ def register(mcp, get_pool, get_arq, uid_dep) -> None:
             source_connection_id=(token.claims or {}).get("jti"),
             source_client_id=(token.claims or {}).get("oauth_client_id"))
 
-    @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+    @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False})
     async def get_proposal_status(proposal_id: str, uid: str = Depends(uid_dep)) -> dict:
         """Read the status of your pending private or public fact proposal."""
         if not settings.feature_plugin_consent:
@@ -72,14 +72,14 @@ def register(mcp, get_pool, get_arq, uid_dep) -> None:
             source_connection_id=(token.claims or {}).get("jti"),
             source_client_id=(token.claims or {}).get("oauth_client_id"))
 
-    @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+    @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False})
     async def list_pending_facts(uid: str = Depends(uid_dep)) -> dict:
         """Private card facts and open proposals. Do not publish them."""
         if not settings.feature_plugin_consent:
             raise PermissionError("ZYND plugin consent flow is unavailable")
         return await plugin_consent.list_pending(await get_pool(), await get_arq(), uid)
 
-    @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+    @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False})
     async def get_public_card(uid: str = Depends(uid_dep)) -> dict:
         """Return only facts already approved for the public findability card."""
         if not settings.feature_plugin_consent:

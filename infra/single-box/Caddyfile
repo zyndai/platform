@@ -42,6 +42,11 @@ cards.api.zynd.ai {
 # memory API, plus the legacy paths clients already call on api.zynd.ai
 # (same routing as infra/api-box/Caddyfile).
 api.zynd.ai {
+	# OpenAI plugin domain verification (token from the plugin's MCP settings page).
+	handle /.well-known/openai-apps-challenge {
+		header Content-Type text/plain
+		respond "WGpC9Ddr-em0sfap28kcsbsouWUhyIQhJbMzcvgwnE8" 200
+	}
 	# Remote MCP endpoint (streamable-HTTP) for Claude/Cursor/any MCP client.
 	handle /chatgpt/mcp* {
 		reverse_proxy 127.0.0.1:8091

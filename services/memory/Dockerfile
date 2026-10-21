@@ -17,7 +17,9 @@ RUN uv sync --frozen --no-dev
 
 COPY memory/ .
 COPY chatgpt-plugin /chatgpt-plugin
-ENV PYTHONPATH="/chatgpt-plugin"
+# /app too: the plugin service runs `uvicorn --app-dir /chatgpt-plugin`, which puts that
+# directory on sys.path instead of the working directory, so `import app` needs /app here.
+ENV PYTHONPATH="/chatgpt-plugin:/app"
 
 # Default command (API). Render's worker service overrides this via render.yaml.
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -51,6 +51,16 @@ import {
   type PersonSuggestion,
 } from "@/lib/cards-network";
 import {
+  activityLabel,
+  applyAgentStream,
+  clearUserStreams,
+  dropFinishedStreams,
+  parseAgentStream,
+  pruneStaleStreams,
+  visibleStreams,
+  type AgentStreams,
+} from "@/lib/agent-stream";
+import {
   cacheInbox,
   cacheMembers,
   cacheThreadMessage,
@@ -63,8 +73,10 @@ import {
   invalidateCachedMembers,
   markCachedMessageRemembered,
   mergeMessages,
+  rememberAgentSources,
   removeCachedMessage,
   threadKey,
+  useAgentSources,
   useNetworkCache,
   type NetworkThreadKind,
 } from "@/lib/network-cache";
@@ -194,6 +206,17 @@ function Avatar({
         <img src={src} alt="" onError={() => setFailedSrc(src)} />
       ) : label}
     </span>
+  );
+}
+
+/** The line above an assistant reply: whose assistant it is. */
+function AgentSender({ own, card }: { own: boolean; card?: CardSummary | null }) {
+  return (
+    <div className="nv2-msg-sender is-agent">
+      <Bot size={11} />
+      {own ? "Your AI assistant" : `AI assistant for ${card?.name || "Member"}`}
+      {!own && card?.handle && <span className="nv2-agent-handle">@{card.handle}</span>}
+    </div>
   );
 }
 
@@ -881,6 +904,10 @@ function ConversationPane({
   const [remembering, setRemembering] = useState<string | null>(null);
   const [typingAgents, setTypingAgents] = useState<Record<string, "pending" | "running">>({});
   const [agentErrors, setAgentErrors] = useState<Record<string, string>>({});
+  // Assistant replies still being written, by job id; the finished reply
+  // arrives separately as a message whose client_id is that job id.
+  const [streams, setStreams] = useState<AgentStreams>({});
+  const agentSources = useAgentSources();
   const [agentPreference, setAgentPreference] = useState<CardAgentPreference | null>(null);
   const [agentPreferenceBusy, setAgentPreferenceBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -1132,6 +1159,7 @@ function ConversationPane({
       setMessages((current) => mergeMessages(current, [message]));
       setLatestSeq((current) => Math.max(current, message.seq ?? 0));
       cacheThreadMessage(kind, conversationId, message);
+      if (isAgentMessage(message)) setStreams((current) => dropFinishedStreams(current, [message]));
       if (isAgentMessage(message) && message.agent_for_user_id) {
         markTyping(message.agent_for_user_id, "done");
         setAgentErrors((current) => {
@@ -1173,14 +1201,23 @@ function ConversationPane({
       const status = String(event.payload.status || "");
       if (target && ["pending", "running", "done", "failed"].includes(status)) {
         markTyping(target, status as "pending" | "running" | "done" | "failed");
+        // A retry starts the reply over and a failure ends it: either way what
+        // was streamed so far is void.
+        if (status === "pending" || status === "failed") setStreams((current) => clearUserStreams(current, target));
       }
+    } else if (event.event === "agent_stream") {
+      const snapshot = parseAgentStream(event.payload);
+      if (!snapshot) return;
+      if (snapshot.sources) rememberAgentSources(snapshot.jobId, snapshot.sources);
+      setStreams((current) => applyAgentStream(current, snapshot, Date.now()));
+      if (snapshot.text.trim() && !atBottomRef.current) setHasNew(true);
     }
   }, [conversationId, isDm, kind, markRemembered, markTyping, memoryOpen, onInboxActivity, scheduleRead, scrollToBottom, userId]);
 
   useNetworkRealtime({
     token,
     topic: isDm ? (threadId ? `cards:dm:${threadId}` : null) : `cards:group:${conversationId}`,
-    events: ["message", "read", "memory", "agent_typing"],
+    events: ["message", "read", "memory", "agent_typing", "agent_stream"],
     onEvent: handleRealtime,
     onReconnect: () => void load(undefined, latestSeq),
   });
@@ -1410,6 +1447,32 @@ function ConversationPane({
     return result;
   }, [messages]);
 
+  const liveStreams = useMemo(() => visibleStreams(streams, messages), [streams, messages]);
+  const streamedChars = liveStreams.reduce((total, stream) => total + stream.text.length, 0);
+  // Keep the newest words in view while you are at the bottom; otherwise the
+  // "New messages" pill (set when the snapshot arrives) says there is more.
+  useEffect(() => {
+    if (streamedChars === 0 || !atBottomRef.current) return;
+    scrollToBottom("auto");
+  }, [streamedChars, scrollToBottom]);
+  const hasStreams = Object.keys(streams).length > 0;
+  useEffect(() => {
+    if (!hasStreams) return;
+    const timer = window.setInterval(() => setStreams((current) => pruneStaleStreams(current, Date.now())), 15_000);
+    return () => window.clearInterval(timer);
+  }, [hasStreams]);
+  // What a not-yet-writing assistant is doing ("Searching group memory…").
+  const activityByUser = useMemo(() => {
+    const byUser: Record<string, string> = {};
+    for (const stream of Object.values(streams).sort((a, b) => a.updatedAt - b.updatedAt)) {
+      const label = activityLabel(stream);
+      if (label) byUser[stream.userId] = label;
+      else delete byUser[stream.userId];
+    }
+    return byUser;
+  }, [streams]);
+  const streamingUsers = useMemo(() => new Set(liveStreams.map((stream) => stream.userId)), [liveStreams]);
+
   const title = isDm ? connection?.partner.name || "Direct message" : group?.name || "Group";
   const subtitle = isDm
     ? `@${connection?.partner.handle || "card"}`
@@ -1557,9 +1620,7 @@ function ConversationPane({
                   const ownAgent = agent && agentOwnerId === userId;
                   const mine = agent ? ownAgent : message.sender_user_id === userId;
                   const senderCard = cardForUser(agent ? agentOwnerId : message.sender_user_id);
-                  const senderName = agent
-                    ? `AI assistant for ${senderCard?.name || "Member"}`
-                    : senderCard?.name || "Member";
+                  const senderName = senderCard?.name || "Member";
                   return (
                     <div
                       key={message.client_id ?? message.id}
@@ -1573,19 +1634,16 @@ function ConversationPane({
                         )
                       )}
                       <div className="nv2-msg-stack">
-                        {(agent || (!mine && !isDm)) && (
-                          <div className={`nv2-msg-sender${agent ? " is-agent" : ""}`}>
-                            {agent && <Bot size={11} />}
-                            {ownAgent ? "Your AI assistant" : senderName}
-                            {agent && !ownAgent && senderCard?.handle && <span className="nv2-agent-handle">@{senderCard.handle}</span>}
-                          </div>
-                        )}
+                        {agent
+                          ? <AgentSender own={ownAgent} card={senderCard} />
+                          : !mine && !isDm && <div className="nv2-msg-sender">{senderName}</div>}
                         {agent ? (
                           <AgentBubble
                             content={message.content}
                             own={ownAgent}
                             pending={message.pending}
                             remembered={message.remembered}
+                            sources={message.client_id ? agentSources[message.client_id] : undefined}
                           />
                         ) : (
                           <div className={`nv2-bubble${message.pending ? " is-pending" : ""}${message.remembered ? " is-remembered" : ""}`}>
@@ -1621,7 +1679,25 @@ function ConversationPane({
                 })}
               </div>
             ))}
-            {Object.entries(typingAgents).map(([agentUserId]) => {
+            {liveStreams.map((stream) => {
+              const own = stream.userId === userId;
+              const card = cardForUser(stream.userId);
+              return (
+                <div
+                  className={`nv2-msg-row is-agent${own ? " is-mine" : ""}`}
+                  key={`stream-${stream.jobId}`}
+                  aria-busy={!stream.done}
+                >
+                  {!own && <AgentAvatar card={card} name={card?.name || "Member"} />}
+                  <div className="nv2-msg-stack">
+                    <AgentSender own={own} card={card} />
+                    <AgentBubble content={stream.text} own={own} streaming sources={agentSources[stream.jobId]} />
+                    <div className="nv2-msg-meta"><span>{stream.done ? "Saving…" : "Writing…"}</span></div>
+                  </div>
+                </div>
+              );
+            })}
+            {Object.entries(typingAgents).filter(([agentUserId]) => !streamingUsers.has(agentUserId)).map(([agentUserId]) => {
               const own = agentUserId === userId;
               const card = cardForUser(agentUserId);
               const name = card?.name || "a group member";
@@ -1633,6 +1709,7 @@ function ConversationPane({
                     : <AgentAvatar card={card} name={name} size={22} />}
                   <span>
                     {own ? "Your AI assistant" : `AI assistant for ${name}${handle ? ` (@${handle})` : ""}`}
+                    {activityByUser[agentUserId] && <span className="nv2-typing-activity"> · {activityByUser[agentUserId]}</span>}
                     <span className="nv2-typing-dots" aria-label="is thinking"><i /><i /><i /></span>
                   </span>
                 </div>

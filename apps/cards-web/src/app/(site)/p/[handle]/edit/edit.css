@@ -269,7 +269,7 @@
 
 /* ── Skills ────────────────────────────────────────────────────────────── */
 .pe-skills { border: 1px solid var(--pe-border); border-radius: 14px; background: #fff; margin-bottom: 12px; }
-.pe-skill { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; }
+.pe-skill { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; }
 .pe-skill + .pe-skill { border-top: 1px solid var(--pe-border); }
 .pe-skill input {
   flex: 1; min-width: 0; height: 34px; border: 0; background: transparent; outline: none;

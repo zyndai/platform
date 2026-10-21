@@ -175,9 +175,10 @@ export function ProfileChatWidget({
         }
 
         if (textAcc) {
+          const content = textAcc;
           setMessages((prev) => {
             const copy = [...prev];
-            copy[assistantIndex] = { role: "assistant", content: textAcc };
+            copy[assistantIndex] = { role: "assistant", content };
             return copy;
           });
           scrollToBottom();
@@ -228,7 +229,7 @@ export function ProfileChatWidget({
       >
         <MessageCircle size={20} />
       </button>
-      <style>{`@media (max-width: 820px) { .pf-chat-fab { bottom: 16px !important; right: 16px !important; } }`}</style>
+      <style>{`@media (max-width: 820px) { .pf-chat-fab { bottom: calc(76px + env(safe-area-inset-bottom, 0px)) !important; right: 16px !important; } }`}</style>
       </>
     );
   }

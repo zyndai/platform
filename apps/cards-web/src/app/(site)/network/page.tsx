@@ -18,6 +18,13 @@ export default async function NetworkPage({ searchParams }: { searchParams: Prom
   const params = await searchParams;
   const v2 = process.env.FEATURE_NETWORK_V2 === "true" || params?.v2 === "1";
   return v2
-    ? <NetworkV2 token={session.access_token} userId={session.user.id} />
+    ? (
+      <NetworkV2
+        token={session.access_token}
+        userId={session.user.id}
+        groupMemoryEnabled={process.env.FEATURE_GROUP_MEMORY === "true"}
+        groupAgentRepliesEnabled={process.env.FEATURE_GROUP_AGENT_REPLIES === "true"}
+      />
+    )
     : <NetworkClient token={session.access_token} userId={session.user.id} />;
 }

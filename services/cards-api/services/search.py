@@ -6,6 +6,7 @@ import config
 from models.card import AgentProfileCard
 from services import cards as cards_service
 from services.embed import card_search_text, embed_text
+from services.search_constraints import Constraints, explicit_query_constraints, skill_matches
 from services.two_way import LESS_LIKE_PENALTY, TWO_WAY_BOOST, kinds_of, too_much_like, two_way_match
 from services.search_text import (
     contains_all,
@@ -61,10 +62,8 @@ def _age_days(fact: dict) -> int | None:
 
 
 def _skill_matches(wanted: str, skill_name: str) -> bool:
-    """Whole-word skill match, either direction: "AI dev tools" reaches a skill called "AI",
-    but "go" no longer reaches "django"."""
-    want, have = set(query_terms(wanted)), set(query_terms(skill_name))
-    return bool(want and have) and (have <= want or want <= have)
+    """Match the requested topic with whole words; Go must never match Django."""
+    return skill_matches(wanted, skill_name)
 
 
 def _candidates(q: str, query_vec: list[float], include_unclaimed: bool) -> list[dict]:
@@ -92,6 +91,18 @@ def _candidates(q: str, query_vec: list[float], include_unclaimed: bool) -> list
             ).execute()
             for r in resp.data or []:
                 by_id.setdefault(r["id"], {"card": r["card"], "handle": r["handle"]})
+            # Broadcasts are deliberately absent from durable embeddings: their
+            # exact expiry must not leave a stale semantic match behind.
+            from services.beacons import active_beacon, candidate_rows as beacon_rows
+            for r in beacon_rows():
+                if not include_unclaimed and not (r.get("owner_email") or "").strip():
+                    continue
+                try:
+                    beacon = active_beacon(AgentProfileCard.model_validate(r["card"]))
+                except (ValueError, TypeError, KeyError):
+                    continue
+                if beacon and any(t in token_set(beacon.text) for t in query_terms(q)):
+                    by_id.setdefault(r["id"], r)
             return list(by_id.values())
         except Exception as exc:  # noqa: BLE001 — functions not deployed yet: degrade, don't fail search
             logger.warning("search RPCs unavailable (%s); falling back to a full scan", exc)
@@ -122,10 +133,23 @@ def search_agents(
     # Stopwords out, whole words only: "in", "who" and "ai" used to substring-match nearly
     # every card ("ai" is inside "maintain").
     q_terms = query_terms(q)
-    if q and not q_terms and not any((role, location, skills, industry, availability)):
+    if q and not q_terms and not any((role, location, skills, industry, availability, experience_min is not None)):
         return []   # "who is in the": nothing to look for, and embedding it would match noise
+    inferred_location, inferred_skills = explicit_query_constraints(q)
+    location = location or inferred_location
+    skills = skills or ",".join(inferred_skills)
+    constraints = Constraints(role, location, tuple(s.strip() for s in skills.split(",") if s.strip()), industry, availability, experience_min)
     query_vec = embed_text(q) if q else []
-    rows = candidate_rows if candidate_rows is not None else _candidates(q, query_vec, include_unclaimed)
+    if candidate_rows is not None:
+        rows = candidate_rows
+    elif constraints.active:
+        # Page the published corpus: pre-limited vector candidates can omit the
+        # only valid city/skill match. Filter before ranking or applying a limit.
+        rows = cards_service.list_published_rows()
+        if not include_unclaimed:
+            rows = [r for r in rows if bool((r.get("owner_email") or "").strip())]
+    else:
+        rows = _candidates(q, query_vec, include_unclaimed)
     skill_list = [s.strip() for s in skills.split(",") if s.strip()] if skills else []
     industry_norm = _norm(industry)
     role_norm = _norm(role)
@@ -142,11 +166,20 @@ def search_agents(
             continue
         if row.get("handle"):
             card.handle = row["handle"]
+        if not constraints.matches(card):
+            continue
         search_text = card_search_text(card).lower()
+        from services.beacons import active_beacon
+        beacon = active_beacon(card)
+        if beacon:
+            search_text += " " + beacon.text.lower()
         text_tokens = token_set(search_text)
 
         score = 0.0
         reasons: list = []
+        if beacon and q_terms and any(t in token_set(beacon.text) for t in q_terms):
+            score += 0.2
+            reasons.append("Current beacon: " + beacon.text)
 
         sim = row.get("similarity")
         if sim is None and query_vec:

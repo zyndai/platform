@@ -1,6 +1,7 @@
 "use client";
 
 import { createClient } from "@/lib/supabase/client";
+import { clearNetworkCache } from "@/lib/network-cache";
 import { setAuthNext } from "@/lib/auth/next-cookie";
 import { clientOrigin, oauthCallbackUrl } from "@/lib/auth/origin";
 
@@ -23,5 +24,6 @@ export async function signOutAndLeave(path = "/"): Promise<void> {
   } catch (err) {
     console.error("Sign out failed:", err);
   }
+  clearNetworkCache();
   window.location.assign(new URL(path, clientOrigin()).toString());
 }

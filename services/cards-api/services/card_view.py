@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import config
 from models.card import AgentProfileCard, CardFact, CardView
+from services.profile_quality import PLACEHOLDERS, clean_topic
 
 HALF_LIFE_DAYS = {
     "is_seeking": 7,
@@ -73,6 +74,10 @@ def live_facts(facts: list | None, now: datetime | None = None) -> list[dict]:
             continue
         if not fact_object(fact):
             continue
+        if fact_object(fact).casefold() in PLACEHOLDERS:
+            continue
+        if fact_predicate(fact) in {"has_skill", "has_expertise_in", "is_learning"} and not clean_topic(fact_object(fact)):
+            continue
         if is_expired(fact, now):
             continue
         out.append(fact)
@@ -115,6 +120,11 @@ def build_card_view(card: AgentProfileCard, *, claimed: bool) -> CardView:
 
     card = derive_public_signals(card)
     facts = [shape_fact(f) for f in live_facts(card.zynd_memory)]
+    from services.beacons import active_beacon
+    beacon = active_beacon(card) if claimed else None
+    if beacon:
+        facts.append(CardFact(text=beacon.text, type="broadcast_beacon", source="declared",
+                              approved_at=beacon.created_at.isoformat(), expires_at=beacon.expires_at.isoformat()))
     identity = card.identity.model_dump(mode="json")
     view = CardView(
         handle=card.handle,
@@ -128,6 +138,7 @@ def build_card_view(card: AgentProfileCard, *, claimed: bool) -> CardView:
         love_talking_about=list(card.love_talking_about),
         availability=card.availability,
         facts=facts,
+        beacon=beacon,
         cite_as=cite_as(card.handle),
         fresh_as_of=card.updated_at or None,
         calendly_url=card.calendly_url if claimed else None,

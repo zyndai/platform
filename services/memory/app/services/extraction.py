@@ -37,6 +37,7 @@ Allowed predicates (pick the most specific that fits):
   Beliefs: believes, values, recently_changed_stance_on, has_aesthetic
   Navigation: is_navigating, is_constrained_by, is_frustrated_by, has_been_wronged
   Life: has_age, is_transitioning, is_experiencing, is_processing, is_rediscovering, has_unsolved_problem
+  History: is_founder_of, has_experience_in
   People: has_collaborator, is_responsible_for, is_advocating_for, is_in_conflict_with, is_inspired_by
   Place: is_located_in, is_affiliated_with, has_language_context
   Motivation: is_motivated_by
@@ -51,6 +52,12 @@ Choosing between building, working on, tools and expertise:
     never has_expertise_in unless the person says they are an expert in it.
   has_expertise_in = a field the person has depth in, stated or clearly shown.
     A single mention is not expertise.
+  is_learning = an explicitly current learning activity and a short topic name.
+    Discussing a topic does not mean learning it. Never put a biography, historical
+    accomplishment, founding role or past employment under is_learning.
+  is_founder_of = an organization the person founded (object is the organization name).
+  has_experience_in = an evidenced historical role or accomplishment. History does not decay.
+  Never emit placeholder objects such as general, misc, other or unknown.
 
 object_type is one of the taxonomy entity types, e.g. skill_technical,
   concept_topic, project_venture, belief_opinion, intent_project,

@@ -1,10 +1,11 @@
 import type { Page } from "@playwright/test";
-import type { CardConnection, CardGroup, CardGroupInvitation, CardGroupMember, CardMessage, CardSummary } from "../../src/lib/cards-network";
+import type { CardConnection, CardGroup, CardGroupInvitation, CardGroupMember, CardGroupMemory, CardMessage, CardSummary } from "../../src/lib/cards-network";
 
 export const NETWORK_USER = "11111111-1111-4111-8111-111111111111";
 const BOB = "22222222-2222-4222-8222-222222222222";
 const DM_THREAD = "66666666-6666-4666-8666-666666666666";
 const GROUP_ID = "55555555-5555-4555-8555-555555555555";
+let nextGroupId = 0;
 
 export async function mockNetwork(page: Page) {
   const state = {
@@ -26,6 +27,12 @@ export async function mockNetwork(page: Page) {
     failNextMessage: false,
     dmSeq: 0,
     groupSeq: 0,
+    groupSummary: null as CardGroupMemory | null,
+    memoryFacts: [] as CardGroupMemory[],
+    rememberedMessageIds: [] as string[],
+    agentPreference: true,
+    memorySeq: 0,
+    messageCalls: [] as string[],
   };
 
   const lastDm = (connection: CardConnection) => {
@@ -50,7 +57,7 @@ export async function mockNetwork(page: Page) {
     return {
       ...group,
       last_message_at: last?.created_at ?? null,
-      last_message_preview: last?.content ?? null,
+      last_message_preview: last ? (last.sender_kind === "agent" ? `AI: ${last.content}` : last.content) : null,
       last_message_sender_user_id: last?.sender_user_id ?? null,
     };
   };
@@ -99,6 +106,7 @@ export async function mockNetwork(page: Page) {
     if (path.match(/^\/connections\/[^/]+\/messages$/)) {
       const connection = state.connections.find(row => row.id === path.split("/")[2])!;
       connection.thread_id ??= DM_THREAD;
+      if (!post) state.messageCalls.push(request.url());
       if (post) {
         if (state.failNextMessage) { state.failNextMessage = false; return json({ detail: "Message failed" }, 503); }
         const existing = body.client_id
@@ -134,12 +142,13 @@ export async function mockNetwork(page: Page) {
     if (path === "/groups") {
       if (!post) return json({ groups: state.groups.map(decorateGroup) });
       const group: CardGroup = {
-        id: GROUP_ID, name: body.name, description: body.description, owner_user_id: NETWORK_USER,
+        id: nextGroupId++ === 0 ? GROUP_ID : crypto.randomUUID(),
+        name: body.name, description: body.description, owner_user_id: NETWORK_USER,
         my_role: "owner", visibility: "private", created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         unread_count: 0,
       };
       state.groups.push(group);
-      state.members.push({ id: "owner-member", user_id: NETWORK_USER, role: "owner", card: { card_id: "owner-card", name: "Alice" } });
+      state.members.push({ id: `owner-member-${group.id}`, user_id: NETWORK_USER, role: "owner", card: { card_id: "owner-card", name: "Alice" } });
       return json({ group });
     }
 
@@ -179,12 +188,18 @@ export async function mockNetwork(page: Page) {
           group_id: groupId,
           seq: ++state.groupSeq,
           sender_user_id: NETWORK_USER,
+          sender_kind: "user",
           content: body.content,
           created_at: new Date().toISOString(),
         };
         state.groupMessages.push(message);
-        return json({ message, duplicate: false });
+        return json({
+          message,
+          duplicate: false,
+          agent_replies: /@bob\b/i.test(body.content) ? 1 : 0,
+        });
       }
+      state.messageCalls.push(request.url());
       const before = urlNumber(request.url(), "before_seq");
       const after = urlNumber(request.url(), "after_seq");
       const limit = urlNumber(request.url(), "limit") ?? 40;
@@ -194,7 +209,59 @@ export async function mockNetwork(page: Page) {
       rows = rows.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
       const hasMore = rows.length > limit;
       rows = hasMore ? rows.slice(-limit) : rows;
-      return json({ group_id: groupId, messages: rows, has_more: hasMore, latest_seq: state.groupSeq });
+      const decorated = rows.map((message) => ({
+        ...message,
+        remembered: state.rememberedMessageIds.includes(message.id),
+      }));
+      return json({ group_id: groupId, messages: decorated, has_more: hasMore, latest_seq: state.groupSeq });
+    }
+
+    if (path.match(/^\/groups\/[^/]+\/memory$/)) {
+      const groupId = path.split("/")[2];
+      if (post) {
+        if (body.message_id) {
+          const message = state.groupMessages.find((row) => row.id === body.message_id);
+          if (!message) return json({ detail: "Message not found" }, 404);
+          const existing = state.memoryFacts.find((fact) => fact.source_message_id === message.id);
+          const memory: CardGroupMemory = existing || {
+            id: `memory-${++state.memorySeq}`,
+            kind: "fact",
+            content: message.content,
+            source_message_id: message.id,
+            metadata: { source: "remember" },
+            created_at: new Date().toISOString(),
+          };
+          if (!existing) state.memoryFacts.unshift(memory);
+          if (!state.rememberedMessageIds.includes(message.id)) state.rememberedMessageIds.push(message.id);
+          return json({ memory, message_id: message.id });
+        }
+        if (body.content) {
+          const memory: CardGroupMemory = {
+            id: `memory-${++state.memorySeq}`,
+            kind: "fact",
+            content: body.content,
+            metadata: { source: "manual" },
+            created_at: new Date().toISOString(),
+          };
+          state.memoryFacts.unshift(memory);
+          return json({ memory });
+        }
+        return json({ detail: "Send a message_id or content" }, 422);
+      }
+      const query = new URL(request.url()).searchParams.get("q") || "";
+      if (query) {
+        const results = state.memoryFacts.filter((fact) => fact.content.toLowerCase().includes(query.toLowerCase()));
+        return json({ group_id: groupId, query, results });
+      }
+      return json({ summary: state.groupSummary, facts: state.memoryFacts });
+    }
+
+    if (path === "/agent-preferences") {
+      if (request.method() === "PUT") {
+        state.agentPreference = Boolean(body.enabled);
+        return json({ enabled: state.agentPreference, updated_at: new Date().toISOString() });
+      }
+      return json({ enabled: state.agentPreference, updated_at: null });
     }
 
     if (path === "/read") {

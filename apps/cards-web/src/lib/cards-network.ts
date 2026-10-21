@@ -31,6 +31,12 @@ export interface CardMessage {
   seq?: number;
   client_id?: string | null;
   sender_user_id: string;
+  sender_kind?: "user" | "agent";
+  agent_for_user_id?: string | null;
+  reply_to_message_id?: string | null;
+  mentions?: string[];
+  remembered?: boolean;
+  memory_id?: string | null;
   content: string;
   created_at: string;
   pending?: boolean;
@@ -92,6 +98,36 @@ export interface CardMessagePage {
 export interface CardMessageResult {
   message: CardMessage;
   duplicate?: boolean;
+  agent_replies?: number;
+  agent_reply_users?: string[];
+}
+
+export interface CardGroupMemory {
+  id: string;
+  kind: "summary" | "fact";
+  content: string;
+  metadata?: Record<string, unknown>;
+  source_message_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  similarity?: number;
+}
+
+export interface CardGroupMemoryList {
+  summary: CardGroupMemory | null;
+  facts: CardGroupMemory[];
+}
+
+export interface CardGroupMemorySearch {
+  group_id: string;
+  query: string;
+  results: CardGroupMemory[];
+  error?: string;
+}
+
+export interface CardAgentPreference {
+  enabled: boolean;
+  updated_at?: string | null;
 }
 
 export type NetworkConversation =
@@ -189,6 +225,52 @@ export function markNetworkRead(
     id,
     seq,
   });
+}
+
+export function fetchGroupMemory(
+  token: string,
+  groupId: string,
+  signal?: AbortSignal,
+): Promise<CardGroupMemoryList> {
+  return cardsNetworkRequest<CardGroupMemoryList>(`/groups/${groupId}/memory`, token, "GET", undefined, signal);
+}
+
+export function searchGroupMemory(
+  token: string,
+  groupId: string,
+  query: string,
+  signal?: AbortSignal,
+): Promise<CardGroupMemorySearch> {
+  const params = new URLSearchParams({ q: query });
+  return cardsNetworkRequest<CardGroupMemorySearch>(`/groups/${groupId}/memory?${params.toString()}`, token, "GET", undefined, signal);
+}
+
+export function rememberGroupMessage(
+  token: string,
+  groupId: string,
+  messageId: string,
+): Promise<{ memory: CardGroupMemory; message_id: string }> {
+  return cardsNetworkRequest<{ memory: CardGroupMemory; message_id: string }>(
+    `/groups/${groupId}/memory`, token, "POST", { message_id: messageId },
+  );
+}
+
+export function addGroupFact(
+  token: string,
+  groupId: string,
+  content: string,
+): Promise<{ memory: CardGroupMemory }> {
+  return cardsNetworkRequest<{ memory: CardGroupMemory }>(
+    `/groups/${groupId}/memory`, token, "POST", { content },
+  );
+}
+
+export function fetchAgentPreference(token: string): Promise<CardAgentPreference> {
+  return cardsNetworkRequest<CardAgentPreference>("/agent-preferences", token);
+}
+
+export function setAgentPreference(token: string, enabled: boolean): Promise<CardAgentPreference> {
+  return cardsNetworkRequest<CardAgentPreference>("/agent-preferences", token, "PUT", { enabled });
 }
 
 export function connectionRequestNotice(result: { connection: CardConnection; existing: boolean }): string {

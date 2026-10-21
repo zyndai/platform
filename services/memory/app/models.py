@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.taxonomy import ENTITY_TYPES, INFERRABLE_PREDICATES
 
@@ -33,6 +33,19 @@ class ExtractedAssertion(BaseModel):
     object_name: str = Field(min_length=1, max_length=200)
     object_type: str
     confidence: float
+
+    @model_validator(mode="after")
+    def _fact_quality(self):
+        from app.services.quality import PLACEHOLDER_TOKENS, TOPIC_PREDICATES, canonicalize, historical_learning, is_atomic_topic
+        self.object_name = canonicalize(self.object_name)
+        if self.predicate == "is_learning" and (historical := historical_learning(self.object_name)):
+            self.predicate, self.object_name = historical
+            self.object_type = "place_institutional" if self.predicate == "is_founder_of" else "concept_topic"
+        if not self.object_name or self.object_name.casefold() in PLACEHOLDER_TOKENS:
+            raise ValueError("placeholder is not a fact")
+        if self.predicate in TOPIC_PREDICATES and not is_atomic_topic(self.object_name):
+            raise ValueError("skill and learning facts must name a topic, not a biography")
+        return self
 
     @field_validator("predicate")
     @classmethod

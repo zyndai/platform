@@ -118,6 +118,7 @@ function JobRow({ job, first }: { job: WorkJob; first: boolean }) {
         {whenDur && (
           <div style={{ fontSize: "0.72rem", color: "#64748b", marginTop: 2 }}>{whenDur}</div>
         )}
+        {job.description?.trim() && <ul style={{ margin: "8px 0 0", paddingLeft: 16, color: "#475569", fontSize: ".75rem", lineHeight: 1.5 }}>{job.description.split(/\n+/).map(s => s.replace(/^[•\-–]\s*/, "").trim()).filter(Boolean).slice(0, 3).map((text, i) => <li key={i}>{text}</li>)}</ul>}
       </div>
     </div>
   );

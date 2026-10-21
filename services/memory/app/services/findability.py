@@ -24,6 +24,8 @@ from app.taxonomy import FINDABILITY_PREDICATES, PREDICATE_HALFLIFE_DAYS, decay_
 
 # Declarable predicates -> the entity family a declared value resolves to.
 DECLARE_ENTITY_TYPE: dict[str, str] = {
+    "is_founder_of": "place_institutional",
+    "has_experience_in": "concept_topic",
     "is_building": "project_venture",
     "is_working_on": "project_venture",
     "is_learning": "skill_domain",
@@ -49,6 +51,8 @@ DECLARED_CONFIDENCE = 0.97  # user-declared facts carry the system's max confide
 # (has_age, is_seeking, open_to) are intentionally excluded — they need literal
 # storage, not entity resolution.
 PRIVATE_DECLARE_ENTITY_TYPE: dict[str, str] = {
+    "is_founder_of": "place_institutional",
+    "has_experience_in": "concept_topic",
     "is_building": "project_venture",
     "is_working_on": "project_venture",
     "is_creating": "artifact_creative",
@@ -219,6 +223,11 @@ async def approve(
     if not object_name:
         return None
 
+    from app.services.quality import PLACEHOLDER_TOKENS, TOPIC_PREDICATES, historical_learning, is_atomic_topic
+    target_predicate = as_predicate or _APPROVE_AS.get(predicate) or predicate
+    if object_name.casefold() in PLACEHOLDER_TOKENS or (target_predicate in TOPIC_PREDICATES and not is_atomic_topic(object_name)):
+        raise ValueError("Choose a specific topic or correct this fact's category before publishing")
+
     if predicate in FINDABILITY_PREDICATES and not as_predicate:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(_LOOKUP, user_id, predicate, object_name)
@@ -258,12 +267,14 @@ async def approve(
                 WHERE id = $1""",
             row["id"],
         )
-    await declare(pool, user_id, public_pred, object_name)
-    label = public_label_for(public_pred, object_name)
+    historical = historical_learning(object_name) if predicate == "is_learning" else None
+    declared_value = historical[1] if historical and historical[0] == public_pred else object_name
+    await declare(pool, user_id, public_pred, declared_value)
+    label = public_label_for(public_pred, declared_value)
     return {
         "status": "approved",
         "predicate": public_pred,
-        "value": object_name,
+        "value": declared_value,
         "public_label": label,
     }
 
@@ -305,6 +316,9 @@ async def declare(pool: asyncpg.Pool, user_id: str, predicate: str, value: str) 
     value = (value or "").strip()
     if not value:
         raise ValueError("value is required")
+    from app.services.quality import PLACEHOLDER_TOKENS, TOPIC_PREDICATES, is_atomic_topic
+    if value.casefold() in PLACEHOLDER_TOKENS or (predicate in TOPIC_PREDICATES and not is_atomic_topic(value)):
+        raise ValueError("Use a specific topic; biography text and placeholders are not topics")
     allowed = ENUM_VALUES.get(predicate)
     if allowed is not None and value not in allowed:
         raise ValueError(f"{value!r} not allowed for {predicate}; choose one of {sorted(allowed)}")

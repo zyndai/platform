@@ -6,7 +6,7 @@ import hashlib
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import config
 from services import cards, events, zynd_mcp, zynd_memory
@@ -186,6 +186,45 @@ def unclaimed_duplicates(row: dict) -> list[dict]:
     return cards.claim_candidates_by_linkedin(linkedin) if linkedin else []
 
 
+def normalized_socials(row: dict) -> set[str]:
+    links = ((row.get("card") or {}).get("identity") or {}).get("links") or {}
+    keys = set()
+    for url in links.values():
+        if not isinstance(url, str):
+            continue
+        try:
+            parsed = urlparse(url)
+            host = (parsed.hostname or "").lower().removeprefix("www.")
+            path = parsed.path.strip("/").lower()
+            if parsed.scheme not in {"http", "https"}:
+                continue
+            if host == "linkedin.com" and path.startswith("in/") and len(path.split("/")) == 2:
+                keys.add("linkedin.com/" + path)
+            elif host in {"github.com", "x.com", "twitter.com"} and path and "/" not in path:
+                keys.add(("x.com" if host == "twitter.com" else host) + "/" + path)
+        except ValueError:
+            continue
+    return keys
+
+
+def possible_duplicates(email: str, row: dict) -> list[dict]:
+    """Public social overlap is a review hint, never authority to merge accounts."""
+    socials = normalized_socials(row)
+    if not socials:
+        return []
+    matches = []
+    for other in cards.list_published_rows(columns="id,handle,card,owner_email"):
+        if other.get("id") == row["id"] or not other.get("owner_email"):
+            continue
+        if other["owner_email"].strip().casefold() == email.strip().casefold():
+            continue   # Already in the actionable, same-owner duplicate list.
+        shared = sorted(socials & normalized_socials(other))
+        if shared:
+            matches.append({"handle": other["handle"], "name": (other.get("card", {}).get("identity") or {}).get("name", ""),
+                            "matched_socials": shared, "mergeable": False})
+    return matches
+
+
 async def status(email: str, *, persist: bool = True) -> dict | None:
     row = await asyncio.to_thread(current_row, email)
     if row is None:
@@ -204,9 +243,10 @@ async def status(email: str, *, persist: bool = True) -> dict | None:
             pending = len(suggestions)
         elif isinstance(suggestions, zynd_mcp.MemoryUnavailable) and "no ZYND account" in str(suggestions):
             pending = 0
-    metrics, candidates, unclaimed = await asyncio.gather(
+    metrics, candidates, unclaimed, possible = await asyncio.gather(
         asyncio.to_thread(activity, card.handle), asyncio.to_thread(duplicates, email, row),
         asyncio.to_thread(unclaimed_duplicates, row),
+        asyncio.to_thread(possible_duplicates, email, row),
     )
     matches = sum(q["count"] for q in metrics["queries"])
     intro_pending = None
@@ -231,6 +271,6 @@ async def status(email: str, *, persist: bool = True) -> dict | None:
             "sources": [{"platform": s.platform, "scraped_at": s.scraped_at,
                          "state": "stale" if (_parse_ts(s.scraped_at) is None or _parse_ts(s.scraped_at) < datetime.now(timezone.utc) - timedelta(days=30)) else "fresh"}
                         for s in card.sources],
-            "activity": metrics, "duplicates": candidates, "unclaimed_duplicates": unclaimed, "nudges": nudges,
+            "activity": metrics, "duplicates": candidates, "unclaimed_duplicates": unclaimed, "possible_duplicates": possible, "nudges": nudges,
             "notification_prefs": {**DEFAULT_PREFS, **(row.get("notification_prefs") or {})},
             "visibility": "public" if row["status"] == "published" else "private"}

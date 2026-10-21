@@ -96,11 +96,38 @@ export function startFixtureServer(): Promise<void> {
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
     const path = url.pathname;
     const json = (status: number, body: unknown) => {
-      res.writeHead(status, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization,apikey,content-type,x-client-info,x-supabase-api-version", "Access-Control-Allow-Methods": "GET,POST,PATCH,OPTIONS" });
+      res.writeHead(status, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization,apikey,content-type,x-client-info,x-supabase-api-version", "Access-Control-Allow-Methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS" });
       res.end(JSON.stringify(body));
     };
 
     if (req.method === "OPTIONS") return json(200, {});
+    if (path === "/cards/by-handle/owner/beacon") {
+      if (!req.headers.authorization) return json(401, { detail: "Unauthorized" });
+      if (req.method === "DELETE") { ownerCard = { ...ownerCard, beacon: null }; return json(204, {}); }
+      if (req.method === "PUT") {
+        let raw = "";
+        req.on("data", chunk => { raw += chunk; });
+        req.on("end", () => {
+          const created_at = new Date().toISOString();
+          const beacon = { text: JSON.parse(raw).text, created_at, expires_at: new Date(Date.now() + 7 * 86400000).toISOString() };
+          ownerCard = { ...ownerCard, beacon };
+          return json(200, { beacon });
+        });
+        return;
+      }
+    }
+    if (/^\/cards\/by-handle\/audit(?:-expired)?(?:\/view)?$/.test(path)) {
+      const handle = path.includes("audit-expired") ? "audit-expired" : "audit";
+      const start = Date.now() - (handle === "audit-expired" ? 8 : 0) * 86400000;
+      const beacon = { text: "Seeking early builders to test a developer tool", created_at: new Date(start).toISOString(), expires_at: new Date(start + 7 * 86400000).toISOString() };
+      const card = { ...cardFixture(handle), beacon,
+        identity: { name: "Alice Chen", headline: "Engineer", location: "Bangalore", avatar_url: "", links: {} },
+        skills: [{ name: "general", level: "intermediate", evidence_count: 0 }, { name: "TypeScript", level: "advanced", evidence_count: 1, evidence: [{ label: "alice/typescript-tool", url: "https://github.com/alice/typescript-tool", kind: "repository" }] }],
+        calendly_url: "https://calendly.com/alice/example",
+        zynd_memory: [{ predicate: "is_learning", object: "Founder of Example, a developer community" }],
+      };
+      return json(200, path.endsWith("/view") ? { ...card, facts: [{ type: "has_expertise_in", text: "general" }, { type: "is_learning", text: "Founder of Example, a developer community" }], cite_as: `http://127.0.0.1:3010/p/${handle}` } : card);
+    }
     if (path === "/__s12/reset") { intro = initialIntro(); sentIntros = []; retryKeys.clear(); return json(200, {}); }
     if (path.endsWith("/intro-eligibility")) return json(200, { available: !path.includes("unclaimed"), agent_id: "test-agent" });
     if (path === "/cards/mine/intros") return json(200, { intros: url.searchParams.get("outgoing") === "true" ? sentIntros : [intro] });

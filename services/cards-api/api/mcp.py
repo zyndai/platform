@@ -109,7 +109,7 @@ async def mcp_approve(
             email, body.predicate, body.value, as_predicate=body.as_predicate,
         )
     except zynd_mcp.MemoryUnavailable as exc:
-        raise HTTPException(status_code=404 if "no matching" in str(exc) else 502,
+        raise HTTPException(status_code=422 if exc.status_code == 422 else 404 if "no matching" in str(exc) else 502,
                             detail=str(exc)) from exc
     from services.zynd_memory import refresh_owner_snapshot
 

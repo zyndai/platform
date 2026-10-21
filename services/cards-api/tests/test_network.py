@@ -111,6 +111,10 @@ def test_network_handlers_do_not_block_the_event_loop():
         network.groups,
         network.group_messages,
         network.send_group_message,
+        network.group_memory_list,
+        network.group_memory_write,
+        network.agent_preferences,
+        network.update_agent_preferences,
         network.mark_read,
     ):
         assert not inspect.iscoroutinefunction(handler), handler.__name__

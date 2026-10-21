@@ -451,9 +451,12 @@ async def service_approve(body: dict, authorization: str = Header(default="")) -
     if not predicate or not value:
         raise HTTPException(status_code=422, detail="predicate and value are required")
     from app.services.findability import approve
-    result = await approve(
-        get_pool(), user_id, predicate, value, as_predicate=as_predicate,
-    )
+    try:
+        result = await approve(
+            get_pool(), user_id, predicate, value, as_predicate=as_predicate,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     if not result:
         raise HTTPException(status_code=404, detail="no matching private findability fact")
     return result

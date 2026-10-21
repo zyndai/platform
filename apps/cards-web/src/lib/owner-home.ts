@@ -30,6 +30,7 @@ export interface OwnerStatus {
   notification_prefs: { weekly_digest: boolean; email_nudges: boolean };
   duplicates: { id: string; handle: string; name: string; status: string }[];
   unclaimed_duplicates?: { handle: string; name: string }[];
+  possible_duplicates?: { handle: string; name: string; matched_socials: string[]; mergeable: false }[];
   nudges: { id: string; kind: string; title: string; href: string }[];
 }
 

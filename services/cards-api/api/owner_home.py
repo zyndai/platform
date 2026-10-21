@@ -113,6 +113,30 @@ class Section(BaseModel):
     expected: dict
 
 
+class BeaconRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=280)
+
+
+@router.put("/by-handle/{handle}/beacon")
+async def publish_beacon(handle: str, body: BeaconRequest, authorization: str | None = Header(default=None)):
+    email = email_for(authorization)
+    if not body.text.strip():
+        raise HTTPException(422, "Write a short request before publishing")
+    from services.beacons import save_beacon
+    result = await asyncio.to_thread(save_beacon, handle, email, body.text)
+    await asyncio.to_thread(ping_revalidate, handle)
+    return {"beacon": result}
+
+
+@router.delete("/by-handle/{handle}/beacon")
+async def dismiss_beacon(handle: str, authorization: str | None = Header(default=None)):
+    email = email_for(authorization)
+    from services.beacons import save_beacon
+    await asyncio.to_thread(save_beacon, handle, email, None)
+    await asyncio.to_thread(ping_revalidate, handle)
+    return Response(status_code=204)
+
+
 SECTIONS = {
     "identity": {"identity"}, "summary": {"summary", "availability", "industries"},
     "signals": {"working_on", "connect_with", "love_talking_about", "can_help_with"},

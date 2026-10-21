@@ -27,6 +27,8 @@ const RETYPE_OPTIONS = [
   "has_expertise_in",
   "is_building",
   "is_learning",
+  "is_founder_of",
+  "has_experience_in",
   "is_affiliated_with",
   "is_located_in",
   "is_seeking",

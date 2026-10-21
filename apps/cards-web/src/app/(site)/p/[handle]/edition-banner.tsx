@@ -1,7 +1,7 @@
 import { BadgeCheck, Clock3, FileText, Github, Linkedin, MapPin, Target, UserRound } from "lucide-react";
 import { EthMark } from "@/components/editions/eth-mark";
 import { EDITION_FONT_VARS } from "@/components/editions/fonts";
-import { MumbaiSkyline } from "@/components/editions/mumbai-skyline";
+import { EditionBannerImage } from "@/components/editions/banner-image";
 import { EDITION_NAME, HERE_FOR_LABEL, type CardEdition } from "@/lib/editions";
 import { EditionAboutText } from "./edition-about";
 import { EditionIdentityActions } from "./edition-actions";
@@ -63,14 +63,14 @@ export function EditionHero(props: Props) {
   return (
     <section className={`ed ed-hero ${EDITION_FONT_VARS}`} aria-label={`${EDITION_NAME[edition.id]} card`}>
       <div className="ed-hero-art">
-        <MumbaiSkyline idPrefix="ed-hero" focus="bottom" />
+        <EditionBannerImage className="ed-hero-img" priority sizes="(max-width: 820px) 600px, min(100vw, 1252px)" />
+        {/* Over the clear sky at the top centre: the artwork's crystals sit at the sides. */}
         <div className="ed-hero-title">
-          <span className="ed-hero-mark"><EthMark size={22} /></span>
-          <span>
-            <span className="ed-hero-name">MUMBAI BUILDER WEEK<span className="ed-hero-short"> ’26</span></span>
-            <span className="ed-hero-year">2026 ✦</span>
-            <span className="ed-hero-line">BUILDERS, IN PERSON,<br />IN MUMBAI</span>
+          <span className="ed-hero-name">
+            <span className="ed-hero-mark"><EthMark size={20} /></span>
+            MUMBAI BUILDER WEEK<span className="ed-hero-year"> 2026</span><span className="ed-hero-short"> ’26</span>
           </span>
+          <span className="ed-hero-line">BUILDERS, IN PERSON, IN MUMBAI</span>
         </div>
       </div>
 

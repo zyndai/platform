@@ -26,3 +26,17 @@ async def test_resource_metadata_names_the_issuer_exactly():
 async def test_cors_preflight_for_the_metadata_still_works():
     response = await get("/.well-known/oauth-protected-resource/chatgpt/mcp", method="OPTIONS")
     assert response.status_code in (200, 204)
+
+
+def test_server_starts_and_stops_through_its_lifespan():
+    """uvicorn runs the app's lifespan; a broken one aborts startup (seen on the box)."""
+    from unittest.mock import AsyncMock, patch
+    from starlette.testclient import TestClient
+    import server
+    with patch.object(server, "init_pool", AsyncMock()) as init, \
+         patch.object(server, "close_pool", AsyncMock()) as close:
+        with TestClient(server.app, base_url="http://localhost") as client:
+            assert client.get("/.well-known/oauth-protected-resource/chatgpt/mcp").status_code == 200
+            assert client.post("/chatgpt/mcp", json={}).status_code == 401
+        init.assert_awaited_once()
+        close.assert_awaited_once()

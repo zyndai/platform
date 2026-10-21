@@ -6,6 +6,7 @@ Run from services/memory so the shared app package resolves:
 """
 import base64
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -136,11 +137,14 @@ app = build()
 _inner = app.router.lifespan_context
 
 
+@asynccontextmanager
 async def _lifespan(application):
     await init_pool()
-    async with _inner(application):
-        yield
-    await close_pool()
+    try:
+        async with _inner(application):
+            yield
+    finally:
+        await close_pool()
 
 
 app.router.lifespan_context = _lifespan

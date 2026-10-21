@@ -40,3 +40,25 @@ def test_server_starts_and_stops_through_its_lifespan():
             assert client.post("/chatgpt/mcp", json={}).status_code == 401
         init.assert_awaited_once()
         close.assert_awaited_once()
+
+
+async def test_every_tool_declares_all_three_hints():
+    """OpenAI's scan requires explicit booleans for readOnlyHint, destructiveHint and openWorldHint."""
+    from fastmcp import Client
+    from fastmcp.server.auth import AccessToken
+    from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
+    from plugin_mcp import PLUGIN_SCOPES
+    from server import mcp
+    reset = auth_context_var.set(AuthenticatedUser(AccessToken(
+        token="test", client_id="owner", scopes=list(PLUGIN_SCOPES),
+        claims={"oauth_client_id": settings.plugin_oauth_client_id})))
+    try:
+        async with Client(mcp) as client:
+            tools = await client.list_tools()
+    finally:
+        auth_context_var.reset(reset)
+    assert len(tools) == 6
+    for tool in tools:
+        hints = tool.annotations.model_dump(by_alias=True, exclude_none=True)
+        for key in ("readOnlyHint", "destructiveHint", "openWorldHint"):
+            assert isinstance(hints.get(key), bool), (tool.name, key)

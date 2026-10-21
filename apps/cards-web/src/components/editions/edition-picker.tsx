@@ -2,7 +2,7 @@
 
 import { Check } from "lucide-react";
 import { EDITION_FONT_VARS } from "./fonts";
-import { MumbaiSkyline } from "./mumbai-skyline";
+import { EditionBannerImage } from "./banner-image";
 import { EDITION_NAME, HERE_FOR, HERE_FOR_LABEL, isEditionPickable, type CardEdition } from "@/lib/editions";
 import "./edition.css";
 
@@ -55,7 +55,7 @@ export function EditionPicker({ value, onChange, person }: Props) {
         <button type="button" className="ed-tile" aria-pressed={!!mumbai} disabled={!canPickMumbai}
           onClick={() => onChange(mumbai ?? { id: "mumbai-26", mood: "night", here_for: null })}>
           <span className="ed-mini ed-mini-edition" aria-hidden>
-            <MumbaiSkyline idPrefix="ed-pick-tile" focus="bottom" simple />
+            <EditionBannerImage sizes="420px" />
             <MiniPerson person={person} />
           </span>
           <span className="ed-tile-tag">{canPickMumbai ? "Limited edition · Nov 2026" : "Edition closed"}</span>

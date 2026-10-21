@@ -43,21 +43,23 @@
 /* ── Public card: page and hero ──────────────────────────────────────────── */
 .ed-page { background-image: linear-gradient(180deg, #ECE9FB 0%, #F5F3FE 38%, #F3F1FB 100%); }
 .ed-hero { position: relative; margin-bottom: 16px; }
+/* The artwork is 3:1 and taller than the banner, so it is cropped with cover.
+ * 58% keeps the skyline's waterline just above the identity card's overlap. */
 .ed-hero-art {
-  position: relative; overflow: hidden; height: clamp(230px, 23vw, 300px);
-  border-radius: 26px; background: #BBB5F0;
+  position: relative; overflow: hidden; height: clamp(220px, 23vw, 300px);
+  border-radius: 26px; background: #C9D6F7;
 }
-.ed-hero-art > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.ed-hero-img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover; object-position: 50% 58%; }
 .ed-hero-title {
-  position: absolute; left: clamp(20px, 12%, 190px); top: 15%;
-  display: flex; align-items: flex-start; gap: 12px; color: #2B2770;
-  font-family: var(--ed-mono), ui-monospace, monospace;
+  position: absolute; left: 50%; top: 9%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; white-space: nowrap;
+  color: #262266; font-family: var(--ed-mono), ui-monospace, monospace;
+  text-shadow: 0 1px 14px rgba(255, 255, 255, .75);
 }
-.ed-hero-mark { display: inline-flex; padding-top: 2px; }
-.ed-hero-name { display: block; font-weight: 700; font-size: 22px; letter-spacing: .3em; line-height: 1.2; }
+.ed-hero-name { display: inline-flex; align-items: center; gap: 12px; font-weight: 700; font-size: 20px; letter-spacing: .26em; line-height: 1.2; }
+.ed-hero-mark { display: inline-flex; }
 .ed-hero-short { display: none; }
-.ed-hero-year { display: block; margin-top: 4px; font-size: 13px; letter-spacing: .32em; }
-.ed-hero-line { display: block; margin-top: 18px; font-size: 12px; font-weight: 700; letter-spacing: .16em; line-height: 1.5; }
+.ed-hero-line { font-size: 11px; font-weight: 700; letter-spacing: .2em; opacity: .8; }
 
 /* Identity card: two bands on one column grid, so every edge lines up.
  *   photo + who | actions
@@ -67,7 +69,7 @@
 .ed-id {
   --ed-side: 320px;
   --ed-col-gap: 40px;
-  position: relative; z-index: 1; margin: -70px 14px 0;
+  position: relative; z-index: 1; margin: -56px 14px 0;
   display: grid; grid-template-columns: minmax(0, 1fr) var(--ed-side); column-gap: var(--ed-col-gap);
   grid-template-areas: "profile actions" "more more";
   padding: 28px 32px; border-radius: 24px; border: 1px solid var(--ed-line); background: #fff;
@@ -283,18 +285,18 @@
 
 @media (max-width: 820px) {
   .ed-hero { margin-bottom: 12px; }
-  .ed-hero-art { height: 176px; border-radius: 22px; }
-  /* A frosted pill instead of the wide letter-spaced title, so the art can
-     fill the narrow banner without fighting the text. */
+  /* Cover scales the art by height here, so only a window of its width shows:
+     37% keeps the left crystal whole, the city in the middle and the sun right. */
+  .ed-hero-art { height: 190px; border-radius: 22px; }
+  .ed-hero-img { object-position: 37% 50%; }
+  /* A frosted pill instead of the wide letter-spaced title. */
   .ed-hero-title {
-    left: 12px; top: 12px; align-items: center; gap: 8px;
-    padding: 7px 12px 7px 10px; border-radius: 999px;
-    background: rgba(255, 255, 255, .8); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    top: 12px; gap: 0; padding: 7px 12px 7px 10px; border-radius: 999px; text-shadow: none;
+    background: rgba(255, 255, 255, .82); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
     box-shadow: 0 8px 20px -14px rgba(30, 27, 75, .6);
   }
-  .ed-hero-mark { padding-top: 0; }
+  .ed-hero-name { gap: 8px; font-size: 11px; letter-spacing: .14em; }
   .ed-hero-mark svg { width: 10px; height: 16px; }
-  .ed-hero-name { font-size: 11px; letter-spacing: .14em; white-space: nowrap; }
   .ed-hero-short { display: inline; }
   .ed-hero-year, .ed-hero-line { display: none; }
 
@@ -336,7 +338,7 @@
   background: linear-gradient(180deg, #F3F1FB 0%, #ECE9FB 100%);
 }
 .ed-qr-art { position: absolute; top: 0; left: 0; right: 0; height: 34vh; min-height: 200px; overflow: hidden; }
-.ed-qr-art > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.ed-qr-art > img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover; object-position: 52% 55%; }
 .ed-qr-art::after { content: ""; position: absolute; inset: auto 0 0; height: 40%; background: linear-gradient(transparent, #F3F1FB); }
 .ed-qr-close {
   position: fixed; top: 16px; right: 16px; z-index: 2; cursor: pointer;
@@ -413,7 +415,7 @@
 .ed-tile-title { font: 700 15px/1.25 var(--ed-ui), system-ui, sans-serif; }
 .ed-tile-sub { font-size: 13px; color: var(--ed-soft); }
 .ed-mini { position: relative; height: 112px; border-radius: 12px; overflow: hidden; }
-.ed-mini > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.ed-mini > img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover; object-position: 52% 55%; }
 .ed-mini-classic { background: linear-gradient(160deg, #EEF0FF, #F8F7FF); border: 1px solid #ECEAF8; }
 .ed-mini-person {
   position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 1;

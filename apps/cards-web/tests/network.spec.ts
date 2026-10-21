@@ -12,19 +12,19 @@ test("profile request preserves a failed note and reports duplicate state honest
   const state = await mockNetwork(page);
   state.failNextRequest = true;
   await page.goto("/p/claimed");
-  await page.getByRole("button", { name: "Request connection", exact: true }).click();
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.getByLabel("Connection note").fill("Can we discuss APIs?");
   await page.getByRole("button", { name: "Send request", exact: true }).click();
-  await expect(page.locator(".intro-request").getByRole("alert")).toHaveText("Temporarily unavailable");
+  await expect(page.locator(".pf-connect").getByRole("alert")).toHaveText("Temporarily unavailable");
   await expect(page.getByLabel("Connection note")).toHaveValue("Can we discuss APIs?");
   await page.getByRole("button", { name: "Send request", exact: true }).click();
-  await expect(page.locator(".intro-request")).toContainText("Connection request sent");
+  await expect(page.locator(".pf-connect")).toContainText("Connection request sent");
   expect(state.connections.at(-1)?.request_message).toBe("Can we discuss APIs?");
+  // once they accept, the profile offers the conversation instead of another request
   state.connections.at(-1)!.status = "accepted";
   await page.reload();
-  await page.getByRole("button", { name: "Request connection", exact: true }).click();
-  await page.getByRole("button", { name: "Send request", exact: true }).click();
-  await expect(page.locator(".intro-request")).toContainText("You are already connected");
+  await expect(page.locator(".pf-connect").getByRole("link", { name: "Message", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Connect", exact: true })).toHaveCount(0);
 });
 
 test("accepting a selected request enables DMs and new replies appear without reload", async ({ page, context }) => {

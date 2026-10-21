@@ -27,6 +27,8 @@ interface Props {
   verified: boolean;
   /** Claimed cards have the profile chat. */
   canChat: boolean;
+  /** The Connect / Message button, for visitors only. Sits at the top of the actions. */
+  connect?: React.ReactNode;
   links: { x: string | null; github: string | null; linkedin: string | null };
   updatedLabel: string | null;
 }
@@ -42,7 +44,7 @@ function XGlyph() {
 /** Top of a card on the Mumbai Builder Week edition: the artwork, then an
  *  identity card that takes the place of the classic purple hero. */
 export function EditionHero(props: Props) {
-  const { edition, name, nameLines, headline, location, role, chips, avatarSrc, initials, url, permalink, handle, verified, canChat, links, updatedLabel } = props;
+  const { edition, name, nameLines, headline, location, role, chips, avatarSrc, initials, url, permalink, handle, verified, canChat, connect, links, updatedLabel } = props;
   const hereFor = edition.here_for ? HERE_FOR_LABEL[edition.here_for] : null;
   const socials = [
     { href: links.x, label: "X", icon: <XGlyph /> },
@@ -94,6 +96,7 @@ export function EditionHero(props: Props) {
         </div>
 
         <div className="ed-id-side">
+          {connect}
           <EditionIdentityActions handle={handle} permalink={permalink} canChat={canChat} />
           <div className="ed-id-row">
             {socials.map((s) => (

@@ -9,6 +9,11 @@ connection requests, DMs, groups, or the Cards MCP network tools.
   account.
 - A connection starts as `pending`; only the receiving Card can accept or
   decline it.
+- There is one connection row per pair of people, and a decided one is final:
+  a second request returns the existing row whatever its status, and only
+  `pending` can be accepted or declined. So `declined`, `revoked` and
+  `blocked` can never become a new request, and the UI does not offer one
+  (status reports `can_connect: false` with a reason).
 - DMs are available only after `accepted`.
 - Group invitations are sent only to accepted connections and do not create
   membership until the invitee accepts.
@@ -26,10 +31,23 @@ connection requests, DMs, groups, or the Cards MCP network tools.
 
 ## Surfaces
 
-- Cards web: `/network` (legacy) and `/network?v2=1` (preview)
-- Card profile: `Request connection`
+- Cards web: `/network` (legacy) and `/network?v2=1` (preview). v2 also takes
+  `?c=<connection id>`, which opens that conversation once the inbox loads
+  (an accepted DM, or the Requests tab for a pending request); the signed-out
+  redirect keeps it in `next`. The legacy inbox ignores it.
+- Card profile: a Connect / Message button in the hero (under the name; at the
+  top of the actions on an edition card). It shows what can work for the viewer:
+  Connect (with an optional note), Requested, Accept, or Message
+  (`/network?c=<id>`). Never shown on your own Card.
+- Start a connection (v2): a name-or-handle combobox over
+  `GET /people/suggest?q=`; typing an exact handle and sending still works.
 - Cards API: `/cards/network/*`, including `GET /inbox`, message cursors
   (`before_seq` / `after_seq`), idempotent `client_id` sends, and `POST /read`
+- Cards API people lookup: `GET /people/suggest?q=` (claimed, published Cards
+  by handle or name, with the caller's connection to each; public Card data
+  only) and `GET /connections/status?handle=` (`{self}` or `{connection,
+  can_connect, reason}`; it reports state and never 409s for a caller with no
+  Card)
 - Cards API group memory: `GET/POST /groups/{id}/memory` (summary, facts,
   semantic search, Remember) and `GET/PUT /agent-preferences`
 - Authenticated MCP: `list_card_connections`, `request_card_connection`,

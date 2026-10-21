@@ -262,3 +262,197 @@ def test_the_inbox_carries_links_only_for_accepted_partners(monkeypatch):
     assert "links" not in out[2]["partner"]          # card not found: nothing invented
     chain.in_.assert_called_once_with("id", ["c-bob", "c-gone"])   # one lookup, accepted partners only
     assert network._with_accepted_links([{"status": "pending", "partner": {"card_id": "x"}}])[0]["partner"] == {"card_id": "x"}
+
+
+# ── people suggestions and connection status ──────────────────────────────────────
+
+CY = "00000000-0000-0000-0000-000000000003"
+DEE = "00000000-0000-0000-0000-000000000004"
+
+
+def _person(handle, name, owner, headline="", **extra):
+    return {
+        "id": f"card-{handle}", "handle": handle, "owner_user_id": owner,
+        "card": {"identity": {"name": name, "headline": headline, "avatar_url": f"https://img/{handle}.png"}},
+        **extra,
+    }
+
+
+@pytest.mark.parametrize("raw,clean", [
+    ("alice", "alice"),
+    ("  @alice  ", "alice"),
+    ("@@alice", "alice"),
+    ("al,ice", "al ice"),
+    ("a),owner_user_id.neq.x,(b", "a owner_user_id.neq.x b"),
+    ('x"y\\z', "x y z"),
+    ("100%*", "100"),
+    ("handle:eq.1", "handle eq.1"),
+    ("two   spaces\tand\nnewline", "two spaces and newline"),
+    ("x" * 200, "x" * 64),
+])
+def test_search_text_cannot_reshape_the_or_filter(raw, clean):
+    assert network._search_term(raw) == clean
+
+
+@pytest.mark.parametrize("raw", ["", " ", "a", "@a", "@ ", "%%", ",,", "(*)", " a "])
+def test_short_searches_return_nothing_without_touching_the_database(monkeypatch, raw):
+    sb, _ = database(monkeypatch)
+    assert network.suggest_people(USER, raw) == {"people": []}
+    sb.table.assert_not_called()
+
+
+def test_suggestions_search_claimed_published_cards_by_handle_or_name(monkeypatch):
+    _, queries = database(monkeypatch, agent_profile_cards=[], connections=[])
+    network.suggest_people(USER, "  @Ali Ce ")
+    cards = queries["agent_profile_cards"]
+    cards.eq.assert_called_once_with("status", "published")
+    assert [c.args for c in cards.not_.is_.call_args_list] == [("owner_email", "null"), ("owner_user_id", "null")]
+    cards.or_.assert_called_once_with('handle.ilike."*Ali Ce*",card->identity->>name.ilike."*Ali Ce*"')
+    cards.limit.assert_called_once_with(network.SUGGEST_FETCH)
+    assert "owner_email" not in cards.select.call_args.args[0]
+
+
+def test_injected_filter_syntax_stays_inside_the_quoted_pattern(monkeypatch):
+    _, queries = database(monkeypatch, agent_profile_cards=[], connections=[])
+    network.suggest_people(USER, 'zz"),owner_user_id.neq.0,(handle.eq."')
+    (filters,), _ = queries["agent_profile_cards"].or_.call_args
+    assert filters == (
+        'handle.ilike."*zz owner_user_id.neq.0 handle.eq.*",'
+        'card->identity->>name.ilike."*zz owner_user_id.neq.0 handle.eq.*"'
+    )
+    # still exactly two conditions: nothing in the typed text added a comma, paren or quote
+    assert filters.count(",") == 1 and filters.count("(") == 0 and filters.count('"') == 4
+
+
+def test_suggestions_rank_handle_prefix_then_name_word_prefix_then_contains(monkeypatch):
+    rows = [
+        _person("zz-contains", "Maria Palmer", CY),          # "alm" only inside "Palmer"
+        _person("almost-there", "Zed", PARTNER),             # handle prefix
+        _person("quiet", "Bob Almond", DEE),                 # name word prefix
+    ]
+    database(monkeypatch, agent_profile_cards=rows, connections=[])
+    people = network.suggest_people(USER, "alm")["people"]
+    assert [p["handle"] for p in people] == ["almost-there", "quiet", "zz-contains"]
+
+
+def test_suggestions_exclude_the_caller_and_dedupe_by_owner(monkeypatch):
+    rows = [
+        _person("me", "Me Myself", USER),
+        _person("old-cy", "Cy Old", CY),                      # name-prefix match only
+        _person("cy", "Cy", CY),                              # same person, better rank: this one wins, once
+        _person("cyrus", "Cyrus", DEE),
+    ]
+    database(monkeypatch, agent_profile_cards=rows, connections=[])
+    people = network.suggest_people(USER, "cy")["people"]
+    assert [p["handle"] for p in people] == ["cy", "cyrus"]
+    assert USER not in str(people)
+
+
+def test_suggestions_respect_the_limit(monkeypatch):
+    rows = [_person(f"sam{i}", f"Sam {i}", f"00000000-0000-0000-0000-0000000001{i:02d}") for i in range(12)]
+    database(monkeypatch, agent_profile_cards=rows, connections=[])
+    assert len(network.suggest_people(USER, "sam")["people"]) == 8
+    assert len(network.suggest_people(USER, "sam", limit=3)["people"]) == 3
+
+
+def test_suggestions_carry_the_connection_from_one_query_and_no_contact_details(monkeypatch):
+    rows = [
+        _person("pat", "Pat One", PARTNER, headline="Founder", owner_email="pat@example.com"),
+        _person("pam", "Pam Two", CY, headline="Designer"),
+        _person("pax", "Pax Three", DEE),
+    ]
+    rows[0]["card"]["identity"]["links"] = {"linkedin": "https://linkedin.com/in/pat"}
+    connections = [
+        {"id": "c1", "status": "accepted", "connection_key": network._connection_key(USER, PARTNER),
+         "requester_user_id": USER, "recipient_user_id": PARTNER},
+        {"id": "c2", "status": "pending", "connection_key": network._connection_key(USER, CY),
+         "requester_user_id": CY, "recipient_user_id": USER},
+    ]
+    sb, queries = database(monkeypatch, agent_profile_cards=rows, connections=connections)
+    people = {p["handle"]: p for p in network.suggest_people(USER, "pa")["people"]}
+
+    assert people["pat"]["connection"] == {"id": "c1", "status": "accepted", "incoming": False}
+    assert people["pam"]["connection"] == {"id": "c2", "status": "pending", "incoming": True}
+    assert people["pax"]["connection"] is None
+    assert people["pat"]["headline"] == "Founder"
+    assert set(people["pat"]) == {"card_id", "handle", "name", "headline", "avatar_url", "connection"}
+    assert "pat@example.com" not in str(people) and "linkedin" not in str(people)
+    # every result's connection comes back in a single query keyed by connection_key
+    assert [c.args[0] for c in sb.table.call_args_list].count("connections") == 1
+    queries["connections"].in_.assert_called_once()
+    assert queries["connections"].in_.call_args.args[0] == "connection_key"
+    assert len(queries["connections"].in_.call_args.args[1]) == 3
+
+
+def test_no_matches_skips_the_connection_lookup(monkeypatch):
+    sb, _ = database(monkeypatch, agent_profile_cards=[], connections=[])
+    assert network.suggest_people(USER, "nobody") == {"people": []}
+    assert [c.args[0] for c in sb.table.call_args_list] == ["agent_profile_cards"]
+
+
+def _status(monkeypatch, *, owner=PARTNER, connection=None, own_card=True):
+    monkeypatch.setattr(network, "_card_for_handle", lambda handle: {"id": "card-bob", "handle": handle, "owner_user_id": owner})
+    monkeypatch.setattr(network, "_find_card_for_user", lambda uid: {"id": "card-me"} if own_card else None)
+    database(monkeypatch, connections=[connection] if connection else [])
+    return network.connection_status(USER, "bob")
+
+
+def _row(status, requester=USER, recipient=PARTNER):
+    return {"id": "conn", "status": status, "connection_key": "k",
+            "requester_user_id": requester, "recipient_user_id": recipient}
+
+
+def test_status_for_your_own_card_is_self(monkeypatch):
+    assert _status(monkeypatch, owner=USER) == {"self": True}
+
+
+def test_status_without_a_connection_can_connect(monkeypatch):
+    assert _status(monkeypatch) == {"connection": None, "can_connect": True, "reason": None}
+
+
+def test_status_reports_but_does_not_raise_when_you_have_no_card(monkeypatch):
+    result = _status(monkeypatch, own_card=False)
+    assert result["connection"] is None and result["can_connect"] is False
+    assert "Card" in result["reason"]
+
+
+def test_status_for_a_missing_card_is_a_404(monkeypatch):
+    monkeypatch.setattr(network, "_card_for_handle", MagicMock(side_effect=HTTPException(404, "That verified Card is not available")))
+    with pytest.raises(HTTPException) as error:
+        network.connection_status(USER, "ghost")
+    assert error.value.status_code == 404
+
+
+@pytest.mark.parametrize("row,incoming", [
+    (_row("pending"), False),
+    (_row("pending", requester=PARTNER, recipient=USER), True),
+    (_row("accepted"), False),
+])
+def test_status_open_connections_are_reported_and_not_connectable(monkeypatch, row, incoming):
+    result = _status(monkeypatch, connection=row)
+    assert result["connection"] == {"id": "conn", "status": row["status"], "incoming": incoming}
+    assert result["can_connect"] is False and result["reason"]
+
+
+@pytest.mark.parametrize("status", ["declined", "revoked", "blocked"])
+def test_status_decided_connections_are_final_so_connect_is_not_offered(monkeypatch, status):
+    # _create_connection hands back the existing row whatever its status and respond_connection only
+    # moves a row out of `pending`, so a new request here could never succeed.
+    result = _status(monkeypatch, connection=_row(status))
+    assert result["connection"]["status"] == status
+    assert result["can_connect"] is False and result["reason"]
+
+
+def test_a_blocked_status_does_not_say_who_blocked(monkeypatch):
+    mine = _status(monkeypatch, connection=_row("blocked"))["reason"]
+    theirs = _status(monkeypatch, connection=_row("blocked", requester=PARTNER, recipient=USER))["reason"]
+    assert mine == theirs and "block" not in mine.lower()
+
+
+def test_status_does_not_look_up_your_card_when_a_connection_exists(monkeypatch):
+    lookup = MagicMock(return_value=None)
+    monkeypatch.setattr(network, "_card_for_handle", lambda handle: {"id": "c", "handle": handle, "owner_user_id": PARTNER})
+    monkeypatch.setattr(network, "_find_card_for_user", lookup)
+    database(monkeypatch, connections=[_row("accepted")])
+    assert network.connection_status(USER, "bob")["connection"]["status"] == "accepted"
+    lookup.assert_not_called()

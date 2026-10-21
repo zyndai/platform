@@ -8,6 +8,23 @@ export interface CardSummary {
   avatar_url?: string | null;
 }
 
+/** The caller's connection with one other person, as the status and suggestion endpoints report it. */
+export interface ConnectionSummary {
+  id: string;
+  status: ConnectionStatus;
+  /** True when the other person asked and the caller is the one who can answer. */
+  incoming: boolean;
+}
+
+/** A claimed Card matching the typed text (GET /network/people/suggest). Public Card data only. */
+export interface PersonSuggestion extends CardSummary {
+  connection: ConnectionSummary | null;
+}
+
+export type ConnectionStatusResult =
+  | { self: true }
+  | { self?: false; connection: ConnectionSummary | null; can_connect: boolean; reason: string | null };
+
 export interface CardConnection {
   id: string;
   status: ConnectionStatus;
@@ -172,6 +189,16 @@ export function fetchInbox(token: string, signal?: AbortSignal): Promise<CardInb
   return cardsNetworkRequest<CardInbox>("/inbox", token, "GET", undefined, signal);
 }
 
+export function suggestPeople(token: string, q: string, signal?: AbortSignal): Promise<{ people: PersonSuggestion[] }> {
+  const params = new URLSearchParams({ q });
+  return cardsNetworkRequest<{ people: PersonSuggestion[] }>(`/people/suggest?${params.toString()}`, token, "GET", undefined, signal);
+}
+
+export function fetchConnectionStatus(token: string, handle: string, signal?: AbortSignal): Promise<ConnectionStatusResult> {
+  const params = new URLSearchParams({ handle });
+  return cardsNetworkRequest<ConnectionStatusResult>(`/connections/status?${params.toString()}`, token, "GET", undefined, signal);
+}
+
 export function fetchDmMessages(
   token: string,
   connectionId: string,
@@ -281,6 +308,27 @@ export function connectionRequestNotice(result: { connection: CardConnection; ex
     ? "This Card has already sent you a request. Accept it in your network."
     : "Your connection request is already pending";
   return `This connection is ${connection.status}. No new request was sent.`;
+}
+
+/** How a connection reads to the person looking at it. `closed` is declined, revoked or blocked:
+ *  the server keeps one final row per pair, so a new request can never succeed and the UI must not
+ *  offer one. (Blocked is kept vague on purpose: it does not say who blocked whom.) */
+export type ConnectionState = "none" | "connected" | "requested" | "wants-to-connect" | "closed";
+
+export function connectionState(connection: ConnectionSummary | null | undefined): ConnectionState {
+  if (!connection) return "none";
+  if (connection.status === "accepted") return "connected";
+  if (connection.status === "pending") return connection.incoming ? "wants-to-connect" : "requested";
+  return "closed";
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The `?c=` deep link into a conversation: a connection id, or null for anything that is not a UUID
+ *  (a repeated param takes the first). Lower-cased so it matches the ids the API returns. */
+export function parseConnectionParam(raw: string | string[] | null | undefined): string | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value && UUID.test(value) ? value.toLowerCase() : null;
 }
 
 /** What each side of an accepted connection is doing now, what they share, and what to bring up

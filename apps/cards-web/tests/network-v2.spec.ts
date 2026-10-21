@@ -294,6 +294,232 @@ test("v2 shows your own assistant thinking on your side", async ({ page, context
   expect(theirsBox.x).toBeLessThan(area.x + 40);
 });
 
+// Realtime is switched off in these runs (no socket on the fake Supabase URL),
+// so a broadcast is delivered the way use-network-realtime.ts allows: as a
+// window event carrying the topic, event name and payload.
+async function broadcast(page: Page, topic: string, event: string, payload: Record<string, unknown>) {
+  await page.evaluate((detail) => window.dispatchEvent(new CustomEvent("zynd:test-broadcast", { detail })), { topic, event, payload });
+}
+
+const JOB = "30000000-0000-4000-8000-000000000030";
+
+async function openGroupWithBob(page: Page, name: string, state: Awaited<ReturnType<typeof mockNetwork>>) {
+  await page.goto("/network?v2=1");
+  await page.getByRole("button", { name: "Create a group" }).click();
+  await page.getByLabel("Group name", { exact: true }).fill(name);
+  await page.getByRole("button", { name: "Create group", exact: true }).click();
+  const bob = state.people[0];
+  state.members.push({ id: "bob-member", user_id: bob.user_id, role: "member", card: bob });
+  await page.reload();
+  await page.getByRole("button").filter({ hasText: name }).click();
+  await expect(page.getByText(/2 members/)).toBeVisible();
+  return { group: state.groups[0], bob, topic: `cards:group:${state.groups[0].id}` };
+}
+
+test("v2 streams an assistant reply, keeps its sources, and swaps in the saved message", async ({ page, context }) => {
+  await signIn(context);
+  const state = await mockNetwork(page);
+  const { group, bob, topic } = await openGroupWithBob(page, "Streaming", state);
+  const snapshot = (seq: number, extra: Record<string, unknown>) => ({
+    job_id: JOB, group_id: group.id, user_id: bob.user_id, message_id: "trigger-1",
+    attempt: 1, seq, text: "", done: false, status: "writing", ...extra,
+  });
+
+  await page.getByLabel("Group message", { exact: true }).fill("@bob plan the launch");
+  await page.getByRole("button", { name: "Send group message" }).click();
+  const thinking = page.locator(".nv2-typing-row:not(.is-mine)");
+  await expect(thinking).toContainText("AI assistant for Bob");
+
+  // Nothing written yet: still the "thinking" row, and a tool step says so.
+  await broadcast(page, topic, "agent_stream", snapshot(1, { status: "thinking" }));
+  await expect(thinking).toBeVisible();
+  await broadcast(page, topic, "agent_stream", snapshot(2, { status: "tool" }));
+  await expect(thinking).toContainText("Looking things up…");
+
+  // Text arrives: a streaming bubble on Bob's side replaces the thinking row.
+  await broadcast(page, topic, "agent_stream", snapshot(3, { text: "Here is the" }));
+  const row = page.locator(".nv2-msg-row.is-agent");
+  await expect(row).toHaveCount(1);
+  await expect(row).not.toHaveClass(/is-mine/);
+  await expect(row.locator(".nv2-msg-sender")).toContainText("AI assistant for Bob");
+  await expect(row.locator(".nv2-agent-avatar .nv2-agent-badge")).toBeVisible();
+  await expect(row.locator(".nv2-bubble")).toHaveClass(/is-streaming/);
+  await expect(row.locator(".nv2-bubble")).toContainText("Here is the");
+  await expect(row).toContainText("Writing…");
+  await expect(thinking).toHaveCount(0);
+
+  // Full-text snapshots: markdown renders as it grows, and the caret rides the last block.
+  const plan = "Here is the **plan**:\n\n1. Ship the API\n2. Measure adoption";
+  await broadcast(page, topic, "agent_stream", snapshot(4, { text: plan }));
+  await expect(row.locator(".nv2-bubble strong")).toHaveText("plan");
+  await expect(row.locator(".nv2-bubble ol li")).toHaveCount(2);
+  const caret = await row.locator(".nv2-bubble ol li").last().evaluate((li) => getComputedStyle(li, "::after").content);
+  expect(caret).toBe('""');
+
+  // A snapshot that arrives late cannot rewind the text.
+  await broadcast(page, topic, "agent_stream", snapshot(3, { text: "Here is the" }));
+  await expect(row.locator(".nv2-bubble ol li")).toHaveCount(2);
+
+  // No sources unless the server sent them.
+  await expect(row.locator(".nv2-sources")).toHaveCount(0);
+
+  // The final snapshot: exact text, plus the dev trace.
+  const finalText = `${plan}\n\nDone.`;
+  const sources = {
+    context: {
+      recent_messages: 12,
+      summary: { present: true, preview: "The group is shipping on Friday." },
+      group_facts: { count: 2, items: ["Alice owns launch", "Staging key is in the vault"] },
+      member_facts: { member: "bob", connected: true, count: 1, items: ["is working on: Payments API"] },
+    },
+    tools: [{ name: "search_group_memory", args: { query: "launch date" }, ok: true, summary: "2 results: Ship on Friday | Alice owns launch" }],
+  };
+  await broadcast(page, topic, "agent_stream", snapshot(5, { text: finalText, done: true, status: "done", sources }));
+  await expect(row).toContainText("Saving…");
+  await expect(row.locator(".nv2-bubble")).toContainText("Done.");
+  const panel = row.locator(".nv2-sources");
+  await expect(panel.locator("summary")).toHaveText("Sources (dev)");
+  await expect(panel.locator(".nv2-sources-body")).toBeHidden();
+  await panel.locator("summary").click();
+  await expect(panel).toContainText("12 recent messages");
+  await expect(panel).toContainText("The group is shipping on Friday.");
+  await expect(panel).toContainText("Saved group facts: 2");
+  await expect(panel).toContainText("Alice owns launch");
+  await expect(panel).toContainText("@bob's public memory: 1 facts");
+  await expect(panel.locator("code")).toHaveText("search_group_memory");
+  await expect(panel).toContainText("query: launch date");
+  await expect(panel).toContainText("2 results: Ship on Friday | Alice owns launch");
+
+  // The saved message lands: one bubble, not two, still with its sources.
+  const saved = {
+    id: "bob-final", group_id: group.id, seq: ++state.groupSeq, client_id: JOB,
+    sender_user_id: bob.user_id, sender_kind: "agent", agent_for_user_id: bob.user_id,
+    reply_to_message_id: "trigger-1", content: finalText, created_at: new Date().toISOString(),
+  };
+  state.groupMessages.push(saved as never);
+  await broadcast(page, topic, "message", { kind: "group", group_id: group.id, message: saved });
+  await broadcast(page, topic, "agent_typing", { job_id: JOB, group_id: group.id, user_id: bob.user_id, status: "done" });
+  const messages = page.getByLabel("Group messages", { exact: true });
+  await expect(messages.locator(".nv2-bubble.is-agent")).toHaveCount(1);
+  await expect(messages.locator(".nv2-bubble.is-streaming")).toHaveCount(0);
+  await expect(messages.locator(".nv2-msg-row.is-agent")).not.toContainText("Saving…");
+  await expect(messages.locator(".nv2-sources summary")).toHaveText("Sources (dev)");
+
+  // A snapshot that straggles in after the saved message never brings the bubble back.
+  await broadcast(page, topic, "agent_stream", snapshot(6, { text: finalText }));
+  await expect(messages.locator(".nv2-bubble.is-streaming")).toHaveCount(0);
+  await expect(messages.locator(".nv2-bubble.is-agent")).toHaveCount(1);
+
+  // Sources are session memory: they survive leaving the conversation and coming back.
+  await page.getByRole("button", { name: "Create a group" }).click();
+  await page.getByLabel("Group name", { exact: true }).fill("Elsewhere");
+  await page.getByRole("button", { name: "Create group", exact: true }).click();
+  await expect(page.locator(".nv2-conv-title")).toContainText("Elsewhere");
+  await page.getByRole("button").filter({ hasText: "Streaming" }).first().click();
+  await expect(page.locator(".nv2-conv-title")).toContainText("Streaming");
+  await expect(messages.locator(".nv2-sources summary")).toHaveText("Sources (dev)");
+  await messages.locator(".nv2-sources summary").click();
+  await expect(messages.locator(".nv2-sources")).toContainText("query: launch date");
+
+  // ...but not a reload: sources are never persisted.
+  await page.reload();
+  await page.getByRole("button").filter({ hasText: "Streaming" }).first().click();
+  await expect(page.getByLabel("Group messages", { exact: true }).locator(".nv2-bubble.is-agent")).toHaveCount(1);
+  await expect(page.locator(".nv2-sources")).toHaveCount(0);
+});
+
+test("v2 shows a streamed reply on your own side, restarts a retried job, and clears a failed one", async ({ page, context }) => {
+  await signIn(context);
+  const state = await mockNetwork(page);
+  const { group, topic } = await openGroupWithBob(page, "Retries", state);
+  const snapshot = (attempt: number, seq: number, extra: Record<string, unknown>) => ({
+    job_id: JOB, group_id: group.id, user_id: NETWORK_USER, message_id: "trigger-1",
+    attempt, seq, text: "", done: false, status: "writing", ...extra,
+  });
+  const messages = page.getByLabel("Group messages", { exact: true });
+
+  await page.getByLabel("Group message", { exact: true }).fill("@alice summarise this");
+  await page.getByRole("button", { name: "Send group message" }).click();
+  await expect(page.locator(".nv2-typing-row.is-mine")).toContainText("Your AI assistant");
+
+  await broadcast(page, topic, "agent_stream", snapshot(1, 1, { text: "First attempt, half" }));
+  const own = messages.locator(".nv2-msg-row.is-agent.is-mine");
+  await expect(own.locator(".nv2-msg-sender")).toHaveText("Your AI assistant");
+  await expect(own.locator(".nv2-bubble")).toHaveClass(/is-own/);
+  await expect(own.locator(".nv2-bubble")).toContainText("First attempt, half");
+  await expect(page.locator(".nv2-typing-row.is-mine")).toHaveCount(0);
+  const area = (await messages.boundingBox())!;
+  const box = (await own.locator(".nv2-bubble").boundingBox())!;
+  expect(box.x + box.width).toBeGreaterThan(area.x + area.width - 60);
+
+  // The job failed and is being retried: what was written is void.
+  await broadcast(page, topic, "agent_typing", { job_id: JOB, group_id: group.id, user_id: NETWORK_USER, status: "pending" });
+  await expect(own).toHaveCount(0);
+  // Attempt 2 restarts from nothing, with a lower seq than attempt 1 reached.
+  await broadcast(page, topic, "agent_stream", snapshot(2, 1, { status: "thinking" }));
+  await broadcast(page, topic, "agent_stream", snapshot(2, 2, { text: "Second attempt" }));
+  await expect(own.locator(".nv2-bubble")).toContainText("Second attempt");
+  await expect(own.locator(".nv2-bubble")).not.toContainText("First attempt");
+
+  // The last attempt fails: the bubble goes and the existing error shows.
+  await broadcast(page, topic, "agent_typing", { job_id: JOB, group_id: group.id, user_id: NETWORK_USER, status: "failed" });
+  await expect(own).toHaveCount(0);
+  await expect(page.locator(".nv2-agent-error.is-mine")).toContainText("The assistant couldn't reply");
+});
+
+test("v2 follows a streaming reply at the bottom and offers the New messages pill when scrolled up", async ({ page, context }) => {
+  await signIn(context);
+  const state = await mockNetwork(page);
+  await page.goto("/network?v2=1");
+  await page.getByRole("button", { name: "Create a group" }).click();
+  await page.getByLabel("Group name", { exact: true }).fill("Long chat");
+  await page.getByRole("button", { name: "Create group", exact: true }).click();
+  const group = state.groups[0];
+  const bob = state.people[0];
+  state.members.push({ id: "bob-member", user_id: bob.user_id, role: "member", card: bob });
+  for (let n = 0; n < 40; n += 1) {
+    state.groupMessages.push({
+      id: `history-${n}`, group_id: group.id, seq: ++state.groupSeq, sender_user_id: bob.user_id, sender_kind: "user",
+      content: `Earlier message number ${n}`, created_at: new Date(Date.now() - (60 - n) * 1000).toISOString(),
+    });
+  }
+  await page.reload();
+  await page.getByRole("button").filter({ hasText: "Long chat" }).click();
+  const topic = `cards:group:${group.id}`;
+  const messages = page.getByLabel("Group messages", { exact: true });
+  await expect(messages).toContainText("Earlier message number 39");
+  const gap = () => messages.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+  const snapshot = (seq: number, text: string) => ({
+    job_id: JOB, group_id: group.id, user_id: bob.user_id, message_id: "trigger-1",
+    attempt: 1, seq, text, done: false, status: "writing",
+  });
+  const lines = (count: number) => Array.from({ length: count }, (_, n) => `- point ${n + 1}`).join("\n");
+
+  // At the bottom: the view stays on the newest words as the reply grows tall.
+  await expect.poll(gap).toBeLessThan(4);
+  await broadcast(page, topic, "agent_stream", snapshot(1, "Plan:\n\n" + lines(6)));
+  await broadcast(page, topic, "agent_stream", snapshot(2, "Plan:\n\n" + lines(30)));
+  await expect(messages.locator(".nv2-bubble.is-streaming li")).toHaveCount(30);
+  await expect.poll(gap).toBeLessThan(4);
+  await expect(page.getByRole("button", { name: /New messages/ })).toHaveCount(0);
+
+  // Scrolled up: the view stays put and the pill says there is more.
+  // Wait for the scroll event itself: that is what tells the pane the reader left the bottom.
+  await messages.evaluate((el) => new Promise<void>((resolve) => {
+    el.addEventListener("scroll", () => resolve(), { once: true });
+    el.scrollTop = 0;
+  }));
+  expect(await messages.evaluate((el) => el.scrollTop)).toBe(0);
+  await broadcast(page, topic, "agent_stream", snapshot(3, "Plan:\n\n" + lines(34)));
+  await expect(messages.locator(".nv2-bubble.is-streaming li")).toHaveCount(34);
+  const pill = page.getByRole("button", { name: /New messages/ });
+  await expect(pill).toBeVisible();
+  expect(await messages.evaluate((el) => el.scrollTop)).toBe(0);
+  await pill.click();
+  await expect.poll(gap).toBeLessThan(4);
+  await expect(pill).toHaveCount(0);
+});
+
 test("v2 has no horizontal overflow on a narrow phone", async ({ page, context }) => {
   await signIn(context);
   await mockNetwork(page);

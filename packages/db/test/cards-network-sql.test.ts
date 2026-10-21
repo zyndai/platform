@@ -36,7 +36,7 @@ test('Cards network migrations preserve invitation and membership invariants', {
     });
     await apply();
     await apply();
-    assert.equal((await client.query('select count(*)::int as n from drizzle.__cards_migrations')).rows[0].n, 28);
+    assert.equal((await client.query('select count(*)::int as n from drizzle.__cards_migrations')).rows[0].n, 29);
     assert.equal((await client.query("select to_regclass('drizzle.__persona_migrations') as table")).rows[0].table, null);
     await client.query("set request.jwt.claim.role='service_role'");
 
@@ -328,6 +328,85 @@ test('Cards network migrations preserve invitation and membership invariants', {
       )).rows[0].result;
       assert.equal(skipped.enqueued, 0);
       await client.query('delete from cards.group_agent_preferences where user_id=$1', [guest]);
+    });
+
+    await t.test('assistant replies keep up to 8000 characters while human messages stay at 4000', async () => {
+      const groupId = await group();
+      assert.equal((await decide(guest, await invite(groupId))).status, 'accepted');
+      const ask = await sendGroup(owner, groupId, randomUUID(), '@guest write the launch plan');
+      const reply = async (content: string, clientId = randomUUID()) => (await client.query(
+        'select cards.network_send_agent_group_message($1,$2,$3,$4,$5) as result',
+        [groupId, guest, content, ask.message.id, clientId],
+      )).rows[0].result;
+
+      // 0027 and earlier cut this at 4000. A real plan is Markdown, so keep its shape too.
+      const plan = `## Plan\n\n${'1. Ship it carefully.\n'.repeat(260)}`.trim();
+      assert.ok(plan.length > 4000 && plan.length < 8000);
+      const full = await reply(plan);
+      assert.equal(full.message.content.length, plan.length);
+      assert.ok(full.message.content === plan, 'the Markdown plan is stored unchanged');
+      assert.equal(full.message.sender_kind, 'agent');
+
+      // Exactly the limit is stored untouched; one more is cut to the limit.
+      const exact = await reply('a'.repeat(8000));
+      assert.equal(exact.message.content.length, 8000);
+      const overKey = randomUUID();
+      const over = await reply('b'.repeat(8001), overKey);
+      assert.equal(over.message.content.length, 8000);
+      assert.ok(over.message.content === 'b'.repeat(8000));
+      // Padding is trimmed before the cut, so it never eats into the limit.
+      const padded = await reply(`   ${'c'.repeat(8000)}   `);
+      assert.equal(padded.message.content.length, 8000);
+      assert.ok(padded.message.content === 'c'.repeat(8000));
+
+      // A retry with the same key returns the stored reply, not a second one.
+      const clientId = randomUUID();
+      const first = await reply('d'.repeat(7000), clientId);
+      const again = await reply('d'.repeat(7000), clientId);
+      assert.equal(again.duplicate, true);
+      assert.equal(again.message.id, first.message.id);
+
+      // Pages and the Realtime broadcast carry the whole reply.
+      const stored = (await readGroup(guest, groupId)).messages.find((message: { id: string }) => message.id === over.message.id);
+      assert.equal(stored.content.length, 8000);
+      const broadcast = (await client.query(
+        `select length(payload->'message'->>'content') as n, payload->'message'->>'client_id' as client_id
+         from realtime.messages where topic=$1 and event='message' and payload->'message'->>'id'=$2`,
+        [`cards:group:${groupId}`, over.message.id],
+      )).rows[0];
+      assert.equal(broadcast.n, 8000);
+      // The web UI matches a streaming bubble to its saved reply by client_id (= the job id).
+      assert.equal(stored.client_id, overKey);
+      assert.equal(broadcast.client_id, overKey);
+
+      // The inbox line is still one short preview, whatever the length.
+      const preview = (await inbox(owner)).groups.find((row: { id: string }) => row.id === groupId).last_message_preview as string;
+      assert.ok(preview.startsWith('AI: ') && preview.length <= 144);
+
+      // Empty is still rejected, and a non-member's assistant still cannot write.
+      assert.equal((await reply('   ')).status_code, 400);
+      const outsider = (await client.query(
+        'select cards.network_send_agent_group_message($1,$2,$3,null,null) as result', [groupId, stranger, 'hello'],
+      )).rows[0].result;
+      assert.equal(outsider.status_code, 403);
+
+      // Human messages did not move: group messages and DMs still stop at 4000.
+      const human = await sendGroup(owner, groupId, randomUUID(), 'h'.repeat(4001));
+      assert.equal(human.message.content.length, 4000);
+      const exactHuman = await sendGroup(owner, groupId, randomUUID(), 'k'.repeat(4000));
+      assert.equal(exactHuman.message.content.length, 4000);
+      const direct = await sendDm(owner, guestConnection, randomUUID(), 'm'.repeat(4001));
+      assert.equal(direct.message.content.length, 4000);
+
+      // Same grants as before: service only.
+      for (const role of ['anon', 'authenticated']) {
+        assert.equal((await client.query(
+          "select has_function_privilege($1,'cards.network_send_agent_group_message(uuid,uuid,text,uuid,uuid)','execute') as allowed", [role],
+        )).rows[0].allowed, false);
+      }
+      assert.equal((await client.query(
+        "select has_function_privilege('service_role','cards.network_send_agent_group_message(uuid,uuid,text,uuid,uuid)','execute') as allowed",
+      )).rows[0].allowed, true);
     });
 
     await t.test('browser roles can authorize Realtime topics but cannot call messaging RPCs', async () => {

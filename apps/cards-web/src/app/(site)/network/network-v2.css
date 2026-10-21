@@ -1467,3 +1467,111 @@
   background: rgba(255, 255, 255, 0.06);
   font-weight: 700;
 }
+
+/* A reply still being written: a caret after the last word. The markdown is
+   block-level, so the caret rides on the last block (or the last list item). */
+.nv2-md.is-streaming > :last-child:not(ul):not(ol)::after,
+.nv2-md.is-streaming > :is(ul, ol):last-child > li:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  background: currentColor;
+  vertical-align: text-bottom;
+  animation: nv2-caret 1s steps(2, start) infinite;
+}
+
+@keyframes nv2-caret {
+  to { visibility: hidden; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nv2-md.is-streaming > :last-child:not(ul):not(ol)::after,
+  .nv2-md.is-streaming > :is(ul, ol):last-child > li:last-child::after {
+    animation: none;
+  }
+}
+
+.nv2-typing-activity {
+  color: #8b93a1;
+}
+
+/* Dev-only "where did this come from" panel under an assistant reply. */
+.nv2-sources {
+  margin: 4px 0 0 4px;
+  color: #8b93a1;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.nv2-msg-row.is-mine .nv2-sources {
+  margin: 4px 4px 0 0;
+}
+
+.nv2-sources > summary {
+  display: inline-block;
+  color: #a78bfa;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.nv2-sources-body {
+  margin-top: 4px;
+  padding: 7px 10px;
+  border: 1px dashed rgba(167, 139, 250, 0.3);
+  border-radius: 10px;
+  background: rgba(10, 13, 22, 0.55);
+  overflow-wrap: anywhere;
+}
+
+.nv2-sources-body section + section {
+  margin-top: 6px;
+}
+
+.nv2-sources-body h4 {
+  margin: 0 0 2px;
+  color: #c4b5fd;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.nv2-sources-body p {
+  margin: 0;
+}
+
+.nv2-sources-body ul,
+.nv2-sources-body ol {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.nv2-sources-body q {
+  display: block;
+  color: #b4bcc9;
+  quotes: "\201c" "\201d";
+}
+
+.nv2-sources-items {
+  color: #b4bcc9;
+  list-style: square;
+}
+
+.nv2-sources-body code {
+  color: #ddd6fe;
+  font-size: 10.5px;
+}
+
+.nv2-sources-args,
+.nv2-sources-result {
+  display: block;
+}
+
+.nv2-sources-result {
+  color: #b4bcc9;
+}
+
+.nv2-sources-body li.is-failed .nv2-sources-result {
+  color: #fca5a5;
+}

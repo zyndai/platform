@@ -35,6 +35,7 @@ Thumbs.db
 
 # Webapp specific
 /apps/persona-web/.next/
+/apps/persona-web/.next.prev/
 /apps/persona-web/.vercel/
 /apps/persona-web/out/
 /apps/persona-web/build/

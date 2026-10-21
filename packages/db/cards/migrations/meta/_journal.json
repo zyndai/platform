@@ -183,6 +183,13 @@
       "when": 1792518523821,
       "tag": "0025_networking_controls",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1792568072811,
+      "tag": "0026_group_memory_agent_replies",
+      "breakpoints": true
     }
   ]
 }

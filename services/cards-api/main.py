@@ -45,19 +45,26 @@ async def lifespan(app: FastAPI):
         )
     else:
         logger.warning("ZYND memory refresh disabled — MEMORY_SERVICE_TOKEN not set")
+
+    group_memory_task = None
+    if config.FEATURE_GROUP_MEMORY:
+        from services.group_agent import group_memory_loop
+        group_memory_task = asyncio.create_task(group_memory_loop())
+        logger.info("group memory worker started")
+    group_agent_task = None
+    if config.FEATURE_GROUP_AGENT_REPLIES:
+        from services.group_agent import agent_reply_loop
+        group_agent_task = asyncio.create_task(agent_reply_loop())
+        logger.info("group agent reply worker started")
+
     yield
-    if task:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-    if memory_task:
-        memory_task.cancel()
-        try:
-            await memory_task
-        except asyncio.CancelledError:
-            pass
+    for running in (task, memory_task, group_memory_task, group_agent_task):
+        if running:
+            running.cancel()
+            try:
+                await running
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(title="Zynd Cards API", version="1.0.0", lifespan=lifespan)

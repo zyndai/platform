@@ -30,6 +30,8 @@ connection requests, DMs, groups, or the Cards MCP network tools.
 - Card profile: `Request connection`
 - Cards API: `/cards/network/*`, including `GET /inbox`, message cursors
   (`before_seq` / `after_seq`), idempotent `client_id` sends, and `POST /read`
+- Cards API group memory: `GET/POST /groups/{id}/memory` (summary, facts,
+  semantic search, Remember) and `GET/PUT /agent-preferences`
 - Authenticated MCP: `list_card_connections`, `request_card_connection`,
   `respond_card_connection`, `read_card_dm`, `send_card_dm`, and the
   `card_group` tools.
@@ -48,6 +50,9 @@ reviewed older drift while preserving the live analytics view.
 `0023_network_messaging_v2` adds message sequences, idempotency keys, read
 cursors, inbox summaries, and Realtime Broadcast triggers. **Apply `0023`
 before deploying the v2 API code**; the new endpoints call its RPCs.
+`0026_group_memory_agent_replies` adds group summaries/facts, message
+remembering, durable agent jobs, and the group-memory/agent RPCs. It is
+additive and is **not applied** until a human approves it.
 
 Test the full Cards migration history and concurrent invitation decisions on a
 disposable local Postgres with pgvector (never set this to Supabase):
@@ -83,6 +88,42 @@ CARDS_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5559/postgres n
 - Apply `0023` before deploying API code that calls the new RPCs. The API and
   old endpoints remain backward compatible.
 
+## Group memory and Card assistant replies (migration 0026)
+
+- The group conversation is **not** copied into memory. Agents get the last
+  `GROUP_MEMORY_RECENT_MESSAGES` messages (default 50) as raw context.
+- `cards.group_memory` stores only a rolling **summary** and durable **facts**.
+  A member can press **Remember** on a message; that message becomes a fact and
+  is highlighted in the Cards accent colour for everyone in the group.
+- The summarizer runs every `GROUP_MEMORY_SUMMARY_EVERY` new messages (default
+  30), folds the previous summary into a new one, and extracts up to six durable
+  facts. Embeddings are filled asynchronously by the same worker.
+- Typing `@` in the group composer opens a member picker; choosing a member
+  inserts their Card handle. Messages that start with **Remember** are saved to
+  group memory automatically and highlighted in the accent colour, in addition
+  to the per-message **Remember** action.
+- `@handle` in a group message queues that member's **Card AI assistant**, not
+  the Persona agent. The assistant gets the recent messages, the group
+  summary/facts, and only that member's approved public memory facts. It can
+  call tools for semantic group-memory search, more recent messages, another
+  member's public memory, group facts, and the member list.
+- Replies are stored with `sender_kind='agent'` and `agent_for_user_id`; the UI
+  labels them **AI assistant for @handle**. Agent messages never trigger more
+  agent jobs.
+- Realtime events: `agent_typing` (`pending`, `running`, `done`, `failed`) and
+  `memory` (summary/fact saved, message remembered).
+- Flags: `FEATURE_GROUP_MEMORY` and `FEATURE_GROUP_AGENT_REPLIES`, both off by
+  default. They require `packages/db` cards migration `0026`. Apply the
+  migration only with explicit approval; the migration is additive and does not
+  touch Persona.
+- The web cache is client-side: the inbox and per-conversation pages are kept
+  in memory and IndexedDB per signed-in user. Revisiting a conversation renders
+  the cached messages immediately and fetches only `after_seq` deltas. The last
+  80 messages per conversation, 30 conversations, and a 7-day TTL are kept.
+- `FEATURE_GROUP_MEMORY` gates the memory endpoints; the web UI still renders
+  the current conversation if memory is disabled. `FEATURE_GROUP_AGENT_REPLIES`
+  gates mention queueing and the worker.
+
 ## Dev rollout and rollback
 
 - Squash-merge the feature into `dev` only after verification. Deploy Cards web,
@@ -100,6 +141,14 @@ CARDS_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5559/postgres n
   Rollback is step 5 reversed; the additive tables and message data stay.
   Do **not** deploy cards-api before `0023`, because the old endpoints now
   read through `network_inbox`.
+- Group memory rollout: (1) confirm `0024`/`0025` are applied, (2) apply
+  `0026` after review, (3) deploy cards-api with both group flags false,
+  (4) deploy cards-web with both group flags false, (5) set
+  `FEATURE_GROUP_MEMORY=true` and verify Remember/search, (6) set
+  `FEATURE_GROUP_AGENT_REPLIES=true` and verify a tagged assistant reply and
+  the typing indicator. Rollback is the reverse flag order; the additive
+  tables and saved facts stay. The client cache needs no flag and ships with
+  the v2 UI.
 
 ### Shared database preflight — 2026-10-17
 
@@ -175,6 +224,31 @@ that Cards migration was pending. Post-application verification:
 - Cards API and Cards web were not deployed by this migration step. Apply the
   code in the rollout order above; the migration is additive and the currently
   deployed API keeps working.
+
+### Live application — 2026-10-21 (group memory, 0026)
+
+Applied the three pending Cards migrations through the session pooler:
+`0024_connection_invites`, `0025_networking_controls`, and
+`0026_group_memory_agent_replies`. Identity and persona had no pending
+migrations and were untouched.
+
+Post-application verification:
+
+- Cards has **29** migration records; identity remains **1** and persona **9**.
+- `cards.group_memory`, `group_memory_state`, `group_message_memory`,
+  `group_agent_jobs`, and `group_agent_preferences` exist.
+- `group_messages` has `sender_kind`, `agent_for_user_id`,
+  `reply_to_message_id`, and `mentions`.
+- All group-memory/agent RPCs and event triggers are present.
+- Browser roles have no table grants on the new tables and cannot execute the
+  new service-only functions.
+- The only `realtime.messages` policy is still
+  `cards network can receive broadcasts`.
+- Full drift check against a clean replay: **No drift: 1,504 catalog entries
+  match.**
+- Application code and feature flags were not deployed by this migration step.
+  Use the group-memory rollout order above; both flags stay off until the code
+  is deployed and verified.
 
 ### Live application — 2026-10-17
 

@@ -36,7 +36,7 @@ test('Cards network migrations preserve invitation and membership invariants', {
     });
     await apply();
     await apply();
-    assert.equal((await client.query('select count(*)::int as n from drizzle.__cards_migrations')).rows[0].n, 26);
+    assert.equal((await client.query('select count(*)::int as n from drizzle.__cards_migrations')).rows[0].n, 27);
     assert.equal((await client.query("select to_regclass('drizzle.__persona_migrations') as table")).rows[0].table, null);
     await client.query("set request.jwt.claim.role='service_role'");
 
@@ -240,6 +240,85 @@ test('Cards network migrations preserve invitation and membership invariants', {
       assert.equal(noKey.message.seq, 3);
     });
 
+    await t.test('group memory, remembered messages and agent jobs stay scoped', async () => {
+      const groupId = await group();
+      assert.equal((await decide(guest, await invite(groupId))).status, 'accepted');
+      const first = await sendGroup(owner, groupId, randomUUID(), 'Decision: ship the API on Friday');
+      const vector = "array_fill(0.1::real, ARRAY[1536])::vector";
+      const remembered = (await client.query(
+        `select cards.network_group_memory_remember($1,$2,$3,$4,${vector}) as result`,
+        [owner, groupId, first.message.id, 'remember-hash-1'],
+      )).rows[0].result;
+      assert.equal(remembered.memory.kind, 'fact');
+      assert.equal(remembered.memory.source_message_id, first.message.id);
+
+      const page = await readGroup(guest, groupId);
+      assert.equal(page.messages[0].remembered, true);
+      assert.equal(page.messages[0].memory_id, remembered.memory.id);
+
+      const manual = (await client.query(
+        'select cards.network_group_memory_add_fact($1,$2,$3,$4,null) as result',
+        [owner, groupId, 'The launch owner is Alice', 'manual-hash-1'],
+      )).rows[0].result;
+      assert.equal(manual.memory.kind, 'fact');
+      const repeated = (await client.query(
+        'select cards.network_group_memory_add_fact($1,$2,$3,$4,null) as result',
+        [owner, groupId, 'The launch owner is Alice', 'manual-hash-1'],
+      )).rows[0].result;
+      assert.equal(repeated.memory.id, manual.memory.id);
+
+      const agentClientId = randomUUID();
+      const agentReply = (await client.query(
+        'select cards.network_send_agent_group_message($1,$2,$3,$4,$5) as result',
+        [groupId, guest, 'Friday works for me.', first.message.id, agentClientId],
+      )).rows[0].result;
+      assert.equal(agentReply.message.sender_kind, 'agent');
+      assert.equal(agentReply.message.agent_for_user_id, guest);
+      assert.equal(agentReply.message.reply_to_message_id, first.message.id);
+      const retriedReply = (await client.query(
+        'select cards.network_send_agent_group_message($1,$2,$3,$4,$5) as result',
+        [groupId, guest, 'Friday works for me.', first.message.id, agentClientId],
+      )).rows[0].result;
+      assert.equal(retriedReply.duplicate, true);
+      assert.equal(retriedReply.message.id, agentReply.message.id);
+
+      const queued = (await client.query(
+        'select cards.network_enqueue_group_agent_replies($1,$2) as result',
+        [first.message.id, [guest]],
+      )).rows[0].result;
+      assert.equal(queued.enqueued, 1);
+      const job = (await client.query('select cards.network_claim_group_agent_job() as result')).rows[0].result;
+      assert.equal(job.status, 'running');
+      assert.equal(job.mentioned_user_id, guest);
+      assert.equal((await client.query('select cards.network_finish_group_agent_job($1,true,null) as result', [job.id])).rows[0].result.status, 'done');
+
+      const summary = (await client.query(
+        `select cards.network_group_memory_set_summary($1,$2,$3,$4,${vector},'{}'::jsonb) as result`,
+        [groupId, 'The group is shipping the API on Friday.', 'summary-hash-1', first.message.seq],
+      )).rows[0].result;
+      assert.equal(summary.memory.kind, 'summary');
+      const listed = (await client.query('select cards.network_group_memory_list($1,$2,30) as result', [owner, groupId])).rows[0].result;
+      assert.equal(listed.summary.content, 'The group is shipping the API on Friday.');
+      assert.equal(listed.facts.length, 2);
+      const search = (await client.query(
+        `select cards.network_group_memory_search($1,$2,${vector},8) as result`, [owner, groupId],
+      )).rows[0].result;
+      assert.ok(search.some((row: { kind: string }) => row.kind === 'summary'));
+      assert.ok(search.some((row: { kind: string }) => row.kind === 'fact'));
+
+      // A member who turned replies off is never queued.
+      const otherGroup = await group();
+      assert.equal((await decide(guest, await invite(otherGroup))).status, 'accepted');
+      await client.query('insert into cards.group_agent_preferences(user_id,enabled) values($1,false) on conflict (user_id) do update set enabled=false', [guest]);
+      const second = await sendGroup(owner, otherGroup, randomUUID(), 'Second group message');
+      const skipped = (await client.query(
+        'select cards.network_enqueue_group_agent_replies($1,$2) as result',
+        [second.message.id, [guest]],
+      )).rows[0].result;
+      assert.equal(skipped.enqueued, 0);
+      await client.query('delete from cards.group_agent_preferences where user_id=$1', [guest]);
+    });
+
     await t.test('browser roles can authorize Realtime topics but cannot call messaging RPCs', async () => {
       assert.equal((await client.query("select has_schema_privilege('authenticated','cards','usage') as allowed")).rows[0].allowed, true);
       assert.equal((await client.query("select has_function_privilege('authenticated','cards.network_can_subscribe(text)','execute') as allowed")).rows[0].allowed, true);
@@ -248,6 +327,16 @@ test('Cards network migrations preserve invitation and membership invariants', {
         'cards.network_dm_messages(uuid,uuid,bigint,bigint,integer)',
         'cards.network_send_dm(uuid,uuid,uuid,text)',
         'cards.network_mark_read(uuid,text,uuid,bigint)',
+        'cards.network_send_agent_group_message(uuid,uuid,text,uuid,uuid)',
+        'cards.network_enqueue_group_agent_replies(uuid,uuid[])',
+        'cards.network_claim_group_agent_job()',
+        'cards.network_finish_group_agent_job(uuid,boolean,text)',
+        'cards.network_group_memory_search(uuid,uuid,vector,integer)',
+        'cards.network_group_memory_remember(uuid,uuid,uuid,text,vector)',
+        'cards.network_group_memory_add_fact(uuid,uuid,text,text,vector)',
+        'cards.network_group_memory_set_summary(uuid,text,text,bigint,vector,jsonb)',
+        'cards.network_group_memory_list(uuid,uuid,integer)',
+        'cards.network_groups_needing_summary(integer,integer)',
       ]) {
         assert.equal((await client.query('select has_function_privilege($1,$2,\'execute\') as allowed', ['authenticated', signature])).rows[0].allowed, false);
       }

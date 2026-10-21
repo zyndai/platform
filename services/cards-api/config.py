@@ -45,6 +45,15 @@ FEATURE_S12_INTROS: bool = os.getenv("FEATURE_S12_INTROS", "false").lower() in (
 # card_verifications, match_preferences). Off by default.
 FEATURE_NETWORK_CONTROLS: bool = os.getenv("FEATURE_NETWORK_CONTROLS", "false").lower() in ("1", "true", "yes")
 FEATURE_A2_INVITE_TO_CLAIM: bool = os.getenv("FEATURE_A2_INVITE_TO_CLAIM", "false").lower() in ("1", "true", "yes")
+# Group memory + Card assistant replies (packages/db cards 0026). Both stay
+# off until the migration is applied and the dev flow is verified.
+FEATURE_GROUP_MEMORY: bool = os.getenv("FEATURE_GROUP_MEMORY", "false").lower() in ("1", "true", "yes")
+FEATURE_GROUP_AGENT_REPLIES: bool = os.getenv("FEATURE_GROUP_AGENT_REPLIES", "false").lower() in ("1", "true", "yes")
+GROUP_MEMORY_SUMMARY_EVERY: int = int(os.getenv("GROUP_MEMORY_SUMMARY_EVERY", "30"))
+GROUP_MEMORY_RECENT_MESSAGES: int = int(os.getenv("GROUP_MEMORY_RECENT_MESSAGES", "50"))
+GROUP_MEMORY_SEARCH_LIMIT: int = int(os.getenv("GROUP_MEMORY_SEARCH_LIMIT", "8"))
+GROUP_AGENT_POLL_SECONDS: float = float(os.getenv("GROUP_AGENT_POLL_SECONDS", "2"))
+GROUP_AGENT_MAX_STEPS: int = int(os.getenv("GROUP_AGENT_MAX_STEPS", "4"))
 PERSONA_API_URL: str = os.getenv("PERSONA_API_URL", "http://127.0.0.1:8000")
 PERSONA_SITE_URL: str = os.getenv("PERSONA_SITE_URL", "https://persona.zynd.ai")
 CARDS_INTRO_SERVICE_TOKEN: str = os.getenv("CARDS_INTRO_SERVICE_TOKEN", "")

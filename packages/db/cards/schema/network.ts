@@ -4,6 +4,8 @@ import {
   boolean,
   check,
   index,
+  integer,
+  jsonb,
   pgPolicy,
   pgTable,
   primaryKey,
@@ -11,6 +13,7 @@ import {
   unique,
   uniqueIndex,
   uuid,
+  vector,
 } from 'drizzle-orm/pg-core';
 import { authUsers, fk, serviceRole, tstz } from '../../lib/shared';
 import { cards } from './_schema';
@@ -210,12 +213,23 @@ export const cardGroupMessages = cards.table(
     seq: bigint('seq', { mode: 'number' }).notNull(),
     clientId: uuid('client_id'),
     senderUserId: uuid('sender_user_id').notNull(),
+    // "user" messages are written by the member. "agent" messages are written
+    // by the Card AI assistant on behalf of agent_for_user_id and are always
+    // labelled as AI in the UI. Agent messages never trigger more agents.
+    senderKind: text('sender_kind').notNull().default('user'),
+    agentForUserId: uuid('agent_for_user_id'),
+    replyToMessageId: uuid('reply_to_message_id'),
+    mentions: uuid('mentions').array().notNull().default(sql`'{}'::uuid[]`),
     content: text('content').notNull(),
     createdAt: tstz('created_at').notNull().defaultNow(),
   },
   (t) => [
     fk('cards_group_messages_group_fkey', t.groupId, cardGroups.id, 'cascade'),
     fk('cards_group_messages_sender_fkey', t.senderUserId, authUsers.id, 'cascade'),
+    fk('cards_group_messages_agent_for_user_id_fkey', t.agentForUserId, authUsers.id, 'set null'),
+    fk('cards_group_messages_reply_to_message_id_fkey', t.replyToMessageId, t.id, 'set null'),
+    check('cards_group_messages_sender_kind_check', sql`sender_kind IN ('user', 'agent')`),
+    check('cards_group_messages_agent_identity_check', sql`sender_kind = 'user' OR agent_for_user_id IS NOT NULL`),
     check('cards_group_messages_seq_check', sql`seq > 0`),
     uniqueIndex('cards_group_messages_group_seq_key').on(t.groupId, t.seq),
     uniqueIndex('cards_group_messages_client_key')
@@ -241,6 +255,130 @@ export const cardGroupReadState = cards.table(
     check('cards_group_read_state_seq_check', sql`last_read_seq >= 0`),
     index('cards_group_read_state_user_idx').on(t.userId, t.lastReadAt.desc()),
     serviceOnly('group_read_state'),
+  ],
+);
+
+// owner: cards — durable group memory. The conversation itself is not copied
+// here: agents receive the last N messages as raw context, while this table
+// holds the rolling summary and the small set of durable facts worth keeping.
+// `source_message_id` is set for a fact a member explicitly remembered; the
+// link table below is what the UI uses to paint that message in the accent
+// colour.
+export const cardGroupMemory = cards.table(
+  'group_memory',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    groupId: uuid('group_id').notNull(),
+    kind: text('kind').notNull(),
+    content: text('content').notNull(),
+    contentHash: text('content_hash').notNull(),
+    sourceMessageId: uuid('source_message_id'),
+    createdBy: uuid('created_by'),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    embedding: vector('embedding', { dimensions: 1536 }),
+    createdAt: tstz('created_at').notNull().defaultNow(),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    fk('cards_group_memory_group_fkey', t.groupId, cardGroups.id, 'cascade'),
+    fk('cards_group_memory_source_message_fkey', t.sourceMessageId, cardGroupMessages.id, 'set null'),
+    fk('cards_group_memory_created_by_fkey', t.createdBy, authUsers.id, 'set null'),
+    check('cards_group_memory_kind_check', sql`kind IN ('summary', 'fact')`),
+    check('cards_group_memory_content_check', sql`char_length(content) BETWEEN 1 AND 4000`),
+    uniqueIndex('cards_group_memory_summary_key')
+      .on(t.groupId)
+      .where(sql`kind = 'summary'`),
+    uniqueIndex('cards_group_memory_fact_hash_key')
+      .on(t.groupId, t.contentHash)
+      .where(sql`kind = 'fact'`),
+    index('cards_group_memory_group_created_idx').on(t.groupId, t.createdAt.desc()),
+    index('cards_group_memory_embedding_hnsw_idx').using('hnsw', t.embedding.op('vector_cosine_ops')),
+    serviceOnly('group_memory'),
+  ],
+);
+
+// owner: cards — one row per group tracking how far the rolling summary has
+// read. Keeping the cursor here means a failed summary job retries from the
+// same place instead of skipping messages.
+export const cardGroupMemoryState = cards.table(
+  'group_memory_state',
+  {
+    groupId: uuid('group_id').primaryKey(),
+    lastSummarizedSeq: bigint('last_summarized_seq', { mode: 'number' }).notNull().default(0),
+    summaryMemoryId: uuid('summary_memory_id'),
+    summaryUpdatedAt: tstz('summary_updated_at'),
+    createdAt: tstz('created_at').notNull().defaultNow(),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    fk('cards_group_memory_state_group_fkey', t.groupId, cardGroups.id, 'cascade'),
+    fk('cards_group_memory_state_summary_fkey', t.summaryMemoryId, cardGroupMemory.id, 'set null'),
+    check('cards_group_memory_state_seq_check', sql`last_summarized_seq >= 0`),
+    serviceOnly('group_memory_state'),
+  ],
+);
+
+// owner: cards — the message a member chose to remember. One message maps to
+// one fact; the fact may also be reused by the summarizer.
+export const cardGroupMessageMemory = cards.table(
+  'group_message_memory',
+  {
+    messageId: uuid('message_id').primaryKey(),
+    memoryId: uuid('memory_id').notNull(),
+    createdBy: uuid('created_by'),
+    createdAt: tstz('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    fk('cards_group_message_memory_message_fkey', t.messageId, cardGroupMessages.id, 'cascade'),
+    fk('cards_group_message_memory_memory_fkey', t.memoryId, cardGroupMemory.id, 'cascade'),
+    fk('cards_group_message_memory_created_by_fkey', t.createdBy, authUsers.id, 'set null'),
+    index('cards_group_message_memory_memory_idx').on(t.memoryId),
+    serviceOnly('group_message_memory'),
+  ],
+);
+
+// owner: cards — a durable queue for Card AI assistant replies. Sending a
+// message stays fast; the worker claims one job at a time with SKIP LOCKED.
+export const cardGroupAgentJobs = cards.table(
+  'group_agent_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    groupId: uuid('group_id').notNull(),
+    messageId: uuid('message_id').notNull(),
+    mentionedUserId: uuid('mentioned_user_id').notNull(),
+    status: text('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    availableAt: tstz('available_at').notNull().defaultNow(),
+    lockedAt: tstz('locked_at'),
+    lastError: text('last_error'),
+    createdAt: tstz('created_at').notNull().defaultNow(),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    fk('cards_group_agent_jobs_group_fkey', t.groupId, cardGroups.id, 'cascade'),
+    fk('cards_group_agent_jobs_message_fkey', t.messageId, cardGroupMessages.id, 'cascade'),
+    fk('cards_group_agent_jobs_user_fkey', t.mentionedUserId, authUsers.id, 'cascade'),
+    check('cards_group_agent_jobs_status_check', sql`status IN ('pending', 'running', 'done', 'failed')`),
+    uniqueIndex('cards_group_agent_jobs_message_user_key').on(t.messageId, t.mentionedUserId),
+    index('cards_group_agent_jobs_ready_idx').on(t.status, t.availableAt),
+    index('cards_group_agent_jobs_group_idx').on(t.groupId, t.createdAt.desc()),
+    serviceOnly('group_agent_jobs'),
+  ],
+);
+
+// owner: cards — per-user opt-out for automatic Card AI replies in groups.
+// Missing row means enabled, so existing members get the feature without a
+// backfill; the API writes a row only when someone turns it off or on.
+export const cardGroupAgentPreferences = cards.table(
+  'group_agent_preferences',
+  {
+    userId: uuid('user_id').primaryKey(),
+    enabled: boolean('enabled').notNull().default(true),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    fk('cards_group_agent_preferences_user_fkey', t.userId, authUsers.id, 'cascade'),
+    serviceOnly('group_agent_preferences'),
   ],
 );
 

@@ -11,6 +11,8 @@ single-worker cards-api process.
 """
 
 import hmac
+import logging
+import re
 from uuid import UUID
 
 import jwt
@@ -19,7 +21,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 import config
 from api.auth import Principal, verify_supabase_jwt
-from services import connection_brief, invites, match_prefs, network, saved_searches, trust
+from services import connection_brief, group_memory, invites, match_prefs, network, saved_searches, trust
+
+_MENTION_RE = re.compile(r"(?<![\w.])@([A-Za-z0-9_.-]{1,64})")
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -123,8 +128,59 @@ class ReadMark(BaseModel):
     seq: int = Field(ge=0)
 
 
+class GroupMemoryRemember(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message_id: UUID | None = None
+    content: str | None = Field(default=None, max_length=4000)
+
+
+class AgentPreferenceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+
+
 def _uid(authorization: str | None, zynd_user: str | None) -> str:
     return _principal(authorization, zynd_user).sub
+
+
+def _enqueue_group_mentions(user_id: str, group_id: str, result: dict) -> None:
+    """Queue Card assistant replies for @handles; never fail the message send."""
+    if not config.FEATURE_GROUP_AGENT_REPLIES:
+        return
+    message = result.get("message") or {}
+    content = message.get("content") or ""
+    handles = list(dict.fromkeys(match.lower() for match in _MENTION_RE.findall(content)))
+    if not handles:
+        result["agent_replies"] = 0
+        return
+    try:
+        members = group_memory.members(group_id)
+        by_handle = {
+            (member.get("handle") or "").lower(): member["user_id"]
+            for member in members
+            if member.get("handle") and member.get("user_id")
+        }
+        mentioned = []
+        for handle in handles:
+            target = by_handle.get(handle)
+            if target and target != user_id and target not in mentioned:
+                mentioned.append(target)
+        mentioned = mentioned[:2]
+        if not mentioned:
+            result["agent_replies"] = 0
+            return
+        queued = group_memory.enqueue_agent_replies(str(message["id"]), mentioned)
+        result["agent_replies"] = int(queued.get("enqueued") or 0)
+        # The mention list is metadata for the message page; the content stays
+        # untouched so the UI can render @handles in the accent colour.
+        try:
+            config.get_supabase().table("group_messages").update({"mentions": mentioned}).eq("id", message["id"]).execute()
+            message["mentions"] = mentioned
+        except Exception:
+            pass
+    except Exception as exc:  # noqa: BLE001 — sending must not depend on the queue
+        logger.warning("could not queue group mentions: %s", exc)
+        result["agent_replies"] = 0
 
 
 @router.get("/network/inbox")
@@ -232,10 +288,66 @@ def group_messages(
 
 @router.post("/network/groups/{group_id}/messages")
 def send_group_message(group_id: UUID, body: MessageCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
-    return network.send_group_message(
-        _uid(authorization, x_zynd_user), str(group_id), body.content,
+    user_id = _uid(authorization, x_zynd_user)
+    result = network.send_group_message(
+        user_id, str(group_id), body.content,
         str(body.client_id) if body.client_id else None,
     )
+    if not result.get("duplicate"):
+        _enqueue_group_mentions(user_id, str(group_id), result)
+    return result
+
+
+@router.get("/network/groups/{group_id}/memory")
+def group_memory_list(
+    group_id: UUID,
+    q: str = Query("", max_length=300),
+    limit: int = Query(30, ge=1, le=100),
+    authorization: str | None = Header(default=None),
+    x_zynd_user: str | None = Header(default=None),
+):
+    if not config.FEATURE_GROUP_MEMORY:
+        raise HTTPException(503, "Group memory is not enabled")
+    user_id = _uid(authorization, x_zynd_user)
+    if q.strip():
+        return group_memory.search_memory(
+            user_id, str(group_id), q, min(limit, config.GROUP_MEMORY_SEARCH_LIMIT),
+        )
+    return group_memory.list_memory(user_id, str(group_id), limit)
+
+
+@router.post("/network/groups/{group_id}/memory")
+def group_memory_write(
+    group_id: UUID,
+    body: GroupMemoryRemember,
+    authorization: str | None = Header(default=None),
+    x_zynd_user: str | None = Header(default=None),
+):
+    if not config.FEATURE_GROUP_MEMORY:
+        raise HTTPException(503, "Group memory is not enabled")
+    user_id = _uid(authorization, x_zynd_user)
+    if body.message_id is not None:
+        return group_memory.remember_message(user_id, str(group_id), str(body.message_id))
+    if body.content is not None:
+        return group_memory.add_fact(user_id, str(group_id), body.content)
+    raise HTTPException(422, "Send a message_id or content")
+
+
+@router.get("/network/agent-preferences")
+def agent_preferences(
+    authorization: str | None = Header(default=None),
+    x_zynd_user: str | None = Header(default=None),
+):
+    return group_memory.get_agent_preference(_uid(authorization, x_zynd_user))
+
+
+@router.put("/network/agent-preferences")
+def update_agent_preferences(
+    body: AgentPreferenceUpdate,
+    authorization: str | None = Header(default=None),
+    x_zynd_user: str | None = Header(default=None),
+):
+    return group_memory.set_agent_preference(_uid(authorization, x_zynd_user), body.enabled)
 
 
 @router.post("/network/invites")

@@ -66,6 +66,37 @@ async function main() {
         await context.close();
       }
     }
+    for (const [scope, allow] of [
+      ['memory:recall memory:propose cards:review', 'Allow limited access'],
+      ['memory:recall memory:write', 'Allow full access'],
+    ]) {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.route('**/*', async (route) => {
+        const url = new URL(route.request().url());
+        if (url.hostname === 'cdn.jsdelivr.net') {
+          await route.fulfill({ contentType: 'application/javascript', body: `window.supabase = {
+            createClient: () => ({auth: {getSession: async () => ({data: {session: {access_token: 'mock-session'}}})}})
+          };` });
+        } else if (url.pathname === '/oauth/login') {
+          await route.fulfill({ contentType: 'text/html', body: login });
+        } else if (url.pathname === '/oauth/consent') {
+          await route.fulfill({ json: {
+            email: 'verified@example.test', client_name: 'Plugin', resource: 'https://api.example/chatgpt/mcp', scope
+          } });
+        } else {
+          throw new Error(`Unexpected external request: ${url}`);
+        }
+      });
+      await page.goto('http://oauth.test/oauth/login?zynd_oauth=sealed-request');
+      await page.locator('#consent').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#allow').textContent(), allow);
+      if (allow === 'Allow limited access') {
+        assert.equal(await page.locator('#permissions li').count(), 4);
+        assert.doesNotMatch(await page.locator('#permission-summary').textContent(), /full access/);
+      }
+      await context.close();
+    }
     const context = await browser.newContext();
     const page = await context.newPage();
     await page.addInitScript(() => {

@@ -6,6 +6,7 @@ import { Loader2, Moon, QrCode, Sun, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { EDITION_FONT_VARS } from "@/components/editions/fonts";
 import { EthMark } from "@/components/editions/eth-mark";
+import { EditionBannerImage } from "@/components/editions/banner-image";
 import { MumbaiSkyline } from "@/components/editions/mumbai-skyline";
 import { withShareRef } from "@/lib/attr";
 import { HERE_FOR_LABEL, type CardEdition } from "@/lib/editions";
@@ -154,7 +155,7 @@ export function EditionQrButton({ edition, wide = false, url, permalink, handle,
       {open && createPortal(
         <div ref={overlayRef} className={`ed ed-qr-overlay ${EDITION_FONT_VARS}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
           <div className="ed-qr-art" aria-hidden>
-            <MumbaiSkyline idPrefix="ed-qr" className="ed-qr-bg" focus="bottom" />
+            <EditionBannerImage className="ed-qr-bg" sizes="(max-width: 820px) 900px, 100vw" />
           </div>
           <button ref={closeRef} type="button" className="ed-qr-close" onClick={() => setOpen(false)} aria-label="Close QR code">
             <X size={20} />

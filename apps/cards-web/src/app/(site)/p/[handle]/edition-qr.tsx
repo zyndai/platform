@@ -2,18 +2,20 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Download, Loader2, QrCode, X } from "lucide-react";
+import { Loader2, Moon, QrCode, Sun, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { EDITION_FONT_VARS } from "@/components/editions/fonts";
 import { EthMark } from "@/components/editions/eth-mark";
-import { MumbaiSkyline, SKYLINE_EDGES } from "@/components/editions/mumbai-skyline";
+import { MumbaiSkyline } from "@/components/editions/mumbai-skyline";
 import { withShareRef } from "@/lib/attr";
 import { HERE_FOR_LABEL, type CardEdition } from "@/lib/editions";
 import { track } from "@/lib/track";
-import { renderWallpaper, saveWallpaper } from "./edition-wallpaper";
+import { renderWallpaper, saveWallpaper, type WallpaperTheme } from "./edition-wallpaper";
 
 interface Props {
   edition: CardEdition;
+  /** Span the whole row of the action grid (no social links beside it). */
+  wide?: boolean;
   url: string;
   permalink: string;
   handle: string;
@@ -57,32 +59,42 @@ function useScreenAwake(active: boolean) {
   }, [active]);
 }
 
-export function EditionQrButton({ edition, url, permalink, handle, name, headline, avatarSrc, initials }: Props) {
+/** Stops the page behind the dialog from scrolling; returns the undo. */
+function lockPageScroll(): () => void {
+  const previous = document.body.style.overflow;
+  document.body.style.overflow = "hidden";
+  return () => {
+    document.body.style.overflow = previous;
+  };
+}
+
+export function EditionQrButton({ edition, wide = false, url, permalink, handle, name, headline, avatarSrc, initials }: Props) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
-  const [wallpaper, setWallpaper] = useState<"idle" | "working" | "error">("idle");
+  // Which wallpaper is being made, or whether the last attempt failed.
+  const [wallpaper, setWallpaper] = useState<WallpaperTheme | "idle" | "error">("idle");
   useScreenAwake(open);
 
-  async function saveAsWallpaper() {
+  async function saveAsWallpaper(theme: WallpaperTheme) {
     const overlay = overlayRef.current;
-    const scene = overlay?.querySelector<SVGSVGElement>("svg.ed-qr-bg");
+    const art = overlay?.querySelector<SVGSVGElement>(`svg.ed-wall-${theme}`);
     const qr = overlay?.querySelector<SVGSVGElement>(".ed-qr-panel svg");
-    if (!overlay || !scene || !qr || wallpaper === "working") return;
-    setWallpaper("working");
+    if (!overlay || !art || !qr || wallpaper === "light" || wallpaper === "dark") return;
+    setWallpaper(theme);
     try {
       const css = getComputedStyle(overlay);
       const png = await renderWallpaper({
-        scene, qr, edges: SKYLINE_EDGES, avatarSrc, initials, name, headline, hereFor, permalink,
+        theme, art, qr, avatarSrc, initials, name, headline, hereFor, permalink,
         fonts: {
           ui: css.getPropertyValue("--ed-ui").trim() || "system-ui, sans-serif",
           mono: css.getPropertyValue("--ed-mono").trim() || "ui-monospace, monospace",
         },
       });
-      const outcome = await saveWallpaper(png, `zynd-${handle}-mumbai-26-wallpaper.png`);
-      if (outcome !== "cancelled") track("share_click", { handle, target: "edition_wallpaper" }, handle);
+      const outcome = await saveWallpaper(png, `zynd-${handle}-mumbai-26-wallpaper-${theme}.png`);
+      if (outcome !== "cancelled") track("share_click", { handle, target: `edition_wallpaper_${theme}` }, handle);
       setWallpaper("idle");
     } catch (err) {
       console.error("edition QR: wallpaper export failed", err);
@@ -115,11 +127,10 @@ export function EditionQrButton({ edition, url, permalink, handle, name, headlin
       }
     };
     document.addEventListener("keydown", onKey);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlockPageScroll = lockPageScroll();
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previousOverflow;
+      unlockPageScroll();
       trigger?.focus();
     };
   }, [open]);
@@ -132,7 +143,7 @@ export function EditionQrButton({ edition, url, permalink, handle, name, headlin
       <button
         ref={triggerRef}
         type="button"
-        className="ed-qr-btn"
+        className={`ed-qr-btn${wide ? " is-wide" : ""}`}
         onClick={() => {
           track("share_click", { handle, target: "edition_qr" }, handle);
           setOpen(true);
@@ -167,11 +178,24 @@ export function EditionQrButton({ edition, url, permalink, handle, name, headlin
               <span className="ed-qr-url">{permalink}</span>
             </div>
             <div className="ed-qr-hint">Scan to open my Zynd card</div>
-            <button type="button" className="ed-wallpaper-btn" onClick={saveAsWallpaper} disabled={wallpaper === "working"}>
-              {wallpaper === "working" ? <Loader2 size={17} className="ed-spin" aria-hidden /> : <Download size={17} aria-hidden />}
-              {wallpaper === "working" ? "Making your wallpaper…" : "Save as phone wallpaper"}
-            </button>
+            <div className="ed-wall-label">Save as phone wallpaper</div>
+            <div className="ed-wall-actions">
+              {(["light", "dark"] as const).map((theme) => (
+                <button key={theme} type="button" className={`ed-wallpaper-btn is-${theme}`}
+                  onClick={() => void saveAsWallpaper(theme)} disabled={wallpaper === "light" || wallpaper === "dark"}>
+                  {wallpaper === theme
+                    ? <Loader2 size={17} className="ed-spin" aria-hidden />
+                    : theme === "light" ? <Sun size={17} aria-hidden /> : <Moon size={17} aria-hidden />}
+                  {theme === "light" ? "Light" : "Dark"} wallpaper
+                </button>
+              ))}
+            </div>
             {wallpaper === "error" && <div className="ed-qr-hint" role="alert">Couldn’t make the wallpaper. Take a screenshot of this screen instead.</div>}
+            {/* The skyline for each wallpaper, drawn without a sky; only ever rasterized. */}
+            <div hidden>
+              <MumbaiSkyline idPrefix="ed-wall-light" className="ed-wall-light" theme="light" silhouette crop={[150, 500]} />
+              <MumbaiSkyline idPrefix="ed-wall-dark" className="ed-wall-dark" theme="dark" silhouette crop={[150, 500]} />
+            </div>
             <span className="ed-edition-badge"><EthMark size={14} /> MUMBAI BUILDER WEEK ’26</span>
           </div>
         </div>,

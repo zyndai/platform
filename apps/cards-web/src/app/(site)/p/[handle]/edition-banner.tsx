@@ -1,4 +1,4 @@
-import { BadgeCheck, FileText, Github, Linkedin, MapPin, UserRound } from "lucide-react";
+import { BadgeCheck, Clock3, FileText, Github, Linkedin, MapPin, Target, UserRound } from "lucide-react";
 import { EthMark } from "@/components/editions/eth-mark";
 import { EDITION_FONT_VARS } from "@/components/editions/fonts";
 import { MumbaiSkyline } from "@/components/editions/mumbai-skyline";
@@ -45,7 +45,10 @@ function XGlyph() {
 }
 
 /** Top of a card on the Mumbai Builder Week edition: the artwork, then an
- *  identity card that takes the place of the classic purple hero. */
+ *  identity card that takes the place of the classic purple hero.
+ *
+ *  The identity card is two bands that share one column grid, so every edge
+ *  lines up: photo + who | actions on top, About | Focus below a divider. */
 export function EditionHero(props: Props) {
   const { edition, name, nameLines, headline, location, role, chips, avatarSrc, initials, url, permalink, handle, verified, canChat, connect, about, links, updatedLabel } = props;
   const hereFor = edition.here_for ? HERE_FOR_LABEL[edition.here_for] : null;
@@ -54,6 +57,8 @@ export function EditionHero(props: Props) {
     { href: links.github, label: "GitHub", icon: <Github size={17} aria-hidden /> },
     { href: links.linkedin, label: "LinkedIn", icon: <Linkedin size={17} aria-hidden /> },
   ].filter((s): s is { href: string; label: string; icon: React.JSX.Element } => !!s.href);
+  const updated = updatedLabel ? `Updated ${updatedLabel.charAt(0)}${updatedLabel.slice(1).toLowerCase()}` : "";
+  const hasFocus = chips.length > 0 || !!hereFor;
 
   return (
     <section className={`ed ed-hero ${EDITION_FONT_VARS}`} aria-label={`${EDITION_NAME[edition.id]} card`}>
@@ -70,56 +75,68 @@ export function EditionHero(props: Props) {
       </div>
 
       <div className="ed-id">
-        {avatarSrc ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img className="ed-id-photo" src={avatarSrc} alt={name} />
-        ) : (
-          <span className="ed-id-photo ed-id-initials" role="img" aria-label={name}>{initials}</span>
+        <div className="ed-id-profile">
+          {avatarSrc ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="ed-id-photo" src={avatarSrc} alt={name} />
+          ) : (
+            <span className="ed-id-photo ed-id-initials" role="img" aria-label={name}>{initials}</span>
+          )}
+          <div className="ed-id-who">
+            <div className="ed-id-im">I&apos;m</div>
+            <div className="ed-id-name">
+              <span>{nameLines.map((line, i) => <span key={i}>{line}{i < nameLines.length - 1 ? " " : ""}</span>)}</span>
+              {verified && <BadgeCheck size={26} className="ed-id-verified" aria-label="LinkedIn linked" />}
+            </div>
+            {headline && <div className="ed-id-headline">{headline}</div>}
+            {(location || role || updated) && (
+              <div className="ed-id-meta">
+                {location && <span><MapPin size={15} aria-hidden />{location}</span>}
+                {role && <span><UserRound size={15} aria-hidden />{role}</span>}
+                {updated && <span><Clock3 size={15} aria-hidden />{updated}</span>}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Two equal columns: Connect spans both; Ask Agent | handle;
+            socials | Show my QR. A missing partner makes the other span. */}
+        <div className="ed-id-actions">
+          {connect && <div className="ed-act-connect">{connect}</div>}
+          <EditionIdentityActions handle={handle} permalink={permalink} canChat={canChat} />
+          {socials.length > 0 && (
+            <div className="ed-act-socials" style={{ "--n": socials.length } as React.CSSProperties}>
+              {socials.map((s) => (
+                <a key={s.label} className="ed-social" href={s.href} target="_blank" rel="noreferrer" aria-label={s.label}>
+                  {s.icon}
+                  {socials.length === 1 && <span>{s.label}</span>}
+                </a>
+              ))}
+            </div>
+          )}
+          <EditionQrButton edition={edition} url={url} permalink={permalink} handle={handle} name={name}
+            headline={headline} avatarSrc={avatarSrc} initials={initials} wide={socials.length === 0} />
+        </div>
+
+        {(about || hasFocus) && (
+          <div className={`ed-id-more${about && hasFocus ? "" : " is-single"}`}>
+            {about && (
+              <div className="ed-id-about">
+                <div className="ed-id-label"><FileText size={15} aria-hidden /> About</div>
+                <EditionAboutText text={about} />
+              </div>
+            )}
+            {hasFocus && (
+              <div className="ed-id-focus">
+                <div className="ed-id-label"><Target size={15} aria-hidden /> Focus</div>
+                <div className="ed-id-chips">
+                  {hereFor && <span className="ed-chip">Here for · {hereFor}</span>}
+                  {chips.map((chip) => <span key={chip} className="ed-tag">{chip}</span>)}
+                </div>
+              </div>
+            )}
+          </div>
         )}
-
-        <div className="ed-id-main">
-          <div className="ed-id-im">I&apos;m</div>
-          <div className="ed-id-name">
-            <span>{nameLines.map((line, i) => <span key={i}>{line}{i < nameLines.length - 1 ? " " : ""}</span>)}</span>
-            {verified && <BadgeCheck size={26} className="ed-id-verified" aria-label="LinkedIn linked" />}
-          </div>
-          {headline && <div className="ed-id-headline">{headline}</div>}
-          {(location || role) && (
-            <div className="ed-id-meta">
-              {location && <span><MapPin size={15} aria-hidden />{location}</span>}
-              {role && <span><UserRound size={15} aria-hidden />{role}</span>}
-            </div>
-          )}
-          {(chips.length > 0 || hereFor) && (
-            <div className="ed-id-chips">
-              {hereFor && <span className="ed-chip">Here for · {hereFor}</span>}
-              {chips.map((chip) => <span key={chip} className="ed-tag">{chip}</span>)}
-            </div>
-          )}
-          {about && (
-            <div className="ed-id-about">
-              <div className="ed-id-about-label"><FileText size={15} aria-hidden /> About</div>
-              <EditionAboutText text={about} />
-            </div>
-          )}
-        </div>
-
-        {/* One column of equal-width rows, so every action lines up:
-            Connect / Ask Agent + handle / socials + Show my QR. */}
-        <div className="ed-id-side">
-          {connect && <div className="ed-act-row ed-act-connect">{connect}</div>}
-          <div className="ed-act-row">
-            <EditionIdentityActions handle={handle} permalink={permalink} canChat={canChat} />
-          </div>
-          <div className="ed-act-row">
-            {socials.map((s) => (
-              <a key={s.label} className="ed-social" href={s.href} target="_blank" rel="noreferrer" aria-label={s.label}>{s.icon}</a>
-            ))}
-            <EditionQrButton edition={edition} url={url} permalink={permalink} handle={handle} name={name}
-              headline={headline} avatarSrc={avatarSrc} initials={initials} />
-          </div>
-          {updatedLabel && <div className="ed-id-updated">Updated {updatedLabel.charAt(0)}{updatedLabel.slice(1).toLowerCase()}</div>}
-        </div>
       </div>
     </section>
   );

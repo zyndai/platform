@@ -110,7 +110,7 @@ test.describe("limited-edition card style", () => {
     await expect(trigger).toBeFocused();
   });
 
-  test("the QR screen saves a phone wallpaper", async ({ page, context }) => {
+  test("the QR screen saves a light and a dark phone wallpaper", async ({ page, context }) => {
     // #given the QR screen of a card on the edition
     await signIn(context);
     await page.goto("/p/owner/edit");
@@ -120,17 +120,19 @@ test.describe("limited-edition card style", () => {
     await page.goto("/p/owner?preview=visitor");
     await page.getByRole("button", { name: "Show my QR" }).click();
 
-    // #when the owner saves it as a wallpaper (desktop: a download)
-    const [download] = await Promise.all([
-      page.waitForEvent("download"),
-      page.getByRole("button", { name: "Save as phone wallpaper" }).click(),
-    ]);
+    for (const theme of ["light", "dark"] as const) {
+      // #when the owner saves that wallpaper (desktop: a download)
+      const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        page.getByRole("button", { name: `${theme === "light" ? "Light" : "Dark"} wallpaper` }).click(),
+      ]);
 
-    // #then they get a phone-sized PNG
-    expect(download.suggestedFilename()).toBe("zynd-owner-mumbai-26-wallpaper.png");
-    const png = await readFile(await download.path());
-    expect(png.subarray(1, 4).toString()).toBe("PNG");
-    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([1170, 2532]);
+      // #then they get a phone-sized PNG of that theme
+      expect(download.suggestedFilename()).toBe(`zynd-owner-mumbai-26-wallpaper-${theme}.png`);
+      const png = await readFile(await download.path());
+      expect(png.subarray(1, 4).toString()).toBe("PNG");
+      expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([1170, 2532]);
+    }
   });
 
   test("create flow offers the style last and publishes the choice", async ({ page }) => {

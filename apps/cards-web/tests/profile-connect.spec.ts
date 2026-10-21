@@ -234,7 +234,7 @@ test.describe("on a limited-edition card", () => {
     state.selfHandle = "";                       // view the owner's card as a visitor would
     await page.goto("/p/owner?preview=visitor");
 
-    const side = page.locator(".ed-id-side");
+    const side = page.locator(".ed-id-actions");
     const connect = side.getByRole("button", { name: "Connect", exact: true });
     await expect(connect).toBeVisible();
     await expect(page.locator(".pf-hero")).toHaveCount(0);
@@ -250,9 +250,9 @@ test.describe("on a limited-edition card", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/p/owner?preview=visitor");
 
-    const connect = page.locator(".ed-id-side").getByRole("link", { name: "Connect", exact: true });
+    const connect = page.locator(".ed-id-actions").getByRole("link", { name: "Connect", exact: true });
     await expect(connect).toHaveAttribute("href", "/auth?next=%2Fp%2Fowner");
-    const [button, side] = await Promise.all([connect.boundingBox(), page.locator(".ed-id-side").boundingBox()]);
+    const [button, side] = await Promise.all([connect.boundingBox(), page.locator(".ed-id-actions").boundingBox()]);
     expect(button!.width).toBeGreaterThan(side!.width - 4);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });

@@ -283,7 +283,8 @@ async def decide(pool, redis, uid: str, proposal_id: str, nonce: str, decision: 
                     content_hash, version, decision, status, nonce_hash, expires_at)
                    VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz) RETURNING id""",
                 proposal_id, uid, data["connection_jti"], data["source_client_id"], data["action"],
-                data["content_hash"], data["version"], decision, status, nonce_hash, data["expires_at"])
+                data["content_hash"], data["version"], decision, status, nonce_hash,
+                datetime.fromisoformat(data["expires_at"]))
             if decision == "approve" and data["action"] == "save_memory":
                 subject = await conn.fetchval(
                     "INSERT INTO memory_plugin_facts (user_id, text, consent_id) VALUES ($1::uuid,$2,$3) RETURNING id",

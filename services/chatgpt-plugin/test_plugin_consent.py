@@ -63,6 +63,8 @@ class Pool:
             return None if self.revoked or args != (JTI, OWNER) else 1
         if "INSERT INTO memory_plugin_consents" in sql:
             proposal, uid, jti, client, action, content_hash, version, decision, status, nonce_hash, expiry = args
+            # asyncpg encodes a `$n::timestamptz` parameter from a datetime only; a str raises DataError.
+            assert isinstance(expiry, datetime), f"expires_at must be a datetime, got {type(expiry).__name__}"
             cid = uuid.uuid4()
             self.consents[proposal] = dict(id=cid, user_id=uid, decision=decision,
                                            status=status, nonce_hash=nonce_hash)

@@ -72,6 +72,8 @@ import {
   useNetworkRealtime,
   type NetworkRealtimeEvent,
 } from "@/lib/use-network-realtime";
+import { cardAvatarSrc } from "@/lib/avatar";
+import { AgentBubble, plainPreview } from "./agent-message";
 import "./network-v2.css";
 
 type Tab = "all" | "dms" | "groups" | "requests";
@@ -129,6 +131,24 @@ function isAgentMessage(message: CardMessage): boolean {
   return message.sender_kind === "agent";
 }
 
+// The database writes assistant previews as "AI: <text>" (migration 0026), and
+// the sender is the member the assistant answered for.
+const AGENT_PREVIEW_PREFIX = "AI: ";
+
+function agentPreview(content: string): string {
+  return `${AGENT_PREVIEW_PREFIX}${previewText(content)}`;
+}
+
+/** The inbox row's last-message line: "You: …", "Your AI: …" or "AI: …". */
+function inboxPreviewLine(preview: string, senderUserId: string | null | undefined, userId: string): string {
+  const own = senderUserId === userId;
+  if (preview.startsWith(AGENT_PREVIEW_PREFIX)) {
+    const text = plainPreview(preview.slice(AGENT_PREVIEW_PREFIX.length));
+    return `${own ? "Your AI" : "AI"}: ${text}`;
+  }
+  return own ? `You: ${preview}` : preview;
+}
+
 function activeMention(value: string, caret: number): { start: number; query: string } | null {
   const before = value.slice(0, caret);
   const match = before.match(/(?:^|\s)@([A-Za-z0-9_.-]*)$/);
@@ -157,16 +177,32 @@ function Avatar({
   small?: boolean;
 }) {
   const label = (card?.name || name || "?").slice(0, 1).toUpperCase();
+  // Photos go through our /api/img proxy: LinkedIn CDN URLs expire and are
+  // often blocked when hotlinked. If the proxy has nothing either, the
+  // initial stays. Tracking the failed src (not a boolean) means a card whose
+  // photo gets refreshed tries the new URL.
+  const src = cardAvatarSrc(card);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   return (
     <span
       className={`nv2-avatar${group ? " is-group" : ""}${small ? " is-small" : ""}`}
       style={{ width: size, height: size, fontSize: Math.round(size * 0.38) }}
       aria-hidden="true"
     >
-      {card?.avatar_url ? (
+      {src && failedSrc !== src ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={card.avatar_url} alt="" />
+        <img src={src} alt="" onError={() => setFailedSrc(src)} />
       ) : label}
+    </span>
+  );
+}
+
+/** The owner's photo with a small bot badge: whose assistant this is. */
+function AgentAvatar({ card, name, size = 26 }: { card?: CardSummary | null; name?: string; size?: number }) {
+  return (
+    <span className="nv2-agent-avatar" aria-hidden="true">
+      <Avatar card={card} name={name} size={size} small />
+      <span className="nv2-agent-badge"><Bot size={9} strokeWidth={2.4} /></span>
     </span>
   );
 }
@@ -454,8 +490,10 @@ export function NetworkV2({
   const onInboxActivity = useCallback((kind: "dm" | "group", id: string, message: CardMessage, unreadDelta: number) => {
     setInbox((current) => {
       if (!current) return current;
-      const preview = message.sender_kind === "agent"
-        ? `AI: ${previewText(message.content)}`
+      // Same shape the database trigger writes, so the next inbox refresh
+      // replaces it with an identical string.
+      const preview = isAgentMessage(message)
+        ? agentPreview(message.content)
         : previewText(message.content);
       if (kind === "dm") {
         return {
@@ -696,9 +734,9 @@ export function NetworkV2({
                       const preview = previewText(item.kind === "dm" ? item.connection.last_message_preview : item.group.last_message_preview);
                       const unreadCount = item.kind === "dm" ? item.connection.unread_count ?? 0 : item.group.unread_count ?? 0;
                       const lastAt = item.kind === "dm" ? item.connection.last_message_at : item.group.last_message_at;
-                      const mine = !preview.startsWith("AI: ") && (item.kind === "dm"
-                        ? item.connection.last_message_sender_user_id === userId
-                        : item.group.last_message_sender_user_id === userId);
+                      const lastSender = item.kind === "dm"
+                        ? item.connection.last_message_sender_user_id
+                        : item.group.last_message_sender_user_id;
                       return (
                         <button
                           type="button"
@@ -716,7 +754,7 @@ export function NetworkV2({
                               <span className="nv2-item-time">{relativeTime(lastAt)}</span>
                             </span>
                             <span className="nv2-item-preview">
-                              <span>{preview ? `${mine ? "You: " : ""}${preview}` : item.kind === "group" ? item.group.description || "No messages yet" : `@${item.connection.partner.handle || "card"}`}</span>
+                              <span>{preview ? inboxPreviewLine(preview, lastSender, userId) : item.kind === "group" ? item.group.description || "No messages yet" : `@${item.connection.partner.handle || "card"}`}</span>
                               {unreadCount > 0 && <span className="nv2-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
                             </span>
                           </span>
@@ -1358,6 +1396,9 @@ function ConversationPane({
   }
 
   const memberByUser = useMemo(() => new Map((members ?? []).map((member) => [member.user_id, member])), [members]);
+  // Who a user id is here: the other person in a DM, a member in a group.
+  const cardForUser = (id: string): CardSummary | null | undefined =>
+    isDm ? (id === userId ? undefined : connection?.partner) : memberByUser.get(id)?.card;
   const grouped = useMemo(() => {
     const result: { key: string; label: string; messages: CardMessage[] }[] = [];
     for (const message of messages) {
@@ -1509,11 +1550,16 @@ function ConversationPane({
                 <div className="nv2-day">{day.label}</div>
                 {day.messages.map((message) => {
                   const agent = isAgentMessage(message);
-                  const mine = !agent && message.sender_user_id === userId;
-                  const sender = memberByUser.get(message.sender_user_id);
+                  // An assistant reply sits on the side of the member it
+                  // answered for: your own assistant is on your side, and
+                  // someone else's is on theirs.
+                  const agentOwnerId = message.agent_for_user_id || message.sender_user_id;
+                  const ownAgent = agent && agentOwnerId === userId;
+                  const mine = agent ? ownAgent : message.sender_user_id === userId;
+                  const senderCard = cardForUser(agent ? agentOwnerId : message.sender_user_id);
                   const senderName = agent
-                    ? `AI assistant for ${sender?.card?.name || "Member"}`
-                    : sender?.card?.name || "Member";
+                    ? `AI assistant for ${senderCard?.name || "Member"}`
+                    : senderCard?.name || "Member";
                   return (
                     <div
                       key={message.client_id ?? message.id}
@@ -1521,27 +1567,31 @@ function ConversationPane({
                     >
                       {!mine && (
                         agent ? (
-                          <span className="nv2-agent-avatar" aria-hidden="true"><Bot size={14} /></span>
+                          <AgentAvatar card={senderCard} name={senderCard?.name || "Member"} />
                         ) : (
-                          <Avatar
-                            card={isDm ? connection?.partner : sender?.card}
-                            name={isDm ? connection?.partner.name : sender?.card?.name || "Member"}
-                            size={26}
-                            small
-                          />
+                          <Avatar card={senderCard} name={senderCard?.name || "Member"} size={26} small />
                         )
                       )}
                       <div className="nv2-msg-stack">
-                        {!mine && !isDm && (
+                        {(agent || (!mine && !isDm)) && (
                           <div className={`nv2-msg-sender${agent ? " is-agent" : ""}`}>
                             {agent && <Bot size={11} />}
-                            {senderName}
-                            {agent && sender?.card?.handle && <span className="nv2-agent-handle">@{sender.card.handle}</span>}
+                            {ownAgent ? "Your AI assistant" : senderName}
+                            {agent && !ownAgent && senderCard?.handle && <span className="nv2-agent-handle">@{senderCard.handle}</span>}
                           </div>
                         )}
-                        <div className={`nv2-bubble${message.pending ? " is-pending" : ""}${agent ? " is-agent" : ""}${message.remembered ? " is-remembered" : ""}`}>
-                          {renderMessageContent(message.content)}
-                        </div>
+                        {agent ? (
+                          <AgentBubble
+                            content={message.content}
+                            own={ownAgent}
+                            pending={message.pending}
+                            remembered={message.remembered}
+                          />
+                        ) : (
+                          <div className={`nv2-bubble${message.pending ? " is-pending" : ""}${message.remembered ? " is-remembered" : ""}`}>
+                            {renderMessageContent(message.content)}
+                          </div>
+                        )}
                         <div className="nv2-msg-meta">
                           <span>{formatTime(message.created_at)}</span>
                           {message.pending && <span>Sending…</span>}
@@ -1561,7 +1611,7 @@ function ConversationPane({
                               Remember
                             </button>
                           )}
-                          {mine && isDm && !message.pending && (message.seq ?? 0) > 0 && peerReadSeq >= (message.seq ?? 0) && (
+                          {mine && !agent && isDm && !message.pending && (message.seq ?? 0) > 0 && peerReadSeq >= (message.seq ?? 0) && (
                             <span className="nv2-seen">Seen</span>
                           )}
                         </div>
@@ -1572,24 +1622,28 @@ function ConversationPane({
               </div>
             ))}
             {Object.entries(typingAgents).map(([agentUserId]) => {
-              const member = memberByUser.get(agentUserId);
-              const name = member?.card?.name || "a group member";
-              const handle = member?.card?.handle;
+              const own = agentUserId === userId;
+              const card = cardForUser(agentUserId);
+              const name = card?.name || "a group member";
+              const handle = card?.handle;
               return (
-                <div className="nv2-typing-row" key={`typing-${agentUserId}`} aria-live="polite">
-                  <span className="nv2-agent-avatar" aria-hidden="true"><Bot size={14} /></span>
+                <div className={`nv2-typing-row${own ? " is-mine" : ""}`} key={`typing-${agentUserId}`} aria-live="polite">
+                  {own
+                    ? <Bot size={13} aria-hidden="true" />
+                    : <AgentAvatar card={card} name={name} size={22} />}
                   <span>
-                    AI assistant for {name}{handle ? ` (@${handle})` : ""}
+                    {own ? "Your AI assistant" : `AI assistant for ${name}${handle ? ` (@${handle})` : ""}`}
                     <span className="nv2-typing-dots" aria-label="is thinking"><i /><i /><i /></span>
                   </span>
                 </div>
               );
             })}
             {Object.entries(agentErrors).map(([agentUserId, message]) => {
-              const member = memberByUser.get(agentUserId);
+              const own = agentUserId === userId;
+              const card = cardForUser(agentUserId);
               return (
-                <div className="nv2-agent-error" key={`agent-error-${agentUserId}`} role="status">
-                  <Bot size={12} /> {message}{member?.card?.handle ? ` (@${member.card.handle})` : ""}
+                <div className={`nv2-agent-error${own ? " is-mine" : ""}`} key={`agent-error-${agentUserId}`} role="status">
+                  <Bot size={12} /> {message}{card?.handle ? ` (@${card.handle})` : ""}
                 </div>
               );
             })}

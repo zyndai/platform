@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import type { CardConnection } from "../src/lib/cards-network";
 import { signIn } from "./fixtures/sign-in";
-import { mockNetwork } from "./fixtures/network";
+import { mockNetwork, NETWORK_USER } from "./fixtures/network";
 
 test("v2 accepts a request and sends an optimistic DM with retry", async ({ page, context }) => {
   await signIn(context);
@@ -136,6 +136,162 @@ test("v2 remembers a message in the accent colour and shows group memory", async
   await page.getByRole("button").filter({ hasText: "Memory group" }).click();
   await expect(page.getByText("AI assistant for Bob")).toBeVisible();
   await expect(page.getByLabel("Group messages", { exact: true })).toContainText("Friday works for me.");
+});
+
+test("v2 loads avatars through the /api/img proxy and falls back to the initial", async ({ page, context }) => {
+  await signIn(context);
+  const state = await mockNetwork(page);
+  await page.goto("/network?v2=1");
+
+  // Never the raw CDN URL: it expires, and many browsers block the hotlink.
+  const bob = page.locator(".nv2-item", { hasText: "Bob" }).locator(".nv2-avatar img");
+  await expect(bob).toBeVisible();
+  const src = (await bob.getAttribute("src"))!;
+  expect(src).toMatch(/^\/api\/img\?/);
+  expect(new URL(src, "http://x").searchParams.get("url")).toBe("https://avatars.githubusercontent.com/u/2?v=4");
+  expect(new URL(src, "http://x").searchParams.get("handle")).toBe("bob");
+
+  // The photo is a block that covers the whole circle.
+  await expect(bob).toHaveCSS("display", "block");
+  const photo = (await bob.boundingBox())!;
+  const circle = (await bob.locator("..").boundingBox())!;
+  expect(photo.width).toBeCloseTo(circle.width, 0);
+  expect(photo.height).toBeCloseTo(circle.height, 0);
+
+  // An expired photo (the proxy answers 404) gives way to the initial.
+  await page.getByRole("button", { name: "Create a group" }).click();
+  await page.getByLabel("Group name", { exact: true }).fill("Avatar group");
+  await page.getByRole("button", { name: "Create group", exact: true }).click();
+  state.members.push({
+    id: "carol-member", user_id: "33333333-3333-4333-8333-333333333334", role: "member",
+    card: { card_id: "carol-card", handle: "carol", name: "Carol", avatar_url: "https://media.licdn.com/dms/expired.jpg" },
+  });
+  await page.reload();
+  await page.getByRole("button").filter({ hasText: "Avatar group" }).click();
+  const carol = page.locator(".nv2-member-strip .nv2-avatar").filter({ hasText: "C" });
+  await expect(carol).toBeVisible();
+  await expect(carol.locator("img")).toHaveCount(0);
+  expect(state.avatarRequests.some((url) => url.includes("expired.jpg") && url.includes("handle=carol"))).toBe(true);
+});
+
+test("v2 puts an assistant reply on its owner's side and renders markdown only for assistants", async ({ page, context }) => {
+  await signIn(context);
+  const state = await mockNetwork(page);
+  const remoteImages: string[] = [];
+  page.on("request", (request) => { if (request.url().includes("tracker.example")) remoteImages.push(request.url()); });
+  await page.goto("/network?v2=1");
+
+  await page.getByRole("button", { name: "Create a group" }).click();
+  await page.getByLabel("Group name", { exact: true }).fill("Assistants");
+  await page.getByRole("button", { name: "Create group", exact: true }).click();
+  const group = state.groups[0];
+  const bob = state.people[0];
+  state.members.push({ id: "bob-member", user_id: bob.user_id, role: "member", card: bob });
+  const at = (offset: number) => new Date(Date.now() - offset * 1000).toISOString();
+  state.groupMessages.push(
+    {
+      id: "human-md", group_id: group.id, seq: ++state.groupSeq, sender_user_id: NETWORK_USER, sender_kind: "user",
+      content: "Plan **bold** and\n- not a list\n# not a heading", created_at: at(30),
+    },
+    {
+      id: "bob-agent", group_id: group.id, seq: ++state.groupSeq, sender_user_id: bob.user_id, sender_kind: "agent",
+      agent_for_user_id: bob.user_id, content: "Friday works for me.", created_at: at(20),
+    },
+    {
+      id: "own-agent", group_id: group.id, seq: ++state.groupSeq, sender_user_id: NETWORK_USER, sender_kind: "agent",
+      agent_for_user_id: NETWORK_USER, created_at: at(10),
+      content: "## Summary\n\n- first point\n- second point with `code`\n\nSee [docs](https://example.com/docs), <b>raw html</b> and ![pic](https://tracker.example/pixel.png)",
+    },
+  );
+  await page.reload();
+  await page.getByRole("button").filter({ hasText: "Assistants" }).click();
+  const messages = page.getByLabel("Group messages", { exact: true });
+  await expect(messages).toContainText("Friday works for me.");
+
+  // A human message with markdown-looking text stays plain text.
+  const human = messages.locator(".nv2-bubble").filter({ hasText: "Plan **bold**" });
+  await expect(human).toContainText("not a list");
+  await expect(human.locator("strong, ul, li, h1")).toHaveCount(0);
+
+  // Someone else's assistant: left, owner's photo with a bot badge.
+  const bobRow = messages.locator(".nv2-msg-row.is-agent").filter({ hasText: "Friday works for me." });
+  await expect(bobRow).not.toHaveClass(/is-mine/);
+  await expect(bobRow.locator(".nv2-msg-sender")).toContainText("AI assistant for Bob");
+  await expect(bobRow.locator(".nv2-agent-avatar .nv2-agent-badge")).toBeVisible();
+  expect(await bobRow.locator(".nv2-agent-avatar img").getAttribute("src")).toMatch(/^\/api\/img\?/);
+
+  // Your own assistant: right, labelled, in its own bubble variant, with markdown.
+  const ownRow = messages.locator(".nv2-msg-row.is-agent").filter({ hasText: "Summary" });
+  await expect(ownRow).toHaveClass(/is-mine/);
+  await expect(ownRow.locator(".nv2-msg-sender")).toHaveText("Your AI assistant");
+  await expect(ownRow.locator(".nv2-agent-avatar")).toHaveCount(0);
+  const ownBubble = ownRow.locator(".nv2-bubble");
+  await expect(ownBubble).toHaveClass(/is-own/);
+  await expect(ownBubble.locator("h2")).toHaveText("Summary");
+  await expect(ownBubble.locator("li")).toHaveCount(2);
+  await expect(ownBubble.locator("li code")).toHaveText("code");
+  const link = ownBubble.getByRole("link", { name: "docs" });
+  await expect(link).toHaveAttribute("href", "https://example.com/docs");
+  await expect(link).toHaveAttribute("target", "_blank");
+  await expect(link).toHaveAttribute("rel", "noopener noreferrer nofollow");
+  // Raw HTML is shown as text, and a remote image becomes a link to it.
+  await expect(ownBubble).toContainText("<b>raw html</b>");
+  await expect(ownBubble.locator("b, img")).toHaveCount(0);
+  await expect(ownBubble.getByRole("link", { name: "pic" })).toHaveAttribute("href", "https://tracker.example/pixel.png");
+  expect(remoteImages).toEqual([]);
+  // The reply is not an ordinary human bubble, and it cannot be "remembered".
+  await expect(ownBubble).toHaveCSS("background-image", /linear-gradient/);
+  await expect(ownRow.getByRole("button", { name: "Save message to group memory" })).toHaveCount(0);
+
+  // Sides, not just classes.
+  const area = (await messages.boundingBox())!;
+  const own = (await ownBubble.boundingBox())!;
+  const theirs = (await bobRow.locator(".nv2-bubble").boundingBox())!;
+  expect(own.x + own.width).toBeGreaterThan(area.x + area.width - 60);
+  expect(theirs.x).toBeLessThan(area.x + 90);
+
+  // The inbox line says whose assistant spoke last, without markdown syntax.
+  const item = page.locator(".nv2-item", { hasText: "Assistants" });
+  await expect(item).toContainText("Your AI: Summary");
+  await expect(item).not.toContainText("##");
+  await expect(item).not.toContainText("`");
+  state.groupMessages.push({
+    id: "bob-agent-2", group_id: group.id, seq: ++state.groupSeq, sender_user_id: bob.user_id, sender_kind: "agent",
+    agent_for_user_id: bob.user_id, content: "**Friday** again", created_at: at(1),
+  });
+  await page.reload();
+  const refreshed = page.locator(".nv2-item", { hasText: "Assistants" });
+  await expect(refreshed).toContainText("AI: Friday again");
+  await expect(refreshed).not.toContainText("Your AI");
+});
+
+test("v2 shows your own assistant thinking on your side", async ({ page, context }) => {
+  await signIn(context);
+  const state = await mockNetwork(page);
+  await page.goto("/network?v2=1");
+
+  await page.getByRole("button", { name: "Create a group" }).click();
+  await page.getByLabel("Group name", { exact: true }).fill("Thinking group");
+  await page.getByRole("button", { name: "Create group", exact: true }).click();
+  const bob = state.people[0];
+  state.members.push({ id: "bob-member", user_id: bob.user_id, role: "member", card: bob });
+  await page.reload();
+  await page.getByRole("button").filter({ hasText: "Thinking group" }).click();
+  await expect(page.getByText(/2 members/)).toBeVisible();
+
+  await page.getByLabel("Group message", { exact: true }).fill("@alice and @bob compare notes");
+  await page.getByRole("button", { name: "Send group message" }).click();
+
+  const mine = page.locator(".nv2-typing-row.is-mine");
+  await expect(mine).toContainText("Your AI assistant");
+  const theirs = page.locator(".nv2-typing-row:not(.is-mine)");
+  await expect(theirs).toContainText("AI assistant for Bob");
+  await expect(theirs.locator(".nv2-agent-badge")).toBeVisible();
+  const area = (await page.getByLabel("Group messages", { exact: true }).boundingBox())!;
+  const mineBox = (await mine.boundingBox())!;
+  const theirsBox = (await theirs.boundingBox())!;
+  expect(mineBox.x + mineBox.width).toBeGreaterThan(area.x + area.width - 60);
+  expect(theirsBox.x).toBeLessThan(area.x + 40);
 });
 
 test("v2 has no horizontal overflow on a narrow phone", async ({ page, context }) => {

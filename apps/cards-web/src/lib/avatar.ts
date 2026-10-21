@@ -20,3 +20,14 @@ export function imgProxyUrl(
   if (!qs.has("url") && !qs.has("fallback")) return undefined;
   return `/api/img?${qs.toString()}`;
 }
+
+/**
+ * Proxied photo for a Cards network summary (inbox, group members, people
+ * search). The handle rides along so /api/img can kick off an avatar refresh
+ * when a stored LinkedIn URL has expired.
+ */
+export function cardAvatarSrc(
+  card: { avatar_url?: string | null; handle?: string | null } | null | undefined,
+): string | undefined {
+  return imgProxyUrl(card?.avatar_url, null, card?.handle);
+}

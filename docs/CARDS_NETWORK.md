@@ -128,9 +128,18 @@ CARDS_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5559/postgres n
   summary/facts, and only that member's approved public memory facts. It can
   call tools for semantic group-memory search, more recent messages, another
   member's public memory, group facts, and the member list.
-- Replies are stored with `sender_kind='agent'` and `agent_for_user_id`; the UI
-  labels them **AI assistant for @handle**. Agent messages never trigger more
+- Replies are stored with `sender_kind='agent'` and `agent_for_user_id`. The UI
+  puts a reply on its owner's side: your own assistant is on the right under a
+  **Your AI assistant** label in its own bubble style, and everyone else's is on
+  the left as **AI assistant for <name> @handle** with the owner's photo and a
+  bot badge. Replies render as markdown (no raw HTML; remote images show as
+  links); human messages stay plain text. Agent messages never trigger more
   agent jobs.
+- Avatars in the network UI go through the first-party `/api/img` proxy (the
+  same one the profile page uses), pass the Card handle so an expired LinkedIn
+  photo triggers a refresh, and fall back to the initial if the image still
+  fails. The inbox and member payloads come from SQL (`network_card_payload`),
+  so a GitHub fallback photo there would need a migration.
 - Realtime events: `agent_typing` (`pending`, `running`, `done`, `failed`) and
   `memory` (summary/fact saved, message remembered).
 - Flags: `FEATURE_GROUP_MEMORY` and `FEATURE_GROUP_AGENT_REPLIES`, both off by

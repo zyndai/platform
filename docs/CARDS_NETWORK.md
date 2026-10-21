@@ -75,7 +75,7 @@ additive and was applied to aafo on **2026-10-21** together with the pending
 read cursor for assistant replies, stuck-job recovery, retry state, memory
 broadcast noise, and assistant-reply remembering.
 `0028_agent_reply_limit` raises the stored length of an assistant reply from
-4000 to 8000 characters. It is **not applied to any database yet**; see
+4000 to 8000 characters. It was applied to aafo on **2026-10-21**; see
 [Long replies, streaming and sources](#long-replies-streaming-and-sources-migration-0028).
 
 Test the full Cards migration history and concurrent invitation decisions on a
@@ -190,10 +190,10 @@ service-only grants and `client_id` idempotency are unchanged; human DMs and
 group messages keep their 4000 limit, and so do group facts and summaries. It is
 expand-only, was rehearsed on a disposable local Postgres 17 with pgvector (the
 test in `packages/db/test/cards-network-sql.test.ts` fails against `0027` and
-passes against `0028`), and is **not applied to any database**. Rollout:
+passes against `0028`). Rollout:
 
 1. Apply `0028` with explicit approval (`npm run db:migrate -- --project cards`
-   from `packages/db`, dry run first).
+   from `packages/db`, dry run first). **Done 2026-10-21.**
 2. Set `GROUP_AGENT_MAX_REPLY_CHARS=8000` and restart cards-api.
 
 Never raise the cap before step 1: the function would cut the stored reply at
@@ -376,6 +376,19 @@ that Cards migration was pending. Post-application verification:
 - Cards API and Cards web were not deployed by this migration step. Apply the
   code in the rollout order above; the migration is additive and the currently
   deployed API keeps working.
+
+### Live application — 2026-10-21 (assistant reply limit, 0028)
+
+Applied `0028_agent_reply_limit` to aafo through the session pooler, with the
+owner's approval, after the code (#84) was merged to `dev`. The dry run listed
+only that Cards migration as pending; identity and persona had none.
+
+- Cards is applied through `0028`; nothing is pending in any history.
+- Full drift check against a clean replay: **No drift: 1,504 catalog entries
+  match.** The count is unchanged because the function is replaced, not added.
+- cards-api still runs with `GROUP_AGENT_MAX_REPLY_CHARS=4000` until that env
+  var is raised to 8000 and the service restarted; until then nothing changes
+  for users.
 
 ### Live application — 2026-10-21 (group memory, 0026)
 

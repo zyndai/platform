@@ -38,6 +38,13 @@ MAINTENANCE_READONLY: bool = os.getenv("MAINTENANCE_READONLY", "false").lower() 
 # Cards written before then get owner_user_id from the cutover backfill (by email).
 WRITES_OWNER_USER_ID: bool = SUPABASE_DB_SCHEMA == "cards"
 FEATURE_S12_INTROS: bool = os.getenv("FEATURE_S12_INTROS", "false").lower() in ("1", "true", "yes")
+# A2: invite someone who has no claimed Card yet. Creates an unclaimed Card about a third party
+# from public LinkedIn data and needs cards.connection_invites (packages/db 0024). Off by default.
+# Saved searches, reports, blocks, match preferences, request limits and verification badges
+# (A3, A6, A8). They need packages/db migration 0025 (cards.saved_searches, card_reports,
+# card_verifications, match_preferences). Off by default.
+FEATURE_NETWORK_CONTROLS: bool = os.getenv("FEATURE_NETWORK_CONTROLS", "false").lower() in ("1", "true", "yes")
+FEATURE_A2_INVITE_TO_CLAIM: bool = os.getenv("FEATURE_A2_INVITE_TO_CLAIM", "false").lower() in ("1", "true", "yes")
 PERSONA_API_URL: str = os.getenv("PERSONA_API_URL", "http://127.0.0.1:8000")
 PERSONA_SITE_URL: str = os.getenv("PERSONA_SITE_URL", "https://persona.zynd.ai")
 CARDS_INTRO_SERVICE_TOKEN: str = os.getenv("CARDS_INTRO_SERVICE_TOKEN", "")
@@ -134,6 +141,8 @@ MEMORY_SERVICE_TOKEN: str = os.getenv("MEMORY_SERVICE_TOKEN", "")
 MEMORY_REFRESH_INTERVAL_HOURS: int = int(os.getenv("MEMORY_REFRESH_INTERVAL_HOURS", "6"))
 
 # ── QuickEnrich (free contact-finder only; cards-api owns this client) ──
+# QuickEnrich lives in Memory now (POST /v1/service/outside-people), the only client. These four
+# are unused here and kept only so existing env files stay valid; only QUICKENRICH_TIMEOUT is read.
 QUICKENRICH_BASE_URL: str = os.getenv("QUICKENRICH_BASE_URL", "")
 QUICKENRICH_API_KEY: str = os.getenv("QUICKENRICH_API_KEY", "")
 QUICKENRICH_AUTH_HEADER: str = os.getenv("QUICKENRICH_AUTH_HEADER", "Authorization")

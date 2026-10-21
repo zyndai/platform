@@ -256,20 +256,20 @@ async def test_new_user_finds_no_similar_users_yet():
 
 
 async def test_user_searches_for_a_target_person_and_gets_no_matches():
-    # given — no findable ZYND user matches her target description yet
+    # given — nobody matches her target description yet, in any source
     pool = MagicMock()
 
     # when — she looks for a seed-stage investor in dev tools
     with patch("app.mcp_http._get_pool", AsyncMock(return_value=pool)), \
-         patch("app.mcp_http.search_by_query", AsyncMock(return_value=[])) as search, \
-         patch("app.mcp_http.search_cards", AsyncMock(return_value=([], None))), \
-         patch("app.mcp_http.search_quickenrich", AsyncMock(return_value=([], None))):
+         patch("app.services.people_search.search_by_query", AsyncMock(return_value=[])) as search, \
+         patch("app.services.people_search.people_discovery.search_cards", AsyncMock(return_value=([], None))), \
+         patch("app.services.people_search.people_discovery.search_quickenrich", AsyncMock(return_value=([], None))), \
+         patch("app.services.people_search.card_directory.cards_for_users", AsyncMock(return_value={})):
         result = await m.find_people("seed-stage investor in dev tools", uid="test-uid")
 
-    # then — every source is empty rather than fabricating people
-    assert result["zynd_users"] == []
-    assert result["cards"] == []
-    assert result["quickenrich"] == []
+    # then — one empty list rather than fabricated people
+    assert result["people"] == []
+    assert result["mode"] == "target" and result["parsed"]["role"] == "investor"
     search.assert_awaited_once()
 
 

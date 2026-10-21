@@ -30,7 +30,9 @@ interface MemoryResponse {
 // predicates fall back to the raw value so nothing is ever hidden.
 const PREDICATE_LABEL: Record<string, string> = {
   is_working_on: "Working on",
-  is_interested_in: "Interested in",
+  // Memory's taxonomy has no is_interested_in; interests are stored as is_learning, and
+  // older rows written under the legacy name read the same.
+  is_interested_in: "Learning",
   is_learning: "Learning",
   has_goal: "Goal",
   has_skill: "Skill",

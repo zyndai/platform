@@ -167,7 +167,7 @@ export function MemoryProviderOnboard({
     letterSpacing: "-0.01em",
     cursor: busy ? "default" : "pointer",
     opacity: busy ? 0.7 : 1,
-    width: "100%",
+    width: compact ? "auto" : "100%",
   };
 
   const skipStyle: React.CSSProperties = {
@@ -179,11 +179,16 @@ export function MemoryProviderOnboard({
     font: `600 ${compact ? 14 : 15}px/1 ${DISPLAY}`,
     letterSpacing: "-0.01em",
     cursor: busy ? "default" : "pointer",
-    width: "100%",
+    width: compact ? "auto" : "100%",
+  };
+
+  // Compact (the card editor) lays its buttons out in a row instead of a stack.
+  const actionsStyle: React.CSSProperties = {
+    display: "flex", flexDirection: compact ? "row" : "column", flexWrap: "wrap", gap: 10, flexShrink: 0,
   };
 
   const titleStyle: React.CSSProperties = {
-    font: `700 ${compact ? 22 : 34}px/1.15 ${DISPLAY}`,
+    font: `700 ${compact ? 17 : 34}px/1.15 ${DISPLAY}`,
     color: ink,
     letterSpacing: "-0.03em",
   };
@@ -244,7 +249,7 @@ export function MemoryProviderOnboard({
               </button>
             )}
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
+          <div style={actionsStyle}>
             <button type="button" onClick={preview} disabled={busy !== null} style={primaryStyle}>
               {busy === "preview" ? "Detecting…" : "Preview tile"}
             </button>
@@ -283,7 +288,7 @@ export function MemoryProviderOnboard({
               onToggle={facts.length > 0 ? toggle : undefined}
             />
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
+          <div style={actionsStyle}>
             {facts.length > 0 && (
               <button type="button" onClick={approve} disabled={busy !== null} style={primaryStyle}>
                 {busy === "save" ? "Publishing…" : "Show this on my profile"}
@@ -304,7 +309,7 @@ export function MemoryProviderOnboard({
                 padding: compact ? "12px 16px" : "16px 22px",
                 font: `500 ${compact ? 14 : 15}px/1 ${SANS}`,
                 cursor: "pointer",
-                width: "100%",
+                width: compact ? "auto" : "100%",
               }}
             >
               Try a different key

@@ -13,7 +13,7 @@ redirect in that Supabase project.
 import html
 import json
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from app.config import settings
@@ -52,7 +52,23 @@ _CSS = """<style>
   @keyframes spin{to{transform:rotate(360deg)}}
   .foot{margin-top:16px;font-size:12px;color:#6b7088;line-height:1.5}
   a{color:#8B5CF6}
+  .reviewer{margin-top:18px;text-align:left;border-top:1px solid var(--line);padding-top:14px}
+  .reviewer summary{cursor:pointer;color:var(--muted);font-size:13px}
+  .reviewer input{display:block;width:100%;margin-top:10px;padding:11px 12px;border-radius:9px;
+    border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--fg);font:inherit;font-size:14px}
 </style>"""
+
+# Shown only on a plugin-client request while PLUGIN_REVIEW_EMAILS is set: the
+# demo account OpenAI's reviewers use. The server enforces who may use it
+# (supabase_identity allow_reviewer); this block is just the entry point.
+_REVIEWER_BLOCK = """<details class="reviewer">
+      <summary>Reviewer sign-in</summary>
+      <form id="reviewer-form" autocomplete="off">
+        <input id="reviewer-email" type="email" placeholder="Reviewer email" required autocomplete="username">
+        <input id="reviewer-password" type="password" placeholder="Password" required autocomplete="current-password">
+        <button type="submit">Sign in</button>
+      </form>
+    </details>"""
 
 
 def _page(title: str, body: str) -> HTMLResponse:
@@ -90,6 +106,7 @@ _LOGIN_BODY = """<div class="wrap">
   <div class="card" id="signin">
     <button data-provider="google">Continue with Google</button>
     <button data-provider="linkedin_oidc">Continue with LinkedIn</button>
+    %%REVIEWER%%
   </div>
   <div class="card" id="consent" hidden>
     <div class="details">
@@ -187,6 +204,26 @@ _LOGIN_BODY = """<div class="wrap">
         .then(function(r){ if (r.error) { showError(r.error.message); } });
     });
   });
+  var reviewerForm = document.getElementById('reviewer-form');
+  if (reviewerForm) {
+    reviewerForm.addEventListener('submit', function(ev){
+      ev.preventDefault();
+      var submit = reviewerForm.querySelector('button');
+      submit.disabled = true;
+      sb.auth.signInWithPassword({
+        email: document.getElementById('reviewer-email').value.trim(),
+        password: document.getElementById('reviewer-password').value
+      }).then(function(r){
+        document.getElementById('reviewer-password').value = '';
+        if (r.error || !r.data || !r.data.session) {
+          showError('Reviewer sign-in failed. Check the email and password.');
+          return;
+        }
+        preview(r.data.session.access_token);
+      }).catch(function(){ showError('Reviewer sign-in failed.'); })
+      .finally(function(){ submit.disabled = false; });
+    });
+  }
   // Existing sessions may skip sign-in, but never skip explicit consent.
   sb.auth.getSession().then(function(r){
     if (r.data && r.data.session && r.data.session.access_token) preview(r.data.session.access_token);
@@ -229,6 +266,18 @@ _CALLBACK_BODY = """<div class="wrap">
 </script>"""
 
 
+def _reviewer_form_enabled(req: str) -> bool:
+    """True only for a signed plugin-client request while the reviewer account is configured."""
+    if not (req and settings.plugin_review_email_set):
+        return False
+    from app import oauth  # lazy: oauth imports the plugin tools, this module stays config-only
+    try:
+        payload = oauth._verify_oauth_request(req)
+    except HTTPException:
+        return False
+    return oauth._is_plugin_client(payload.get("client_id", ""))
+
+
 def _render_login(req: str, error: str = "") -> HTMLResponse:
     project = _supabase_project()
     if not project:
@@ -236,6 +285,7 @@ def _render_login(req: str, error: str = "") -> HTMLResponse:
                      "OAuth sign-in is not configured on this server.</div></div></div>")
     url, key = project
     body = _LOGIN_BODY
+    body = body.replace("%%REVIEWER%%", _REVIEWER_BLOCK if _reviewer_form_enabled(req) else "")
     body = body.replace("%%ERROR_HIDDEN%%", "" if error else "hidden")
     body = body.replace("%%ERROR%%", html.escape(error))
     body = body.replace("%%REQ%%", _js_string(req))

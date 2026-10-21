@@ -9,6 +9,7 @@ sees from getMyContext — matched case-insensitively, scoped to that user.
 """
 import asyncpg
 
+from app.config import settings
 from app.services.matching import recompute_user_embeddings
 
 _LOOKUP = """SELECT a.id, a.confidence, a.predicate, e.canonical_name AS object
@@ -27,9 +28,12 @@ async def confirm_fact(pool: asyncpg.Pool, user_id: str, predicate: str, object_
             row = await conn.fetchrow(_LOOKUP, user_id, predicate, object_name)
             if row is None:
                 return None
+            # A confirmation is fresh evidence: under freshness v2 the decay job derives
+            # confidence from base_confidence, so the base must move with it.
+            v2 = ", base_confidence = 0.97, last_seen_at = now()" if settings.freshness_v2 else ""
             await conn.execute(
-                """UPDATE assertions
-                      SET confidence = 0.97, source_system = 'user_confirmed', version = version + 1
+                f"""UPDATE assertions
+                      SET confidence = 0.97, source_system = 'user_confirmed', version = version + 1{v2}
                     WHERE id = $1""",
                 row["id"],
             )

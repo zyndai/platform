@@ -122,6 +122,26 @@ async def test_authorize_claude_accepts_advertised_scopes(meta_mock):
     meta_mock.assert_awaited_once_with(client_id)
 
 
+@patch("app.oauth._fetch_metadata_document")
+async def test_authorize_claude_code_accepts_resource_metadata_scopes(meta_mock):
+    # Claude Code builds its scope from the MCP resource metadata, not the
+    # authorization server's, and redirects to an ephemeral loopback port.
+    client_id = "https://claude.ai/oauth/claude-code-client-metadata"
+    meta_mock.return_value = {"client_id": client_id, "redirect_uris": ["http://localhost/callback"]}
+    transport = httpx.ASGITransport(app=mcp_asgi)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        prm = (await c.get("/.well-known/oauth-protected-resource/mcp")).json()
+    resp = await oauth.authorize(
+        client_id=client_id, redirect_uri="http://localhost:53363/callback",
+        scope=" ".join([*prm["scopes_supported"], "offline_access"]),
+        code_challenge=CHALLENGE, code_challenge_method="S256", resource=RESOURCE,
+    )
+    assert resp.status_code == 302
+    req = _sealed(resp.headers["location"].split("zynd_oauth=", 1)[1])
+    assert req["scope"] == "user"
+    assert req["create_user"] is False
+
+
 async def test_authorize_connector_rejects_unadvertised_scope():
     with pytest.raises(HTTPException) as exc:
         await oauth.authorize(

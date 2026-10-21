@@ -26,6 +26,14 @@ services:
       context: ${DEV_ROOT}/services
       dockerfile: memory/Dockerfile
     env_file: ${DEV_ROOT}/services/memory/.env.prod
+    # Memory quality flags (docs/plans/ZYND_MEMORY_QUALITY_PLAN.md section 17): on in dev, off in prod.
+    # CAUTION: dev shares prod's database, so the write-path flags act on prod data from here.
+    # FEATURE_FRESHNESS_V2 stays off until sql/schema.sql has been applied and a human says so.
+    environment:
+      FEATURE_RANKED_CONTEXT: "true"
+      FEATURE_FACT_FAMILIES: "true"
+      FEATURE_STRICT_TECH: "true"
+      FEATURE_FACT_MATCHING: "true"
     command: sh -c "python -m app.schema_apply && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     ports:
       - "127.0.0.1:8101:8000"
@@ -44,6 +52,14 @@ services:
       context: ${DEV_ROOT}/services
       dockerfile: memory/Dockerfile
     env_file: ${DEV_ROOT}/services/memory/.env.prod
+    # Memory quality flags (docs/plans/ZYND_MEMORY_QUALITY_PLAN.md section 17): on in dev, off in prod.
+    # CAUTION: dev shares prod's database, so the write-path flags act on prod data from here.
+    # FEATURE_FRESHNESS_V2 stays off until sql/schema.sql has been applied and a human says so.
+    environment:
+      FEATURE_RANKED_CONTEXT: "true"
+      FEATURE_FACT_FAMILIES: "true"
+      FEATURE_STRICT_TECH: "true"
+      FEATURE_FACT_MATCHING: "true"
     command: uvicorn app.mcp_http:app --host 0.0.0.0 --port 8090
     ports:
       - "127.0.0.1:8190:8090"

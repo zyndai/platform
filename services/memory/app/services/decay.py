@@ -3,10 +3,25 @@
 Run nightly. For every active, decaying assertion, recompute confidence from its
 age and half-life. Drop below 0.1 -> archive via valid_until (never DELETE).
 Every change is logged to assertion_history with reason 'decay'.
+
+Two modes. The legacy job multiplies the *already decayed* confidence by the decay factor of
+the *total* age every night, so night n has applied roughly 0.5^(n(n+1)/2h): an is_working_on
+(14-day half-life) at 0.9 was archived after ~9 days instead of ~44. With freshness v2 the
+confidence is recomputed from the evidence each time:
+
+    confidence = base_confidence x 0.5 ^ (days since last_seen_at / half-life)
+
+which is idempotent (running twice changes nothing) and cannot over-decay. Facts that can go
+stale (taxonomy.STALE_AFTER_DAYS) are never archived by age: staleness is a read-time state, so
+they stay searchable by topic. Only facts that are not time-bound (beliefs, feelings, ...) are
+archived below ARCHIVE_THRESHOLD.
 """
 import re
 
 import asyncpg
+
+from app.config import settings
+from app.taxonomy import STALE_AFTER_DAYS
 
 ARCHIVE_THRESHOLD = 0.1  # brief §5.4 — archive when confidence drops below this
 
@@ -24,8 +39,13 @@ def apply_decay(confidence: float, halflife_days: int, days_elapsed: float) -> f
     return round(confidence * decay_factor, 4)
 
 
+MIN_CHANGE = 0.0001   # v2 skips writes smaller than this, so a second run in the same minute is a no-op
+
+
 async def run_decay_job(pool: asyncpg.Pool) -> dict:
     """Decay all active assertions. Returns counts for observability."""
+    if settings.freshness_v2:
+        return await _run_decay_v2(pool)
     rows = await pool.fetch(
         """SELECT id, confidence, decay_fn,
                   EXTRACT(EPOCH FROM (now() - COALESCE(observed_at, extracted_at))) / 86400.0
@@ -52,6 +72,45 @@ async def run_decay_job(pool: asyncpg.Pool) -> dict:
             decayed += 1
 
     return {"scanned": len(rows), "decayed": decayed, "archived": archived}
+
+
+async def _run_decay_v2(pool: asyncpg.Pool) -> dict:
+    """Recompute confidence from base_confidence and last_seen_at; idempotent."""
+    rows = await pool.fetch(
+        """SELECT id, predicate, confidence, decay_fn,
+                  coalesce(base_confidence, confidence) AS base,
+                  EXTRACT(EPOCH FROM (now() - coalesce(last_seen_at, observed_at, extracted_at))) / 86400.0
+                    AS days_elapsed
+             FROM assertions
+            WHERE valid_until IS NULL AND decay_fn <> 'none'""",
+    )
+    decayed: list[tuple[float, object]] = []
+    archived: list[tuple[float, object]] = []
+    history: list[tuple[object, float, float]] = []
+    for row in rows:
+        halflife = parse_halflife_days(row["decay_fn"])
+        if halflife is None:
+            continue
+        old = round(float(row["confidence"]), 4)
+        new = apply_decay(float(row["base"]), halflife, max(float(row["days_elapsed"]), 0.0))
+        if new < ARCHIVE_THRESHOLD and row["predicate"] not in STALE_AFTER_DAYS:
+            archived.append((new, row["id"]))
+            history.append((row["id"], old, new))
+        elif abs(new - old) >= MIN_CHANGE:
+            decayed.append((new, row["id"]))
+            history.append((row["id"], old, new))
+
+    if decayed or archived:
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.executemany("UPDATE assertions SET confidence = $1 WHERE id = $2", decayed)
+            await conn.executemany(
+                "UPDATE assertions SET confidence = $1, valid_until = now() WHERE id = $2", archived)
+            await conn.executemany(
+                """INSERT INTO assertion_history (assertion_id, prev_confidence, new_confidence, change_reason)
+                   VALUES ($1, $2, $3, 'decay')""",
+                history,
+            )
+    return {"scanned": len(rows), "decayed": len(decayed), "archived": len(archived), "mode": "v2"}
 
 
 async def _decay(pool: asyncpg.Pool, assertion_id, old: float, new: float) -> None:

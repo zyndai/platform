@@ -1,6 +1,7 @@
 """S10 endpoints. Every owner read/write derives identity from the existing JWT."""
 import asyncio
 import html
+import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from services import owner_home, cards
 from services.zynd_memory import ping_revalidate
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def require_home():
@@ -119,6 +121,51 @@ SECTIONS = {
 }
 
 
+# The photo comes from the linked accounts (LinkedIn, X, GitHub), never from the
+# editor, and the LinkedIn avatar self-heal moves it while the editor is open.
+AVATAR_FIELDS = ("avatar_url", "avatar_bg_url")
+
+
+def with_stored_photo(values: dict, stored_identity: dict) -> dict:
+    """`values` with its identity photo fields taken from `stored_identity`.
+
+    Whatever photo the editor sends back is just what it loaded, possibly stale.
+    Using the stored one means a save can neither overwrite a self-healed photo nor
+    conflict because of it, and the editor can't set a photo of its own.
+    """
+    identity = values.get("identity")
+    if not isinstance(identity, dict):
+        return values
+    kept = {k: v for k, v in identity.items() if k not in AVATAR_FIELDS}
+    photo = {f: stored_identity[f] for f in AVATAR_FIELDS if f in stored_identity}
+    return {**values, "identity": {**kept, **photo}}
+
+
+def without_blank_links(values: dict) -> dict:
+    """The editor's form drops blank links, so it never holds the blank entries a
+    stored card can carry. Compare without them, or such a card conflicts on every
+    identity save."""
+    identity = values.get("identity")
+    if not isinstance(identity, dict) or not isinstance(identity.get("links"), dict):
+        return values
+    links = {k: v for k, v in identity["links"].items() if str(k).strip() and str(v).strip()}
+    return {**values, "identity": {**identity, "links": links}}
+
+
+def drifted_fields(visible: dict, acknowledged: dict) -> list[str]:
+    """Names (never values) of the fields where the stored card moved off what the editor saw."""
+    names = []
+    for key, value in acknowledged.items():
+        current = visible.get(key)
+        if current == value:
+            continue
+        if isinstance(value, dict) and isinstance(current, dict):
+            names += [f"{key}.{sub}" for sub in sorted(set(value) | set(current)) if value.get(sub) != current.get(sub)]
+        else:
+            names.append(key)
+    return names
+
+
 @router.patch("/by-handle/{handle}/sections/{section}")
 async def save_section(handle: str, section: str, body: Section, authorization: str | None = Header(default=None)):
     email = email_for(authorization)
@@ -137,15 +184,19 @@ async def save_section(handle: str, section: str, body: Section, authorization: 
         if not rows:
             raise HTTPException(403, "Not the card owner")
         row = rows[0]
-        visible = cards._row_to_card(row).model_dump(mode="json")
+        visible = without_blank_links(cards._row_to_card(row).model_dump(mode="json"))
         # Sparse legacy JSON and cleaned work-history descriptions may differ
         # from the serialized editor model. Translate its acknowledged values
         # to raw JSON, then still compare under the SQL row lock.
-        if any(visible.get(key) != value for key, value in body.expected.items()):
+        acknowledged = without_blank_links(with_stored_photo(body.expected, visible.get("identity") or {}))
+        drift = drifted_fields(visible, acknowledged)
+        if drift:
+            logger.info("section conflict handle=%s section=%s fields=%s", handle, section, ",".join(drift))
             raise HTTPException(409, "Section changed in another session. Reload before saving.")
-        return {key: row["card"].get(key, value) for key, value in body.expected.items()}
-    expected = await asyncio.to_thread(stored_expectations)
-    result = await asyncio.to_thread(rpc, "s10_save_section", {"p_email": email, "p_handle": handle, "p_patch": normalized, "p_expected": expected})
+        patch = with_stored_photo(normalized, row["card"].get("identity") or {})
+        return {key: row["card"].get(key, value) for key, value in acknowledged.items()}, patch
+    expected, patch = await asyncio.to_thread(stored_expectations)
+    result = await asyncio.to_thread(rpc, "s10_save_section", {"p_email": email, "p_handle": handle, "p_patch": patch, "p_expected": expected})
     # The transaction clears the stale vector. FTS already reflects the saved
     # JSON. Best-effort regeneration is guarded against a newer section save.
     def reembed():

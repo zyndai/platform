@@ -101,6 +101,17 @@ def validate(root=ROOT, submission=False):
     require(all(interface.get(key) for key in ("displayName", "shortDescription",
                                            "longDescription", "developerName", "category")),
             "missing listing description")
+    # The portal rejects a listing without these, so a draft ZIP must carry them too.
+    for key in ("websiteURL", "supportURL", "privacyPolicyURL", "termsOfServiceURL"):
+        value = interface.get(key)
+        require(safe_url(value), f"listing requires {key} as a plain HTTPS URL")
+        require(value == REVIEW_ORIGIN or value.startswith(REVIEW_ORIGIN + "/"),
+                f"{key} must be on {REVIEW_ORIGIN}")
+    # Listing text is public; it must not announce itself as an unverified draft.
+    listing = " ".join([interface["shortDescription"], interface["longDescription"],
+                        plugin["extensions"]["com.openai"].get("publication", {}).get("release_notes", "")])
+    require(not re.search(r"(?i)\bdraft (?:contract|\d)|not yet verified|unverified|not for public", listing),
+            "listing text must not describe the plugin as an unverified draft")
     require(interface["logo"] == "./assets/zynd-logo.png" and
             interface["composerIcon"] == "./assets/zynd-logo.png", "missing brand image references")
     image = (root / "assets/zynd-logo.png").read_bytes()
@@ -133,8 +144,6 @@ def validate(root=ROOT, submission=False):
             require(all(case.get(key) for key in ("description", "prompt", "expected_behavior")),
                     f"incomplete {kind} review case")
     if submission:
-        for key in ("websiteURL", "supportURL", "privacyPolicyURL", "termsOfServiceURL"):
-            require(safe_url(interface.get(key)), f"submission requires verified {key}")
         require(safe_url(review.get("demo_recording_url")), "submission requires actual walkthrough URL")
         require(plugin["extensions"]["com.openai"].get("publication", {}).get("countries"),
                 "submission requires verified country availability")

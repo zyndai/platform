@@ -10,16 +10,16 @@ every service listed as a reader.
 | Table | Owner | Also read by |
 |---|---|---|
 | `persona_agents` | persona | **memory** (`services/memory/app/tools/zynd_network.py`: `agent_id, name, description, active, updated_at`), persona-web (via RLS subqueries) |
-| `dm_threads`, `dm_messages`, `a2a_tasks`, `agent_tasks`, `pending_approvals` | persona | persona-web (signed-in reads + realtime) |
+| `dm_threads`, `dm_messages`, `dm_thread_reads`, `a2a_tasks`, `agent_tasks`, `pending_approvals` | persona | persona-web (signed-in reads + realtime); read cursors are persona-api only |
 | `outbound_callbacks`, `callback_results` | persona | persona-web (realtime) |
-| `persona_groups`, `persona_group_members`, `persona_group_messages`, `persona_group_invitations`, `persona_group_constraints`, `persona_group_audit_events` | persona | persona-web (realtime on messages/invitations) |
+| `persona_groups`, `persona_group_members`, `persona_group_messages`, `persona_group_reads`, `persona_group_invitations`, `persona_group_constraints`, `persona_group_audit_events` | persona | persona-web (realtime on messages/invitations); read cursors are persona-api only |
 | `api_tokens`, `oauth_pending_state`, `telegram_links`, `telegram_chat_history` | persona | — |
 | `linkedin_profiles`, `twitter_profiles`, `github_profiles` | persona | — |
 | `enriched_contacts`, `enriched_companies`, `suggested_contacts`, `suggested_contact_runs` | persona | — |
 | `chat_messages`, `brief_todos`, `published_pages` | persona | — |
 | `cards.agent_profile_cards`, `cards.x_accounts`, `cards.x_mentions`, `cards.x_conversations`, `cards.keyword_posts`, `cards.takedown_requests` | cards | — (service role only; cards-web goes through cards-api) |
 | `cards.visitor_preferences`, `cards.profile_visits` | cards | cards-api only; consent-bound owner reads |
-| `cards.connections`, `cards.dm_threads`, `cards.dm_messages`, `cards.groups`, `cards.group_members`, `cards.group_invitations`, `cards.group_messages` | cards | cards-api only; Cards web/MCP use Cards HTTP |
+| `cards.connections`, `cards.dm_threads`, `cards.dm_messages`, `cards.dm_read_state`, `cards.groups`, `cards.group_members`, `cards.group_read_state`, `cards.group_invitations`, `cards.group_messages` | cards | cards-api only; Cards web/MCP use Cards HTTP. Read cursors are service-role only |
 | `identity.*` (empty today; Zynd Account tables in Stage 2) | shared | persona, cards |
 | `persona_intro_requests`, `persona_intro_rules`, `persona_intro_audit` | persona | cards-api via Persona HTTP; persona-web (requests only, participant RLS) |
 | `cards.intro_requests` | cards | cards-api; minimal Persona status projection and activity events |
@@ -36,6 +36,10 @@ every service listed as a reader.
 | `cards.s10_set_visitor_privacy`, `cards.s10_record_named_visit` | cards | cards 0016 | cards-api only |
 | `cards.s10_named_visitors` | cards | cards 0018 | cards-api only; consent-bound public profile links |
 | `cards.network_create_group`, `cards.network_respond_invitation` | cards | cards 0020 | cards-api only; transactional membership checks |
+| `cards.network_inbox`, `cards.network_dm_messages`, `cards.network_send_dm`, `cards.network_group_messages`, `cards.network_send_group_message`, `cards.network_mark_read`, `cards.network_group_members`, `cards.network_card_payload` | cards | cards 0023 | cards-api only; one round-trip inbox/message operations |
+| `cards.network_can_subscribe` | cards | cards 0023 | Supabase Realtime RLS only; boolean authorization for `cards:*` private topics |
+| `realtime.messages` policy `cards network can receive broadcasts` | cards | cards 0023 | Supabase Realtime private `cards:*` topics; review alongside any other `realtime.messages` policy |
+| message/connection/invitation/member triggers in `cards` | cards | cards 0023 | sequence assignment, inbox summaries, read-state init, and Realtime Broadcast |
 | `cards.v_funnel_daily`, `cards.v_funnel_daily_totals`, `cards.purge_card_events` | cards | cards 0022 | Cards analytics/retention; deployed daily-view contract preserved |
 | publication `supabase_realtime` (9 persona tables) | persona | persona 0000 | persona-web realtime |
 | extension `vector` (schema `extensions`) | cards | cards 0000 | — |

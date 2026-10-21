@@ -3,6 +3,11 @@
 The caller is always a verified aafo account with a claimed, published Card.
 The same endpoints are used by Cards web and the authenticated Cards MCP
 bridge; MCP service calls identify the account with X-Zynd-User.
+
+These handlers are deliberately synchronous (`def`, not `async def`). The
+Supabase Python client is synchronous, so FastAPI must run these calls in its
+threadpool; running them on the event loop blocks every other request in the
+single-worker cards-api process.
 """
 
 import hmac
@@ -14,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 import config
 from api.auth import Principal, verify_supabase_jwt
-from services import network
+from services import connection_brief, invites, match_prefs, network, saved_searches, trust
 
 router = APIRouter()
 
@@ -58,6 +63,9 @@ class ConnectionDecision(BaseModel):
 class MessageCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     content: str = Field(min_length=1, max_length=4000)
+    # Client-generated idempotency key. Retrying the same logical send must
+    # return the stored row instead of creating a duplicate.
+    client_id: UUID | None = None
 
 
 class GroupCreate(BaseModel):
@@ -73,87 +81,239 @@ class GroupInvite(BaseModel):
     message: str | None = Field(default=None, max_length=500)
 
 
+class InviteCreate(BaseModel):
+    """Prepared by Memory from its own LinkedIn search result and sent with the service token."""
+    model_config = ConfigDict(extra="forbid")
+    linkedin_url: str = Field(min_length=10, max_length=300)
+    name: str = Field(min_length=1, max_length=120)
+    headline: str = Field(default="", max_length=200)
+    message: str | None = Field(default=None, max_length=500)
+
+
+class SavedSearchCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    q: str = Field(default="", max_length=200)
+    role: str = Field(default="", max_length=100)
+    location: str = Field(default="", max_length=100)
+    skills: str = Field(default="", max_length=200)
+    label: str = Field(default="", max_length=80)
+
+
+class PreferenceChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: str = Field(pattern="^(hide_person|mute_topic|less_like_this)$")
+    value: str = Field(min_length=1, max_length=100)
+
+
+class CardReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(pattern="^(spam|impersonation|harassment|inaccurate|other)$")
+    details: str = Field(default="", max_length=1000)
+
+
 class InvitationDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     decision: str = Field(pattern="^(accept|decline)$")
+
+
+class ReadMark(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: str = Field(pattern="^(dm|group)$")
+    id: UUID
+    seq: int = Field(ge=0)
 
 
 def _uid(authorization: str | None, zynd_user: str | None) -> str:
     return _principal(authorization, zynd_user).sub
 
 
+@router.get("/network/inbox")
+def inbox(authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return network.get_inbox(_uid(authorization, x_zynd_user))
+
+
 @router.get("/network/connections")
-async def connections(authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+def connections(authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.list_connections(_uid(authorization, x_zynd_user))
 
 
 @router.post("/network/connections")
-async def request_connection(body: ConnectionCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+def request_connection(body: ConnectionCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.request_connection(_uid(authorization, x_zynd_user), body.target_handle, body.message)
 
 
 @router.post("/network/connections/{connection_id}/respond")
-async def respond_connection(connection_id: UUID, body: ConnectionDecision, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+def respond_connection(connection_id: UUID, body: ConnectionDecision, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.respond_connection(_uid(authorization, x_zynd_user), str(connection_id), body.action)
 
 
 @router.get("/network/connections/{connection_id}/messages")
-async def connection_messages(connection_id: UUID, limit: int = Query(default=100, ge=1, le=500), authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
-    return network.list_messages(_uid(authorization, x_zynd_user), str(connection_id), limit)
+def connection_messages(
+    connection_id: UUID,
+    limit: int = Query(default=100, ge=1, le=500),
+    before_seq: int | None = Query(default=None, ge=0),
+    after_seq: int | None = Query(default=None, ge=0),
+    authorization: str | None = Header(default=None),
+    x_zynd_user: str | None = Header(default=None),
+):
+    return network.list_messages(
+        _uid(authorization, x_zynd_user), str(connection_id), limit, before_seq, after_seq,
+    )
 
 
 @router.post("/network/connections/{connection_id}/messages")
-async def send_connection_message(connection_id: UUID, body: MessageCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
-    return network.send_message(_uid(authorization, x_zynd_user), str(connection_id), body.content)
+def send_connection_message(connection_id: UUID, body: MessageCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return network.send_message(
+        _uid(authorization, x_zynd_user), str(connection_id), body.content,
+        str(body.client_id) if body.client_id else None,
+    )
+
+
+@router.post("/network/read")
+def mark_read(body: ReadMark, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return network.mark_read(_uid(authorization, x_zynd_user), body.kind, str(body.id), body.seq)
 
 
 @router.get("/network/groups")
-async def groups(authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+def groups(authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.list_groups(_uid(authorization, x_zynd_user))
 
 
 @router.post("/network/groups")
-async def create_group(body: GroupCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+def create_group(body: GroupCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.create_group(_uid(authorization, x_zynd_user), body.name, body.description, body.visibility)
 
 
 @router.get("/network/groups/{group_id}/members")
-async def group_members(group_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+def group_members(group_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.list_members(_uid(authorization, x_zynd_user), str(group_id))
 
 
 @router.get("/network/groups/{group_id}/people")
-async def group_people(group_id: UUID, query: str = Query("", max_length=120), authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+def group_people(group_id: UUID, query: str = Query("", max_length=120), authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.search_invitable(_uid(authorization, x_zynd_user), str(group_id), query)
 
 
 @router.post("/network/groups/{group_id}/invitations")
-async def invite_group_member(group_id: UUID, body: GroupInvite, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+def invite_group_member(group_id: UUID, body: GroupInvite, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     user_id = _uid(authorization, x_zynd_user)
     target = network._card_for_handle(body.target_handle)
     return network.invite_to_group(user_id, str(group_id), target["owner_user_id"], body.message)
 
 
 @router.get("/network/groups/{group_id}/invitations")
-async def group_invitations(group_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+def group_invitations(group_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.list_invitations(_uid(authorization, x_zynd_user), str(group_id))
 
 
 @router.get("/network/group-invitations")
-async def incoming_group_invitations(authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+def incoming_group_invitations(authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.list_incoming_invitations(_uid(authorization, x_zynd_user))
 
 
 @router.post("/network/group-invitations/{invitation_id}/respond")
-async def respond_group_invitation(invitation_id: UUID, body: InvitationDecision, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+def respond_group_invitation(invitation_id: UUID, body: InvitationDecision, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.respond_invitation(_uid(authorization, x_zynd_user), str(invitation_id), body.decision)
 
 
 @router.get("/network/groups/{group_id}/messages")
-async def group_messages(group_id: UUID, limit: int = Query(default=100, ge=1, le=500), authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
-    return network.list_group_messages(_uid(authorization, x_zynd_user), str(group_id), limit)
+def group_messages(
+    group_id: UUID,
+    limit: int = Query(default=100, ge=1, le=500),
+    before_seq: int | None = Query(default=None, ge=0),
+    after_seq: int | None = Query(default=None, ge=0),
+    authorization: str | None = Header(default=None),
+    x_zynd_user: str | None = Header(default=None),
+):
+    return network.list_group_messages(
+        _uid(authorization, x_zynd_user), str(group_id), limit, before_seq, after_seq,
+    )
 
 
 @router.post("/network/groups/{group_id}/messages")
-async def send_group_message(group_id: UUID, body: MessageCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
-    return network.send_group_message(_uid(authorization, x_zynd_user), str(group_id), body.content)
+def send_group_message(group_id: UUID, body: MessageCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return network.send_group_message(
+        _uid(authorization, x_zynd_user), str(group_id), body.content,
+        str(body.client_id) if body.client_id else None,
+    )
+
+
+@router.post("/network/invites")
+async def create_invite(body: InviteCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    """Invite someone with no claimed Card. Only Memory (service token) may supply the name and
+    headline, because they are published on the new Card; a browser session cannot."""
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    if not (config.MEMORY_SERVICE_TOKEN and hmac.compare_digest(token.encode(), config.MEMORY_SERVICE_TOKEN.encode())):
+        raise HTTPException(403, "Invitations are prepared by the Zynd assistant, not the browser")
+    return invites.create_invite(
+        _uid(authorization, x_zynd_user), linkedin_url=body.linkedin_url, name=body.name,
+        headline=body.headline, message=body.message or "")
+
+
+@router.get("/network/invites")
+async def list_invites(authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return invites.list_invites(_uid(authorization, x_zynd_user))
+
+
+@router.post("/network/invites/{invite_id}/cancel")
+async def cancel_invite(invite_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return invites.cancel_invite(_uid(authorization, x_zynd_user), str(invite_id))
+
+
+@router.get("/network/connections/{connection_id}/brief")
+async def connection_brief_route(connection_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    """A5: what each person is working on now, shared ground and topics. Accepted connections only."""
+    return network.connection_brief(_uid(authorization, x_zynd_user), str(connection_id))
+
+
+@router.get("/network/groups/{group_id}/search")
+async def search_group(
+    group_id: UUID, q: str = Query("", max_length=200), role: str = Query("", max_length=100),
+    location: str = Query("", max_length=100), skills: str = Query("", max_length=200),
+    limit: int = Query(10, ge=1, le=50),
+    authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None),
+):
+    """A7: search only the Cards of one group's members. Members only."""
+    return network.search_group(_uid(authorization, x_zynd_user), str(group_id), q=q, role=role,
+                                location=location, skills=skills, limit=limit)
+
+
+@router.post("/network/saved-searches")
+async def add_saved_search(body: SavedSearchCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return saved_searches.add(_uid(authorization, x_zynd_user), q=body.q, role=body.role, location=body.location,
+                              skills=body.skills, label=body.label)
+
+
+@router.get("/network/saved-searches")
+async def list_saved_searches(authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return saved_searches.list_searches(_uid(authorization, x_zynd_user))
+
+
+@router.delete("/network/saved-searches/{search_id}")
+async def remove_saved_search(search_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return saved_searches.remove(_uid(authorization, x_zynd_user), str(search_id))
+
+
+@router.get("/network/preferences")
+async def get_preferences(authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return {"preferences": match_prefs.get(_uid(authorization, x_zynd_user))}
+
+
+@router.post("/network/preferences")
+async def add_preference(body: PreferenceChange, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return match_prefs.add(_uid(authorization, x_zynd_user), body.kind, body.value)
+
+
+@router.post("/network/preferences/remove")
+async def remove_preference(body: PreferenceChange, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return match_prefs.remove(_uid(authorization, x_zynd_user), body.kind, body.value)
+
+
+@router.post("/network/cards/{handle}/report")
+async def report_card(handle: str, body: CardReport, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return trust.report_card(_uid(authorization, x_zynd_user), handle, body.reason, body.details)
+
+
+@router.post("/network/cards/{handle}/block")
+async def block_card(handle: str, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return trust.block_card(_uid(authorization, x_zynd_user), handle)

@@ -314,9 +314,8 @@ MAX_SKILL_FACTS = 8
 def _extract_facts(profile: dict) -> list[tuple[str, str]]:
     """Curated (predicate, value) facts from a raw_profile blob.
 
-    Deliberately small and high-signal — the same shape the persona
-    surfaces elsewhere (works_at / lives_in / has_skill), not a full
-    dump of the profile.
+    Deliberately small and high-signal (current position / location / skills), not a
+    full dump of the profile. Predicates are the ones memory's taxonomy accepts.
     """
     facts: list[tuple[str, str]] = []
 
@@ -327,11 +326,11 @@ def _extract_facts(profile: dict) -> list[tuple[str, str]]:
         company = str(first.get("companyName") or first.get("company") or "").strip()
         if title or company:
             value = f"{title} at {company}" if title and company else (title or company)
-            facts.append(("works_at", value))
+            facts.append(("is_affiliated_with", value))
 
     location = str(profile.get("location") or "").strip()
     if location:
-        facts.append(("lives_in", location))
+        facts.append(("is_located_in", location))
 
     for skill in (profile.get("skills") or [])[:MAX_SKILL_FACTS]:
         name = skill.get("name") if isinstance(skill, dict) else skill
@@ -350,7 +349,7 @@ async def _compose_profile_summary(user_id: str, profile: dict) -> str:
     """
     headline = str(profile.get("headline") or "").strip()
     facts = _extract_facts(profile)
-    works_at = next((v for p, v in facts if p == "works_at"), "")
+    works_at = next((v for p, v in facts if p == "is_affiliated_with"), "")
     skills = [v for p, v in facts if p == "has_skill"]
 
     if works_at or skills:
@@ -394,9 +393,9 @@ async def sync_profile_to_memory(user_id: str, profile: dict) -> dict:
     """Write the IMPORTANT LinkedIn facts to the memory layer, deduped.
 
     Curated, not everything:
-      • works_at   — the current position ("<title> at <company>")
-      • lives_in   — the profile location
-      • has_skill  — the first MAX_SKILL_FACTS skills
+      • is_affiliated_with — the current position ("<title> at <company>")
+      • is_located_in — the profile location
+      • has_skill — the first MAX_SKILL_FACTS skills
     Plus one LLM-composed first-person summary ingested with
     source_system="linkedin" for async extraction — only when at least
     one new fact was declared, so an unchanged re-scrape writes nothing.
@@ -406,6 +405,7 @@ async def sync_profile_to_memory(user_id: str, profile: dict) -> dict:
     memory-layer problems are logged and never block the scrape.
     """
     from agent.memory_client import (
+        canonical_predicate,
         declare_fact,
         ingest_turns,
         is_enabled,
@@ -421,7 +421,7 @@ async def sync_profile_to_memory(user_id: str, profile: dict) -> dict:
 
     try:
         existing = await list_assertions(user_id)
-        seen = {(a.predicate, (a.object or "").strip().lower()) for a in existing}
+        seen = {(canonical_predicate(a.predicate), (a.object or "").strip().lower()) for a in existing}
         new_facts = [
             (p, v) for p, v in facts if (p, v.strip().lower()) not in seen
         ]

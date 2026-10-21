@@ -1,5 +1,16 @@
 import { sql } from 'drizzle-orm';
-import { bigint, check, index, jsonb, pgTable, text, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  bigint,
+  check,
+  index,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  unique,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { authUsers, fk, isOwner, jsonbDefault, publicPolicy, serviceRolePolicy, tstz } from '../../lib/shared';
 
 // owner: persona — DMs between personas, A2A tasks, meeting tasks, approvals.
@@ -29,6 +40,9 @@ export const dmThreads = pgTable(
       .default(
         sql`jsonb_build_object('can_request_meetings', true, 'can_query_availability', false, 'can_view_full_profile', false, 'can_post_on_my_behalf', false)`,
       ),
+    lastMessageAt: tstz('last_message_at'),
+    lastMessagePreview: text('last_message_preview'),
+    lastMessageSenderId: text('last_message_sender_id'),
     createdAt: tstz('created_at').defaultNow(),
     updatedAt: tstz('updated_at').defaultNow(),
   },
@@ -38,6 +52,8 @@ export const dmThreads = pgTable(
     check('dm_threads_initiator_mode_check', sql`initiator_mode IN ('human', 'agent')`),
     check('dm_threads_receiver_mode_check', sql`receiver_mode IN ('human', 'agent')`),
     index('dm_threads_lifecycle_idx').on(t.lifecycle),
+    index('dm_threads_initiator_updated_idx').on(t.initiatorId, t.updatedAt.desc().nullsFirst()),
+    index('dm_threads_receiver_updated_idx').on(t.receiverId, t.updatedAt.desc().nullsFirst()),
     serviceRolePolicy('dm_threads'),
     publicPolicy('Users can read own threads', { for: 'select', using: isThreadParty('dm_threads') }),
     publicPolicy('Participants can update threads', { for: 'update', using: isThreadParty('dm_threads') }),
@@ -75,6 +91,7 @@ export const dmMessages = pgTable(
     fk('dm_messages_thread_id_fkey', t.threadId, dmThreads.id, 'cascade'),
     check('dm_messages_sender_type_check', sql`sender_type IN ('human', 'agent', 'system')`),
     check('dm_messages_channel_check', sql`channel IN ('human', 'agent')`),
+    index('dm_messages_thread_created_idx').on(t.threadId, t.createdAt.desc().nullsFirst()),
     serviceRolePolicy('dm_messages'),
     publicPolicy('Users can read messages in non-blocked threads', {
       for: 'select',
@@ -91,6 +108,30 @@ export const dmMessages = pgTable(
     }),
   ],
 );
+
+/**
+ * Per-user read cursor for a DM thread. Unread counts are derived from this
+ * timestamp rather than maintained as a counter, so every message writer
+ * (human API, A2A, MCP tools, Telegram) stays correct without extra writes.
+ * Service-role only: the API is the sole reader/writer.
+ */
+export const dmThreadReads = pgTable(
+  'dm_thread_reads',
+  {
+    threadId: uuid('thread_id').notNull(),
+    userId: uuid('user_id').notNull(),
+    lastReadAt: tstz('last_read_at').notNull().defaultNow(),
+    createdAt: tstz('created_at').notNull().defaultNow(),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    fk('dm_thread_reads_thread_id_fkey', t.threadId, dmThreads.id, 'cascade'),
+    fk('dm_thread_reads_user_id_fkey', t.userId, authUsers.id, 'cascade'),
+    primaryKey({ columns: [t.threadId, t.userId] }),
+    index('dm_thread_reads_user_idx').on(t.userId, t.updatedAt.desc().nullsFirst()),
+    serviceRolePolicy('dm_thread_reads', { withCheck: true }),
+  ],
+).enableRLS();
 
 export const a2aTasks = pgTable(
   'a2a_tasks',

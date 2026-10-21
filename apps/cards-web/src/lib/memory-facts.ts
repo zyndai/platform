@@ -60,12 +60,87 @@ const PUBLIC_FAMILY: Record<string, string> = {
   is_responsible_for: "is_building",
 };
 
+/** Which card group a predicate is shown under. */
 export function memoryFactFamily(predicate: string): string {
   return PUBLIC_FAMILY[predicate] ?? predicate;
 }
 
+// ── De-duplication across predicates ───────────────────────────────────────────────
+// Rows written before the Memory write path was unified can hold the same thing under
+// several predicates ("Skilled in JavaScript" and "Tools I use: javascript"). They are
+// de-duplicated here for display only (nothing is changed in memory) and the stronger
+// predicate wins. This is separate from the display family above: a tool still shows under
+// "Tools I use" unless the same thing is also a skill or expertise.
+
+const TECH_PREDICATES = new Set(["has_expertise_in", "has_skill", "uses_tool"]);
+
+/** Higher wins when one thing appears under several predicates. */
+const DEDUPE_RANK: Record<string, number> = {
+  has_expertise_in: 4,
+  has_skill: 3,
+  uses_tool: 2,
+  is_learning: 1,
+};
+
+// Mirrors services/memory/app/services/canonical.py for the common names. A safety net,
+// not the source of truth: unknown names simply are not folded.
+const TECH_ALIASES: Record<string, string> = {
+  js: "javascript", ts: "typescript", py: "python", python3: "python", golang: "go",
+  node: "node.js", nodejs: "node.js", "node js": "node.js", nextjs: "next.js", next: "next.js",
+  reactjs: "react", "react.js": "react", vuejs: "vue", "vue.js": "vue", postgres: "postgresql",
+  psql: "postgresql", mongo: "mongodb", k8s: "kubernetes", gcp: "google cloud", cpp: "c++",
+  csharp: "c#", tailwind: "tailwind css", vscode: "vs code", "visual studio code": "vs code",
+};
+const KNOWN_TECH = new Set([
+  "javascript", "typescript", "python", "go", "rust", "java", "kotlin", "swift", "c", "c++", "c#",
+  "ruby", "php", "scala", "elixir", "haskell", "dart", "sql", "html", "css", "bash",
+  "react", "next.js", "vue", "nuxt", "angular", "svelte", "node.js", "deno", "bun", "express",
+  "nestjs", "django", "flask", "fastapi", "ruby on rails", "laravel", "spring", "tensorflow",
+  "pytorch", "pandas", "numpy", "langchain", "tailwind css", "flutter", "react native",
+  "docker", "kubernetes", "terraform", "aws", "google cloud", "azure", "vercel", "supabase",
+  "firebase", "postgresql", "mysql", "mongodb", "redis", "sqlite", "git", "github", "figma",
+  "notion", "cursor", "vs code", "claude code", "openai", "linux",
+]);
+
+function canonicalTech(object: string): string {
+  const folded = object.trim().toLowerCase().replace(/\s+/g, " ");
+  const direct = TECH_ALIASES[folded] ?? (KNOWN_TECH.has(folded) ? folded : undefined);
+  if (direct) return direct;
+  // "Python 3.12" -> "python", but only when what is left is a technology we know:
+  // "Skill 2" or "Phase 2" must stay as written.
+  const stripped = folded.replace(/\s+v?\d+(\.\d+)*(\.x)?$/, "");
+  const base = TECH_ALIASES[stripped] ?? (KNOWN_TECH.has(stripped) ? stripped : undefined);
+  return base ?? folded;
+}
+
+function isKnownTech(object: string): boolean {
+  return KNOWN_TECH.has(canonicalTech(object));
+}
+
+function dedupeFamily(predicate: string, object: string): string {
+  if (TECH_PREDICATES.has(predicate)) return "tech";
+  if (predicate === "is_learning" && isKnownTech(object)) return "tech";
+  return memoryFactFamily(predicate);
+}
+
 export function memoryFactKey(predicate: string, object: string): string {
-  return `${memoryFactFamily(predicate)}|${object.trim().toLowerCase()}`;
+  const family = dedupeFamily(predicate, object);
+  const name = family === "tech" ? canonicalTech(object) : object.trim().toLowerCase();
+  return `${family}|${name}`;
+}
+
+/** Index of the fact to show for each distinct thing: the strongest predicate, first on a tie. */
+function strongestByKey(facts: Array<{ predicate: string; object: string }>): Map<string, number> {
+  const best = new Map<string, number>();
+  facts.forEach((fact, index) => {
+    if (!fact.predicate || !fact.object?.trim()) return;
+    const key = memoryFactKey(fact.predicate, fact.object);
+    const held = best.get(key);
+    if (held === undefined || (DEDUPE_RANK[fact.predicate] ?? 0) > (DEDUPE_RANK[facts[held].predicate] ?? 0)) {
+      best.set(key, index);
+    }
+  });
+  return best;
 }
 
 /** The fact alone, for use under its group heading (the heading already says "Expert in"). */
@@ -90,16 +165,14 @@ export type MemoryGroup = {
 };
 
 export function groupMemoryFacts(facts: MemoryFact[]): MemoryGroup[] {
-  const seen = new Set<string>();
+  const best = strongestByKey(facts);
   const byPredicate = new Map<string, { text: string; object: string }[]>();
-  for (const fact of facts) {
+  for (const [index, fact] of facts.entries()) {
     const predicate = fact.predicate;
     const object = fact.object.trim();
     const family = memoryFactFamily(predicate);
     if (!object || !MEMORY_GROUPS[family]) continue;
-    const dedupeKey = memoryFactKey(predicate, object);
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
+    if (best.get(memoryFactKey(predicate, object)) !== index) continue;
     const list = byPredicate.get(family) ?? [];
     list.push({ text: factLabel({ predicate: family, object }), object });
     byPredicate.set(family, list);
@@ -154,16 +227,21 @@ export function ownerFactGroups(
   const seen = new Set<string>();
   const byFamily = new Map<string, OwnerFactItem[]>();
   const notes: OwnerFactItem[] = [];
+  const best = strongestByKey(
+    facts.map((fact) => ({
+      predicate: typeof fact.predicate === "string" ? fact.predicate : "",
+      object: typeof fact.object === "string" ? fact.object : "",
+    })),
+  );
 
-  for (const fact of facts) {
+  for (const [index, fact] of facts.entries()) {
     const predicate = typeof fact.predicate === "string" ? fact.predicate : "";
     const object = typeof fact.object === "string" ? fact.object.trim() : "";
     if (predicate && object) {
       const family = memoryFactFamily(predicate);
       if (!MEMORY_GROUPS[family]) continue;
       const key = memoryFactKey(predicate, object);
-      if (seen.has(key)) continue;
-      seen.add(key);
+      if (best.get(key) !== index) continue;
       const detail = details[key] ?? {};
       const provenance =
         detail.provenance ?? (typeof fact.provenance === "string" ? fact.provenance : undefined);

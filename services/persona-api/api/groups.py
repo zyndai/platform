@@ -60,6 +60,14 @@ def _supabase():
 def _is_missing_table(err: APIError) -> bool:
     return getattr(err, "code", None) == "PGRST205"
 
+
+def _is_missing_relation(err: Exception) -> bool:
+    return (
+        getattr(err, "code", None) in {"PGRST205", "42P01"}
+        or "Could not find the table" in str(err)
+        or "does not exist" in str(err)
+    )
+
 def _post_group_system_note(sb, group_id: str, note: str) -> None:
     """Best-effort system message into the group chat. Failure is swallowed."""
     try:
@@ -79,6 +87,26 @@ def _post_group_system_note(sb, group_id: str, note: str) -> None:
 # with member count too. Owners hit this cap before they hit something
 # the system can't recover from gracefully.
 MAX_GROUP_MEMBERS = 15
+
+# Keep a strong reference to mention-dispatch tasks until they finish. The
+# message POST must not wait for Google Docs, roster hydration, or an LLM
+# invocation, but the task still needs to survive after the response returns.
+_group_dispatch_tasks: set[asyncio.Task] = set()
+
+
+def _track_group_dispatch(task: asyncio.Task) -> None:
+    _group_dispatch_tasks.add(task)
+
+    def _finished(completed: asyncio.Task) -> None:
+        _group_dispatch_tasks.discard(completed)
+        try:
+            completed.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("[groups] background mention dispatch failed")
+
+    task.add_done_callback(_finished)
 
 def _enforce_member_cap(sb, group_id: str) -> None:
     """Raise 409 if the group is at the soft cap."""
@@ -321,6 +349,30 @@ async def list_my_groups(user: dict = Depends(get_current_user)):
     """Return all groups the caller belongs to, newest activity first."""
     sb = _supabase()
     try:
+        rows = (
+            sb.table("persona_group_inbox")
+            .select("*")
+            .eq("user_id", user["id"])
+            .order("last_activity_at", desc=True)
+            .limit(50)
+            .execute()
+            .data
+            or []
+        )
+    except APIError as e:
+        if not _is_missing_relation(e):
+            raise
+        rows = []
+
+    if rows:
+        for row in rows:
+            row.pop("user_id", None)
+            row.pop("last_read_at", None)
+        return {"groups": rows}
+
+    # Pre-migration fallback. Keeps the page usable between code deploy and
+    # the expand-only migration being applied.
+    try:
         memberships = (
             sb.table("persona_group_members")
             .select("group_id, role, joined_at")
@@ -331,11 +383,11 @@ async def list_my_groups(user: dict = Depends(get_current_user)):
         if _is_missing_table(e):
             return {"groups": []}
         raise
-    rows = memberships.data or []
-    if not rows:
+    membership_rows = memberships.data or []
+    if not membership_rows:
         return {"groups": []}
 
-    ids = [r["group_id"] for r in rows]
+    ids = [r["group_id"] for r in membership_rows]
     groups = (
         sb.table("persona_groups")
         .select("id, slug, name, description, avatar_url, visibility, created_at, updated_at, archived_at")
@@ -344,10 +396,18 @@ async def list_my_groups(user: dict = Depends(get_current_user)):
         .order("updated_at", desc=True)
         .execute()
     )
-    role_by_id = {r["group_id"]: r["role"] for r in rows}
+    role_by_id = {r["group_id"]: r["role"] for r in membership_rows}
     out = []
     for g in groups.data or []:
-        out.append({**g, "my_role": role_by_id.get(g["id"])})
+        out.append({
+            **g,
+            "my_role": role_by_id.get(g["id"]),
+            "unread_count": 0,
+            "last_message_at": None,
+            "last_message_preview": None,
+            "last_message_sender_name": None,
+            "last_activity_at": g.get("updated_at") or g.get("created_at"),
+        })
     return {"groups": out}
 
 # ── Discoverable groups (phase 5) ──────────────────────────────────────
@@ -870,6 +930,36 @@ async def remove_member(
     return {"status": "removed"}
 
 # ── Messages ────────────────────────────────────────────────────────────
+def _mark_group_read(sb, group_id: str, user_id: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    sb.table("persona_group_reads").upsert(
+        {
+            "group_id": group_id,
+            "user_id": user_id,
+            "last_read_at": now,
+            "updated_at": now,
+        },
+        on_conflict="group_id,user_id",
+    ).execute()
+
+
+@router.post("/{group_id}/read")
+async def mark_group_read(
+    group_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Advance this member's read cursor after a live message arrives."""
+    sb = _supabase()
+    _require_member(sb, group_id, user["id"])
+    try:
+        await asyncio.to_thread(_mark_group_read, sb, group_id, user["id"])
+    except APIError as e:
+        if _is_missing_relation(e):
+            return {"status": "unavailable"}
+        raise
+    return {"status": "ok"}
+
+
 @router.get("/{group_id}/messages")
 async def list_messages(
     group_id: str,
@@ -892,7 +982,20 @@ async def list_messages(
     rows = q.execute()
     # Reverse so the client gets oldest-first (chat reading order).
     out = list(reversed(rows.data or []))
-    return {"messages": out, "count": len(out)}
+
+    # Opening a room is the read action. Best-effort so a pre-migration deploy
+    # still returns messages; the explicit POST endpoint covers live arrivals.
+    try:
+        await asyncio.to_thread(_mark_group_read, sb, group_id, user["id"])
+    except Exception as exc:
+        logger.debug("[groups] couldn't mark %s read: %s", group_id, exc)
+
+    return {
+        "messages": out,
+        "count": len(out),
+        "has_more": len(rows.data or []) == limit,
+        "next_before": out[0].get("created_at") if out and len(out) == limit else None,
+    }
 
 @router.post("/{group_id}/messages")
 async def post_message(
@@ -926,30 +1029,34 @@ async def post_message(
         "updated_at": datetime.now(timezone.utc).isoformat()
     }).eq("id", group_id).execute()
 
-    # Phase 2: detect @-mentions and fire the target personas off the
-    # request path so the human's POST returns fast. The dispatcher posts
-    # each reply back into persona_group_messages with channel='agent';
-    # realtime delivers them to every subscriber, including the asker.
-    #
-    # Phase 3a: when the group has a brief doc, pre-fetch its content
-    # once here (rather than per-dispatch) and pass into each target's
-    # invocation. The fetch happens off the event loop because read_document
-    # is sync; on failure we fall through with no brief context.
-    mentioned_uids = _spawn_mention_dispatch(
-        sb=sb,
-        group_id=group_id,
-        asker_user=user,
-        asker_display=asker_display,
-        asker_agent_id=m.get("agent_id"),
-        asker_permissions=perms,
-        message_content=content,
-        time_zone=body.time_zone,
+    # Mention resolution, Google Docs reads, roster hydration, and agent
+    # invocations all happen after the durable human message is committed.
+    # In particular, a slow/broken Google connection must never make sending
+    # a normal chat message feel slow.
+    dispatch_loop = asyncio.get_running_loop()
+    dispatch_task = asyncio.create_task(
+        asyncio.to_thread(
+            _spawn_mention_dispatch,
+            sb=sb,
+            group_id=group_id,
+            asker_user=user,
+            asker_display=asker_display,
+            asker_agent_id=m.get("agent_id"),
+            asker_permissions=perms,
+            message_content=content,
+            time_zone=body.time_zone,
+            dispatch_loop=dispatch_loop,
+        )
     )
+    _track_group_dispatch(dispatch_task)
 
     inserted = row.data[0] if row.data else None
     return {
         "message": inserted,
-        "mentioned_user_ids": mentioned_uids,
+        # Resolution now happens off the response path. Realtime will deliver
+        # the eventual agent row; the empty list keeps the old response shape
+        # compatible while avoiding false "replying" indicators.
+        "mentioned_user_ids": [],
     }
 
 def _spawn_mention_dispatch(
@@ -962,6 +1069,7 @@ def _spawn_mention_dispatch(
     asker_permissions: dict,
     message_content: str,
     time_zone: Optional[str] = None,
+    dispatch_loop: asyncio.AbstractEventLoop | None = None,
 ) -> list[str]:
     """
     Parse @-mentions, resolve them to roster rows, and schedule a
@@ -1084,20 +1192,22 @@ def _spawn_mention_dispatch(
                     "target_user_id": target["user_id"],
                 },
             )
-        asyncio.create_task(
-            dispatch_group_mention(
-                group_id=group_id,
-                asker_user_id=asker_user["id"],
-                asker_display_name=asker_display,
-                asker_agent_id=asker_agent_id,
-                target_member=target,
-                user_message=message_content,
-                asker_permissions=asker_permissions,
-                group_brief_content=group_brief_content,
-                group_constraints=group_constraints,
-                time_zone=time_zone,
-            )
+        dispatch_coro = dispatch_group_mention(
+            group_id=group_id,
+            asker_user_id=asker_user["id"],
+            asker_display_name=asker_display,
+            asker_agent_id=asker_agent_id,
+            target_member=target,
+            user_message=message_content,
+            asker_permissions=asker_permissions,
+            group_brief_content=group_brief_content,
+            group_constraints=group_constraints,
+            time_zone=time_zone,
         )
+        if dispatch_loop is None:
+            asyncio.create_task(dispatch_coro)
+        else:
+            asyncio.run_coroutine_threadsafe(dispatch_coro, dispatch_loop)
     return scheduled_user_ids
 
 # ── Invites ─────────────────────────────────────────────────────────────

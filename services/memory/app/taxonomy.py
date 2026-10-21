@@ -56,6 +56,112 @@ PREDICATE_HALFLIFE_DAYS: dict[str, int | None] = {
 
 ALLOWED_PREDICATES: frozenset[str] = frozenset(PREDICATE_HALFLIFE_DAYS)
 
+# ── Freshness: when is a fact "old"? ───────────────────────────────────────────────
+# Predicates that describe a moment rather than a trait. Once a fact of one of these has
+# gone this many days without being seen again it is *stale*: it drops out of the default
+# (no-topic) context but stays stored and comes back when a topic query matches it.
+# Predicates not listed here never go stale. Never archived on age alone.
+STALE_AFTER_DAYS: dict[str, int] = {
+    "is_working_on": 30,       # D4
+    "is_learning": 60,
+    "is_seeking": 30,
+    "intends_to": 45,
+    "is_preparing_for": 30,
+    "is_building": 120,
+}
+
+# ── One thing, one fact ──────────────────────────────────────────────────────────────
+# Predicates whose object is usually a technology name; only these get alias and version
+# canonicalization ("JS" -> "JavaScript"). A project called "Next" must not become Next.js.
+TECH_NAME_PREDICATES: frozenset[str] = frozenset({
+    "has_expertise_in", "has_skill", "uses_tool", "is_learning",
+})
+
+_TECH_FAMILY: frozenset[str] = frozenset({"has_expertise_in", "has_skill", "uses_tool"})
+_WORK_FAMILY: frozenset[str] = frozenset({"is_building", "is_creating", "is_working_on", "intends_to"})
+
+# Within a family the stronger predicate wins; a weaker report of the same thing only
+# refreshes the stronger fact. is_learning ranks lowest in both families it can join.
+FAMILY_RANK: dict[str, int] = {
+    "has_expertise_in": 4, "has_skill": 3, "uses_tool": 2,
+    "is_building": 5, "is_creating": 4, "is_working_on": 3, "intends_to": 2,
+    "is_learning": 1,
+}
+
+
+def family_of(predicate: str, *, is_tech: bool = False, is_project: bool = False) -> str | None:
+    """The family a (predicate, object) fact belongs to, or None when it stands alone.
+
+    is_learning joins a family only by what it is about: learning a technology is the
+    tech family, learning a project the work family. Learning a *field* ("machine
+    learning") next to expertise in it is legitimate and stays on its own.
+    """
+    if predicate in _TECH_FAMILY:
+        return "tech"
+    if predicate in _WORK_FAMILY:
+        return "work"
+    if predicate == "is_learning":
+        if is_tech:
+            return "tech"
+        if is_project:
+            return "work"
+    return None
+
+
+# Entity types that name the same kind of thing. "JavaScript" can come back from extraction as
+# skill_technical, skill_domain or concept_topic; within a user these are one entity.
+ENTITY_TYPE_GROUPS: dict[str, tuple[str, ...]] = {
+    "tech": ("skill_technical", "skill_domain", "concept_topic"),
+    "project": ("project_venture", "project_assignment", "project_side"),
+}
+
+
+def entity_type_group(entity_type: str, *, tech_name: bool = False, work: bool = False) -> tuple[str, ...]:
+    """The set of entity types a name may already be stored under."""
+    if tech_name and entity_type in ENTITY_TYPE_GROUPS["tech"]:
+        return ENTITY_TYPE_GROUPS["tech"]
+    if work and entity_type in ENTITY_TYPE_GROUPS["project"]:
+        return ENTITY_TYPE_GROUPS["project"]
+    return (entity_type,)
+
+
+# Sources whose sync already DECLARES these facts directly (persona-api github_sync /
+# linkedin_scraper / twitter_scraper). The sync also ingests an LLM summary turn under the
+# same source_system, and extraction turned that summary into the same facts again, so
+# these predicates are dropped from chunks of those sources.
+SYNC_SOURCES: frozenset[str] = frozenset({"github", "linkedin", "twitter"})
+SYNC_DECLARED_PREDICATES: frozenset[str] = frozenset({
+    "has_skill", "uses_tool", "has_expertise_in", "is_working_on", "is_building",
+})
+
+
+# ── What context returns ─────────────────────────────────────────────────────────────
+# Always part of the no-topic context packet, as (predicate, max facts of it). Capped to a
+# share of k elsewhere so they never crowd out what the person is doing now.
+CORE_LIMITS: tuple[tuple[str, int], ...] = (
+    ("is_located_in", 1),
+    ("is_affiliated_with", 2),
+    ("is_building", 3),
+    ("has_expertise_in", 3),
+)
+CORE_PREDICATES: frozenset[str] = frozenset(p for p, _ in CORE_LIMITS)
+CORE_MAX_SHARE = 0.4
+
+# Minimum cosine similarity between a topic and a fact's object for the fact to count as
+# related. A starting value for text-embedding-3-small on short entity names; tuned by
+# tests/fixtures/context_eval.json.
+RELATED_MIN = 0.45
+
+# Ranking nudge by kind of fact. Things a person is doing or is rank above things they
+# merely hold an opinion on or touched once.
+PREDICATE_WEIGHT: dict[str, float] = {
+    "is_building": 1.0, "is_creating": 1.0, "is_working_on": 1.0, "is_seeking": 1.0,
+    "is_located_in": 1.0, "is_affiliated_with": 1.0, "has_expertise_in": 0.95,
+    "open_to": 0.9, "is_learning": 0.9, "intends_to": 0.85, "has_skill": 0.85,
+    "uses_tool": 0.8, "is_preparing_for": 0.85,
+}
+DEFAULT_PREDICATE_WEIGHT = 0.7
+
 # System-emitted (never extracted or declared) + declared-only predicates.
 SYSTEM_PREDICATES: frozenset[str] = frozenset({"is_resolved"})
 DECLARED_ONLY: frozenset[str] = frozenset({"open_to"})

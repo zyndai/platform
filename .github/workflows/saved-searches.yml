@@ -1,0 +1,24 @@
+# A3: re-run saved people searches and nudge owners about new matches.
+# The endpoint is a no-op (enabled: false) until FEATURE_NETWORK_CONTROLS is on in Cards API.
+name: saved-searches
+on:
+  schedule:
+    - cron: "15 */6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: saved-searches
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run saved searches
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CARDS_API: ${{ secrets.CARDS_API_URL }}
+        run: |
+          test -n "$CRON_SECRET" && test -n "$CARDS_API" || { echo "Cards secrets are not configured; skipping"; exit 0; }
+          curl --max-time 600 -fsS -X POST "${CARDS_API%/}/internal/saved-searches/run" \
+            -H "Authorization: Bearer ${CRON_SECRET}"

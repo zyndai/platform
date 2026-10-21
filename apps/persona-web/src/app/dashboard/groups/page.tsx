@@ -23,6 +23,11 @@ interface GroupSummary {
   created_at: string;
   updated_at: string;
   my_role: "owner" | "admin" | "member";
+  last_message_at?: string | null;
+  last_message_preview?: string | null;
+  last_message_sender_name?: string | null;
+  last_activity_at?: string | null;
+  unread_count?: number;
 }
 
 interface DiscoverableGroup {
@@ -197,8 +202,18 @@ export default function GroupsListPage() {
                       {g.my_role !== "member" && (
                         <span className="groups-role">{g.my_role}</span>
                       )}
+                      {(g.unread_count ?? 0) > 0 && (
+                        <span
+                          className="groups-unread-badge"
+                          aria-label={`${g.unread_count} unread messages`}
+                        >
+                          {g.unread_count! > 99 ? "99+" : g.unread_count}
+                        </span>
+                      )}
                     </div>
-                    {g.description ? (
+                    {g.last_message_preview ? (
+                      <p className="groups-row-preview">{g.last_message_preview}</p>
+                    ) : g.description ? (
                       <p className="groups-row-desc">{g.description}</p>
                     ) : (
                       <p className="groups-row-desc groups-row-desc-empty">No description.</p>

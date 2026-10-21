@@ -9,12 +9,17 @@ export type SectionValues = Record<string, Record<string, unknown>>;
 /** Serialize saves and compare each section with its last acknowledged value.
  * New edits made during a request stay queued. Failures keep the draft local;
  * navigation is blocked until saving succeeds or the user reloads deliberately.
+ *
+ * With `auto` false nothing is saved until `flush()` is called (the editor's Save
+ * button), so a slip of the mouse can be discarded instead of being persisted.
+ * Leaving the page then asks first instead of saving on the way out.
  */
 export function useSectionAutosave(
   handle: string,
   token: string,
   values: SectionValues,
   enabled: boolean,
+  auto = true,
 ) {
   const router = useRouter();
   const initial = JSON.stringify(values);
@@ -27,6 +32,8 @@ export function useSectionAutosave(
     {},
   );
   const [error, setError] = useState("");
+  // What the server last acknowledged, as state so the page can show "unsaved" and revert to it.
+  const [saved, setSaved] = useState<SectionValues>(() => JSON.parse(initial));
   const [recovery, setRecovery] = useState<SectionValues | null>(null);
   const storageKey = useMemo(() => {
     try {
@@ -113,11 +120,13 @@ export function useSectionAutosave(
               );
               baseline.current[section] = patch;
               expected.current[section] = acknowledged;
-              if (mounted.current)
+              if (mounted.current) {
+                setSaved(JSON.parse(JSON.stringify(baseline.current)));
                 setSectionStates((current) => ({
                   ...current,
                   [section]: "Saved",
                 }));
+              }
             }
           }
           if (storageKey) {
@@ -152,10 +161,10 @@ export function useSectionAutosave(
   }, [initial, handle, token, dirty, enabled, storageKey]);
 
   useEffect(() => {
-    if (!enabled || !dirty()) return;
+    if (!enabled || !auto || !dirty()) return;
     const timer = setTimeout(() => void saveRef.current(), 750);
     return () => clearTimeout(timer);
-  }, [initial, enabled, dirty]);
+  }, [initial, enabled, auto, dirty]);
 
   useEffect(() => {
     mounted.current = true;
@@ -188,8 +197,13 @@ export function useSectionAutosave(
         return;
       event.preventDefault();
       event.stopPropagation();
+      const go = () => router.push(target.pathname + target.search + target.hash);
+      if (!auto) {
+        if (window.confirm("You have unsaved changes. Leave without saving?")) go();
+        return;
+      }
       void saveRef.current().then((ok) => {
-        if (ok) router.push(target.pathname + target.search + target.hash);
+        if (ok) go();
       });
     };
     window.addEventListener("beforeunload", beforeUnload);
@@ -199,22 +213,34 @@ export function useSectionAutosave(
       window.removeEventListener("beforeunload", beforeUnload);
       document.removeEventListener("click", click, true);
     };
-  }, [enabled, router, dirty]);
+  }, [enabled, auto, router, dirty]);
+
+  const clearBackup = () => {
+    if (storageKey) {
+      try {
+        sessionStorage.removeItem(storageKey);
+      } catch {
+        /* Optional storage. */
+      }
+    }
+    setRecovery(null);
+  };
 
   return {
     status,
     sectionStates,
     error,
     recovery,
-    discardRecovery: () => {
-      if (storageKey) {
-        try {
-          sessionStorage.removeItem(storageKey);
-        } catch {
-          /* Optional storage. */
-        }
-      }
-      setRecovery(null);
+    /** True while the page holds edits the server hasn't acknowledged. */
+    unsaved: JSON.stringify(saved) !== initial,
+    /** The values the server last acknowledged. */
+    saved,
+    discardRecovery: clearBackup,
+    /** After the page drops its edits: forget the local backup and any save error. */
+    reset: () => {
+      clearBackup();
+      setStatus("Saved");
+      setError("");
     },
     flush: () => saveRef.current(),
   };

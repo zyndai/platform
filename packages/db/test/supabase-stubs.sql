@@ -61,6 +61,40 @@ create or replace function auth.jwt() returns jsonb language sql stable as $$
   )::jsonb
 $$;
 
+-- Minimal Realtime surface for migrations that broadcast from the database.
+-- Supabase owns this schema in production; this stub only exists so the
+-- cards migration can create its authorization policy and test its triggers
+-- against plain Postgres.
+create schema if not exists realtime;
+grant usage on schema realtime to anon, authenticated, service_role;
+
+create table if not exists realtime.messages (
+  id          bigint generated always as identity primary key,
+  topic       text not null,
+  extension   text not null default 'broadcast',
+  event       text,
+  payload     jsonb,
+  private     boolean not null default true,
+  inserted_at timestamptz not null default now()
+);
+alter table realtime.messages enable row level security;
+grant select, insert on realtime.messages to authenticated, service_role;
+
+create or replace function realtime.topic() returns text
+language sql stable as $$
+  select coalesce(nullif(current_setting('realtime.topic', true), ''), '')
+$$;
+
+create or replace function realtime.send(
+  payload jsonb, event text, topic text, private boolean default true
+) returns void
+language sql as $$
+  insert into realtime.messages(topic, extension, event, payload, private)
+  values (topic, 'broadcast', event, payload, private)
+$$;
+grant execute on function realtime.send(jsonb, text, text, boolean) to authenticated, service_role;
+grant execute on function realtime.topic() to authenticated, service_role;
+
 do $$
 begin
   if not exists (select from pg_publication where pubname = 'supabase_realtime') then

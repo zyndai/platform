@@ -54,7 +54,10 @@ async def test_jsonld_export_structure(client):
 
 
 @pytest.mark.integration
-async def test_context_slice_ranks_by_topic_relevance(client):
+async def test_context_slice_ranks_by_topic_relevance(client, monkeypatch):
+    # The legacy query ordered by predicate name before LIMIT, so the topic was a no-op
+    # (is_building sorted ahead of is_learning). The ranked path puts the topic first.
+    monkeypatch.setattr(settings, "feature_ranked_context", True)
     uid = await _dev_uid()
     await _seed(uid, "is_learning", "Rust async runtimes", "skill_technical", 0.8)
     await _seed(uid, "is_building", "sourdough bread bakery", "project_venture", 0.8)
@@ -62,7 +65,7 @@ async def test_context_slice_ranks_by_topic_relevance(client):
     slice_ = await context_slice(get_pool(), str(uid), "Rust async performance tuning", k=20)
 
     assert slice_[0]["object"] == "Rust async runtimes"
-    assert slice_[0]["relevance"] > slice_[-1]["relevance"]
+    assert "sourdough bread bakery" not in {f["object"] for f in slice_}   # below RELATED_MIN
 
 
 @pytest.mark.integration

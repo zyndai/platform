@@ -4,6 +4,11 @@ Cards is the source of truth for this social graph. The service-role client is
 used deliberately: browser callers authenticate with a shared Supabase session
 and this module enforces every ownership, acceptance, and membership check
 before writing the Cards schema.
+
+Messaging v2 is implemented as service-only Postgres functions so a page load,
+message page, send, or read receipt is one Supabase round trip instead of a
+chain of REST calls. The database functions also assign the per-conversation
+sequence and keep inbox summaries/read cursors consistent for every writer.
 """
 
 from __future__ import annotations
@@ -96,7 +101,15 @@ def _require_connection_party(row: dict, user_id: str) -> bool:
 def _partner_card(row: dict, user_id: str) -> dict:
     partner_id = row["recipient_card_id"] if row["requester_user_id"] == user_id else row["requester_card_id"]
     cards = _sb().table("agent_profile_cards").select("id,handle,card").eq("id", partner_id).limit(1).execute().data or []
-    return _card_payload(cards[0]) if cards else {"card_id": partner_id, "name": "Zynd member"}
+    if not cards:
+        return {"card_id": partner_id, "name": "Zynd member"}
+    payload = _card_payload(cards[0])
+    if row.get("status") == "accepted":
+        # Contact links are for people who have agreed to connect: search results never carry
+        # them, and neither does a pending request.
+        links = ((cards[0].get("card") or {}).get("identity") or {}).get("links") or {}
+        payload["links"] = {k: v for k, v in links.items() if isinstance(v, str) and v.strip()}
+    return payload
 
 
 def _serialize_connection(row: dict, user_id: str) -> dict:
@@ -112,22 +125,34 @@ def _serialize_connection(row: dict, user_id: str) -> dict:
     }
 
 
-def request_connection(user_id: str, target_handle: str, message: str | None = None) -> dict:
-    requester = _card_for_user(user_id)
-    recipient = _card_for_handle(target_handle)
-    recipient_user_id = recipient["owner_user_id"]
-    if recipient_user_id == user_id:
-        raise HTTPException(422, "You cannot connect to your own Card")
+def _rpc_result(name: str, params: dict) -> dict:
+    result = _sb().rpc(name, params).execute().data
+    if not isinstance(result, dict):
+        raise HTTPException(500, "Cards network operation failed")
+    if result.get("error"):
+        raise HTTPException(result.get("status_code", 409), result["error"])
+    return result
 
-    key = _connection_key(user_id, recipient_user_id)
+
+def _create_connection(
+    requester_user_id: str, requester: dict, recipient_user_id: str, recipient: dict, message: str | None,
+    before_insert=None,
+) -> tuple[dict, bool]:
+    """The one place a connection request is written: (row, already_existed).
+
+    One row per pair of people (connection_key), whoever asked first; a second request,
+    in either direction, returns the existing row instead of a duplicate.
+    """
+    key = _connection_key(requester_user_id, recipient_user_id)
     existing = _sb().table("connections").select("*").eq("connection_key", key).limit(1).execute().data or []
     if existing:
-        return {"connection": _serialize_connection(existing[0], user_id), "existing": True}
-
+        return existing[0], True
+    if before_insert is not None:
+        before_insert()      # limits apply to NEW requests only; repeating one is harmless
     try:
         inserted = _sb().table("connections").insert({
             "connection_key": key,
-            "requester_user_id": user_id,
+            "requester_user_id": requester_user_id,
             "requester_card_id": requester["id"],
             "recipient_user_id": recipient_user_id,
             "recipient_card_id": recipient["id"],
@@ -138,21 +163,82 @@ def request_connection(user_id: str, target_handle: str, message: str | None = N
         if getattr(exc, "code", None) == "23505" or "duplicate key" in str(exc).lower():
             existing = _sb().table("connections").select("*").eq("connection_key", key).limit(1).execute().data or []
             if existing:
-                return {"connection": _serialize_connection(existing[0], user_id), "existing": True}
+                return existing[0], True
         raise
     if not inserted.data:
         raise HTTPException(500, "Could not create connection request")
-    return {"connection": _serialize_connection(inserted.data[0], user_id), "existing": False}
+    return inserted.data[0], False
+
+
+def request_connection(user_id: str, target_handle: str, message: str | None = None) -> dict:
+    requester = _card_for_user(user_id)
+    recipient = _card_for_handle(target_handle)
+    recipient_user_id = recipient["owner_user_id"]
+    if recipient_user_id == user_id:
+        raise HTTPException(422, "You cannot connect to your own Card")
+    from services import trust
+    row, existed = _create_connection(
+        user_id, requester, recipient_user_id, recipient, message,
+        before_insert=lambda: trust.check_request_limits(user_id, recipient_user_id))
+    return {"connection": _serialize_connection(row, user_id), "existing": existed}
+
+
+def get_inbox(user_id: str) -> dict:
+    """One round trip: connections, groups, invitations, summaries, unread."""
+    return _rpc_result("network_inbox", {"p_user": user_id})
 
 
 def list_connections(user_id: str) -> dict:
-    rows = (
-        _sb().table("connections").select("*")
-        .or_(f"requester_user_id.eq.{user_id},recipient_user_id.eq.{user_id}")
-        .order("updated_at", desc=True)
-        .execute().data or []
-    )
-    return {"connections": [_serialize_connection(row, user_id) for row in rows]}
+    from services import invites
+    invites.deliver_for_user(user_id)    # invitations that were waiting for their Card to be claimed
+    connections = get_inbox(user_id).get("connections", [])
+    return {"connections": _with_accepted_links(connections)}
+
+
+def _with_accepted_links(connections: list[dict]) -> list[dict]:
+    """Contact links are for people who have agreed to connect: the inbox carries the partner's
+    public identity only, so add the owner's chosen links for ACCEPTED connections (never for pending,
+    declined or blocked ones, and never in search results)."""
+    ids = [c["partner"]["card_id"] for c in connections
+           if c.get("status") == "accepted" and (c.get("partner") or {}).get("card_id")]
+    if not ids:
+        return connections
+    rows = _sb().table("agent_profile_cards").select("id,card").in_("id", ids).execute().data or []
+    links_by_id = {
+        r["id"]: {k: v for k, v in (((r.get("card") or {}).get("identity") or {}).get("links") or {}).items()
+                  if isinstance(v, str) and v.strip()}
+        for r in rows
+    }
+    for c in connections:
+        partner = c.get("partner") or {}
+        if c.get("status") == "accepted" and partner.get("card_id") in links_by_id:
+            partner["links"] = links_by_id[partner["card_id"]]
+    return connections
+
+
+def connection_brief(user_id: str, connection_id: str) -> dict:
+    """A5: what each side is doing now, what they share and what to talk about, for an accepted
+    connection only (a pending or blocked one reveals nothing beyond the public Card)."""
+    from models.card import AgentProfileCard
+    from services import connection_brief as brief
+
+    row = _connection_row(connection_id)
+    _require_connection_party(row, user_id)
+    if row.get("status") != "accepted":
+        raise HTTPException(409, "Accept the connection first")
+    mine_id, theirs_id = (row["requester_card_id"], row["recipient_card_id"]) if row["requester_user_id"] == user_id \
+        else (row["recipient_card_id"], row["requester_card_id"])
+    cards = _sb().table("agent_profile_cards").select("id,handle,card").in_("id", [mine_id, theirs_id]).execute().data or []
+    by_id = {c["id"]: c for c in cards}
+    if mine_id not in by_id or theirs_id not in by_id:
+        raise HTTPException(404, "Connection not found")
+
+    def load(card_row: dict) -> AgentProfileCard:
+        card = AgentProfileCard.model_validate(card_row.get("card") or {})
+        card.handle = card_row.get("handle") or card.handle
+        return card
+
+    return {"connection_id": connection_id, "brief": brief.build_brief(load(by_id[mine_id]), load(by_id[theirs_id]))}
 
 
 def respond_connection(user_id: str, connection_id: str, action: str) -> dict:
@@ -184,50 +270,43 @@ def respond_connection(user_id: str, connection_id: str, action: str) -> dict:
     return {"connection": _serialize_connection(updated.data[0], user_id)}
 
 
-def _accepted_connection(user_id: str, connection_id: str) -> dict:
-    row = _connection_row(connection_id)
-    _require_connection_party(row, user_id)
-    if row.get("status") != "accepted":
-        raise HTTPException(409, "Accept the connection before messaging")
-    return row
+def list_messages(
+    user_id: str,
+    connection_id: str,
+    limit: int = 100,
+    before_seq: int | None = None,
+    after_seq: int | None = None,
+) -> dict:
+    return _rpc_result("network_dm_messages", {
+        "p_user": user_id,
+        "p_connection": connection_id,
+        "p_before_seq": before_seq,
+        "p_after_seq": after_seq,
+        "p_limit": max(1, min(limit, 500)),
+    })
 
 
-def _thread_for_connection(connection_id: str) -> dict:
-    rows = _sb().table("dm_threads").select("*").eq("connection_id", connection_id).limit(1).execute().data or []
-    if not rows:
-        created = _sb().table("dm_threads").upsert(
-            {"connection_id": connection_id}, on_conflict="connection_id", ignore_duplicates=True,
-        ).execute().data or []
-        if not created:
-            created = _sb().table("dm_threads").select("*").eq("connection_id", connection_id).limit(1).execute().data or []
-        if not created:
-            raise HTTPException(500, "Could not open the conversation")
-        return created[0]
-    return rows[0]
+def send_message(
+    user_id: str,
+    connection_id: str,
+    content: str,
+    client_id: str | None = None,
+) -> dict:
+    return _rpc_result("network_send_dm", {
+        "p_user": user_id,
+        "p_connection": connection_id,
+        "p_client_id": client_id,
+        "p_content": content,
+    })
 
 
-def list_messages(user_id: str, connection_id: str, limit: int = 100) -> dict:
-    _accepted_connection(user_id, connection_id)
-    thread = _thread_for_connection(connection_id)
-    rows = (_sb().table("dm_messages").select("id,thread_id,sender_user_id,content,created_at")
-            .eq("thread_id", thread["id"]).order("created_at", desc=True).order("id", desc=True)
-            .limit(max(1, min(limit, 500))).execute().data or [])
-    return {"thread_id": thread["id"], "messages": list(reversed(rows))}
-
-
-def send_message(user_id: str, connection_id: str, content: str) -> dict:
-    _accepted_connection(user_id, connection_id)
-    text = content.strip()
-    if not text:
-        raise HTTPException(400, "Message cannot be empty")
-    thread = _thread_for_connection(connection_id)
-    inserted = _sb().table("dm_messages").insert({
-        "thread_id": thread["id"],
-        "sender_user_id": user_id,
-        "content": text[:4000],
-    }).execute()
-    _sb().table("dm_threads").update({"updated_at": _now()}).eq("id", thread["id"]).execute()
-    return {"message": (inserted.data or [None])[0]}
+def mark_read(user_id: str, kind: str, target_id: str, seq: int) -> dict:
+    return _rpc_result("network_mark_read", {
+        "p_user": user_id,
+        "p_kind": kind,
+        "p_id": target_id,
+        "p_seq": max(0, seq),
+    })
 
 
 def _group(group_id: str) -> dict:
@@ -265,24 +344,39 @@ def create_group(user_id: str, name: str, description: str | None, visibility: s
 
 
 def list_groups(user_id: str) -> dict:
-    rows = _sb().table("group_members").select("group_id,role").eq("user_id", user_id).execute().data or []
-    ids = [row["group_id"] for row in rows]
-    if not ids:
-        return {"groups": []}
-    groups = _sb().table("groups").select("*").in_("id", ids).is_("archived_at", "null").order("updated_at", desc=True).execute().data or []
-    role_by_id = {row["group_id"]: row["role"] for row in rows}
-    return {"groups": [{**group, "my_role": role_by_id.get(group["id"], "member")} for group in groups]}
+    return {"groups": get_inbox(user_id).get("groups", [])}
 
 
 def list_members(user_id: str, group_id: str) -> dict:
+    return _rpc_result("network_group_members", {"p_user": user_id, "p_group": group_id})
+
+
+def search_group(user_id: str, group_id: str, *, q: str = "", role: str = "", location: str = "",
+                 skills: str = "", limit: int = 10) -> dict:
+    """A7: people search scoped to one group (an event, a community). Only members can ask, only
+    the group's own Cards are searched, and the caller never finds themselves."""
+    from models.card import AgentProfileCard
+    from services import search as search_service
+    from services import trust
+
     _require_member(group_id, user_id)
-    rows = _sb().table("group_members").select("*").eq("group_id", group_id).order("joined_at").execute().data or []
-    if not rows:
-        return {"members": []}
-    user_ids = [row["user_id"] for row in rows]
-    cards = _sb().table("agent_profile_cards").select("id,owner_user_id,handle,card").in_("owner_user_id", user_ids).eq("status", "published").execute().data or []
-    by_user = {row.get("owner_user_id"): _card_payload(row) for row in cards}
-    return {"members": [{**row, "card": by_user.get(row["user_id"])} for row in rows]}
+    member_ids = [m["user_id"] for m in (_sb().table("group_members").select("user_id").eq("group_id", group_id).execute().data or [])]
+    rows = (_sb().table("agent_profile_cards").select("id,card,handle,owner_user_id,owner_email,embedding")
+            .in_("owner_user_id", member_ids).eq("status", "published").execute().data or []) if member_ids else []
+    mine = next((r for r in rows if r.get("owner_user_id") == user_id), None)
+    rows = [r for r in rows if r.get("owner_user_id") != user_id]
+    searcher = None
+    if mine is not None:
+        searcher = AgentProfileCard.model_validate(mine.get("card") or {})
+        searcher.handle = mine.get("handle") or searcher.handle
+    results = search_service.search_agents(
+        q=q, role=role, location=location, skills=skills, limit=max(1, min(limit, 50)),
+        include_unclaimed=True, searcher=searcher, candidate_rows=rows)
+    verified = trust.verified_by_card_ids([r["agent_id"] for r in results])
+    for r in results:
+        r["claimed"] = True
+        r["verified"] = verified.get(r["agent_id"], [])
+    return {"group_id": group_id, "members_searched": len(rows), "results": results}
 
 
 def _connected(user_id: str, target_user_id: str) -> bool:
@@ -366,23 +460,7 @@ def list_invitations(user_id: str, group_id: str) -> dict:
 
 
 def list_incoming_invitations(user_id: str) -> dict:
-    rows = (_sb().table("group_invitations").select("*").eq("invitee_user_id", user_id)
-            .eq("status", "pending").gt("expires_at", _now()).order("created_at", desc=True).execute().data or [])
-    if not rows:
-        return {"invitations": []}
-    groups = (_sb().table("groups").select("id,name,description")
-              .in_("id", list({row["group_id"] for row in rows})).is_("archived_at", "null").execute().data or [])
-    by_id = {group["id"]: group for group in groups}
-    return {"invitations": [{**row, "group": by_id[row["group_id"]]} for row in rows if row["group_id"] in by_id]}
-
-
-def _rpc_result(name: str, params: dict) -> dict:
-    result = _sb().rpc(name, params).execute().data
-    if not isinstance(result, dict):
-        raise HTTPException(500, "Cards network operation failed")
-    if result.get("error"):
-        raise HTTPException(result.get("status_code", 409), result["error"])
-    return result
+    return {"invitations": get_inbox(user_id).get("invitations", [])}
 
 
 def respond_invitation(user_id: str, invitation_id: str, decision: str) -> dict:
@@ -393,17 +471,31 @@ def respond_invitation(user_id: str, invitation_id: str, decision: str) -> dict:
     })
 
 
-def list_group_messages(user_id: str, group_id: str, limit: int = 100) -> dict:
-    _require_member(group_id, user_id)
-    rows = (_sb().table("group_messages").select("*").eq("group_id", group_id).order("created_at", desc=True).limit(max(1, min(limit, 500))).execute().data or [])
-    return {"messages": list(reversed(rows))}
+def list_group_messages(
+    user_id: str,
+    group_id: str,
+    limit: int = 100,
+    before_seq: int | None = None,
+    after_seq: int | None = None,
+) -> dict:
+    return _rpc_result("network_group_messages", {
+        "p_user": user_id,
+        "p_group": group_id,
+        "p_before_seq": before_seq,
+        "p_after_seq": after_seq,
+        "p_limit": max(1, min(limit, 500)),
+    })
 
 
-def send_group_message(user_id: str, group_id: str, content: str) -> dict:
-    _require_member(group_id, user_id)
-    text = content.strip()
-    if not text:
-        raise HTTPException(400, "Message cannot be empty")
-    inserted = _sb().table("group_messages").insert({"group_id": group_id, "sender_user_id": user_id, "content": text[:4000]}).execute()
-    _sb().table("groups").update({"updated_at": _now()}).eq("id", group_id).execute()
-    return {"message": (inserted.data or [None])[0]}
+def send_group_message(
+    user_id: str,
+    group_id: str,
+    content: str,
+    client_id: str | None = None,
+) -> dict:
+    return _rpc_result("network_send_group_message", {
+        "p_user": user_id,
+        "p_group": group_id,
+        "p_client_id": client_id,
+        "p_content": content,
+    })

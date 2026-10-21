@@ -90,7 +90,10 @@ export default function GroupChatPage() {
   const [memberCount, setMemberCount] = useState(0);
   const [members, setMembers] = useState<Member[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [messagesLoading, setMessagesLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -369,22 +372,50 @@ export default function GroupChatPage() {
     resizeComposerInput();
   }, [draft, resizeComposerInput]);
 
+  const markGroupRead = useCallback(async () => {
+    if (!groupId) return;
+    try {
+      await apiPost(`/api/groups/${groupId}/read`, {});
+      // The groups list is cached; clear it so the unread badge disappears
+      // the next time the user navigates back.
+      invalidate("/api/groups/");
+    } catch {
+      /* Pre-migration or transient failure: the next open will re-sync. */
+    }
+  }, [groupId]);
+
   useEffect(() => {
     if (!groupId) return;
     let cancelled = false;
+    setLoading(true);
+    setMessagesLoading(true);
+    setGroup(null);
+    setMembers([]);
+    setMessages([]);
+    setHasMoreMessages(false);
+    setError(null);
+    setNotFound(false);
     (async () => {
       try {
-        const [g, ms, msgs] = await Promise.all([
-          apiGet<{ group: Group; member_count: number }>(`/api/groups/${groupId}`),
-          apiGet<{ members: Member[] }>(`/api/groups/${groupId}/members`).catch(() => ({ members: [] as Member[] })),
-          apiGet<{ messages: Message[] }>(`/api/groups/${groupId}/messages?limit=100`),
-        ]);
+        // The room shell should not wait for its roster and transcript. Get
+        // metadata first so the header/composer can paint immediately, then
+        // hydrate the two secondary panels in parallel.
+        const g = await apiGet<{ group: Group; member_count: number }>(`/api/groups/${groupId}`);
         if (cancelled) return;
         setGroup(g.group);
         setMemberCount(g.member_count);
+        setNotFound(false);
+        setLoading(false);
+        void markGroupRead();
+
+        const [ms, msgs] = await Promise.all([
+          apiGet<{ members: Member[] }>(`/api/groups/${groupId}/members`).catch(() => ({ members: [] as Member[] })),
+          apiGet<{ messages: Message[]; has_more?: boolean }>(`/api/groups/${groupId}/messages?limit=50`),
+        ]);
+        if (cancelled) return;
         setMembers(ms.members);
         setMessages(msgs.messages);
-        setNotFound(false);
+        setHasMoreMessages(msgs.has_more === true);
       } catch (e) {
         if (cancelled) return;
         const msg = e instanceof Error ? e.message : "";
@@ -394,13 +425,40 @@ export default function GroupChatPage() {
           setError(msg || "Couldn't load group.");
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setMessagesLoading(false);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [groupId]);
+  }, [groupId, markGroupRead]);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!groupId || !hasMoreMessages || loadingOlderMessages || messages.length === 0) return;
+    setLoadingOlderMessages(true);
+    try {
+      const before = encodeURIComponent(messages[0].created_at);
+      const data = await apiGet<{ messages: Message[]; has_more?: boolean }>(
+        `/api/groups/${groupId}/messages?limit=50&before=${before}`,
+        { noCache: true },
+      );
+      setMessages((prev) => {
+        const byId = new Map<string, Message>();
+        for (const message of [...(data.messages || []), ...prev]) byId.set(message.id, message);
+        return Array.from(byId.values()).sort(
+          (a, b) => Date.parse(a.created_at) - Date.parse(b.created_at),
+        );
+      });
+      setHasMoreMessages(data.has_more === true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't load older messages.");
+    } finally {
+      setLoadingOlderMessages(false);
+    }
+  }, [groupId, hasMoreMessages, loadingOlderMessages, messages]);
 
   // Realtime — new inserts on persona_group_messages scoped to this group.
   // The RLS policy (member-only SELECT) prevents non-members from
@@ -449,13 +507,16 @@ export default function GroupChatPage() {
               prev.filter((p) => p.userId !== msg.sender_user_id),
             );
           }
+          if (msg.sender_user_id !== user?.id) {
+            void markGroupRead();
+          }
         },
       )
       .subscribe();
     return () => {
       sb.removeChannel(channel);
     };
-  }, [groupId, notFound]);
+  }, [groupId, notFound, markGroupRead, user?.id]);
 
   // Sweep expired pending-reply markers once a second. A persona that
   // never answers (LLM error, no deployed agent on that account, etc.)
@@ -842,7 +903,12 @@ export default function GroupChatPage() {
       <div className="group-chat-body">
         <main className="group-chat-main">
         <div className="group-chat-messages">
-          {messages.length === 0 ? (
+          {messagesLoading ? (
+            <div className="group-chat-empty" aria-busy="true">
+              <p className="group-chat-empty-title">Loading messages…</p>
+              <p className="group-chat-empty-sub">Your room is ready. Fetching the latest conversation.</p>
+            </div>
+          ) : messages.length === 0 ? (
             <div className="group-chat-empty">
               <p className="group-chat-empty-title">No messages yet.</p>
               <p className="group-chat-empty-sub">
@@ -851,6 +917,18 @@ export default function GroupChatPage() {
             </div>
           ) : (
             <ul className="group-msgs">
+              {hasMoreMessages && (
+                <li className="group-chat-history-more">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => void loadOlderMessages()}
+                    disabled={loadingOlderMessages}
+                  >
+                    {loadingOlderMessages ? "Loading older messages…" : "Load older messages"}
+                  </button>
+                </li>
+              )}
               {messages.map((m, i) => {
                 // Local-only slash-command result rows render as a
                 // private inline panel — not as a chat bubble.

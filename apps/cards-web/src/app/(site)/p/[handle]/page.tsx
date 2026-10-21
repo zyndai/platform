@@ -37,6 +37,8 @@ import { MemoryCard } from "./memory-card";
 import { ClaimBanner } from "./claim-banner";
 import { RequestConnection } from "@/components/network/RequestConnection";
 import { memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
+import { readEdition } from "@/lib/editions";
+import { EditionBanner } from "./edition-banner";
 
 interface PageProps {
   params: Promise<{ handle: string }>;
@@ -413,6 +415,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
   const { identity } = card;
   const claimed = card.claimed === true;
+  const edition = readEdition(identity.edition);
   const v = buildView(card);
   const canonical = cardCanonicalUrl(card);
   // Shown and copied without the scheme; this is where the card actually lives
@@ -779,7 +782,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
         }
       `}</style>
 
-      <div className="pf-page" style={{ backgroundColor: "#f5f6f8", minHeight: "100vh" }}>
+      <div className="pf-page" style={{ backgroundColor: edition ? "#F3F1FB" : "#f5f6f8", minHeight: "100vh" }}>
         <div className="pf-inner" style={{ maxWidth: 1300, margin: "0 auto", padding: "24px 24px 56px" }}>
 
           {/* ── UNCLAIMED BANNER ── */}
@@ -825,14 +828,31 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             </div>
           </header>
 
+          {edition && (
+            <EditionBanner
+              edition={edition}
+              name={identity.name || card.handle || "Profile"}
+              headline={isBlank(identity.headline) ? "" : identity.headline}
+              location={isBlank(identity.location) ? "" : identity.location}
+              avatarSrc={heroAvatarSrc ?? null}
+              initials={initials}
+              url={canonical}
+              permalink={permalink}
+              handle={card.handle ?? card.id}
+              verified={linkedinLinked}
+            />
+          )}
+
           {/* ── MAIN GRID ── */}
           <div className="pf-main-grid">
 
             {/* ── HERO CARD (4 col) ── */}
             <div
               className="pf-hero"
-              style={{ background: "#6d64f6", borderRadius: 20, color: "#fff", display: "flex", flexDirection: "column", minHeight: 0 }}
+              style={{ background: edition ? "linear-gradient(160deg, #23256A 0%, #121338 100%)" : "#6d64f6", borderRadius: 20, color: "#fff", display: "flex", flexDirection: "column", minHeight: 0 }}
             >
+              {/* The edition banner above already shows the photo, name, headline and location. */}
+              {!edition && <>
               <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
                 {heroAvatarSrc ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -872,6 +892,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                   {!isBlank(identity.location) && <div style={{ fontWeight: 500, opacity: 0.85 }}>{identity.location}</div>}
                 </div>
               )}
+              </>}
               {helpWith.length > 0 && (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 10 }}>
                   {helpWith.map((item) => (

@@ -157,6 +157,54 @@ def test_sparse_section_expectation_is_translated_without_losing_lock_check(clie
     assert operation.call_args.args[1]["p_expected"] == {"identity": {"name": "Alice"}}
 
 
+def _identity_save(client, monkeypatch, stored, patch_identity, expected_identity):
+    raw = {"id": "c1", "identity": stored}
+    sb = MagicMock()
+    q = sb.table.return_value
+    for method in ("select", "eq", "ilike", "limit"):
+        getattr(q, method).return_value = q
+    q.execute.return_value.data = [{"card": raw, "handle": "alice"}]
+    monkeypatch.setattr(config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(routes, "ping_revalidate", lambda *args: None)
+    operation = MagicMock(return_value={**AgentProfileCard.model_validate(raw).model_dump(mode="json"), "updated_at": "2026-10-12T00:00:00Z"})
+    monkeypatch.setattr(routes, "rpc", operation)
+    # The editor sends the full serialized identity, defaults included.
+    full = lambda identity: AgentProfileCard.model_validate({"id": "c1", "identity": identity}).model_dump(mode="json")["identity"]
+    response = client.patch("/cards/by-handle/alice/sections/identity", headers={"Authorization": "Bearer owner"}, json={"patch": {"identity": full(patch_identity)}, "expected": {"identity": full(expected_identity)}})
+    return response, operation
+
+
+def test_photo_drift_from_avatar_self_heal_does_not_conflict(client, monkeypatch):
+    # The editor loaded the old LinkedIn photo; the self-heal has since stored a new one.
+    response, operation = _identity_save(
+        client, monkeypatch, {"name": "Alice", "avatar_url": "https://media.licdn.com/healed"},
+        {"name": "Alicia", "avatar_url": "https://media.licdn.com/old"},
+        {"name": "Alice", "avatar_url": "https://media.licdn.com/old"})
+    assert response.status_code == 200
+    sent = operation.call_args.args[1]
+    assert sent["p_patch"]["identity"]["name"] == "Alicia"
+    assert sent["p_patch"]["identity"]["avatar_url"] == "https://media.licdn.com/healed"
+    assert sent["p_expected"]["identity"]["avatar_url"] == "https://media.licdn.com/healed"
+
+
+def test_editor_cannot_set_the_photo(client, monkeypatch):
+    response, operation = _identity_save(
+        client, monkeypatch, {"name": "Alice", "avatar_url": "https://media.licdn.com/li.jpg"},
+        {"name": "Alice", "avatar_url": "https://cdn.example/mine.jpg"},
+        {"name": "Alice", "avatar_url": "https://media.licdn.com/li.jpg"})
+    assert response.status_code == 200
+    assert operation.call_args.args[1]["p_patch"]["identity"]["avatar_url"] == "https://media.licdn.com/li.jpg"
+
+
+def test_other_identity_drift_still_conflicts(client, monkeypatch):
+    response, operation = _identity_save(
+        client, monkeypatch, {"name": "Renamed elsewhere", "avatar_url": "https://media.licdn.com/li.jpg"},
+        {"name": "Alice", "avatar_url": "https://media.licdn.com/li.jpg"},
+        {"name": "Alice", "avatar_url": "https://media.licdn.com/li.jpg"})
+    assert response.status_code == 409
+    operation.assert_not_called()
+
+
 def test_rpc_conflict_returns_409(monkeypatch):
     sb = MagicMock()
     sb.rpc.return_value.execute.side_effect = APIError({"code": "40001", "message": "changed", "details": None, "hint": None})
@@ -260,3 +308,20 @@ def test_unsubscribe_updates_all_cards_for_only_matching_owner(client, monkeypat
     assert response.status_code == 200
     q.update.assert_called_once_with({"notification_prefs": {"weekly_digest": False, "email_nudges": False}})
     q.update.return_value.ilike.assert_called_once_with("owner_email", "alice@example.com")
+
+
+def test_identity_save_can_pick_and_clear_an_edition(client, monkeypatch):
+    edition = {"id": "mumbai-26", "mood": "dusk", "here_for": "speaking"}
+    response, operation = _identity_save(
+        client, monkeypatch, {"name": "Alice"},
+        {"name": "Alice", "edition": edition},
+        {"name": "Alice"})
+    assert response.status_code == 200
+    assert operation.call_args.args[1]["p_patch"]["identity"]["edition"] == edition
+
+    response, operation = _identity_save(
+        client, monkeypatch, {"name": "Alice", "edition": edition},
+        {"name": "Alice", "edition": None},
+        {"name": "Alice", "edition": edition})
+    assert response.status_code == 200
+    assert "edition" not in operation.call_args.args[1]["p_patch"]["identity"]

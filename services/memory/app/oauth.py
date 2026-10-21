@@ -58,6 +58,7 @@ from app.auth import (
 from app.config import settings
 from plugin_mcp import PLUGIN_SCOPES
 from app.db import get_pool
+from app.services.mcp_scopes import ALLOWED_SCOPES as MCP_SCOPES
 from app.supabase_auth import supabase_identity
 
 logger = logging.getLogger("zynd.oauth")
@@ -347,6 +348,12 @@ def _public_scope(client_id: str) -> str:
     return " ".join(PLUGIN_SCOPES) if _is_plugin_client(client_id) else "user"
 
 
+# Every scope a connector may ask for. Includes the granular MCP scopes the
+# resource metadata advertises (app/mcp_http.py): Claude Code requests exactly
+# those, so leaving them out rejected its login with "unsupported scope".
+CONNECTOR_SCOPES = ("user", "ingest", "offline_access", *PLUGIN_SCOPES, *MCP_SCOPES)
+
+
 def _plugin_callbacks() -> list[str]:
     callbacks = [uri.strip() for uri in settings.plugin_oauth_redirect_uris.split(",") if uri.strip()]
     if (not callbacks or not settings.feature_s09_mcp_clients or
@@ -546,7 +553,7 @@ async def authorization_server_metadata() -> dict:
         "authorization_endpoint": f"{base}/oauth/authorize",
         "token_endpoint": f"{base}/oauth/token",
         "registration_endpoint": f"{base}/oauth/register",
-        "scopes_supported": ["user", "ingest", "offline_access", *PLUGIN_SCOPES, "people:message"],
+        "scopes_supported": list(CONNECTOR_SCOPES),
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
@@ -651,7 +658,7 @@ async def authorize(
     if is_connector_client:
         if code_challenge_method != "S256" or not re.fullmatch(r"[A-Za-z0-9_-]{43}", code_challenge):
             raise HTTPException(status_code=400, detail="S256 PKCE required")
-        allowed_scopes = set(PLUGIN_SCOPES) if _is_plugin_client(client_id) else {"user", "ingest", "offline_access", *PLUGIN_SCOPES, "people:message"}
+        allowed_scopes = set(PLUGIN_SCOPES) if _is_plugin_client(client_id) else set(CONNECTOR_SCOPES)
         if not set(scope.split()).issubset(allowed_scopes):
             raise HTTPException(status_code=400, detail="unsupported scope")
         scope = _public_scope(client_id)
@@ -751,7 +758,8 @@ class _CompleteRequest(BaseModel):
 @router.post("/consent")
 async def consent(body: _CompleteRequest) -> JSONResponse:
     payload = _verify_oauth_request(body.req)
-    identity = await supabase_identity(body.supabase_token)
+    identity = await supabase_identity(
+        body.supabase_token, allow_reviewer=_is_plugin_client(payload.get("client_id", "")))
     if not identity:
         raise HTTPException(status_code=401, detail="Sign-in could not be verified")
     if not payload.get("create_user", True):
@@ -769,6 +777,7 @@ async def _resolve_user_and_mint_code(
     code_challenge: str, code_challenge_method: str, redis,
     resource: str = "", create_user: bool = True, iss_supported: bool = False,
     client_id: str = "", client_name: str = "", nonce: str = "",
+    allow_reviewer: bool = False,
 ) -> JSONResponse:
     """Verify the Supabase identity, resolve the ZYND user, mint a
     single-use authorization code with optional PKCE params, and return the
@@ -776,7 +785,7 @@ async def _resolve_user_and_mint_code(
 
     create_user=False (MCP connector path) is lookup-only: a verified identity
     with no existing memory user gets a 401 instead of an account."""
-    identity = await supabase_identity(supabase_token)
+    identity = await supabase_identity(supabase_token, allow_reviewer=allow_reviewer)
     if not identity:
         _log_token_diag(supabase_token)
         raise HTTPException(status_code=401, detail="Sign-in could not be verified")
@@ -882,7 +891,8 @@ async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
     create_user = payload.get("create_user", True)   # legacy requests default to create
     iss_supported = payload.get("iss_supported", False)
 
-    identity = await supabase_identity(body.supabase_token)
+    identity = await supabase_identity(
+        body.supabase_token, allow_reviewer=_is_plugin_client(payload.get("client_id", "")))
     if not identity:
         raise HTTPException(status_code=401, detail="Sign-in could not be verified")
     if not create_user:
@@ -899,6 +909,7 @@ async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
         code_challenge, code_challenge_method, redis,
         resource=resource, create_user=create_user, iss_supported=iss_supported,
         client_id=payload.get("client_id", ""), client_name=payload.get("client_name", ""), nonce=nonce,
+        allow_reviewer=_is_plugin_client(payload.get("client_id", "")),
     )
 
 

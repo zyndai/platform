@@ -5,6 +5,7 @@ import logging
 import re
 import secrets
 from urllib.parse import urlparse
+from uuid import UUID
 
 import httpx
 
@@ -197,7 +198,8 @@ def assemble_card(
         status="pending_review",
         created_at=now,
         updated_at=now,
-        identity=synth.identity,
+        # Only the owner picks an edition; never take one from scraped/LLM text.
+        identity=synth.identity.model_copy(update={"edition": None}),
         citation_snippet=synth.citation_snippet,
         summary=synth.summary,
         affiliations=synth.affiliations,
@@ -227,6 +229,29 @@ def pick_avatar(linkedin_avatar: str | None, x_avatar: str | None, github_avatar
         if candidate and str(candidate).startswith("http"):
             return str(candidate)
     return ""
+
+
+# The card editor used to let owners upload a photo into the public `avatars` bucket.
+# Uploads are gone; photos that were already uploaded are only a last resort now.
+_LEGACY_UPLOAD_MARKER = "/storage/v1/object/public/avatars/"
+
+
+def is_legacy_upload(url: str | None) -> bool:
+    return _LEGACY_UPLOAD_MARKER in str(url or "")
+
+
+def resolve_avatar(identity: dict, card: dict) -> str | None:
+    """The photo a card shows when its stored `avatar_url` isn't a linked-account photo.
+
+    A stored http(s) photo from LinkedIn/X/GitHub is used as is (returns None). A blank
+    value, a blob: URL left by the old editor bug, or a legacy upload gives way to the
+    LinkedIn photo, then the X one. With none of those the stored value stays."""
+    current = str(identity.get("avatar_url") or "")
+    if current.startswith("http") and not is_legacy_upload(current):
+        return None
+    sources = [(card.get(k) or {}).get("avatar") if isinstance(card.get(k), dict) else None
+               for k in ("linkedin_stats", "x_stats")]
+    return pick_avatar(*sources, None) or None
 
 
 def refresh_avatar(card: dict, linkedin_avatar: str | None, x_avatar: str | None) -> bool:
@@ -375,6 +400,11 @@ def _row_to_card(row: dict) -> AgentProfileCard:
     data = dict(row["card"])
     if row.get("handle"):
         data["handle"] = row["handle"]
+    identity = data.get("identity")
+    if isinstance(identity, dict):
+        photo = resolve_avatar(identity, data)
+        if photo:
+            data["identity"] = {**identity, "avatar_url": photo}
     if "zynd_memory" in data and isinstance(data.get("zynd_memory"), list):
         data["zynd_memory"] = dedupe_memory_facts(data["zynd_memory"])
     samples = data.get("writing_samples")
@@ -866,6 +896,41 @@ def claimed_by_handles(handles: list[str]) -> dict[str, bool]:
     return {r["handle"]: _claimed_from_row(r) for r in (resp.data or [])}
 
 
+def cards_by_owner_user_ids(user_ids: list[str]) -> dict[str, dict]:
+    """Published, claimed card for each owner (shared Zynd user id), for service callers
+    that need to turn "this person" into "this Card" (Memory's people search).
+
+    Only public identity: handle, name, headline, location. Never an email. A user with
+    several published cards resolves to the most recently published one.
+    """
+    ids = [u for u in dict.fromkeys(user_ids) if u][:50]
+    if not ids:
+        return {}
+    resp = (
+        config.get_supabase()
+        .table("agent_profile_cards")
+        .select("handle,card,owner_user_id,owner_email,published_at")
+        .in_("owner_user_id", ids)
+        .eq("status", "published")
+        .order("published_at", desc=True, nullsfirst=False)
+        .execute()
+    )
+    out: dict[str, dict] = {}
+    for row in resp.data or []:
+        owner = str(row.get("owner_user_id") or "")
+        if not owner or owner in out or not _claimed_from_row(row) or not row.get("handle"):
+            continue
+        identity = (row.get("card") or {}).get("identity") or {}
+        out[owner] = {
+            "handle": row["handle"],
+            "name": identity.get("name") or "",
+            "headline": identity.get("headline") or "",
+            "location": identity.get("location") or "",
+            "claimed": True,
+        }
+    return out
+
+
 def _public_card_payload(row: dict) -> dict:
     """JSON card plus claimed/alias. Never includes owner_email.
 
@@ -921,6 +986,19 @@ def list_published_public(limit: int = 1000) -> list[dict]:
     return [_public_card_payload(r) for r in (resp.data or [])]
 
 
+def _aafo_user_id(principal) -> str | None:
+    """The shared Zynd account id of a signed-in principal, only when it was issued by the shared
+    (aafo) auth project: owner_user_id is a foreign key into that project's users."""
+    sub = (getattr(principal, "sub", "") or "").strip()
+    issuer = getattr(principal, "iss", "") or ""
+    if not sub or not config.AAFO_ISSUER or issuer != config.AAFO_ISSUER:
+        return None
+    try:
+        return str(UUID(sub))
+    except ValueError:
+        return None
+
+
 def claim_card_by_owner(handle: str, principal: dict) -> tuple[bool, str]:
     """Claim an unowned card when the signed-in LinkedIn identity matches the
     card's LinkedIn URL. Returns (claimed, message).
@@ -932,7 +1010,7 @@ def claim_card_by_owner(handle: str, principal: dict) -> tuple[bool, str]:
     sb = config.get_supabase()
     resp = (
         sb.table("agent_profile_cards")
-        .select("owner_email,claim_token_hash,card,status")
+        .select("id,owner_email,claim_token_hash,card,status")
         .eq("handle", handle)
         .execute()
     )
@@ -955,9 +1033,18 @@ def claim_card_by_owner(handle: str, principal: dict) -> tuple[bool, str]:
     if card_linkedin != user_linkedin:
         return False, "your LinkedIn account does not match this card's LinkedIn profile"
 
-    sb.table("agent_profile_cards").update(
-        {"owner_email": owner_email, "claim_token_hash": None}
-    ).eq("handle", handle).execute()
+    update: dict = {"owner_email": owner_email, "claim_token_hash": None}
+    owner_user_id = _aafo_user_id(principal)
+    if owner_user_id and config.WRITES_OWNER_USER_ID:
+        update["owner_user_id"] = owner_user_id      # Cards networking identifies owners by this
+    sb.table("agent_profile_cards").update(update).eq("handle", handle).execute()
+    card_id = row.get("id")
+    if card_id:
+        from services import trust
+        trust.record_verification(card_id, "linkedin")        # claim required the matching LinkedIn sign-in
+    if owner_user_id and card_id:
+        from services import invites
+        invites.deliver_for_card(card_id, owner_user_id)     # invitations that were waiting for this Card
     return True, "claimed"
 
 

@@ -1,10 +1,12 @@
 import json
+import re
 
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
 from app.config import settings
 from app.models import ExtractedAssertion
+from app.services.canonical import tech_kind
 
 _client: AsyncOpenAI | None = None
 
@@ -63,7 +65,67 @@ Do NOT extract: sentiment, financial/salary figures, phone/address, or
   assistant content. Return {"assertions": []} if nothing is extractable.
 Never hallucinate."""
 
+# Added to the prompt when feature_strict_tech is on. Without it the model read "my build
+# fails in some-lib's webpack config" as uses_tool -> webpack, and a pasted lockfile as a stack.
+STRICT_BLOCK = """
+
+What is NOT about the person (do not extract it):
+  - A library, package or dependency that only appears inside an error message, a stack
+    trace, a lockfile, a package.json/requirements file, a diff, or someone else's code.
+  - A technology that is merely present in a project or mentioned in passing. uses_tool,
+    has_skill and has_expertise_in need the person to say they use, know or write it.
+  - A one-off task ("fix this bug", "rename this file", "bump the version"). is_working_on
+    is for a work stream that lasts days or weeks, never for a single task.
+
+Examples (input -> output):
+  "my build fails in some-lib's webpack config"            -> {"assertions": []}
+  "ModuleNotFoundError: No module named 'requests'"        -> {"assertions": []}
+  "package.json has react, lodash and moment"              -> {"assertions": []}
+  "can you rename this file and fix the typo"              -> {"assertions": []}
+  "this repo is built on Kubernetes"                       -> {"assertions": []}
+  "I run all my services on Kubernetes"                    -> uses_tool: Kubernetes
+  "I've been writing Rust for six years"                   -> has_skill: Rust"""
+
 MAX_CHUNK_CHARS = 3000
+
+# Text that is machine output rather than the person speaking: a model that names tools found
+# in it is describing the project, not the user.
+_MACHINE_OUTPUT = re.compile(
+    r"Traceback \(most recent call last\)|^\s+at .+\(.+:\d+:\d+\)|npm ERR!|ModuleNotFoundError|"
+    r"ImportError:|Cannot find module|node_modules/|site-packages/|\"(?:dev)?[dD]ependencies\"\s*:\s*\{|"
+    r"^\s*[\w.-]+==[\d.]+\s*$|^\+\+\+ |^--- a/|^diff --git",
+    re.MULTILINE,
+)
+_TECH_PREDICATES = frozenset({"has_skill", "uses_tool", "has_expertise_in", "is_learning"})
+# "fix the login bug", "rename this file": a task, not a work stream.
+_ONE_OFF_TASK = re.compile(
+    r"^(?:fix(?:ing)?|debug(?:ging)?|rename|renaming|bump(?:ing)?|patch(?:ing)?|resolve|resolving|"
+    r"update|updating|tweak(?:ing)?)\b", re.IGNORECASE)
+
+
+def looks_like_machine_output(text: str) -> bool:
+    return bool(_MACHINE_OUTPUT.search(text or ""))
+
+
+def guard_extractions(chunk_text: str, assertions: list[ExtractedAssertion]) -> list[ExtractedAssertion]:
+    """Deterministic backstop for the strict prompt: never trust a model to enforce a rule alone.
+
+    Drops technology facts from a chunk that is an error, trace, lockfile or diff, and
+    is_working_on facts that read as a single task.
+    """
+    machine = looks_like_machine_output(chunk_text)
+    kept: list[ExtractedAssertion] = []
+    for item in assertions:
+        if machine and item.predicate in _TECH_PREDICATES and tech_kind(item.object_name) is not None:
+            continue
+        if item.predicate == "is_working_on" and _ONE_OFF_TASK.match(item.object_name.strip()):
+            continue
+        kept.append(item)
+    return kept
+
+
+def system_prompt() -> str:
+    return SYSTEM_PROMPT + STRICT_BLOCK if settings.feature_strict_tech else SYSTEM_PROMPT
 
 
 async def extract_assertions(chunk_text: str) -> list[ExtractedAssertion]:
@@ -77,12 +139,14 @@ async def extract_assertions(chunk_text: str) -> list[ExtractedAssertion]:
     if settings.mock_llm:
         from app.services.mock_llm import mock_extract
         valid = mock_extract(chunk_text[:MAX_CHUNK_CHARS])
+        if settings.feature_strict_tech:
+            valid = guard_extractions(chunk_text, valid)
         return [a for a in valid if not is_gated(a.predicate, tripped)]
     try:
         resp = await _get_client().chat.completions.create(
             model=settings.extraction_model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt()},
                 {"role": "user", "content": chunk_text[:MAX_CHUNK_CHARS]},
             ],
             response_format={"type": "json_object"},
@@ -104,6 +168,8 @@ async def extract_assertions(chunk_text: str) -> list[ExtractedAssertion]:
         except ValidationError:
             # Drop malformed/out-of-taxonomy assertion; keep the rest.
             continue
+    if settings.feature_strict_tech:
+        valid = guard_extractions(chunk_text, valid)
     # Sensitive gate: withhold gated predicates (e.g. `believes` when politics signals
     # are present) so ZYND never auto-stores sensitive inferences.
     return [a for a in valid if not is_gated(a.predicate, tripped)]

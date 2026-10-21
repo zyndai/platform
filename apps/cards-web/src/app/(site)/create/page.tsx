@@ -14,6 +14,8 @@ import type { AgentProfileCard, OnboardStatus, Project, ScrapeWarning, WritingSa
 import { MemoryProviderOnboard } from "@/components/memory/MemoryProviderOnboard";
 import { AutoGrowTextArea } from "@/components/AutoGrowTextArea";
 import { imgProxyUrl } from "@/lib/avatar";
+import { EditionPicker } from "@/components/editions/edition-picker";
+import { readEdition } from "@/lib/editions";
 import { claimHeaders, forgetClaimToken, saveClaimToken } from "@/lib/claim-tokens";
 import { appendAttrToForm, attrPublishFields } from "@/lib/attr";
 import { track } from "@/lib/track";
@@ -507,11 +509,6 @@ function CreateProfilePageContent() {
   const [s08V2] = useState(() => featureS08OnboardingV2());
   const [livePreview, setLivePreview] = useState<AgentProfileCard | null>(null);
 
-  // Photo change
-  const [showPhotoInput, setShowPhotoInput] = useState(false);
-  const [photoUrlInput, setPhotoUrlInput] = useState("");
-  const [photoUploading, setPhotoUploading] = useState(false);
-  const photoFileRef = useRef<HTMLInputElement>(null);
   const pendingCardRef = useRef<AgentProfileCard | null>(null);
   const questionIndexRef = useRef(0);
   const jobDoneRef = useRef(false);
@@ -1027,35 +1024,6 @@ function CreateProfilePageContent() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Re-extract failed");
       setPhase("error");
-    }
-  }
-
-  async function uploadPhoto(file: File) {
-    setPhotoUploading(true);
-    try {
-      // Anonymous onboarding (not yet signed in) has nowhere RLS-safe to
-      // write — fall back to a local preview, same as any other upload
-      // failure below. Storage RLS scopes writes to the uploader's own
-      // folder — see ZYND_DB_UNIFY_PLAN.md §5.5.
-      if (!user) throw new Error("not signed in");
-      const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-      const path = `${user.id}/${Date.now()}.${ext}`;
-      const supabase = createClient();
-      const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: true });
-      if (error) throw error;
-      const { data } = supabase.storage.from("avatars").getPublicUrl(path);
-      if (data?.publicUrl) {
-        updateCard({ identity: { ...card!.identity, avatar_url: data.publicUrl } });
-        setShowPhotoInput(false);
-        setPhotoUrlInput("");
-      }
-    } catch {
-      // Fallback: use object URL (works for preview, lost on reload)
-      const url = URL.createObjectURL(file);
-      updateCard({ identity: { ...card!.identity, avatar_url: url } });
-      setShowPhotoInput(false);
-    } finally {
-      setPhotoUploading(false);
     }
   }
 
@@ -1817,67 +1785,13 @@ function CreateProfilePageContent() {
                     <SectionLabel label="Identity" />
 
                     {/* photo + outbound links */}
-                    <div style={{ display: "flex", alignItems: "flex-start", gap: "14px" }}>
-                      <div style={{ position: "relative", flexShrink: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+                      <div style={{ flexShrink: 0 }}>
                         <Avatar url={card.identity.avatar_url} name={card.identity.name} />
-                        <button type="button" className="zc-pencil" aria-label="Change photo" onClick={() => { setShowPhotoInput(p => !p); setPhotoUrlInput(""); }}
-                          style={{ position: "absolute", bottom: 0, right: 0, width: "22px", height: "22px", borderRadius: "50%", background: T.ink, border: `2px solid ${T.card}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-                          <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M11 2 14 5 5 14H2v-3L11 2z" stroke="#fff" strokeWidth="1.5" strokeLinejoin="round"/></svg>
-                        </button>
                       </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: "6px", minWidth: 0, flex: 1 }}>
-                        <span style={{ font: `400 13px/1.4 ${SANS}`, color: T.soft }}>
-                          {card.identity.avatar_url ? "Profile photo — from scraped sources" : "No photo found"}
-                        </span>
-                        <div className="zc-photo-actions" style={{ display: "flex", gap: "12px" }}>
-                          <button type="button" className="zc-rowbtn" onClick={() => { setShowPhotoInput(p => !p); setPhotoUrlInput(""); }}>
-                            {showPhotoInput ? "Cancel" : "Change photo"}
-                          </button>
-                          {card.identity.avatar_url && (
-                            <button type="button" className="zc-rowbtn" onClick={() => updateCard({ identity: { ...card.identity, avatar_url: "" } })}>
-                              Remove
-                            </button>
-                          )}
-                        </div>
-
-                        {showPhotoInput && (
-                          <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "4px" }}>
-                            <div style={{ display: "flex", gap: "8px" }}>
-                              <input
-                                type="url"
-                                value={photoUrlInput}
-                                onChange={e => setPhotoUrlInput(e.target.value)}
-                                placeholder="Paste image URL…"
-                                className="zc-field"
-                                style={{ flex: 1, padding: "9px 13px", fontSize: "13px", border: `1px solid ${T.border}`, borderRadius: "10px", background: T.surface, color: T.ink, outline: "none", fontFamily: SANS }}
-                                onKeyDown={e => {
-                                  if (e.key === "Enter" && photoUrlInput.trim()) {
-                                    updateCard({ identity: { ...card.identity, avatar_url: photoUrlInput.trim() } });
-                                    setShowPhotoInput(false);
-                                    setPhotoUrlInput("");
-                                  }
-                                }}
-                              />
-                              <button type="button" className="zc-btn" disabled={!photoUrlInput.trim()}
-                                onClick={() => { updateCard({ identity: { ...card.identity, avatar_url: photoUrlInput.trim() } }); setShowPhotoInput(false); setPhotoUrlInput(""); }}
-                                style={{ background: T.accent, color: "#fff", border: "none", borderRadius: "10px", padding: "9px 16px", font: `600 12px/1 ${SANS}`, cursor: photoUrlInput.trim() ? "pointer" : "not-allowed", opacity: photoUrlInput.trim() ? 1 : 0.5, flexShrink: 0 }}>
-                                Set
-                              </button>
-                            </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                              <div style={{ height: "1px", background: T.border, flex: 1 }} />
-                              <span style={{ font: `400 11px/1 ${SANS}`, color: T.faint }}>or</span>
-                              <div style={{ height: "1px", background: T.border, flex: 1 }} />
-                            </div>
-                            <button type="button" className="zc-btn" disabled={photoUploading} onClick={() => photoFileRef.current?.click()}
-                              style={{ background: T.surface, color: T.soft, border: `1px dashed ${T.dashed}`, borderRadius: "10px", padding: "9px 14px", font: `500 12px/1 ${SANS}`, cursor: "pointer", textAlign: "center" }}>
-                              {photoUploading ? "Uploading…" : "↑ Upload photo (JPG / PNG / WebP)"}
-                            </button>
-                            <input ref={photoFileRef} type="file" accept="image/*" style={{ display: "none" }}
-                              onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); }} />
-                          </div>
-                        )}
-                      </div>
+                      <span style={{ font: `400 13px/1.4 ${SANS}`, color: T.soft }}>
+                        {card.identity.avatar_url ? "Profile photo — from your linked accounts" : "No photo found"}
+                      </span>
                     </div>
 
                     {Object.entries(card.identity.links).some(([, v]) => v) && (
@@ -2097,6 +2011,15 @@ function CreateProfilePageContent() {
                       )}
                     </div>
                   )}
+
+                  <div className="zc-card" style={{ padding: "28px", display: "flex", flexDirection: "column", gap: "20px" }}>
+                    <SectionLabel label="Card style" />
+                    <EditionPicker
+                      value={readEdition(card.identity.edition)}
+                      onChange={next => updateCard({ identity: { ...card.identity, edition: next } })}
+                      person={{ name: card.identity.name, headline: card.identity.headline, avatarSrc: imgProxyUrl(card.identity.avatar_url) ?? null }}
+                    />
+                  </div>
 
                   <div className="zc-ctarow">
                     <button type="button" onClick={publish} className="zc-cta"

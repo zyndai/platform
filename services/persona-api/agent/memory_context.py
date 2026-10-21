@@ -87,6 +87,8 @@ def format_context_for_prompt(context: MemoryContext) -> str:
         "",
         "The following facts about the principal were extracted from prior conversations. "
         "Confidence bars (████░) indicate how certain these facts are. "
+        "Facts marked (earlier) are past context that matched this topic, not "
+        "what the principal is doing now. "
         "Use these to personalise your responses — reference them naturally, "
         "never recite them as a list.",
         "",
@@ -98,7 +100,8 @@ def format_context_for_prompt(context: MemoryContext) -> str:
         for a in assertions:
             bar = confidence_bar(a.confidence)
             obj = a.object if a.object else a.statement
-            lines.append(f"- {bar} {obj}")
+            earlier = " (earlier)" if a.stale else ""
+            lines.append(f"- {bar} {obj}{earlier}")
         lines.append("")
 
     return "\n".join(lines)

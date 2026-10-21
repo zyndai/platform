@@ -5,9 +5,9 @@ from services import suggested_people as people_service
 
 
 @pytest.fixture(autouse=True)
-def _disable_quickenrich(monkeypatch):
-    monkeypatch.setattr(people_service.config, "QUICKENRICH_BASE_URL", "")
-    monkeypatch.setattr(people_service.config, "QUICKENRICH_API_KEY", "")
+def _disable_outside_search(monkeypatch):
+    # External people come from Memory's service endpoint; off unless a test turns it on.
+    monkeypatch.setattr(people_service.config, "MEMORY_SERVICE_TOKEN", "")
 
 
 def _card(handle, **fields):
@@ -190,8 +190,7 @@ def test_public_endpoint_returns_people(monkeypatch):
             "card": _card("alex", working_on=["Building with AI"]).model_dump(),
         }],
     )
-    monkeypatch.setattr(people_service.config, "QUICKENRICH_BASE_URL", "")
-    monkeypatch.setattr(people_service.config, "QUICKENRICH_API_KEY", "")
+    monkeypatch.setattr(people_service.config, "MEMORY_SERVICE_TOKEN", "")
     app = FastAPI()
     app.include_router(cards_api.router, prefix="/cards")
 
@@ -207,8 +206,7 @@ def test_outside_empty_when_quickenrich_not_configured(monkeypatch):
     monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
     monkeypatch.setattr(people_service.cards_service, "list_published_rows", lambda **_kw: [])
     monkeypatch.setattr(people_service, "search_outside", lambda _card, _rows: (_ for _ in ()).throw(AssertionError("should not search")))
-    monkeypatch.setattr(people_service.config, "QUICKENRICH_BASE_URL", "")
-    monkeypatch.setattr(people_service.config, "QUICKENRICH_API_KEY", "")
+    monkeypatch.setattr(people_service.config, "MEMORY_SERVICE_TOKEN", "")
 
     result = people_service.get_suggested_people("jane")
 
@@ -225,8 +223,7 @@ def test_outside_drops_zynd_linkedin_and_caps_at_two(monkeypatch):
         "list_published_rows",
         lambda **_kw: [{"handle": "alex", "card": zynd.model_dump()}],
     )
-    monkeypatch.setattr(people_service.config, "QUICKENRICH_BASE_URL", "https://qe.example")
-    monkeypatch.setattr(people_service.config, "QUICKENRICH_API_KEY", "k")
+    monkeypatch.setattr(people_service.config, "MEMORY_SERVICE_TOKEN", "k")
     monkeypatch.setattr(
         people_service,
         "search_outside",
@@ -250,8 +247,7 @@ def test_outside_keeps_people_without_linkedin(monkeypatch):
     requester = _card("jane", connect_with=["Founders"])
     monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
     monkeypatch.setattr(people_service.cards_service, "list_published_rows", lambda **_kw: [])
-    monkeypatch.setattr(people_service.config, "QUICKENRICH_BASE_URL", "https://qe.example")
-    monkeypatch.setattr(people_service.config, "QUICKENRICH_API_KEY", "k")
+    monkeypatch.setattr(people_service.config, "MEMORY_SERVICE_TOKEN", "k")
     monkeypatch.setattr(
         people_service,
         "search_outside",
@@ -267,29 +263,83 @@ def test_outside_keeps_people_without_linkedin(monkeypatch):
     assert result["outside"][0]["source"] == "quickenrich"
 
 
-def test_outside_search_bodies_titles_then_keywords_india_only():
+def test_outside_search_requests_send_titles_then_keywords_near_the_owner():
     card = _card(
         "jane",
         connect_with=["Founders", "Engineers", "Investors"],
         working_on=["Building with AI", "Open source", "B2B SaaS"],
         love_talking_about=["Agentic AI"],
     )
-    bodies = people_service.outside_search_bodies(card)
-    assert len(bodies) == 2
-    assert bodies[0]["title"]["include"] == ["Founder", "Investor"]
-    assert "bio_li" not in bodies[0]
-    assert bodies[1]["bio_li"]["include"] == ["AI", "open source"]
-    assert "title" not in bodies[1]
-    for body in bodies:
-        assert body["country_code"]["include"] == ["IN"]
-        assert body["per_page"] == 4
-        assert "has_email" not in body
+    card.identity.location = "Pune, India"
+    requests = people_service.outside_search_requests(card)
+    assert len(requests) == 2
+    assert requests[0] == {"titles": ["Founder", "Investor"], "keywords": [], "location": "Pune, India", "limit": 4}
+    assert requests[1] == {"titles": [], "keywords": ["AI", "open source"], "location": "Pune, India", "limit": 4}
 
 
-def test_outside_search_bodies_keywords_only_when_no_titles():
+def test_outside_search_requests_assume_no_country_when_the_card_has_no_location():
     card = _card("jane", working_on=["Building with AI"], connect_with=[])
-    bodies = people_service.outside_search_bodies(card)
-    assert len(bodies) == 1
-    assert bodies[0]["bio_li"]["include"] == ["AI"]
-    assert "title" not in bodies[0]
-    assert bodies[0]["country_code"]["include"] == ["IN"]
+    requests = people_service.outside_search_requests(card)
+    assert requests == [{"titles": [], "keywords": ["AI"], "location": "", "limit": 4}]   # not India-only any more
+
+
+def test_outside_search_requests_empty_without_matching_interests():
+    assert people_service.outside_search_requests(_card("jane")) == []
+
+
+def _memory_reply(monkeypatch, payload=None, status=200, exc=None):
+    sent = []
+
+    class Resp:
+        status_code = status
+        text = "boom"
+
+        def json(self):
+            return payload
+
+    def fake_post(url, json, headers, timeout):
+        sent.append((url, json, headers))
+        if exc:
+            raise exc
+        return Resp()
+
+    monkeypatch.setattr(people_service.httpx, "post", fake_post)
+    monkeypatch.setattr(people_service.config, "MEMORY_SERVICE_TOKEN", "svc-token")
+    monkeypatch.setattr(people_service.config, "MEMORY_LAYER_URL", "https://memory.example/")
+    return sent
+
+
+def test_outside_search_asks_memory_and_takes_one_new_person_per_request(monkeypatch):
+    card = _card("jane", connect_with=["Founders"], working_on=["Building with AI"])
+    sent = _memory_reply(monkeypatch, {"people": [
+        {"name": "Pat", "title": "Founder", "company": "Acme", "linkedin_url": "https://linkedin.com/in/pat",
+         "has_email": True, "connection_eligible": False, "source": "quickenrich"},
+        {"name": "Sam", "title": "Founder", "company": "Beta", "linkedin_url": "https://linkedin.com/in/sam"},
+    ], "warning": None})
+
+    people = people_service.search_outside(card, set())
+
+    # Each request contributes its first person not already taken: Pat from the title request,
+    # then Sam from the keyword request (Pat was already taken).
+    assert [p["name"] for p in people] == ["Pat", "Sam"]
+    assert people[0] == {"name": "Pat", "title": "Founder", "company": "Acme",
+                         "linkedin_url": "https://linkedin.com/in/pat", "source": "quickenrich"}
+    url, body, headers = sent[0]
+    assert url == "https://memory.example/v1/service/outside-people"
+    assert headers["Authorization"] == "Bearer svc-token"
+    assert body["titles"] == ["Founder"]
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"status": 503}, {"exc": RuntimeError("down")}, {"payload": {"people": "nope"}}, {"payload": []},
+])
+def test_outside_search_degrades_to_nothing_when_memory_is_unavailable(monkeypatch, kwargs):
+    card = _card("jane", connect_with=["Founders"])
+    _memory_reply(monkeypatch, **kwargs)
+    assert people_service.search_outside(card, set()) == []
+
+
+def test_outside_search_is_off_without_the_service_token(monkeypatch):
+    monkeypatch.setattr(people_service.config, "MEMORY_SERVICE_TOKEN", "")
+    monkeypatch.setattr(people_service.httpx, "post", lambda *a, **k: pytest.fail("must not call memory"))
+    assert people_service.search_outside(_card("jane", connect_with=["Founders"]), set()) == []

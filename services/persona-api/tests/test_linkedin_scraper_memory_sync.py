@@ -3,7 +3,7 @@ Tests for the LinkedIn scraper service (backend/services/linkedin_scraper.py).
 
 Covers the URL-required scrape contract (name guessing removed), the
 latest-5-posts cap, and sync_profile_to_memory — which declares curated
-facts (works_at / lives_in / has_skill) into the memory layer with
+facts (is_affiliated_with / is_located_in / has_skill) into the memory layer with
 dedup against the existing assertion graph, ingesting an LLM-composed
 summary only when new facts were declared.
 """
@@ -74,7 +74,7 @@ def test_posts_actor_capped_at_five_latest():
 
 def test_sync_profile_to_memory_declares_only_new_facts():
     profile = _profile()
-    existing = [_assertion("works_at", "CTO at Lattice Labs")]
+    existing = [_assertion("works_at", "CTO at Lattice Labs")]   # written under the legacy name
     declared = []
 
     async def fake_declare(user_id, predicate, value, source_system="user_confirmed"):
@@ -89,9 +89,10 @@ def test_sync_profile_to_memory_declares_only_new_facts():
             return await sync_profile_to_memory("u1", profile)
 
     result = asyncio.run(run())
-    assert result["facts_declared"] == 9  # lives_in + 8 skills
-    assert ("works_at", "CTO at Lattice Labs") not in declared
-    assert ("lives_in", "San Francisco, California") in declared
+    assert result["facts_declared"] == 9  # is_located_in + 8 skills
+    assert ("is_affiliated_with", "CTO at Lattice Labs") not in declared   # legacy works_at counts as known
+    assert ("is_located_in", "San Francisco, California") in declared
+    assert not [p for p, _ in declared if p in ("works_at", "lives_in")]
     skill_values = [v for p, v in declared if p == "has_skill"]
     assert len(skill_values) == 8
     assert skill_values == ["AI", "Python", "Rust", "Go", "TypeScript", "Java", "C", "Ruby"]
@@ -102,8 +103,8 @@ def test_sync_profile_to_memory_declares_only_new_facts():
 def test_sync_profile_to_memory_skips_summary_when_nothing_new():
     profile = _profile()
     existing = [
-        _assertion("works_at", "CTO at Lattice Labs"),
-        _assertion("lives_in", "San Francisco, California"),
+        _assertion("is_affiliated_with", "CTO at Lattice Labs"),
+        _assertion("lives_in", "San Francisco, California"),   # legacy name still counts as known
     ] + [
         _assertion("has_skill", s)
         for s in ["AI", "Python", "Rust", "Go", "TypeScript", "Java", "C", "Ruby"]

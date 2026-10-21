@@ -109,23 +109,52 @@ test.describe("S10 owner home", () => {
     expect(response.headers().location).toContain("/p/owner");
   });
 
-  test("autosaves the latest edits before navigating away", async ({
+  test("saves edits only when Save changes is clicked", async ({
     page,
     request,
   }) => {
     await page.goto("/p/owner/edit");
     await page.getByLabel("Full name", { exact: true }).fill("Alice Updated");
-    await page.getByRole("link", { name: "Owner home", exact: true }).click();
-    await expect(page).toHaveURL(/\/home$/);
-    const saved = await request.get(
-      "http://127.0.0.1:3030/cards/by-handle/owner",
-    );
+    await expect(page.locator(".pe-save-state")).toContainText("Unsaved changes");
+    // Nothing is saved in the background.
+    await page.waitForTimeout(1500);
+    const before = await request.get("http://127.0.0.1:3030/cards/by-handle/owner");
+    expect((await before.json()).identity.name).not.toBe("Alice Updated");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.locator(".pe-save-state")).toContainText("All changes saved");
+    const saved = await request.get("http://127.0.0.1:3030/cards/by-handle/owner");
     expect((await saved.json()).identity.name).toBe("Alice Updated");
   });
 
-  test("failed autosave keeps the draft and blocks navigation", async ({
+  test("discard reverts unsaved edits without saving them", async ({
     page,
+    request,
   }) => {
+    await page.goto("/p/owner/edit");
+    const name = page.getByLabel("Full name", { exact: true });
+    const original = await name.inputValue();
+    await name.fill("Accidental edit");
+    await page.getByRole("button", { name: "Discard" }).click();
+    await expect(name).toHaveValue(original);
+    await expect(page.locator(".pe-save-state")).toContainText("All changes saved");
+    await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    const saved = await request.get("http://127.0.0.1:3030/cards/by-handle/owner");
+    expect((await saved.json()).identity.name).toBe(original);
+  });
+
+  test("asks before leaving with unsaved changes", async ({ page }) => {
+    await page.goto("/p/owner/edit");
+    await page.getByLabel("Full name", { exact: true }).fill("Unsaved Alice");
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await page.getByRole("link", { name: "Owner home", exact: true }).click();
+    await expect(page).toHaveURL(/\/p\/owner\/edit$/);
+    await expect(page.getByLabel("Full name", { exact: true })).toHaveValue("Unsaved Alice");
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("link", { name: "Owner home", exact: true }).click();
+    await expect(page).toHaveURL(/\/home$/);
+  });
+
+  test("failed save keeps the draft", async ({ page }) => {
     await page.route("**/cards/by-handle/owner/sections/identity", (route) =>
       route.fulfill({
         status: 409,
@@ -137,20 +166,23 @@ test.describe("S10 owner home", () => {
     );
     await page.goto("/p/owner/edit");
     await page.getByLabel("Full name", { exact: true }).fill("Unsaved Alice");
-    await page.getByRole("link", { name: "Owner home", exact: true }).click();
-    await expect(page.getByRole("status")).toContainText("Not saved");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.locator(".pe-save-state")).toContainText("Not saved");
     await expect(page.getByLabel("Full name", { exact: true })).toHaveValue(
       "Unsaved Alice",
     );
+    await expect(page.getByRole("button", { name: "Save changes" })).toBeEnabled();
     await expect(page).toHaveURL(/\/p\/owner\/edit$/);
   });
 
-  test("autosave preserves a private card", async ({ page, request }) => {
+  test("saving preserves a private card", async ({ page, request }) => {
     await page.goto("/home");
     await page.getByRole("checkbox", { name: /Public card/ }).uncheck();
     await expect(page.getByRole("status").first()).toHaveText("Saved");
     await page.getByRole("link", { name: "Edit your card" }).click();
     await page.getByLabel("Full name", { exact: true }).fill("Private Alice");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.locator(".pe-save-state")).toContainText("All changes saved");
     await page.getByRole("link", { name: "Owner home", exact: true }).click();
     await expect(page).toHaveURL(/\/home$/);
     const saved = await request.get(
@@ -163,23 +195,17 @@ test.describe("S10 owner home", () => {
     page,
     request,
   }) => {
-    await page.route("**/cards/by-handle/owner/sections/identity", (route) =>
-      route.fulfill({
-        status: 503,
-        contentType: "application/json",
-        body: JSON.stringify({ detail: "Temporarily unavailable" }),
-      }),
-    );
     await page.goto("/p/owner/edit");
     await page.getByLabel("Full name", { exact: true }).fill("Recovered Alice");
-    await expect(page.getByRole("status")).toContainText("Not saved");
+    await expect(page.locator(".pe-save-state")).toContainText("Unsaved changes");
     page.on("dialog", (dialog) => dialog.accept());
     await page.reload();
     await expect(
       page.getByText("You have unsaved changes from your last visit."),
     ).toBeVisible();
-    await page.unroute("**/cards/by-handle/owner/sections/identity");
     await page.getByRole("button", { name: "Restore unsaved changes" }).click();
+    await expect(page.getByLabel("Full name", { exact: true })).toHaveValue("Recovered Alice");
+    await page.getByRole("button", { name: "Save changes" }).click();
     await expect
       .poll(
         async () =>

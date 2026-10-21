@@ -169,6 +169,78 @@ def test_refresh_avatar_unchanged_is_noop():
     assert cards_service.refresh_avatar(card, "https://media.licdn.com/a.jpg", None) is False
 
 
+UPLOADED = "https://x.supabase.co/storage/v1/object/public/avatars/u1/alice-1.jpg"
+
+
+def test_refresh_avatar_replaces_legacy_upload():
+    card = {"identity": {"name": "Alice", "avatar_url": UPLOADED, "links": {}}}
+
+    assert cards_service.refresh_avatar(card, "https://media.licdn.com/new.jpg", None) is True
+    assert card["identity"]["avatar_url"] == "https://media.licdn.com/new.jpg"
+
+
+def test_apply_linkedin_avatar_replaces_legacy_upload():
+    card = {"identity": {"avatar_url": UPLOADED}, "linkedin_stats": {}}
+
+    assert cards_service.apply_linkedin_avatar(card, "https://media.licdn.com/new.jpg") == "set"
+    assert card["identity"]["avatar_url"] == "https://media.licdn.com/new.jpg"
+
+
+def test_apply_linkedin_avatar_still_replaces_scraped_avatar():
+    card = {"identity": {"avatar_url": "https://media.licdn.com/old.jpg"}, "linkedin_stats": {}}
+
+    assert cards_service.apply_linkedin_avatar(card, "https://media.licdn.com/new.jpg") == "set"
+    assert card["identity"]["avatar_url"] == "https://media.licdn.com/new.jpg"
+
+
+def test_apply_linkedin_avatar_removed_photo_keeps_owner_upload():
+    card = {"identity": {"avatar_url": UPLOADED}, "linkedin_stats": {"avatar": "https://media.licdn.com/old.jpg"}}
+
+    assert cards_service.apply_linkedin_avatar(card, None) == "cleared"
+    assert card["identity"]["avatar_url"] == UPLOADED
+    assert "avatar" not in card["linkedin_stats"]
+
+
+def _row(avatar_url: str, linkedin_avatar: str | None = None, x_avatar: str | None = None) -> dict:
+    card = _card().model_dump(mode="json")
+    card["identity"]["avatar_url"] = avatar_url
+    card["linkedin_stats"] = {"avatar": linkedin_avatar} if linkedin_avatar else None
+    card["x_stats"] = {"avatar": x_avatar} if x_avatar else None
+    return {"handle": "alice", "card": card}
+
+
+def _shown(row: dict) -> str:
+    return cards_service._row_to_card(row).identity.avatar_url
+
+
+def test_card_without_photo_uses_linkedin_then_x_photo():
+    li, x = "https://media.licdn.com/li.jpg", "https://pbs.twimg.com/x.jpg"
+
+    assert _shown(_row("", li, x)) == li
+    assert _shown(_row("", None, x)) == x
+    # A blob: URL saved by the old editor bug is not a photo any browser can load.
+    assert _shown(_row("blob:https://cards.zynd.ai/1234", li)) == li
+
+
+def test_scraped_photo_on_the_card_is_kept():
+    stored = "https://avatars.githubusercontent.com/alice"
+
+    assert _shown(_row(stored, "https://media.licdn.com/li.jpg")) == stored
+
+
+def test_legacy_upload_gives_way_to_a_linked_account_photo():
+    assert _shown(_row(UPLOADED, "https://media.licdn.com/li.jpg")) == "https://media.licdn.com/li.jpg"
+    assert _shown(_row(UPLOADED, None, "https://pbs.twimg.com/x.jpg")) == "https://pbs.twimg.com/x.jpg"
+
+
+def test_legacy_upload_is_kept_when_no_linked_account_has_a_photo():
+    assert _shown(_row(UPLOADED)) == UPLOADED
+
+
+def test_card_without_any_photo_stays_blank():
+    assert _shown(_row("")) == ""
+
+
 def test_merge_scraped_posts_injects_both_platforms():
     from models.card import WritingSample
 

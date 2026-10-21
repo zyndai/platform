@@ -13,6 +13,7 @@ sequence and keep inbox summaries/read cursors consistent for every writer.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -48,7 +49,7 @@ def _card_payload(row: dict) -> dict:
     }
 
 
-def _card_for_user(user_id: str) -> dict:
+def _find_card_for_user(user_id: str) -> dict | None:
     rows = (
         _sb()
         .table("agent_profile_cards")
@@ -62,9 +63,14 @@ def _card_for_user(user_id: str) -> dict:
         .data
         or []
     )
-    if not rows:
+    return rows[0] if rows else None
+
+
+def _card_for_user(user_id: str) -> dict:
+    card = _find_card_for_user(user_id)
+    if not card:
         raise HTTPException(409, "You need a claimed, published Card before using Connections")
-    return rows[0]
+    return card
 
 
 def _card_for_handle(handle: str) -> dict:
@@ -181,6 +187,149 @@ def request_connection(user_id: str, target_handle: str, message: str | None = N
         user_id, requester, recipient_user_id, recipient, message,
         before_insert=lambda: trust.check_request_limits(user_id, recipient_user_id))
     return {"connection": _serialize_connection(row, user_id), "existing": existed}
+
+
+# Characters that mean something inside a PostgREST or() filter (separators, grouping, wildcards,
+# the operator colon, quoting) plus control characters. A search box must never be able to reshape
+# the filter it lands in.
+_FILTER_SYNTAX = re.compile(r'[,()*%:"\\\x00-\x1f\x7f]')
+SUGGEST_MIN_CHARS = 2
+SUGGEST_FETCH = 25
+
+
+def _search_term(query: str) -> str:
+    """Typed text made safe to embed in a PostgREST or() filter: syntax characters and a leading @
+    are dropped, whitespace is collapsed, and the length is capped."""
+    term = " ".join(_FILTER_SYNTAX.sub(" ", query or "").split())
+    return term.lstrip("@ ")[:64]
+
+
+def _suggest_rank(row: dict, needle: str) -> int:
+    """0: the handle starts with the text; 1: the name (or any word in it) does; 2: it is elsewhere."""
+    handle = (row.get("handle") or "").lower()
+    name = (((row.get("card") or {}).get("identity") or {}).get("name") or "").lower()
+    if handle.startswith(needle):
+        return 0
+    if name.startswith(needle) or any(word.startswith(needle) for word in re.split(r"[\s._-]+", name)):
+        return 1
+    return 2
+
+
+def _connection_summary(row: dict, user_id: str) -> dict:
+    return {"id": row["id"], "status": row["status"], "incoming": row.get("recipient_user_id") == user_id}
+
+
+def suggest_people(user_id: str, query: str, limit: int = 8) -> dict:
+    """Typeahead for "who do you want to connect with": claimed, published Cards whose handle or
+    name contains the text, best matches first, each with the caller's existing connection (if any)
+    so the UI can offer Message / show Requested instead of a send that cannot succeed.
+
+    Public Card data only: no owner email and no contact links (those are for accepted connections)."""
+    term = _search_term(query)
+    if len(term) < SUGGEST_MIN_CHARS:
+        return {"people": []}
+    # Quoted so spaces and dots in a name survive; the term holds no quote or backslash to escape.
+    # `*` is PostgREST's URL-safe LIKE wildcard. A literal `_` in the text still acts as a one-char
+    # wildcard, which only widens the DB match (the ranking below puts real matches first).
+    pattern = f'"*{term}*"'
+    rows = (
+        _sb()
+        .table("agent_profile_cards")
+        .select("id,handle,card,owner_user_id")
+        .eq("status", "published")
+        .not_.is_("owner_email", "null")
+        .not_.is_("owner_user_id", "null")
+        .or_(f"handle.ilike.{pattern},card->identity->>name.ilike.{pattern}")
+        .order("published_at", desc=True, nullsfirst=False)
+        .limit(SUGGEST_FETCH)
+        .execute()
+        .data
+        or []
+    )
+    needle = term.lower()
+    ranked = sorted(enumerate(rows), key=lambda item: (_suggest_rank(item[1], needle), item[0]))
+    picked: list[dict] = []
+    seen: set[str] = set()
+    for _, row in ranked:
+        owner = row.get("owner_user_id")
+        if not owner or owner == user_id or owner in seen:
+            continue    # one entry per person, and never the caller
+        seen.add(owner)
+        picked.append(row)
+        if len(picked) >= max(1, min(limit, SUGGEST_FETCH)):
+            break
+    if not picked:
+        return {"people": []}
+
+    keys = {row["owner_user_id"]: _connection_key(user_id, row["owner_user_id"]) for row in picked}
+    connections = (
+        _sb()
+        .table("connections")
+        .select("id,status,connection_key,requester_user_id,recipient_user_id")
+        .in_("connection_key", list(keys.values()))
+        .execute()
+        .data
+        or []
+    )
+    by_key = {c["connection_key"]: c for c in connections}
+    return {"people": [
+        {
+            **_card_payload(row),
+            "connection": (
+                _connection_summary(by_key[keys[row["owner_user_id"]]], user_id)
+                if keys[row["owner_user_id"]] in by_key else None
+            ),
+        }
+        for row in picked
+    ]}
+
+
+def _connect_blocker(connection: dict | None, has_card: bool) -> str | None:
+    """Why a new request cannot be sent, or None when one can.
+
+    A connection row is per pair of people and final once decided: _create_connection returns the
+    existing row whatever its status, and respond_connection only moves a row out of `pending`.
+    So declined, revoked and blocked can never become a fresh request, and the UI must not offer
+    one. Blocked is worded neutrally: it does not say who blocked whom."""
+    if connection:
+        status = connection["status"]
+        if status == "accepted":
+            return "You are already connected."
+        if status == "pending":
+            return "They already sent you a request." if connection["incoming"] else "Your request is waiting for their answer."
+        if status == "declined":
+            return "You declined this request." if connection["incoming"] else "This request was not accepted."
+        if status == "revoked":
+            return "This connection was ended."
+        return "Connecting with this person is not available."
+    if not has_card:
+        return "Claim and publish your own Card to connect with people."
+    return None
+
+
+def connection_status(user_id: str, handle: str) -> dict:
+    """Where the caller stands with one Card, for the profile page's Connect / Message button.
+
+    Only reports state: a caller without a Card of their own gets can_connect=false, not the 409
+    that request_connection raises."""
+    target = _card_for_handle(handle)
+    other = target["owner_user_id"]
+    if other == user_id:
+        return {"self": True}
+    rows = (
+        _sb()
+        .table("connections")
+        .select("id,status,connection_key,requester_user_id,recipient_user_id")
+        .eq("connection_key", _connection_key(user_id, other))
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    connection = _connection_summary(rows[0], user_id) if rows else None
+    # An existing connection already settles the answer; only look up the caller's own Card without one.
+    reason = _connect_blocker(connection, has_card=bool(connection) or bool(_find_card_for_user(user_id)))
+    return {"connection": connection, "can_connect": reason is None, "reason": reason}
 
 
 def get_inbox(user_id: str) -> dict:

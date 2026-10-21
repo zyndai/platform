@@ -100,12 +100,59 @@ def test_read_mark_route(monkeypatch):
     }
 
 
+def test_people_suggest_route_uses_the_bound_user(monkeypatch):
+    app = client(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(network.network, "suggest_people", lambda uid, q: seen.update(uid=uid, q=q) or {"people": []})
+    response = app.get("/cards/network/people/suggest", params={"q": "ali"}, headers={
+        "Authorization": "Bearer memory-network-test", "X-Zynd-User": UID,
+    })
+    assert response.status_code == 200
+    assert response.json() == {"people": []}
+    assert seen == {"uid": UID, "q": "ali"}
+
+
+def test_people_suggest_requires_a_session_and_caps_the_query(monkeypatch):
+    app = client(monkeypatch)
+    monkeypatch.setattr(network.network, "suggest_people", lambda uid, q: {"people": []})
+    assert app.get("/cards/network/people/suggest", params={"q": "ali"}).status_code in (401, 403)
+    headers = {"Authorization": "Bearer memory-network-test", "X-Zynd-User": UID}
+    assert app.get("/cards/network/people/suggest", params={"q": "x" * 64}, headers=headers).status_code == 200
+    assert app.get("/cards/network/people/suggest", params={"q": "x" * 65}, headers=headers).status_code == 422
+
+
+def test_connection_status_route_is_not_swallowed_by_the_connection_id_routes(monkeypatch):
+    app = client(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(network.network, "connection_status", lambda uid, handle: seen.update(uid=uid, handle=handle) or {
+        "connection": None, "can_connect": True, "reason": None,
+    })
+    response = app.get("/cards/network/connections/status", params={"handle": "alice"}, headers={
+        "Authorization": "Bearer memory-network-test", "X-Zynd-User": UID,
+    })
+    assert response.status_code == 200
+    assert response.json() == {"connection": None, "can_connect": True, "reason": None}
+    assert seen == {"uid": UID, "handle": "alice"}
+
+
+def test_connection_status_needs_a_handle_of_sane_length(monkeypatch):
+    app = client(monkeypatch)
+    monkeypatch.setattr(network.network, "connection_status", lambda uid, handle: {"self": True})
+    headers = {"Authorization": "Bearer memory-network-test", "X-Zynd-User": UID}
+    assert app.get("/cards/network/connections/status", headers=headers).status_code == 422
+    assert app.get("/cards/network/connections/status", params={"handle": ""}, headers=headers).status_code == 422
+    assert app.get("/cards/network/connections/status", params={"handle": "h" * 129}, headers=headers).status_code == 422
+    assert app.get("/cards/network/connections/status", params={"handle": "h" * 128}, headers=headers).status_code == 200
+
+
 def test_network_handlers_do_not_block_the_event_loop():
     # The Supabase client is synchronous. These handlers must be plain `def`
     # so FastAPI runs them in its threadpool instead of on the event loop.
     for handler in (
         network.inbox,
         network.connections,
+        network.connection_status,
+        network.suggest_people,
         network.connection_messages,
         network.send_connection_message,
         network.groups,

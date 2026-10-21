@@ -41,6 +41,7 @@ test.describe("S12 human introductions", () => {
 
   test("unclaimed cards have no connection action", async ({ page }) => {
     await page.goto("/p/unclaimed");
-    await expect(page.getByRole("button", { name: "Request connection", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Connect", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Connect", exact: true })).toHaveCount(0);
   });
 });

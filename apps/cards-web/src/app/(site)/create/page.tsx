@@ -14,6 +14,8 @@ import type { AgentProfileCard, OnboardStatus, Project, ScrapeWarning, WritingSa
 import { MemoryProviderOnboard } from "@/components/memory/MemoryProviderOnboard";
 import { AutoGrowTextArea } from "@/components/AutoGrowTextArea";
 import { imgProxyUrl } from "@/lib/avatar";
+import { EditionPicker } from "@/components/editions/edition-picker";
+import { readEdition } from "@/lib/editions";
 import { claimHeaders, forgetClaimToken, saveClaimToken } from "@/lib/claim-tokens";
 import { appendAttrToForm, attrPublishFields } from "@/lib/attr";
 import { track } from "@/lib/track";
@@ -2009,6 +2011,15 @@ function CreateProfilePageContent() {
                       )}
                     </div>
                   )}
+
+                  <div className="zc-card" style={{ padding: "28px", display: "flex", flexDirection: "column", gap: "20px" }}>
+                    <SectionLabel label="Card style" />
+                    <EditionPicker
+                      value={readEdition(card.identity.edition)}
+                      onChange={next => updateCard({ identity: { ...card.identity, edition: next } })}
+                      person={{ name: card.identity.name, headline: card.identity.headline, avatarSrc: imgProxyUrl(card.identity.avatar_url) ?? null }}
+                    />
+                  </div>
 
                   <div className="zc-ctarow">
                     <button type="button" onClick={publish} className="zc-cta"

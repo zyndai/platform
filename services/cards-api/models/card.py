@@ -1,6 +1,8 @@
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Literal
+
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_serializer, model_validator
 
 
 def _clean(value):
@@ -44,6 +46,19 @@ def _coerce_industries(v):
     return []
 
 
+EDITION_IDS = ("mumbai-26",)
+EDITION_MOODS = ("night", "dusk", "monsoon")
+EDITION_HERE_FOR = ("hacking", "speaking", "building", "hiring", "raising", "investing", "exploring")
+
+
+class Edition(BaseModel):
+    """A limited-edition look the owner picked for their card (cards-web renders it)."""
+
+    id: Literal[EDITION_IDS]
+    mood: Literal[EDITION_MOODS] = "night"
+    here_for: Literal[EDITION_HERE_FOR] | None = None
+
+
 class Identity(BaseModel):
     name: str = ""
     headline: str = ""
@@ -51,6 +66,30 @@ class Identity(BaseModel):
     avatar_url: str = ""
     avatar_bg_url: str = ""
     links: dict[str, str] = Field(default_factory=dict)
+    # Lives in identity so the editor's existing identity section saves it:
+    # cards.s10_save_section only accepts a fixed list of top-level keys.
+    edition: Edition | None = None
+
+    @field_validator("edition", mode="before")
+    @classmethod
+    def _known_edition_or_none(cls, v):
+        # A stored edition that is no longer offered, or junk from an older
+        # client, renders as the classic card instead of failing the whole read.
+        if not isinstance(v, dict):
+            return None
+        try:
+            return Edition.model_validate(v)
+        except ValidationError:
+            return None
+
+    @model_serializer(mode="wrap")
+    def _omit_missing_edition(self, handler):
+        # Classic cards serialize (and are stored) exactly as before the edition
+        # existed. Clearing an edition drops the key, since identity is saved whole.
+        data = handler(self)
+        if data.get("edition") is None:
+            data.pop("edition", None)
+        return data
 
 
 class Skill(BaseModel):

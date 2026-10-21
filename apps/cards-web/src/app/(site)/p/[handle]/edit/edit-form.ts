@@ -1,4 +1,5 @@
 import type { AgentProfileCard } from "@/lib/cards";
+import { readEdition, type CardEdition } from "@/lib/editions";
 
 /** Everything the owner can type on the edit page, in one object. */
 export interface EditForm {
@@ -17,6 +18,8 @@ export interface EditForm {
   skills: AgentProfileCard["skills"];
   calendly: string;
   gcal: string;
+  /** Limited-edition look; null is the classic card. */
+  edition: CardEdition | null;
 }
 
 export type SetField = <K extends keyof EditForm>(key: K, value: EditForm[K]) => void;
@@ -34,7 +37,7 @@ export const TABS: { key: TabKey; label: string; short: string }[] = [
 /** Which tab holds each deep-link anchor. Owner home, completeness actions and
  *  notification emails link to /edit#<anchor>, so every old anchor stays here. */
 const ANCHOR_TAB: Record<string, TabKey> = {
-  identity: "profile", avatar: "profile", presence: "profile", links: "profile",
+  identity: "profile", avatar: "profile", presence: "profile", links: "profile", style: "profile",
   summary: "profile", settings: "profile",
   signals: "interests", skills: "interests",
   career: "imported", projects: "imported", stats: "imported",
@@ -76,6 +79,7 @@ export function formFromCard(card: AgentProfileCard): EditForm {
     skills: card.skills,
     calendly: card.calendly_url ?? "",
     gcal: card.google_calendar_url ?? "",
+    edition: readEdition(card.identity.edition),
   };
 }
 
@@ -90,6 +94,8 @@ export function cardFromForm(base: AgentProfileCard, form: EditForm): AgentProfi
       ...base.identity,
       name: form.name, headline: form.headline, location: form.location,
       links: formLinks(form),
+      // Classic cards that never had an edition keep sending the identity they always did.
+      ...(form.edition || "edition" in base.identity ? { edition: form.edition } : {}),
     },
     summary: form.summary,
     availability: form.availability,

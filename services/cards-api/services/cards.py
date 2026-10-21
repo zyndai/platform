@@ -198,7 +198,8 @@ def assemble_card(
         status="pending_review",
         created_at=now,
         updated_at=now,
-        identity=synth.identity,
+        # Only the owner picks an edition; never take one from scraped/LLM text.
+        identity=synth.identity.model_copy(update={"edition": None}),
         citation_snippet=synth.citation_snippet,
         summary=synth.summary,
         affiliations=synth.affiliations,

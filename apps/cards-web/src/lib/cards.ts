@@ -1,4 +1,5 @@
 import { claimHeaders, forgetClaimToken } from "./claim-tokens";
+import type { CardEdition } from "./editions";
 import type { MatchReason } from "./match-reason";
 import { ownerHomeEnabled } from "./owner-home";
 
@@ -9,6 +10,8 @@ export interface Identity {
   avatar_url: string;
   avatar_bg_url?: string;
   links: Record<string, string>;
+  /** Limited-edition look; read it through `readEdition` from lib/editions. */
+  edition?: CardEdition | null;
 }
 
 export interface Skill {

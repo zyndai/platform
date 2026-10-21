@@ -308,3 +308,20 @@ def test_unsubscribe_updates_all_cards_for_only_matching_owner(client, monkeypat
     assert response.status_code == 200
     q.update.assert_called_once_with({"notification_prefs": {"weekly_digest": False, "email_nudges": False}})
     q.update.return_value.ilike.assert_called_once_with("owner_email", "alice@example.com")
+
+
+def test_identity_save_can_pick_and_clear_an_edition(client, monkeypatch):
+    edition = {"id": "mumbai-26", "mood": "dusk", "here_for": "speaking"}
+    response, operation = _identity_save(
+        client, monkeypatch, {"name": "Alice"},
+        {"name": "Alice", "edition": edition},
+        {"name": "Alice"})
+    assert response.status_code == 200
+    assert operation.call_args.args[1]["p_patch"]["identity"]["edition"] == edition
+
+    response, operation = _identity_save(
+        client, monkeypatch, {"name": "Alice", "edition": edition},
+        {"name": "Alice", "edition": None},
+        {"name": "Alice", "edition": edition})
+    assert response.status_code == 200
+    assert "edition" not in operation.call_args.args[1]["p_patch"]["identity"]

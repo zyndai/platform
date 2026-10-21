@@ -5,6 +5,7 @@ import { Github, Globe, Link2, Linkedin, Loader2, Plus, Sparkles, Twitter, X } f
 import { imgProxyUrl } from "@/lib/avatar";
 import { fetchSummaryDraft, type SummaryDraft } from "@/lib/cards";
 import { AutoGrowTextArea } from "@/components/AutoGrowTextArea";
+import { EditionPicker } from "@/components/editions/edition-picker";
 import { Card, Field, TagInput } from "./edit-ui";
 import { initialsOf, type EditForm, type SetField } from "./edit-form";
 
@@ -63,6 +64,14 @@ export function ProfileTab({ form, set, handle, token }: {
             </Field>
           </div>
         </div>
+      </Card>
+
+      <Card id="style" title="Card style" hint="How your card looks to everyone who opens it.">
+        <EditionPicker
+          value={form.edition}
+          onChange={(next) => set("edition", next)}
+          person={{ name: form.name, headline: form.headline, avatarSrc: photo ?? null }}
+        />
       </Card>
 
       <Card id="summary" title="About" hint="A few sentences on what you do and who you'd like to meet."

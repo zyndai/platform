@@ -758,7 +758,8 @@ class _CompleteRequest(BaseModel):
 @router.post("/consent")
 async def consent(body: _CompleteRequest) -> JSONResponse:
     payload = _verify_oauth_request(body.req)
-    identity = await supabase_identity(body.supabase_token)
+    identity = await supabase_identity(
+        body.supabase_token, allow_reviewer=_is_plugin_client(payload.get("client_id", "")))
     if not identity:
         raise HTTPException(status_code=401, detail="Sign-in could not be verified")
     if not payload.get("create_user", True):
@@ -776,6 +777,7 @@ async def _resolve_user_and_mint_code(
     code_challenge: str, code_challenge_method: str, redis,
     resource: str = "", create_user: bool = True, iss_supported: bool = False,
     client_id: str = "", client_name: str = "", nonce: str = "",
+    allow_reviewer: bool = False,
 ) -> JSONResponse:
     """Verify the Supabase identity, resolve the ZYND user, mint a
     single-use authorization code with optional PKCE params, and return the
@@ -783,7 +785,7 @@ async def _resolve_user_and_mint_code(
 
     create_user=False (MCP connector path) is lookup-only: a verified identity
     with no existing memory user gets a 401 instead of an account."""
-    identity = await supabase_identity(supabase_token)
+    identity = await supabase_identity(supabase_token, allow_reviewer=allow_reviewer)
     if not identity:
         _log_token_diag(supabase_token)
         raise HTTPException(status_code=401, detail="Sign-in could not be verified")
@@ -889,7 +891,8 @@ async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
     create_user = payload.get("create_user", True)   # legacy requests default to create
     iss_supported = payload.get("iss_supported", False)
 
-    identity = await supabase_identity(body.supabase_token)
+    identity = await supabase_identity(
+        body.supabase_token, allow_reviewer=_is_plugin_client(payload.get("client_id", "")))
     if not identity:
         raise HTTPException(status_code=401, detail="Sign-in could not be verified")
     if not create_user:
@@ -906,6 +909,7 @@ async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
         code_challenge, code_challenge_method, redis,
         resource=resource, create_user=create_user, iss_supported=iss_supported,
         client_id=payload.get("client_id", ""), client_name=payload.get("client_name", ""), nonce=nonce,
+        allow_reviewer=_is_plugin_client(payload.get("client_id", "")),
     )
 
 

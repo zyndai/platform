@@ -6,11 +6,13 @@
  */
 
 import { Suspense, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { startLinkedInOAuth } from "@/lib/auth/session";
 
 function AuthPageContent() {
   const searchParams = useSearchParams();
+  const next = searchParams.get("next") || "";
   const [oauthError, setOauthError] = useState<string | null>(searchParams.get("error"));
 
   const loginWithLinkedin = async () => {
@@ -50,6 +52,14 @@ function AuthPageContent() {
         >
           Sign in with LinkedIn
         </button>
+
+        {next.startsWith("/review/") && (
+          <p style={{ marginBottom: "20px", fontSize: "14px" }}>
+            <Link href={`/auth/reviewer?next=${encodeURIComponent(next)}`} style={{ color: "#8B5CF6" }}>
+              Reviewer sign-in
+            </Link>
+          </p>
+        )}
 
         <p style={{ marginTop: "20px", fontSize: "14px", color: "#999" }}>
           Secure authentication powered by Supabase

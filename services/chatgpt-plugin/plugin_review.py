@@ -29,7 +29,7 @@ async def _owner(authorization: str) -> str:
     scheme, _, value = authorization.partition(" ")
     if scheme.lower() != "bearer" or not value.strip():
         raise HTTPException(401, "Supabase session required")
-    identity = await supabase_identity(value.strip())
+    identity = await supabase_identity(value.strip(), allow_reviewer=True)
     if not identity or not identity[2]:
         raise HTTPException(401, "Supabase session required")
     email, _, sub = identity

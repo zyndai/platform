@@ -125,6 +125,11 @@ class Settings(BaseSettings):
     plugin_oauth_redirect_uris: str = ""
     feature_plugin_consent: bool = False
     plugin_mcp_public_base_url: str = "http://localhost:8091/chatgpt"
+    # Comma-separated email(s) of the sample-data account given to OpenAI's plugin
+    # reviewers (email+password Supabase user). Empty disables the reviewer path.
+    # Those sessions are accepted only by the plugin OAuth flow and plugin review
+    # endpoints; supabase_identity() denies them everywhere else.
+    plugin_review_emails: str = ""
     # Second confidential client: the Hermes Deployer. It runs the same
     # authorize-code flow as ChatGPT but, at /oauth/token, receives a long-lived
     # personal token (mcp_token_ttl_seconds) so a deployed agent container can
@@ -197,6 +202,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def plugin_review_email_set(self) -> frozenset[str]:
+        return frozenset(e.strip().lower() for e in self.plugin_review_emails.split(",") if e.strip())
 
     @property
     def trusted_supabase_project_list(self) -> list[tuple[str, str]]:

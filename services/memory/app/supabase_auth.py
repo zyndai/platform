@@ -76,10 +76,19 @@ async def _fetch_user(access_token: str) -> dict | None:
     return None
 
 
-async def supabase_identity(access_token: str) -> tuple[str, str, str] | None:
-    """Verified (email, display_name, supabase_user_id) for a session, or None."""
+async def supabase_identity(
+    access_token: str, *, allow_reviewer: bool = False,
+) -> tuple[str, str, str] | None:
+    """Verified (email, display_name, supabase_user_id) for a session, or None.
+
+    The plugin-review demo account (PLUGIN_REVIEW_EMAILS) has a password its
+    reviewers know, so its sessions are denied unless the caller opts in with
+    allow_reviewer=True. Only the plugin OAuth flow and plugin review endpoints do."""
     user = await _fetch_user(access_token)
-    return _verified_identity(user) if user else None
+    identity = _verified_identity(user) if user else None
+    if identity and not allow_reviewer and identity[0] in settings.plugin_review_email_set:
+        return None
+    return identity
 
 
 async def supabase_email(access_token: str) -> str | None:

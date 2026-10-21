@@ -13,6 +13,7 @@ single-worker cards-api process.
 import hmac
 import logging
 import re
+import time
 from uuid import UUID
 
 import jwt
@@ -29,6 +30,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _token_expired(token: str) -> bool:
+    """True only for a well-formed token whose `exp` has passed. Used to tell "session ended" apart
+    from "wrong account", which both come back from verify_supabase_jwt as None."""
+    try:
+        claims = jwt.decode(token, options={"verify_signature": False})
+    except jwt.PyJWTError:
+        return False
+    exp = claims.get("exp")
+    return isinstance(exp, (int, float)) and exp < time.time()
+
+
 def _principal(authorization: str | None, zynd_user: str | None = None) -> Principal:
     token = (authorization or "").removeprefix("Bearer ").strip()
     if config.MEMORY_SERVICE_TOKEN and hmac.compare_digest(token.encode(), config.MEMORY_SERVICE_TOKEN.encode()):
@@ -39,6 +51,9 @@ def _principal(authorization: str | None, zynd_user: str | None = None) -> Princ
         return Principal(email="", sub=uid, iss=config.AAFO_ISSUER)
 
     principal = verify_supabase_jwt(authorization)
+    if not principal and _token_expired(token):
+        # The browser should refresh its session and retry, so this is a 401, not a 403 about accounts.
+        raise HTTPException(401, "Your session has expired. Sign in again to keep messaging.")
     if not principal or not config.AAFO_ISSUER or principal.iss != config.AAFO_ISSUER:
         raise HTTPException(403, "Use your shared Zynd account for Cards networking")
     try:
@@ -84,6 +99,17 @@ class GroupInvite(BaseModel):
     model_config = ConfigDict(extra="forbid")
     target_handle: str = Field(min_length=1, max_length=128)
     message: str | None = Field(default=None, max_length=500)
+
+
+class GroupUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class GroupTransfer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: UUID
 
 
 class InviteCreate(BaseModel):
@@ -279,6 +305,36 @@ def group_members(group_id: UUID, authorization: str | None = Header(default=Non
     return network.list_members(_uid(authorization, x_zynd_user), str(group_id))
 
 
+@router.delete("/network/groups/{group_id}/messages/{message_id}")
+def delete_group_message(group_id: UUID, message_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return network.delete_group_message(_uid(authorization, x_zynd_user), str(group_id), str(message_id))
+
+
+@router.delete("/network/connections/{connection_id}/messages/{message_id}")
+def delete_dm_message(connection_id: UUID, message_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return network.delete_dm_message(_uid(authorization, x_zynd_user), str(connection_id), str(message_id))
+
+
+@router.patch("/network/groups/{group_id}")
+def update_group(group_id: UUID, body: GroupUpdate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return network.update_group(_uid(authorization, x_zynd_user), str(group_id), body.name, body.description)
+
+
+@router.delete("/network/groups/{group_id}")
+def archive_group(group_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return network.archive_group(_uid(authorization, x_zynd_user), str(group_id))
+
+
+@router.delete("/network/groups/{group_id}/members/{member_user_id}")
+def remove_group_member(group_id: UUID, member_user_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return network.remove_group_member(_uid(authorization, x_zynd_user), str(group_id), str(member_user_id))
+
+
+@router.post("/network/groups/{group_id}/leave")
+def leave_group(group_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return network.leave_group(_uid(authorization, x_zynd_user), str(group_id))
+
+
 @router.get("/network/groups/{group_id}/people")
 def group_people(group_id: UUID, query: str = Query("", max_length=120), authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.search_invitable(_uid(authorization, x_zynd_user), str(group_id), query)
@@ -294,6 +350,16 @@ def invite_group_member(group_id: UUID, body: GroupInvite, authorization: str | 
 @router.get("/network/groups/{group_id}/invitations")
 def group_invitations(group_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
     return network.list_invitations(_uid(authorization, x_zynd_user), str(group_id))
+
+
+@router.delete("/network/groups/{group_id}/invitations/{invitation_id}")
+def cancel_group_invitation(group_id: UUID, invitation_id: UUID, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return network.cancel_invitation(_uid(authorization, x_zynd_user), str(group_id), str(invitation_id))
+
+
+@router.post("/network/groups/{group_id}/transfer")
+def transfer_group(group_id: UUID, body: GroupTransfer, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    return network.transfer_group(_uid(authorization, x_zynd_user), str(group_id), str(body.user_id))
 
 
 @router.get("/network/group-invitations")

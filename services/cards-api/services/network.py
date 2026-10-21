@@ -13,13 +13,17 @@ sequence and keep inbox summaries/read cursors consistent for every writer.
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
 from uuid import UUID
 
+import httpx
 from fastapi import HTTPException
 
 import config
+
+logger = logging.getLogger(__name__)
 
 
 def _sb():
@@ -500,6 +504,58 @@ def list_members(user_id: str, group_id: str) -> dict:
     return _rpc_result("network_group_members", {"p_user": user_id, "p_group": group_id})
 
 
+def _require_owner(user_id: str, group_id: str) -> dict:
+    member = _require_member(group_id, user_id)
+    if member.get("role") != "owner":
+        raise HTTPException(403, "Only the group owner can do that")
+    return member
+
+
+def update_group(user_id: str, group_id: str, name: str | None, description: str | None) -> dict:
+    _require_owner(user_id, group_id)
+    patch: dict = {"updated_at": _now()}
+    if name is not None:
+        clean_name = name.strip()
+        if not clean_name:
+            raise HTTPException(400, "Group name cannot be empty")
+        patch["name"] = clean_name[:80]
+    if description is not None:
+        patch["description"] = description.strip()[:500] or None
+    if len(patch) == 1:
+        raise HTTPException(400, "Nothing to update")
+    rows = _sb().table("groups").update(patch).eq("id", group_id).is_("archived_at", "null").execute().data or []
+    if not rows:
+        raise HTTPException(404, "Group not found")
+    return {"group": rows[0]}
+
+
+def archive_group(user_id: str, group_id: str) -> dict:
+    """Owner deletes a group. Archived rows are hidden from every read path (inbox, members,
+    messages), and nothing is erased, so this is recoverable by hand."""
+    _require_owner(user_id, group_id)
+    _sb().table("groups").update({"archived_at": _now(), "updated_at": _now()}).eq("id", group_id).execute()
+    return {"ok": True}
+
+
+def remove_group_member(user_id: str, group_id: str, member_user_id: str) -> dict:
+    _require_owner(user_id, group_id)
+    if member_user_id == user_id:
+        raise HTTPException(409, "The owner can't be removed. Delete the group instead.")
+    target = _member(group_id, member_user_id)
+    if not target:
+        raise HTTPException(404, "That person is not in this group")
+    _sb().table("group_members").delete().eq("group_id", group_id).eq("user_id", member_user_id).execute()
+    return {"ok": True}
+
+
+def leave_group(user_id: str, group_id: str) -> dict:
+    member = _require_member(group_id, user_id)
+    if member.get("role") == "owner":
+        raise HTTPException(409, "Owners can't leave their own group. Delete the group instead.")
+    _sb().table("group_members").delete().eq("group_id", group_id).eq("user_id", user_id).execute()
+    return {"ok": True}
+
+
 def search_group(user_id: str, group_id: str, *, q: str = "", role: str = "", location: str = "",
                  skills: str = "", limit: int = 10) -> dict:
     """A7: people search scoped to one group (an event, a community). Only members can ask, only
@@ -605,7 +661,118 @@ def list_invitations(user_id: str, group_id: str) -> dict:
         raise HTTPException(403, "Only the group owner can view invitations")
     rows = (_sb().table("group_invitations").select("*").eq("group_id", group_id)
             .eq("status", "pending").gt("expires_at", _now()).order("created_at", desc=True).execute().data or [])
+    # Show who is being invited, not just their user id. Only public Card fields leave here.
+    invitee_ids = list({row["invitee_user_id"] for row in rows})
+    cards_by_owner: dict = {}
+    if invitee_ids:
+        for card in (_sb().table("agent_profile_cards").select("id,handle,card,owner_user_id")
+                     .in_("owner_user_id", invitee_ids).eq("status", "published").execute().data or []):
+            cards_by_owner.setdefault(card["owner_user_id"], card)
+    for row in rows:
+        card = cards_by_owner.get(row["invitee_user_id"])
+        row["invitee"] = _card_payload(card) if card else None
     return {"invitations": rows}
+
+
+def cancel_invitation(user_id: str, group_id: str, invitation_id: str) -> dict:
+    _require_owner(user_id, group_id)
+    rows = (_sb().table("group_invitations").update({"status": "revoked", "decided_at": _now()})
+            .eq("id", invitation_id).eq("group_id", group_id).eq("status", "pending").execute().data or [])
+    if not rows:
+        raise HTTPException(404, "That invitation is no longer pending")
+    return {"ok": True}
+
+
+def transfer_group(user_id: str, group_id: str, new_owner_user_id: str) -> dict:
+    """Hand the group to another member. The new owner is promoted first, so a failure midway
+    leaves two owners (fixable) rather than none (not fixable from the app)."""
+    _require_owner(user_id, group_id)
+    if new_owner_user_id == user_id:
+        raise HTTPException(400, "You already own this group")
+    if not _member(group_id, new_owner_user_id):
+        raise HTTPException(404, "That person is not in this group")
+    _sb().table("group_members").update({"role": "owner"}).eq("group_id", group_id).eq("user_id", new_owner_user_id).execute()
+    _sb().table("groups").update({"owner_user_id": new_owner_user_id, "updated_at": _now()}).eq("id", group_id).execute()
+    _sb().table("group_members").update({"role": "member"}).eq("group_id", group_id).eq("user_id", user_id).execute()
+    return {"ok": True}
+
+
+def _preview(content: str) -> str:
+    """Same shape the database triggers write to last_message_preview."""
+    return " ".join(content.split())[:140]
+
+
+def _preview_patch(latest: dict | None) -> dict:
+    """The inbox preview columns, rewritten to describe the newest message that is left."""
+    if not latest:
+        return {"last_message_preview": None, "last_message_at": None, "last_message_sender_user_id": None}
+    return {
+        "last_message_preview": _preview(latest["content"]),
+        "last_message_at": latest["created_at"],
+        "last_message_sender_user_id": latest["sender_user_id"],
+    }
+
+
+def _announce_deleted(topic: str, message_id: str) -> None:
+    """Tell open clients to drop a deleted message. Best effort: the delete has already happened,
+    and a client that misses this drops the message on its next refresh."""
+    if not (config.SUPABASE_URL and config.SUPABASE_SERVICE_KEY):
+        return
+    key = config.SUPABASE_SERVICE_KEY
+    body = {"messages": [{
+        "topic": topic,
+        "event": "message_deleted",
+        "payload": {"message_id": message_id},
+        "private": True,
+    }]}
+    try:
+        httpx.post(
+            f"{config.SUPABASE_URL.rstrip('/')}/realtime/v1/api/broadcast",
+            headers={"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json=body,
+            timeout=5.0,
+        ).raise_for_status()
+    except Exception:  # noqa: BLE001 — delivery is optional
+        logger.warning("message_deleted broadcast failed topic=%s", topic, exc_info=True)
+
+
+def delete_group_message(user_id: str, group_id: str, message_id: str) -> dict:
+    """Members delete only their own messages. Replies to it keep their text (the foreign key sets
+    reply_to to null), and memory built from it is kept, since it was saved on purpose."""
+    _require_member(group_id, user_id)
+    rows = (_sb().table("group_messages").select("id,sender_user_id").eq("id", message_id).eq("group_id", group_id)
+            .limit(1).execute().data or [])
+    if not rows:
+        raise HTTPException(404, "Message not found")
+    if rows[0]["sender_user_id"] != user_id:
+        raise HTTPException(403, "You can only delete your own messages")
+    _sb().table("group_messages").delete().eq("id", message_id).execute()
+    latest = (_sb().table("group_messages").select("content,created_at,sender_user_id").eq("group_id", group_id)
+              .order("created_at", desc=True).limit(1).execute().data or [])
+    _sb().table("groups").update(_preview_patch(latest[0] if latest else None)).eq("id", group_id).execute()
+    _announce_deleted(f"cards:group:{group_id}", message_id)
+    return {"ok": True}
+
+
+def delete_dm_message(user_id: str, connection_id: str, message_id: str) -> dict:
+    row = _connection_row(connection_id)
+    _require_connection_party(row, user_id)
+    threads = _sb().table("dm_threads").select("id").eq("connection_id", connection_id).limit(1).execute().data or []
+    if not threads:
+        raise HTTPException(404, "Message not found")
+    thread_id = threads[0]["id"]
+    rows = (_sb().table("dm_messages").select("id,sender_user_id").eq("id", message_id).eq("thread_id", thread_id)
+            .limit(1).execute().data or [])
+    if not rows:
+        raise HTTPException(404, "Message not found")
+    if rows[0]["sender_user_id"] != user_id:
+        raise HTTPException(403, "You can only delete your own messages")
+    _sb().table("dm_messages").delete().eq("id", message_id).execute()
+    latest = (_sb().table("dm_messages").select("content,created_at,sender_user_id").eq("thread_id", thread_id)
+              .order("created_at", desc=True).limit(1).execute().data or [])
+    _sb().table("dm_threads").update(_preview_patch(latest[0] if latest else None)).eq("id", thread_id).execute()
+    _announce_deleted(f"cards:dm:{thread_id}", message_id)
+    return {"ok": True}
 
 
 def list_incoming_invitations(user_id: str) -> dict:

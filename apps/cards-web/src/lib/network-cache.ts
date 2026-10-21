@@ -208,6 +208,23 @@ export function removeCachedMessage(kind: NetworkThreadKind, id: string, clientI
   });
 }
 
+/** Drops a message by its server id, for deletes. `removeCachedMessage` matches on client id. */
+export function forgetCachedMessage(kind: NetworkThreadKind, id: string, messageId: string) {
+  const key = threadKey(kind, id);
+  const previous = state.threads[key];
+  if (!previous) return;
+  nextState({
+    threads: {
+      ...state.threads,
+      [key]: {
+        ...previous,
+        messages: previous.messages.filter((message) => message.id !== messageId),
+        updatedAt: Date.now(),
+      },
+    },
+  });
+}
+
 // ── Where an assistant reply came from (dev only) ───────────────────────────
 //
 // Sent by cards-api with `agent_stream` when it runs with

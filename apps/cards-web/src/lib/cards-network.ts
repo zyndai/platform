@@ -94,6 +94,8 @@ export interface CardGroupInvitation {
   created_at: string;
   expires_at: string;
   group?: { id: string; name: string; description?: string | null };
+  /** Only on the owner's pending list (GET /network/groups/{id}/invitations). */
+  invitee?: CardSummary | null;
 }
 
 export interface CardInbox {
@@ -153,12 +155,35 @@ export type NetworkConversation =
 
 const API = (process.env.NEXT_PUBLIC_API_URL || "https://api.zynd.ai").replace(/\/$/, "");
 
-export async function cardsNetworkRequest<T>(
+/** Renews the signed-in session and resolves to the new access token, or to null when it cannot. */
+type SessionRenewer = () => Promise<string | null>;
+let renewSession: SessionRenewer | null = null;
+
+/**
+ * The page registers how to renew its session. A 401 means the token in hand has expired (access
+ * tokens last about an hour), so the request renews it once and retries with the new token.
+ */
+export function setSessionRenewer(renewer: SessionRenewer | null) {
+  renewSession = renewer;
+}
+
+export function cardsNetworkRequest<T>(
   path: string,
   token: string,
   method = "GET",
   body?: unknown,
   signal?: AbortSignal,
+): Promise<T> {
+  return sendNetworkRequest<T>(path, token, method, body, signal, true);
+}
+
+async function sendNetworkRequest<T>(
+  path: string,
+  token: string,
+  method: string,
+  body: unknown,
+  signal: AbortSignal | undefined,
+  canRenew: boolean,
 ): Promise<T> {
   const response = await fetch(`${API}/cards/network${path}`, {
     method,
@@ -170,6 +195,10 @@ export async function cardsNetworkRequest<T>(
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
+  if (response.status === 401 && canRenew && renewSession) {
+    const fresh = await renewSession();
+    if (fresh) return sendNetworkRequest<T>(path, fresh, method, body, signal, false);
+  }
   if (!response.ok) {
     let detail = "Cards network request failed";
     try { detail = (await response.json()).detail || detail; } catch { /* fallback */ }

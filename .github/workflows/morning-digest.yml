@@ -1,10 +1,12 @@
 # Pokes cards-api to email owners today's suggested posts + people.
 # SMTP stays on the API box. This workflow only sends CRON_SECRET.
+# Prod only: dev shares prod's database, so a dev run would email the same real owners.
 #
 # Secrets (repo Settings → Secrets → Actions):
 #   CRON_SECRET     — same value as cards-api CRON_SECRET
-#   CARDS_API_URL   — public cards-api origin, no trailing slash
-#                     (not localhost; the runner is in GitHub's cloud)
+#   CARDS_API_URL   — public prod cards-api origin, no trailing slash
+#                     (https://cards.api.zynd.ai; not localhost, the runner is in
+#                     GitHub's cloud)
 name: morning-digest
 
 on:
@@ -26,13 +28,5 @@ jobs:
         run: |
           test -n "$CRON_SECRET" || { echo "CRON_SECRET secret is empty"; exit 1; }
           test -n "$CARDS_API" || { echo "CARDS_API_URL secret is empty"; exit 1; }
-          curl -fsS -X POST "${CARDS_API%/}/internal/morning-digest" \
-            -H "Authorization: Bearer ${CRON_SECRET}"
-      - name: Trigger morning digest (dev)
-        env:
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          CARDS_API: ${{ secrets.CARDS_API_DEV_URL }}
-        run: |
-          test -n "$CARDS_API" || { echo "CARDS_API_DEV_URL secret not set; skipping dev"; exit 0; }
           curl -fsS -X POST "${CARDS_API%/}/internal/morning-digest" \
             -H "Authorization: Bearer ${CRON_SECRET}"

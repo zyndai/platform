@@ -3,6 +3,11 @@ import type { CardConnection, CardGroup, CardGroupInvitation, CardGroupMember, C
 
 export const NETWORK_USER = "11111111-1111-4111-8111-111111111111";
 const BOB = "22222222-2222-4222-8222-222222222222";
+// A 1x1 transparent PNG, standing in for whatever /api/img would proxy.
+const PIXEL = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64",
+);
 const DM_THREAD = "66666666-6666-4666-8666-666666666666";
 const GROUP_ID = "55555555-5555-4555-8555-555555555555";
 let nextGroupId = 0;
@@ -12,7 +17,7 @@ export async function mockNetwork(page: Page) {
     connections: [{
       id: "33333333-3333-4333-8333-333333333333", status: "pending", incoming: true,
       created_at: new Date().toISOString(), request_message: "Can we discuss Python APIs?",
-      partner: { card_id: "bob-card", handle: "bob", name: "Bob" },
+      partner: { card_id: "bob-card", handle: "bob", name: "Bob", avatar_url: "https://avatars.githubusercontent.com/u/2?v=4" },
       thread_id: null, last_message_at: null, last_message_preview: null,
       last_message_sender_user_id: null, unread_count: 0,
     }] as CardConnection[],
@@ -21,7 +26,10 @@ export async function mockNetwork(page: Page) {
     messages: [] as CardMessage[],
     groupMessages: [] as CardMessage[],
     members: [] as CardGroupMember[],
-    people: [{ card_id: "bob-card", handle: "bob", name: "Bob", user_id: BOB }] as (CardSummary & { user_id: string })[],
+    people: [{
+      card_id: "bob-card", handle: "bob", name: "Bob", user_id: BOB,
+      avatar_url: "https://avatars.githubusercontent.com/u/2?v=4",
+    }] as (CardSummary & { user_id: string })[],
     // Claimed Cards the "Start a connection" search can find (GET /people/suggest).
     directory: [
       { card_id: "bob-card", handle: "bob", name: "Bob", headline: "Backend engineer" },
@@ -50,7 +58,19 @@ export async function mockNetwork(page: Page) {
     agentPreference: true,
     memorySeq: 0,
     messageCalls: [] as string[],
+    avatarRequests: [] as string[],
   };
+
+  // /api/img would fetch the real CDN. Serve a pixel instead, and a 404 for
+  // URLs marked "expired" so the initials fallback can be exercised.
+  await page.route(/\/api\/img\?/, async route => {
+    const url = route.request().url();
+    state.avatarRequests.push(url);
+    if (new URL(url).searchParams.get("url")?.includes("expired")) {
+      return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "image unavailable" }) });
+    }
+    return route.fulfill({ status: 200, contentType: "image/png", body: PIXEL });
+  });
 
   const lastDm = (connection: CardConnection) => {
     const rows = state.messages.filter((message) => message.thread_id === connection.thread_id);
@@ -247,10 +267,14 @@ export async function mockNetwork(page: Page) {
           created_at: new Date().toISOString(),
         };
         state.groupMessages.push(message);
+        // Tagging @alice queues the signed-in user's own assistant.
+        const queued = [/@bob\b/i.test(body.content) ? BOB : null, /@alice\b/i.test(body.content) ? NETWORK_USER : null]
+          .filter((id): id is string => id !== null);
         return json({
           message,
           duplicate: false,
-          agent_replies: /@bob\b/i.test(body.content) ? 1 : 0,
+          agent_replies: queued.length,
+          agent_reply_users: queued,
         });
       }
       state.messageCalls.push(request.url());

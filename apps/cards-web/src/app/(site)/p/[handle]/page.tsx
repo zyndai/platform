@@ -17,6 +17,7 @@ import {
   type Project,
 } from "@/lib/cards";
 import { createClient } from "@/lib/supabase/server";
+import { imgProxyUrl } from "@/lib/avatar";
 import { pageMetadata } from "@/lib/seo";
 import { SkillMatrix } from "./skill-matrix";
 import { withShareRef } from "@/lib/attr";
@@ -83,15 +84,6 @@ function githubAvatar(url: string | null | undefined, size = 400): string | null
   } catch {
     return null;
   }
-}
-
-function imgProxy(src: string | null | undefined, fallback?: string | null, handle?: string | null): string | undefined {
-  const qs = new URLSearchParams();
-  if (src) qs.set("url", src);
-  if (fallback) qs.set("fallback", fallback);
-  if (handle) qs.set("handle", handle);
-  if (!qs.has("url") && !qs.has("fallback")) return undefined;
-  return `/api/img?${qs.toString()}`;
 }
 
 function usernameFromUrl(url: string | null | undefined): string | null {
@@ -433,7 +425,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
   const rawAvatar = safeUrl(identity.avatar_url);
   const ghAvatar = githubAvatar(identity.links?.github);
   const avatarUrl = rawAvatar ?? ghAvatar;
-  const heroAvatarSrc = imgProxy(rawAvatar, ghAvatar, card.handle || handle);
+  const heroAvatarSrc = imgProxyUrl(rawAvatar, ghAvatar, card.handle || handle);
   const linkedinLinked = !!identity.links?.linkedin;
   const skills = card.skills.filter(s => cleanTopic(s.name)).sort((a, b) => b.evidence_count - a.evidence_count);
 
@@ -635,8 +627,8 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
   const ghFollowing = ghExtras?.following ?? null;
   const ghBio = ghExtras?.bio;
   const ghContribTotal = contributions?.total ?? (typeof v.github.commits === "number" ? v.github.commits : null);
-  const linkedinAvatarSrc = imgProxy(safeUrl(card.linkedin_stats?.avatar) ?? rawAvatar, ghAvatar, card.handle || handle);
-  const xAvatarSrc = imgProxy(safeUrl(card.x_stats?.avatar) ?? rawAvatar, ghAvatar, card.handle || handle);
+  const linkedinAvatarSrc = imgProxyUrl(safeUrl(card.linkedin_stats?.avatar) ?? rawAvatar, ghAvatar, card.handle || handle);
+  const xAvatarSrc = imgProxyUrl(safeUrl(card.x_stats?.avatar) ?? rawAvatar, ghAvatar, card.handle || handle);
   const xImpressions = v.x.impressions != null && String(v.x.impressions).trim() !== "—" ? v.x.impressions : null;
   const showMemory = claimed && memoryTotal > 0;
   const showBooking = claimed && bookingLinks.length > 0;
@@ -1284,7 +1276,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
                       <FallbackAvatar
-                        src={imgProxy(githubAvatar(githubUrl, 80) ?? `https://github.com/${encodeURIComponent(ghLogin || githubHandle)}.png?size=80`, undefined, card.handle || handle) ?? ""}
+                        src={imgProxyUrl(githubAvatar(githubUrl, 80) ?? `https://github.com/${encodeURIComponent(ghLogin || githubHandle)}.png?size=80`, undefined, card.handle || handle) ?? ""}
                         alt=""
                         initials={initials}
                         size={44}

@@ -9,9 +9,25 @@ const W = 1600;
 const H = 500;
 const WATER_Y = 400;
 
-/** Colours at the top of the sky and bottom of the water, for extending the
- *  art past its edges (the phone wallpaper). */
-export const SKYLINE_EDGES = { sky: "#BBB5F0", water: "#A6A3E2" } as const;
+export type SkylineTheme = "light" | "dark";
+
+/** Colours of the city, water and foreground for each theme. The light theme
+ *  is the sunrise of the card banner; dark is the same city at night. */
+const PALETTES = {
+  light: {
+    far: ["#B7B2EA", "#C9BFEE"], near: ["#8E8FD9", "#A49CDD"], windows: "#FFF1DE",
+    water: ["#D7CBF2", "#A6A3E2"], glints: "#FFF0DC", cityGlints: "#FFFFFF",
+    deck: "#6E70C2", deckEdge: "#9EA0E0", cables: "#8D8FD8", pylon: "#5A5CB2", piers: "#7577C6",
+    palm: "#5B58A8", palmCrown: "#4A4795", boat: "#5B58A8", cabin: "#6C6AB8",
+  },
+  dark: {
+    far: ["#2E2A72", "#25215E"], near: ["#3D3891", "#2C2878"], windows: "#FFD58A",
+    water: ["#1C1952", "#0D0B2B"], glints: "#FFD58A", cityGlints: "#FFD58A",
+    deck: "#4B47A8", deckEdge: "#6C67C9", cables: "#5D58B8", pylon: "#6F6AD0", piers: "#3B378E",
+    palm: "#0E0C2E", palmCrown: "#0A0824", boat: "#0E0C2E", cabin: "#1A1748",
+  },
+} as const;
+type Palette = (typeof PALETTES)[SkylineTheme];
 
 /** Deterministic pseudo-random numbers, so the server and every client draw
  *  the same towers (no hydration mismatch). */
@@ -68,7 +84,7 @@ function Crystal({ x, y, s, d, id }: { x: number; y: number; s: number; d: numbe
   );
 }
 
-function Palm({ x, scale, flip = false }: { x: number; scale: number; flip?: boolean }) {
+function Palm({ x, scale, flip = false, p }: { x: number; scale: number; flip?: boolean; p: Palette }) {
   // Trunk leans; fronds fan from the crown. Drawn once at unit size.
   const fronds = [
     "M0,0 C-30,-12 -64,0 -88,28 C-60,14 -30,12 0,8Z",
@@ -79,24 +95,24 @@ function Palm({ x, scale, flip = false }: { x: number; scale: number; flip?: boo
     "M0,2 C30,0 58,22 74,52 C50,34 26,22 -2,10Z",
   ];
   return (
-    <g transform={`translate(${x} ${WATER_Y + 12}) scale(${flip ? -scale : scale} ${scale})`} fill="#5B58A8">
+    <g transform={`translate(${x} ${WATER_Y + 12}) scale(${flip ? -scale : scale} ${scale})`} fill={p.palm}>
       <path d="M-4,0 C-2,-60 10,-120 30,-178 L38,-176 C20,-118 10,-58 6,0Z" />
       <g transform="translate(34 -178)">
         {fronds.map((d, i) => <path key={i} d={d} />)}
-        <circle r={6} fill="#4A4795" />
+        <circle r={6} fill={p.palmCrown} />
       </g>
     </g>
   );
 }
 
-function SeaLink() {
+function SeaLink({ p }: { p: Palette }) {
   const deckY = (x: number) => 372 - (x - 880) * 0.03 - Math.sin(((x - 880) / 720) * Math.PI) * 10;
   const pylons = [{ x: 1150, top: 170 }, { x: 1400, top: 200 }];
   const deck = Array.from({ length: 25 }, (_, i) => 880 + i * 30).map((x) => `${x},${deckY(x).toFixed(1)}`).join(" L");
   return (
     <g fill="none" strokeLinecap="round">
-      <path d={`M${deck}`} stroke="#6E70C2" strokeWidth={6} />
-      <path d={`M${deck}`} stroke="#9EA0E0" strokeWidth={1.5} transform="translate(0 5)" />
+      <path d={`M${deck}`} stroke={p.deck} strokeWidth={6} />
+      <path d={`M${deck}`} stroke={p.deckEdge} strokeWidth={1.5} transform="translate(0 5)" />
       {pylons.map(({ x, top }) => {
         const base = deckY(x);
         return (
@@ -107,30 +123,30 @@ function SeaLink() {
                 const dx = side * (24 + i * 15);
                 return (
                   <path key={`${side}-${i}`} d={`M${x},${top + 18 + i * 3} L${x + dx},${deckY(x + dx)}`}
-                    stroke="#8D8FD8" strokeWidth={1} strokeOpacity={0.9} />
+                    stroke={p.cables} strokeWidth={1} strokeOpacity={0.9} />
                 );
               }),
             )}
             {/* Inverted-Y tower: two legs meeting above the deck, one spire. */}
             <path d={`M${x - 24},${base + 30} L${x - 4},${top + 84} L${x},${top} L${x + 4},${top + 84} L${x + 24},${base + 30}`}
-              stroke="#5A5CB2" strokeWidth={7} strokeLinejoin="round" />
-            <path d={`M${x - 15},${base - 4} L${x + 15},${base - 4}`} stroke="#5A5CB2" strokeWidth={4} />
+              stroke={p.pylon} strokeWidth={7} strokeLinejoin="round" />
+            <path d={`M${x - 15},${base - 4} L${x + 15},${base - 4}`} stroke={p.pylon} strokeWidth={4} />
           </g>
         );
       })}
       {Array.from({ length: 12 }, (_, i) => 900 + i * 60).map((x) => (
-        <path key={x} d={`M${x},${deckY(x) + 4} L${x},${WATER_Y + 2}`} stroke="#7577C6" strokeWidth={3} />
+        <path key={x} d={`M${x},${deckY(x) + 4} L${x},${WATER_Y + 2}`} stroke={p.piers} strokeWidth={3} />
       ))}
     </g>
   );
 }
 
-function Boat({ x, y, s }: { x: number; y: number; s: number }) {
+function Boat({ x, y, s, p }: { x: number; y: number; s: number; p: Palette }) {
   return (
-    <g transform={`translate(${x} ${y}) scale(${s})`} fill="#5B58A8">
+    <g transform={`translate(${x} ${y}) scale(${s})`} fill={p.boat}>
       <path d="M-26,0 L26,0 L19,9 L-19,9Z" />
-      <path d="M-12,0 L-12,-10 L10,-10 L14,0Z" fill="#6C6AB8" />
-      <path d="M-2,-10 L-2,-24" stroke="#5B58A8" strokeWidth={1.5} />
+      <path d="M-12,0 L-12,-10 L10,-10 L14,0Z" fill={p.cabin} />
+      <path d="M-2,-10 L-2,-24" stroke={p.boat} strokeWidth={1.5} />
     </g>
   );
 }
@@ -146,9 +162,13 @@ export interface MumbaiSkylineProps {
   crop?: [number, number];
   /** Leave out the palms and boats, e.g. for small thumbnails. */
   simple?: boolean;
+  theme?: SkylineTheme;
+  /** Only the city, bridge and water, with no sky: for drawing on a background of your own. */
+  silhouette?: boolean;
 }
 
-export function MumbaiSkyline({ idPrefix: id, className, style, focus = "bottom", crop = [0, H], simple = false }: MumbaiSkylineProps) {
+export function MumbaiSkyline({ idPrefix: id, className, style, focus = "bottom", crop = [0, H], simple = false, theme = "light", silhouette = false }: MumbaiSkylineProps) {
+  const p = PALETTES[theme];
   return (
     <svg
       viewBox={`0 ${crop[0]} ${W} ${crop[1] - crop[0]}`}
@@ -171,16 +191,16 @@ export function MumbaiSkyline({ idPrefix: id, className, style, focus = "bottom"
           <stop offset="1" stopColor="#FFC9A0" stopOpacity="0" />
         </radialGradient>
         <linearGradient id={`${id}-water`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#D7CBF2" />
-          <stop offset="1" stopColor="#A6A3E2" />
+          <stop offset="0" stopColor={p.water[0]} />
+          <stop offset="1" stopColor={p.water[1]} />
         </linearGradient>
         <linearGradient id={`${id}-far`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#B7B2EA" />
-          <stop offset="1" stopColor="#C9BFEE" />
+          <stop offset="0" stopColor={p.far[0]} />
+          <stop offset="1" stopColor={p.far[1]} />
         </linearGradient>
         <linearGradient id={`${id}-near`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#8E8FD9" />
-          <stop offset="1" stopColor="#A49CDD" />
+          <stop offset="0" stopColor={p.near[0]} />
+          <stop offset="1" stopColor={p.near[1]} />
         </linearGradient>
         <linearGradient id={`${id}-crystal-a`} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#E9E6FF" />
@@ -199,8 +219,8 @@ export function MumbaiSkyline({ idPrefix: id, className, style, focus = "bottom"
           <stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
         </radialGradient>
         <pattern id={`${id}-windows`} width="8" height="11" patternUnits="userSpaceOnUse">
-          <rect x="2" y="3" width="2" height="3" fill="#FFF1DE" opacity="0.75" />
-          <rect x="5.5" y="7.5" width="2" height="3" fill="#FFF1DE" opacity="0.35" />
+          <rect x="2" y="3" width="2" height="3" fill={p.windows} opacity="0.75" />
+          <rect x="5.5" y="7.5" width="2" height="3" fill={p.windows} opacity="0.35" />
         </pattern>
         <filter id={`${id}-soft`} x="-20%" y="-50%" width="140%" height="200%">
           <feGaussianBlur stdDeviation="14" />
@@ -212,15 +232,18 @@ export function MumbaiSkyline({ idPrefix: id, className, style, focus = "bottom"
         @media (prefers-reduced-motion: reduce) { .ed-float { animation: none; } }
       `}</style>
 
-      <rect width={W} height={WATER_Y} fill={`url(#${id}-sky)`} />
-      <circle cx={1170} cy={WATER_Y - 6} r={300} fill={`url(#${id}-sun)`} />
-      <g fill="#FFFFFF" opacity={0.45} filter={`url(#${id}-soft)`}>
-        <ellipse cx={380} cy={110} rx={170} ry={22} />
-        <ellipse cx={860} cy={70} rx={210} ry={18} />
-        <ellipse cx={1380} cy={150} rx={150} ry={16} />
-      </g>
-
-      {CRYSTALS.map((c) => <Crystal key={`${c.x}-${c.y}`} {...c} id={id} />)}
+      {!silhouette && (
+        <>
+          <rect width={W} height={WATER_Y} fill={`url(#${id}-sky)`} />
+          <circle cx={1170} cy={WATER_Y - 6} r={300} fill={`url(#${id}-sun)`} />
+          <g fill="#FFFFFF" opacity={0.45} filter={`url(#${id}-soft)`}>
+            <ellipse cx={380} cy={110} rx={170} ry={22} />
+            <ellipse cx={860} cy={70} rx={210} ry={18} />
+            <ellipse cx={1380} cy={150} rx={150} ry={16} />
+          </g>
+          {CRYSTALS.map((c) => <Crystal key={`${c.x}-${c.y}`} {...c} id={id} />)}
+        </>
+      )}
 
       {FAR.map((t) => (
         <rect key={`f${t.x}`} x={t.x} y={WATER_Y - t.h} width={t.w} height={t.h} fill={`url(#${id}-far)`} />
@@ -236,27 +259,27 @@ export function MumbaiSkyline({ idPrefix: id, className, style, focus = "bottom"
       ))}
 
       <rect y={WATER_Y} width={W} height={H - WATER_Y} fill={`url(#${id}-water)`} />
-      <SeaLink />
+      <SeaLink p={p} />
       {/* sun and city lights on the water */}
-      <g fill="#FFF0DC">
+      <g fill={p.glints}>
         {[0, 1, 2, 3, 4, 5].map((i) => (
           <rect key={i} x={1110 + i * 9} y={WATER_Y + 10 + i * 14} width={120 - i * 18} height={3} rx={1.5} opacity={0.75 - i * 0.1} />
         ))}
       </g>
-      <g fill="#FFFFFF" opacity={0.35}>
+      <g fill={p.cityGlints} opacity={0.35}>
         {NEAR.filter((t) => t.h > 120).map((t, i) => (
           <rect key={t.x} x={t.x + 2} y={WATER_Y + 8 + (i % 3) * 8} width={t.w * 0.6} height={2} rx={1} />
         ))}
       </g>
       {!simple && (
         <>
-          <Boat x={520} y={438} s={1} />
-          <Boat x={930} y={458} s={0.8} />
-          <Boat x={1290} y={446} s={0.9} />
+          <Boat x={520} y={438} s={1} p={p} />
+          <Boat x={930} y={458} s={0.8} p={p} />
+          <Boat x={1290} y={446} s={0.9} p={p} />
           {/* palms stay at the edges so the title over the sky reads clearly */}
-          <Palm x={18} scale={1.15} />
-          <Palm x={96} scale={0.72} flip />
-          <Palm x={1585} scale={1.05} flip />
+          <Palm x={18} scale={1.15} p={p} />
+          <Palm x={96} scale={0.72} flip p={p} />
+          <Palm x={1585} scale={1.05} flip p={p} />
         </>
       )}
     </svg>

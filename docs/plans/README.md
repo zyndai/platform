@@ -36,6 +36,7 @@ current *how*.
 | [`ZYND_DB_UNIFY_PLAN.md`](./ZYND_DB_UNIFY_PLAN.md) | **Current plan** for moving cards' data and login off the dashboard's Supabase project (xmfj) onto persona's (aafo), with Drizzle-managed migrations in `packages/db`. Supersedes §3/P1/P3/P4 of the cards-move plan below |
 | [`ZYND_CARDS_MOVE_PLAN.md`](./ZYND_CARDS_MOVE_PLAN.md) | The broader cards-move plan (P0–P5). P0, P2, and P5 still apply; P1/P3/P4 are replaced by `ZYND_DB_UNIFY_PLAN.md` above |
 | [`ZYND_MEMORY_QUALITY_PLAN.md`](./ZYND_MEMORY_QUALITY_PLAN.md) | **Part A:** memory fact quality (no dependency noise or duplicates, stale facts hidden, `get_my_context` returns what's current plus topic-related facts). **Part B:** Cards networking (people-search fixes, one search tool and result shape, two-way match, invite to claim, digest, trust). Combined order in §16. Proposed, not started |
+| [`ZYND_CLAUDE_PLUGIN_PLAN.md`](./ZYND_CLAUDE_PLUGIN_PLAN.md) | Claude counterpart of the ChatGPT plugin: a `/claude/mcp` server with the same six consent-gated tools, audience-bound plugin OAuth, and a plugin bundle for Anthropic's directory. Proposed, not started |
 
 **4. Paused**
 

@@ -54,7 +54,7 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const GA_ID = process.env.NEXT_PUBLIC_ANALYTICS_ID;
+  const GA_ID = process.env.NEXT_PUBLIC_ANALYTICS_ID || "G-Z0P2VTWZ35";
   const { user } = await getServerAuth();
 
   return (

@@ -355,20 +355,54 @@ async def decide(pool, redis, uid: str, proposal_id: str, nonce: str, decision: 
     return {"status": status}
 
 
+_RECALL_STOPWORDS = frozenset("""
+    about all also and any are but can could did does for from has have how into just
+    know like may more not now off one only other our out should some than that the
+    their them then there these they this those too was were what when where which who
+    whom why will with would you your
+    current else remember remembered remembers recall tell show zynd
+""".split())
+_MAX_RECALL_TERMS = 8
+
+
+def recall_terms(query: str) -> list[str]:
+    """Search words from a natural-language question; falls back to the whole phrase.
+
+    ChatGPT sends phrases like "what else am I building", which never appear verbatim
+    in a saved fact, so recall matches on the meaningful words instead.
+    """
+    words = re.findall(r"\w+", query.lower())
+    terms = [w for w in dict.fromkeys(words) if len(w) >= 3 and w not in _RECALL_STOPWORDS]
+    return terms[:_MAX_RECALL_TERMS] or [query.strip().lower()[:100]]
+
+
+def _like_pattern(term: str) -> str:
+    return "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
 async def recall_facts(pool, uid: str, query: str, limit: int = 5) -> list[dict]:
-    """Read exact approved private facts only; proposals never enter retrieval."""
+    """Read exact approved private facts only; proposals never enter retrieval.
+
+    A fact matches when it contains any search word; facts matching more words rank first.
+    """
     if not query or not query.strip():
         return []
+    patterns = [_like_pattern(term) for term in recall_terms(query[:200])]
     rows = await pool.fetch(
-        """SELECT text FROM (
+        """SELECT facts.text FROM (
                SELECT text, created_at AS occurred_at FROM memory_plugin_facts WHERE user_id = $1::uuid
                UNION ALL
                SELECT e.canonical_name AS text, a.extracted_at AS occurred_at
                  FROM assertions a JOIN entities e ON e.id = a.object_entity_id
                 WHERE a.user_id = $1::uuid AND a.valid_until IS NULL
-             ) facts WHERE text ILIKE '%' || $2 || '%' ESCAPE '\\'
-             ORDER BY occurred_at DESC LIMIT $3""",
-        uid, query[:100].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_"), min(max(limit, 1), 10))
+             ) facts
+             CROSS JOIN LATERAL (
+               SELECT count(*) AS hits FROM unnest($2::text[]) AS p
+                WHERE facts.text ILIKE p ESCAPE '\\'
+             ) m
+            WHERE m.hits > 0
+            ORDER BY m.hits DESC, facts.occurred_at DESC LIMIT $3""",
+        uid, patterns, min(max(limit, 1), 10))
     return [{"text": row["text"]} for row in rows]
 
 

@@ -10,6 +10,11 @@ const nextConfig: NextConfig = {
       // never had a route (it 404'd on the dashboard too). The machine-readable
       // card is data.json; keep already-shared /agent URLs working.
       { source: "/p/:handle/agent", destination: "/p/:handle/data.json", permanent: false },
+      // /find was folded into the directory: its ranked search is the directory's
+      // "match" mode. Links already shared (and the ones in llms.txt) keep working,
+      // and the query string (q, limit) rides along.
+      { source: "/find", has: [{ type: "query", key: "q" }], destination: "/directory?match=1", permanent: false },
+      { source: "/find", destination: "/directory", permanent: false },
     ];
   },
   async headers() {

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { parseConnectionParam } from "@/lib/cards-network";
+import { DiscoverShell } from "@/components/discover/discover-shell";
 import { NetworkClient } from "./network-client";
 import { NetworkV2 } from "./network-v2";
 
@@ -23,13 +24,15 @@ export default async function NetworkPage({ searchParams }: { searchParams: Prom
   const v2 = process.env.FEATURE_NETWORK_V2 === "true" || params?.v2 === "1";
   return v2
     ? (
-      <NetworkV2
-        token={session.access_token}
-        userId={session.user.id}
-        initialConnectionId={connectionId}
-        groupMemoryEnabled={process.env.FEATURE_GROUP_MEMORY === "true"}
-        groupAgentRepliesEnabled={process.env.FEATURE_GROUP_AGENT_REPLIES !== "false"}
-      />
+      <DiscoverShell active="network" app>
+        <NetworkV2
+          token={session.access_token}
+          userId={session.user.id}
+          initialConnectionId={connectionId}
+          groupMemoryEnabled={process.env.FEATURE_GROUP_MEMORY === "true"}
+          groupAgentRepliesEnabled={process.env.FEATURE_GROUP_AGENT_REPLIES !== "false"}
+        />
+      </DiscoverShell>
     )
     : <NetworkClient token={session.access_token} userId={session.user.id} />;
 }

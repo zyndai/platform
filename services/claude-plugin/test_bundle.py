@@ -4,10 +4,11 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 
-from bundle import MCP_URL, REVIEW_ORIGIN, ROOT, SKILL_TOOLS, TOOLS, stage, validate
+from bundle import MCP_URL, REVIEW_ORIGIN, ROOT, SKILL_TOOLS, TOOLS, build, stage, validate
 from plugin_mcp import PLUGIN_TOOLS
 
 
@@ -137,6 +138,39 @@ class BundleTests(unittest.TestCase):
             (Path(directory) / "full/keep.txt").write_text("x")
             with self.assertRaisesRegex(ValueError, "empty directory"):
                 stage(Path(directory) / "full")
+
+    def test_build_zips_the_package_with_the_manifest_at_the_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = build(Path(directory) / "dist/zynd.zip")
+            with zipfile.ZipFile(first) as archive:
+                self.assertEqual(archive.namelist(), validate())
+                self.assertIn(".claude-plugin/plugin.json", archive.namelist())
+                for name in archive.namelist():
+                    self.assertEqual(archive.read(name), (ROOT / name).read_bytes())
+            second = build(Path(directory) / "again.zip")
+            self.assertEqual(first.read_bytes(), second.read_bytes())
+
+    def test_build_can_aim_the_zip_at_another_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = build(Path(directory) / "dev.zip", mcp_url="https://dev.api.zynd.ai/claude/mcp",
+                        review_origin="https://dev.cards.zynd.ai")
+            with zipfile.ZipFile(out) as archive:
+                self.assertEqual(json.loads(archive.read(".mcp.json"))["mcpServers"]["zynd"]["url"],
+                                 "https://dev.api.zynd.ai/claude/mcp")
+                self.assertNotIn(REVIEW_ORIGIN, archive.read(".claude-plugin/plugin.json").decode())
+
+    def test_build_refuses_bad_input_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "outside the package"):
+                build(ROOT / "zynd.zip")
+            with self.assertRaisesRegex(ValueError, "MCP URL"):
+                build(Path(directory) / "bad.zip", mcp_url="http://localhost/claude/mcp")
+            with self.fixture() as root:
+                (root / "hooks").mkdir()
+                (root / "hooks/hooks.json").write_text("{}")
+                with self.assertRaisesRegex(ValueError, "unexpected package file"):
+                    build(Path(directory) / "invalid.zip", root=root)
+            self.assertEqual(list(Path(directory).iterdir()), [])
 
     @unittest.skipUnless(shutil.which("claude"), "claude CLI not installed")
     def test_anthropic_cli_accepts_the_package(self):

@@ -1,6 +1,7 @@
 """Check the Claude plugin bundle in package/ and stage test copies of it (stdlib only).
 
     python3 services/claude-plugin/bundle.py
+    python3 services/claude-plugin/bundle.py --output dist/zynd-claude-plugin.zip
     python3 services/claude-plugin/bundle.py --stage /tmp/zynd-dev \
         --mcp-url https://dev.api.zynd.ai/claude/mcp --review-origin https://dev.cards.zynd.ai
 
@@ -13,6 +14,7 @@ import argparse
 import json
 import re
 import shutil
+import zipfile
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
@@ -136,13 +138,24 @@ def validate(root=ROOT):
     return names
 
 
+def check_targets(mcp_url, review_origin):
+    require(safe_url(mcp_url) and urlsplit(mcp_url).path == "/claude/mcp", "MCP URL must be HTTPS with path /claude/mcp")
+    require(safe_url(review_origin) and urlsplit(review_origin).path == "", "review origin must be an HTTPS origin without a path")
+
+
+def render(root, name, mcp_url, review_origin):
+    """One package file's bytes, aimed at the given environment."""
+    if name.endswith(TEXT_SUFFIXES) or name == "LICENSE":
+        return (root / name).read_text().replace(MCP_URL, mcp_url).replace(REVIEW_ORIGIN, review_origin).encode()
+    return (root / name).read_bytes()
+
+
 def stage(output, root=ROOT, mcp_url=MCP_URL, review_origin=REVIEW_ORIGIN):
     """Write a copy of the package aimed at another environment, for `claude --plugin-dir`.
 
     Never edits package/. The copy is for testing only, so it is not re-validated against the
     production URLs it deliberately replaces."""
-    require(safe_url(mcp_url) and urlsplit(mcp_url).path == "/claude/mcp", "MCP URL must be HTTPS with path /claude/mcp")
-    require(safe_url(review_origin) and urlsplit(review_origin).path == "", "review origin must be an HTTPS origin without a path")
+    check_targets(mcp_url, review_origin)
     names = validate(root)
     output = Path(output).resolve()
     require(not output.is_relative_to(root.resolve()) and not root.resolve().is_relative_to(output),
@@ -151,22 +164,40 @@ def stage(output, root=ROOT, mcp_url=MCP_URL, review_origin=REVIEW_ORIGIN):
     for name in names:
         target = output / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        if name.endswith(TEXT_SUFFIXES) or name == "LICENSE":
-            text = (root / name).read_text().replace(MCP_URL, mcp_url).replace(REVIEW_ORIGIN, review_origin)
-            target.write_text(text)
-        else:
-            shutil.copyfile(root / name, target)
+        target.write_bytes(render(root, name, mcp_url, review_origin))
+    return output
+
+
+def build(output, root=ROOT, mcp_url=MCP_URL, review_origin=REVIEW_ORIGIN):
+    """Zip the package for claude.ai's "Upload a plugin" (Customize > Plugins), manifest at the zip root.
+
+    Reproducible: fixed timestamps and modes, files in sorted order. Nothing is written if validation fails."""
+    check_targets(mcp_url, review_origin)
+    names = validate(root)
+    output = Path(output).resolve()
+    require(not output.is_relative_to(root.resolve()), "write the ZIP outside the package folder")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        for name in names:
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, render(root, name, mcp_url, review_origin), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
     return output
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--output", help="ZIP file to write (outside package/), for claude.ai's Upload a plugin")
     parser.add_argument("--stage", help="empty directory to write a test copy into")
-    parser.add_argument("--mcp-url", default=MCP_URL, help="HTTPS /claude/mcp URL for the test copy")
-    parser.add_argument("--review-origin", default=REVIEW_ORIGIN, help="HTTPS review origin for the test copy")
+    parser.add_argument("--mcp-url", default=MCP_URL, help="HTTPS /claude/mcp URL for the test copy or ZIP")
+    parser.add_argument("--review-origin", default=REVIEW_ORIGIN, help="HTTPS review origin for the test copy or ZIP")
     args = parser.parse_args()
     try:
-        if args.stage:
+        require(not (args.output and args.stage), "choose --output or --stage, not both")
+        if args.output:
+            print(build(args.output, mcp_url=args.mcp_url, review_origin=args.review_origin))
+        elif args.stage:
             print(stage(args.stage, mcp_url=args.mcp_url, review_origin=args.review_origin))
         else:
             print(f"Validated {len(validate())} package files")

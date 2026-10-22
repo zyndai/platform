@@ -35,7 +35,13 @@ cd services/memory && PYTHONPATH=tests .venv/bin/python -m pytest -c pyproject.t
 ```bash
 python3 services/claude-plugin/bundle.py                      # our checks
 claude plugin validate --profile directory --strict services/claude-plugin/package   # Anthropic's
+npm run validate:claude-plugin                                # same, from the repo root
+npm run build:claude-plugin                                   # our checks, then dist/zynd-claude-plugin.zip
 ```
+
+`build:claude-plugin` writes the ZIP for claude.ai's Upload a plugin dialog (the manifest sits at the zip root, so a
+plain zip of the repo folder would not work). It is reproducible and `dist/` is not tracked. For a ZIP aimed at dev,
+pass the same flags as `--stage`: `python3 services/claude-plugin/bundle.py --output dist/zynd-dev.zip --mcp-url ... --review-origin ...`.
 
 Try it in Claude Code against dev (the copy is written outside the repo; `package/` is never edited):
 

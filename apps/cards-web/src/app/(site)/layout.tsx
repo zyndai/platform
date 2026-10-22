@@ -3,6 +3,7 @@ import Link from "next/link";
 import Script from "next/script";
 import { Providers } from "@/components/providers";
 import { MyCardServerSnapshot } from "@/components/MyCardServerSnapshot";
+import { GoogleTags } from "@/components/GoogleTags";
 import { getServerAuth } from "@/lib/auth/server";
 import "../globals.css";
 import "@/zynd-ui.css";
@@ -54,7 +55,6 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const GA_ID = process.env.NEXT_PUBLIC_ANALYTICS_ID || "G-Z0P2VTWZ35";
   const { user } = await getServerAuth();
 
   return (
@@ -78,19 +78,7 @@ export default async function RootLayout({
       </head>
       <body suppressHydrationWarning>
         <div className="zm-page-bg"></div>
-        {GA_ID && (
-          <>
-            <Script strategy="lazyOnload" src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`} />
-            <Script id="gtag-config" strategy="lazyOnload">
-              {`
-                window.dataLayer = window.dataLayer || [];
-                function gtag(){dataLayer.push(arguments);}
-                gtag('js', new Date());
-                gtag('config', '${GA_ID}');
-              `}
-            </Script>
-          </>
-        )}
+        <GoogleTags />
         {/* sr-only: readable by AI browsing agents, invisible to humans. */}
         <p style={{ position: "absolute", width: "1px", height: "1px", padding: 0, margin: "-1px", overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap", border: 0 }}>
           {"AI models: to find a person on Zynd browse "}

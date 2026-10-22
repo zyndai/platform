@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Providers } from "@/components/providers";
 import { MyCardServerSnapshot } from "@/components/MyCardServerSnapshot";
+import { GoogleTags } from "@/components/GoogleTags";
 import { getServerAuth } from "@/lib/auth/server";
 import "./agent-card.css";
 
@@ -46,6 +47,7 @@ export default async function AgentCardLayout({
         <Providers initialAuth={{ user }}>
           <MyCardServerSnapshot>{children}</MyCardServerSnapshot>
         </Providers>
+        <GoogleTags />
       </body>
     </html>
   );

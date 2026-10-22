@@ -5,10 +5,11 @@ import Script from "next/script";
 import "./globals.css";
 
 // Persona's own GA4 property, plus the Zynd-wide one shared with www.zynd.ai
-// and cards. GoogleAnalytics configures only the first, so the second is
-// added with a plain gtag('config') call on the same dataLayer.
+// and cards, plus the "Zynd Persona" stream (G-WKSDPT0VJ6). GoogleAnalytics
+// configures only the first, so the rest are added with plain gtag('config')
+// calls on the same dataLayer.
 const GA_ID = process.env.NEXT_PUBLIC_GA_ID || "G-Z0P2VTWZ35";
-const ZYND_GA_ID = "G-MZ5HW7D8H9";
+const EXTRA_GA_IDS = ["G-MZ5HW7D8H9", "G-WKSDPT0VJ6"].filter((id) => id !== GA_ID);
 
 const fraunces = Fraunces({
   subsets: ["latin"],
@@ -156,12 +157,12 @@ export default function RootLayout({
       </head>
       <body suppressHydrationWarning>{children}</body>
       <GoogleAnalytics gaId={GA_ID} />
-      {GA_ID !== ZYND_GA_ID && (
+      {EXTRA_GA_IDS.length > 0 && (
         <Script id="ga-zynd" strategy="afterInteractive">
           {`
             window.dataLayer = window.dataLayer || [];
             function gtag(){dataLayer.push(arguments);}
-            gtag('config', '${ZYND_GA_ID}');
+            ${EXTRA_GA_IDS.map((id) => `gtag('config', '${id}');`).join("\n            ")}
           `}
         </Script>
       )}

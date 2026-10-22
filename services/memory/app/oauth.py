@@ -344,8 +344,35 @@ def _is_plugin_client(client_id: str) -> bool:
                 hmac.compare_digest(client_id, settings.plugin_oauth_client_id))
 
 
+def _claude_plugin_enabled() -> bool:
+    return bool(settings.feature_claude_plugin and settings.feature_plugin_consent and
+                settings.feature_s09_mcp_clients)
+
+
+def _is_claude_plugin_resource(resource: str) -> bool:
+    """Claude picks its own client_id, so the Claude plugin is recognised by the
+    exact resource it asks for. The origin form stays with the general /mcp."""
+    return bool(resource) and resource.rstrip("/") == settings.claude_plugin_resource_url
+
+
+def _is_plugin_request(payload: dict) -> bool:
+    """A signed /authorize request for either plugin; only these may use the reviewer account."""
+    return (_is_plugin_client(payload.get("client_id", "")) or
+            _is_claude_plugin_resource(payload.get("resource", "")))
+
+
 def _public_scope(client_id: str) -> str:
     return " ".join(PLUGIN_SCOPES) if _is_plugin_client(client_id) else "user"
+
+
+def _public_binding(client_id: str, granted_resource: str) -> tuple[str, str, str]:
+    """(resource, accepted origin, scope) a public client's grant must carry at /token."""
+    if _is_plugin_client(client_id):
+        return settings.plugin_resource_url, settings.plugin_mcp_origin, _public_scope(client_id)
+    if _is_claude_plugin_resource(granted_resource) and _claude_plugin_enabled():
+        resource = settings.claude_plugin_resource_url
+        return resource, resource, " ".join(PLUGIN_SCOPES)
+    return settings.mcp_resource_url, settings.mcp_origin, "user"
 
 
 # Every scope a connector may ask for. Includes the granular MCP scopes the
@@ -644,8 +671,15 @@ async def authorize(
         raise HTTPException(status_code=400, detail="response_type must be 'code'")
 
     plugin = _is_plugin_client(client_id)
-    expected_resource = settings.plugin_resource_url if plugin else settings.mcp_resource_url
-    expected_origin = settings.plugin_mcp_origin if plugin else settings.mcp_origin
+    claude = not plugin and not _is_known_client(client_id) and _is_claude_plugin_resource(resource)
+    if claude and not _claude_plugin_enabled():
+        raise HTTPException(status_code=400, detail="unsupported resource indicator")
+    if plugin:
+        expected_resource, expected_origin = settings.plugin_resource_url, settings.plugin_mcp_origin
+    elif claude:
+        expected_resource = expected_origin = settings.claude_plugin_resource_url
+    else:
+        expected_resource, expected_origin = settings.mcp_resource_url, settings.mcp_origin
     if resource:
         res = resource.rstrip("/")
         # Accept the canonical resource or its origin (some hosts send the
@@ -658,10 +692,16 @@ async def authorize(
     if is_connector_client:
         if code_challenge_method != "S256" or not re.fullmatch(r"[A-Za-z0-9_-]{43}", code_challenge):
             raise HTTPException(status_code=400, detail="S256 PKCE required")
-        allowed_scopes = set(PLUGIN_SCOPES) if _is_plugin_client(client_id) else set(CONNECTOR_SCOPES)
+        if plugin:
+            allowed_scopes = set(PLUGIN_SCOPES)
+        elif claude:
+            # Claude appends offline_access because the AS lists it; refresh is always issued.
+            allowed_scopes = {*PLUGIN_SCOPES, "offline_access"}
+        else:
+            allowed_scopes = set(CONNECTOR_SCOPES)
         if not set(scope.split()).issubset(allowed_scopes):
             raise HTTPException(status_code=400, detail="unsupported scope")
-        scope = _public_scope(client_id)
+        scope = " ".join(PLUGIN_SCOPES) if claude else _public_scope(client_id)
         resource = resource or expected_resource
 
     client_name = client_id
@@ -686,6 +726,8 @@ async def authorize(
             raise HTTPException(status_code=400, detail="unknown client_id")
         if not _check_dcr_redirect_uri(redirect_uri, row["allowed_redirect_uris"]):
             raise HTTPException(status_code=400, detail="redirect_uri not registered")
+    if claude:
+        client_name = "ZYND Claude plugin"
 
     from app.services.mcp_clients import clean_label
     req = _sign_oauth_request(
@@ -759,7 +801,7 @@ class _CompleteRequest(BaseModel):
 async def consent(body: _CompleteRequest) -> JSONResponse:
     payload = _verify_oauth_request(body.req)
     identity = await supabase_identity(
-        body.supabase_token, allow_reviewer=_is_plugin_client(payload.get("client_id", "")))
+        body.supabase_token, allow_reviewer=_is_plugin_request(payload))
     if not identity:
         raise HTTPException(status_code=401, detail="Sign-in could not be verified")
     if not payload.get("create_user", True):
@@ -892,7 +934,7 @@ async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
     iss_supported = payload.get("iss_supported", False)
 
     identity = await supabase_identity(
-        body.supabase_token, allow_reviewer=_is_plugin_client(payload.get("client_id", "")))
+        body.supabase_token, allow_reviewer=_is_plugin_request(payload))
     if not identity:
         raise HTTPException(status_code=401, detail="Sign-in could not be verified")
     if not create_user:
@@ -909,7 +951,7 @@ async def complete(request: Request, body: _CompleteRequest) -> JSONResponse:
         code_challenge, code_challenge_method, redis,
         resource=resource, create_user=create_user, iss_supported=iss_supported,
         client_id=payload.get("client_id", ""), client_name=payload.get("client_name", ""), nonce=nonce,
-        allow_reviewer=_is_plugin_client(payload.get("client_id", "")),
+        allow_reviewer=_is_plugin_request(payload),
     )
 
 
@@ -966,11 +1008,10 @@ async def token(
                 grant = json.loads(raw)
             except (ValueError, TypeError):
                 _invalid_grant()
-            bound_resource = settings.plugin_resource_url if _is_plugin_client(client_id) else settings.mcp_resource_url
-            bound_origin = settings.plugin_mcp_origin if _is_plugin_client(client_id) else settings.mcp_origin
+            bound_resource, bound_origin, bound_scope = _public_binding(client_id, grant.get("resource", ""))
             if (grant.get("client_type") != "public" or grant.get("client_id") != client_id or
                 grant.get("redirect_uri") != redirect_uri or grant.get("resource") != bound_resource or
-                grant.get("scope") != _public_scope(client_id) or
+                grant.get("scope") != bound_scope or
                 (resource and resource.rstrip("/") not in (bound_resource, bound_origin.rstrip("/"))) or
                 not _verify_code_challenge(code_verifier, grant.get("challenge", ""), grant.get("method", ""))):
                 _invalid_grant()
@@ -1101,10 +1142,9 @@ async def token(
                 grant = json.loads(raw)
             except (ValueError, TypeError):
                 _invalid_grant()
-            bound_resource = settings.plugin_resource_url if _is_plugin_client(client_id) else settings.mcp_resource_url
-            bound_origin = settings.plugin_mcp_origin if _is_plugin_client(client_id) else settings.mcp_origin
+            bound_resource, bound_origin, bound_scope = _public_binding(client_id, grant.get("resource", ""))
             if (grant.get("v") != 2 or grant.get("sub") != user_id or grant.get("client_id") != client_id or
-                grant.get("resource") != bound_resource or grant.get("scope") != _public_scope(client_id) or
+                grant.get("resource") != bound_resource or grant.get("scope") != bound_scope or
                 (resource and resource.rstrip("/") not in (bound_resource, bound_origin.rstrip("/"))) or
                 (scope and set(scope.split()) != set(grant["scope"].split()))):
                 _invalid_grant()

@@ -5,13 +5,11 @@ Run from services/memory so the shared app package resolves:
     PYTHONPATH=../chatgpt-plugin uvicorn server:app --app-dir ../chatgpt-plugin --port 8091
 """
 import base64
-import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastmcp import FastMCP
-from fastmcp.server.auth import AccessToken, RemoteAuthProvider
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.server.dependencies import get_access_token
 from mcp.types import Icon
@@ -20,6 +18,7 @@ from pydantic import AnyHttpUrl
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool
 from app.mcp_http import ZyndTokenVerifier, _get_arq, _get_pool, _uid
+from plugin_auth import ExactIssuerAuth
 from plugin_mcp import PLUGIN_SCOPES, is_plugin, plugin_tool_visible, register
 
 _INSTRUCTIONS = (
@@ -60,52 +59,6 @@ class PluginOnly(Middleware):
         if not is_plugin(token) or not plugin_tool_visible(name, scopes):
             raise PermissionError("This ZYND plugin cannot call that tool.")
         return await call_next(context)
-
-
-class ExactIssuerAuth(RemoteAuthProvider):
-    """Advertise the authorization server exactly as its own metadata spells `issuer`.
-
-    AnyHttpUrl appends "/" to a bare origin, and OpenAI compares the issuer in the resource
-    metadata with the authorization server's `issuer` as exact strings, so the stock
-    metadata (https://host/ against https://host) would not match."""
-
-    def __init__(self, issuer: str, **kwargs):
-        super().__init__(authorization_servers=[AnyHttpUrl(issuer)], **kwargs)
-        self.issuer = issuer
-
-    def get_routes(self, mcp_path: str | None = None):
-        routes = super().get_routes(mcp_path)
-        for route in routes:
-            route.app = _with_issuer(route.app, self.issuer)
-        return routes
-
-
-def _with_issuer(app, issuer: str):
-    """Wrap the metadata ASGI app so a GET response names `issuer` verbatim in authorization_servers.
-
-    The body is a few hundred bytes of JSON; everything else (status, headers, CORS preflights) passes through."""
-    async def wrapped(scope, receive, send):
-        if scope["type"] != "http" or scope["method"] != "GET":
-            return await app(scope, receive, send)
-        start, body = None, b""
-
-        async def capture(message):
-            nonlocal start, body
-            if message["type"] == "http.response.start":
-                start = message
-            else:
-                body += message.get("body", b"")
-
-        await app(scope, receive, capture)
-        document = json.loads(body)
-        document["authorization_servers"] = [issuer]
-        body = json.dumps(document, separators=(",", ":")).encode()
-        headers = [(k, v) for k, v in start["headers"] if k.lower() != b"content-length"]
-        headers.append((b"content-length", str(len(body)).encode()))
-        await send({**start, "headers": headers})
-        await send({"type": "http.response.body", "body": body})
-
-    return wrapped
 
 
 mcp = None

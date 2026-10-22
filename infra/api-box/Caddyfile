@@ -6,6 +6,9 @@ api.zynd.ai {
 	handle /chatgpt/mcp* {
 		reverse_proxy chatgpt-plugin:8091
 	}
+	handle /claude/mcp* {
+		reverse_proxy claude-plugin:8092
+	}
 	handle /mcp* {
 		reverse_proxy mcp:8090
 	}
@@ -19,9 +22,12 @@ api.zynd.ai {
 		reverse_proxy mcp:8090
 	}
 	# OAuth protected-resource metadata (RFC 9728) — served by FastMCP.
-	# The ChatGPT plugin's document is served by the plugin server, not the general MCP.
+	# Each plugin's document is served by its plugin server, not the general MCP.
 	handle /.well-known/oauth-protected-resource/chatgpt/mcp* {
 		reverse_proxy chatgpt-plugin:8091
+	}
+	handle /.well-known/oauth-protected-resource/claude/mcp* {
+		reverse_proxy claude-plugin:8092
 	}
 	handle /.well-known/oauth-protected-resource* {
 		reverse_proxy mcp:8090

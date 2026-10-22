@@ -34,7 +34,7 @@ The box runs both, from two checkouts, sharing the same databases for now:
 | cards-web / cards-api | `cards.zynd.ai` / `cards.api.zynd.ai` | `dev.cards.zynd.ai` / `dev.cards.api.zynd.ai` |
 | memory (+ MCP at `/mcp`) | `api.zynd.ai` | `dev.api.zynd.ai` |
 | pm2 apps (`ecosystem*.config.js`) | `api` :8000, `web` :3001, `cards-web` :3002 | `api-dev` :8100, `web-dev` :3101, `cards-web-dev` :3102 |
-| containers (compose project) | `zynd`: postgres, redis, api :8001, worker, mcp :8090, chatgpt-plugin :8091, cards :8002 | `zynd-dev`: api-dev :8101, mcp-dev :8190, chatgpt-plugin-dev :8191, cards-dev :8102 |
+| containers (compose project) | `zynd`: postgres, redis, api :8001, worker, mcp :8090, chatgpt-plugin :8091, claude-plugin :8092, cards :8002 | `zynd-dev`: api-dev :8101, mcp-dev :8190, chatgpt-plugin-dev :8191, claude-plugin-dev :8192, cards-dev :8102 |
 
 Dev's ports are all 127.0.0.1, served only through the `dev.*` HTTPS names
 (no extra public ports). Same DB for now means:
@@ -65,7 +65,7 @@ NodeSource). Checkout at `/home/ubuntu/zynd-platform`, owned by `ubuntu`.
 # 2. containers: memory stack + cards-api
 docker compose -p zynd -f infra/api-box/docker-compose.prod.yml \
   -f infra/single-box/docker-compose.override.yml \
-  --env-file ~/.zynd-box/compose.env up -d --build postgres redis api worker mcp chatgpt-plugin cards
+  --env-file ~/.zynd-box/compose.env up -d --build postgres redis api worker mcp chatgpt-plugin claude-plugin cards
 # 3. web apps (NEXT_PUBLIC_* are baked in at build time)
 (cd apps/persona-web && npm ci && npm run build)
 (cd apps/cards-web && npm ci && npm run build)

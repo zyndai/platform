@@ -34,6 +34,8 @@ services:
       FEATURE_FACT_FAMILIES: "true"
       FEATURE_STRICT_TECH: "true"
       FEATURE_FACT_MATCHING: "true"
+      FEATURE_CLAUDE_PLUGIN: "true"
+      CLAUDE_PLUGIN_MCP_PUBLIC_BASE_URL: https://dev.api.zynd.ai/claude
     command: sh -c "python -m app.schema_apply && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     ports:
       - "127.0.0.1:8101:8000"
@@ -46,6 +48,20 @@ services:
     command: uvicorn server:app --app-dir /chatgpt-plugin --host 0.0.0.0 --port 8091
     ports:
       - "127.0.0.1:8191:8091"
+    restart: unless-stopped
+  claude-plugin-dev:
+    build:
+      context: ${DEV_ROOT}/services
+      dockerfile: memory/Dockerfile
+    env_file: ${DEV_ROOT}/services/memory/.env.prod
+    # Claude plugin (docs/plans/ZYND_CLAUDE_PLUGIN_PLAN.md): on in dev, off in prod until a human enables it.
+    # api-dev mints its tokens, so it carries the same two settings.
+    environment:
+      FEATURE_CLAUDE_PLUGIN: "true"
+      CLAUDE_PLUGIN_MCP_PUBLIC_BASE_URL: https://dev.api.zynd.ai/claude
+    command: uvicorn claude_server:app --app-dir /claude-plugin --host 0.0.0.0 --port 8092
+    ports:
+      - "127.0.0.1:8192:8092"
     restart: unless-stopped
   mcp-dev:
     build:

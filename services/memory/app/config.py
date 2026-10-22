@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     plugin_oauth_redirect_uris: str = ""
     feature_plugin_consent: bool = False
     plugin_mcp_public_base_url: str = "http://localhost:8091/chatgpt"
+    # Claude plugin: same six tools on their own resource. Claude brings its own
+    # client_id (CIMD URL or DCR), so the grant is keyed on this resource, not a client.
+    feature_claude_plugin: bool = False
+    claude_plugin_mcp_public_base_url: str = "http://localhost:8092/claude"
     # Comma-separated email(s) of the sample-data account given to OpenAI's plugin
     # reviewers (email+password Supabase user). Empty disables the reviewer path.
     # Those sessions are accepted only by the plugin OAuth flow and plugin review
@@ -281,6 +285,16 @@ class Settings(BaseSettings):
     def plugin_resource_url(self) -> str:
         path = urlsplit(self.plugin_mcp_public_base_url).path.rstrip("/")
         return f"{self.plugin_mcp_origin}{path}/mcp"
+
+    @property
+    def claude_plugin_mcp_origin(self) -> str:
+        parts = urlsplit(self.claude_plugin_mcp_public_base_url)
+        return f"{parts.scheme}://{parts.netloc}"
+
+    @property
+    def claude_plugin_resource_url(self) -> str:
+        path = urlsplit(self.claude_plugin_mcp_public_base_url).path.rstrip("/")
+        return f"{self.claude_plugin_mcp_origin}{path}/mcp"
 
     @model_validator(mode="after")
     def _refuse_default_secrets_in_production(self) -> "Settings":

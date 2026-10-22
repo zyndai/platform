@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "zynd",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Recall private facts on explicit request and propose exact memory or card facts for signed-in Zynd web review.",
   "author": {"name": "ZYND", "url": "https://cards.zynd.ai"},
   "homepage": "https://cards.zynd.ai",
@@ -45,10 +45,11 @@
             {"description": "Unrequested proposal", "prompt": "I am building Atlas. Help me write a status update.", "tools_triggered": "none", "expected_behavior": "Sharing a fact does not authorize temporary storage or recall. Do not create a proposal without explicit request or agreement."}
           ]
         },
+        "demo_recording_url": "https://youtu.be/x_OXk3oXvCM",
         "commerce": false
       },
       "publication": {
-        "release_notes": "0.2.1: adds support, privacy policy and terms of service links. Recall private facts on request and propose exact facts for review; saving and publishing happen only through signed-in confirmation at https://cards.zynd.ai."
+        "release_notes": "0.2.2: adds a video walkthrough and matches recall on search words instead of the whole query. 0.2.1: adds support, privacy policy and terms of service links. Recall private facts on request and propose exact facts for review; saving and publishing happen only through signed-in confirmation at https://cards.zynd.ai."
       }
     }
   }

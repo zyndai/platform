@@ -40,7 +40,7 @@ package = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-pythonpath = [".", "../chatgpt-plugin"]
+pythonpath = [".", "../chatgpt-plugin", "../claude-plugin"]
 markers = [
     "integration: requires Postgres + Redis (docker compose up)",
 ]

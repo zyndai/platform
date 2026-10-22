@@ -39,7 +39,7 @@ configure_env() {
       COMPOSE=(docker compose -p zynd -f infra/api-box/docker-compose.prod.yml
                -f infra/single-box/docker-compose.override.yml --env-file "$BOX/compose.env")
       COMPOSE_TOUCHED='^(infra/api-box/docker-compose\.prod\.yml|infra/single-box/docker-compose\.override\.yml)$'
-      MEMORY_SERVICES=(postgres redis api worker mcp chatgpt-plugin); CARDS_SERVICES=(cards)
+      MEMORY_SERVICES=(postgres redis api worker mcp chatgpt-plugin claude-plugin); CARDS_SERVICES=(cards)
       P_API=8000; P_WEB=3001; P_CARDS_WEB=3002; P_MEMORY=8001; P_CARDS_API=8002 ;;
     dev)
       REPO="${ZYND_ROOT_DEV:-/home/ubuntu/zynd-platform-dev}"; BRANCH=dev
@@ -48,7 +48,7 @@ configure_env() {
       COMPOSE=(env "DEV_ROOT=$REPO" docker compose -p zynd-dev -f infra/single-box/docker-compose.dev.yml)
       COMPOSE_TOUCHED='^infra/single-box/docker-compose\.dev\.yml$'
       # No dev worker on purpose: memory's nightly cron jobs would run twice on the shared DB.
-      MEMORY_SERVICES=(api-dev mcp-dev chatgpt-plugin-dev); CARDS_SERVICES=(cards-dev)
+      MEMORY_SERVICES=(api-dev mcp-dev chatgpt-plugin-dev claude-plugin-dev); CARDS_SERVICES=(cards-dev)
       P_API=8100; P_WEB=3101; P_CARDS_WEB=3102; P_MEMORY=8101; P_CARDS_API=8102 ;;
     *) die "unknown environment '$1'" ;;
   esac
@@ -121,7 +121,7 @@ else
   touched '^services/persona-api/'  && do_persona_api=1
   touched '^apps/persona-web/'      && do_persona_web=1
   touched '^apps/cards-web/'        && do_cards_web=1
-  touched '^services/memory/|^services/chatgpt-plugin/' && do_memory=1
+  touched '^services/memory/|^services/chatgpt-plugin/|^services/claude-plugin/' && do_memory=1
   touched '^services/cards-api/'    && do_cards_api=1
   if touched "$COMPOSE_TOUCHED"; then do_memory=1; do_cards_api=1; fi
 fi

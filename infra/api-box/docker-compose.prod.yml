@@ -66,6 +66,17 @@ services:
       redis: { condition: service_healthy }
     restart: unless-stopped
 
+  claude-plugin:
+    build:
+      context: ../../services
+      dockerfile: memory/Dockerfile
+    env_file: ../../services/memory/.env.prod
+    command: uvicorn claude_server:app --app-dir /claude-plugin --host 0.0.0.0 --port 8092
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
   mcp:
     build:
       context: ../../services

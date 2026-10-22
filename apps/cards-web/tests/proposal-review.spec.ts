@@ -66,7 +66,7 @@ test("expired proposals cannot be approved", async ({ page, context }) => {
     expires_at: new Date(Date.now() - 1000).toISOString(), version: 1,
   } }));
   await page.goto("/review/proposal-1");
-  await expect(page.getByText("This proposal has expired. Ask ChatGPT for a new proposal.")).toBeVisible();
+  await expect(page.getByText("This proposal has expired. Ask your AI assistant for a new proposal.")).toBeVisible();
   await expect(page.getByRole("main").getByRole("button")).toHaveCount(0);
 });
 

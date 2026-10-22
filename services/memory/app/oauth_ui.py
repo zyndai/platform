@@ -267,7 +267,7 @@ _CALLBACK_BODY = """<div class="wrap">
 
 
 def _reviewer_form_enabled(req: str) -> bool:
-    """True only for a signed plugin-client request while the reviewer account is configured."""
+    """True only for a signed plugin request (ChatGPT or Claude) while the reviewer account is configured."""
     if not (req and settings.plugin_review_email_set):
         return False
     from app import oauth  # lazy: oauth imports the plugin tools, this module stays config-only
@@ -275,7 +275,7 @@ def _reviewer_form_enabled(req: str) -> bool:
         payload = oauth._verify_oauth_request(req)
     except HTTPException:
         return False
-    return oauth._is_plugin_client(payload.get("client_id", ""))
+    return oauth._is_plugin_request(payload)
 
 
 def _render_login(req: str, error: str = "") -> HTMLResponse:

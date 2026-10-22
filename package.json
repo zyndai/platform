@@ -12,7 +12,7 @@
     "dev:cards-web": "npm --prefix apps/cards-web run dev -- -p 3002",
     "dev:persona-api": "cd services/persona-api && .venv/bin/uvicorn main:app --reload --host 127.0.0.1 --port 8000",
     "dev:cards-api": "cd services/cards-api && .venv/bin/uvicorn main:app --reload --host 127.0.0.1 --port 8002",
-    "dev:memory": "npx --yes concurrently@10.0.5 -k -n memory-api,memory-mcp,chatgpt-plugin,memory-worker -c cyan,white,blue,gray \"cd services/memory && .venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8001\" \"cd services/memory && .venv/bin/uvicorn app.mcp_http:app --reload --host 127.0.0.1 --port 8090\" \"cd services/memory && PYTHONPATH=../chatgpt-plugin .venv/bin/uvicorn server:app --app-dir ../chatgpt-plugin --reload --host 127.0.0.1 --port 8091\" \"cd services/memory && .venv/bin/arq app.worker.WorkerSettings\"",
+    "dev:memory": "npx --yes concurrently@10.0.5 -k -n memory-api,memory-mcp,chatgpt-plugin,claude-plugin,memory-worker -c cyan,white,blue,magenta,gray \"cd services/memory && .venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8001\" \"cd services/memory && .venv/bin/uvicorn app.mcp_http:app --reload --host 127.0.0.1 --port 8090\" \"cd services/memory && PYTHONPATH=../chatgpt-plugin .venv/bin/uvicorn server:app --app-dir ../chatgpt-plugin --reload --host 127.0.0.1 --port 8091\" \"cd services/memory && PYTHONPATH=../chatgpt-plugin:../claude-plugin .venv/bin/uvicorn claude_server:app --app-dir ../claude-plugin --reload --host 127.0.0.1 --port 8092\" \"cd services/memory && .venv/bin/arq app.worker.WorkerSettings\"",
     "dev:infra": "docker compose -f infra/local/docker-compose.yml up -d --wait",
     "dev:infra:down": "docker compose -f infra/local/docker-compose.yml down",
 

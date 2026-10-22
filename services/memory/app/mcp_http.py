@@ -135,8 +135,11 @@ async def _suid(uid: str = Depends(_uid)) -> str:
 
 class ZyndTokenVerifier(TokenVerifier):
 
-    def __init__(self, required_scopes: list[str] | None = None):
+    def __init__(self, required_scopes: list[str] | None = None, audiences: list[str] | None = None):
+        """`audiences` overrides the JWT audiences this server accepts. The Claude
+        plugin server passes only its own resource; nothing else accepts that one."""
         super().__init__(required_scopes=required_scopes)
+        self._audiences = audiences
         self._log = logging.getLogger("zynd.mcp_verify")
 
     async def verify_token(self, token: str) -> AccessToken | None:
@@ -151,7 +154,7 @@ class ZyndTokenVerifier(TokenVerifier):
         try:
             meta = verify_access_meta(
                 token,
-                allowed_audiences=["zynd", settings.mcp_resource_url, settings.plugin_resource_url],
+                allowed_audiences=self._audiences or ["zynd", settings.mcp_resource_url, settings.plugin_resource_url],
                 allowed_issuers=[settings.jwt_issuer, settings.public_base_url.rstrip("/")],
             )
         except ValueError as exc:
@@ -185,6 +188,12 @@ class ZyndTokenVerifier(TokenVerifier):
                 or meta.get("aud") != settings.plugin_resource_url
             ):
                 return None
+            claude_plugin = meta.get("aud") == settings.claude_plugin_resource_url
+            if claude_plugin and (
+                not (settings.feature_claude_plugin and settings.feature_plugin_consent)
+                or set(scopes) != set(PLUGIN_SCOPES) or not jti
+            ):
+                return None
             self._log.debug("accepted token: user=%s iss-scopes=%s", user_id, scopes)
             return AccessToken(
                 token=token,
@@ -195,7 +204,7 @@ class ZyndTokenVerifier(TokenVerifier):
                 # tokens whose `resource` doesn't match the resource-server URL.
                 # Every accepted audience (legacy "zynd" or the MCP resource)
                 # is valid for this server, so bind to the canonical resource.
-                resource=settings.mcp_resource_url,
+                resource=settings.claude_plugin_resource_url if claude_plugin else settings.mcp_resource_url,
                 subject=str(user_id),
                 claims={
                     "sub": user_id,

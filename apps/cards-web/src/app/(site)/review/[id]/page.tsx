@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { ProposalReview } from "@/components/mcp/ProposalReview";
 
 export const metadata: Metadata = {
-  title: "Review ChatGPT proposal",
+  title: "Review assistant proposal",
   robots: { index: false, follow: false },
   referrer: "no-referrer",
 };

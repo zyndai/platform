@@ -148,7 +148,7 @@ export default function RootLayout({
         />
       </head>
       <body suppressHydrationWarning>{children}</body>
-      <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID || "G-1L9YDBKGRT"} />
+      <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID || "G-Z0P2VTWZ35"} />
     </html>
   );
 }

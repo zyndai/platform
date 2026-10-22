@@ -1,21 +1,30 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
+  Ban,
   ArrowLeft,
   Bookmark,
   BookmarkCheck,
   Bot,
   Brain,
   Check,
+  ChevronDown,
+  ChevronUp,
   Clock3,
+  Copy,
   Inbox,
   Loader2,
+  LogOut,
   MessageCircle,
   Plus,
   Search,
   Send,
+  Settings,
   Sparkles,
+  Trash2,
+  UserMinus,
   UserPlus,
   Users,
   X,
@@ -35,6 +44,7 @@ import {
   sendDm,
   sendGroupMessage,
   setAgentPreference as saveAgentPreference,
+  setSessionRenewer,
   suggestPeople,
   type CardAgentPreference,
   type CardConnection,
@@ -67,6 +77,7 @@ import {
   cacheThreadPage,
   cacheThreadPeerRead,
   getCachedInbox,
+  forgetCachedMessage,
   getCachedMembers,
   getCachedThread,
   hydrateNetworkCache,
@@ -80,6 +91,7 @@ import {
   useNetworkCache,
   type NetworkThreadKind,
 } from "@/lib/network-cache";
+import { createClient } from "@/lib/supabase/client";
 import {
   useNetworkRealtime,
   type NetworkRealtimeEvent,
@@ -131,11 +143,39 @@ function previewText(text?: string | null): string {
   return (text || "").replace(/\s+/g, " ").trim().slice(0, 140);
 }
 
-function renderMessageContent(content: string) {
+/** Search reads at most this many older pages (40 messages each) before it stops. */
+const HISTORY_SEARCH_PAGES = 25;
+
+function rowKeyOf(message: CardMessage): string {
+  return message.client_id ?? message.id;
+}
+
+function withoutMessage(messages: CardMessage[], messageId: string): CardMessage[] {
+  return messages.filter((message) => message.id !== messageId);
+}
+
+/** Wraps each case-insensitive hit of `needle` in a <mark>. Plain text stays plain when there is no search. */
+function highlightText(text: string, needle: string) {
+  if (!needle) return text;
+  const lower = text.toLowerCase();
+  const pieces: React.ReactNode[] = [];
+  let start = 0;
+  let hit = lower.indexOf(needle);
+  while (hit !== -1) {
+    if (hit > start) pieces.push(text.slice(start, hit));
+    pieces.push(<mark key={`hit-${hit}`}>{text.slice(hit, hit + needle.length)}</mark>);
+    start = hit + needle.length;
+    hit = lower.indexOf(needle, start);
+  }
+  if (start < text.length) pieces.push(text.slice(start));
+  return pieces;
+}
+
+function renderMessageContent(content: string, needle = "") {
   return content.split(/((?<![\w.])@[A-Za-z0-9_.-]{1,64})/g).map((part, index) => (
     part.startsWith("@")
       ? <span className="nv2-mention" key={`${part}-${index}`}>{part}</span>
-      : <span key={`text-${index}`}>{part}</span>
+      : <span key={`text-${index}`}>{highlightText(part, needle)}</span>
   ));
 }
 
@@ -244,7 +284,7 @@ function asMessage(value: unknown): CardMessage | null {
 }
 
 export function NetworkV2({
-  token,
+  token: initialToken,
   userId,
   initialConnectionId = null,
   groupMemoryEnabled = false,
@@ -263,6 +303,57 @@ export function NetworkV2({
   const [loading, setLoading] = useState(!cachedInbox);
   const [loadError, setLoadError] = useState("");
   const [notice, setNotice] = useState("");
+  // The server hands the page its token at load time, and that token expires about an hour later.
+  // The browser client holds the live session and refreshes it, so the newest token comes from there.
+  // Background tabs pause timers, so returning to the tab checks again.
+  const [token, setToken] = useState(initialToken);
+  const [sessionEnded, setSessionEnded] = useState(false);
+  useEffect(() => {
+    const supabase = createClient();
+    let active = true;
+    async function refreshSession() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!active) return;
+        if (session?.access_token) {
+          setToken(session.access_token);
+          setSessionEnded(false);
+        } else {
+          setSessionEnded(true);
+        }
+      } catch {
+        // A network blip is not a signed-out session. The next request says what is really wrong.
+      }
+    }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (active && session?.access_token) setToken(session.access_token);
+    });
+    function onVisible() {
+      if (document.visibilityState === "visible") void refreshSession();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    // Any request that comes back 401 renews through here and retries once (see cards-network.ts).
+    // Only a 4xx from Supabase means the sign-in itself is gone; a network error is not that.
+    setSessionRenewer(async () => {
+      const { data, error } = await supabase.auth.refreshSession();
+      if (data.session?.access_token) {
+        if (active) {
+          setToken(data.session.access_token);
+          setSessionEnded(false);
+        }
+        return data.session.access_token;
+      }
+      if (active && error?.status && error.status >= 400 && error.status < 500) setSessionEnded(true);
+      return null;
+    });
+    void refreshSession();
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+      document.removeEventListener("visibilitychange", onVisible);
+      setSessionRenewer(null);
+    };
+  }, []);
   const [tab, setTab] = useState<Tab>("all");
   const [search, setSearch] = useState("");
   const [selectedKind, setSelectedKind] = useState<"dm" | "group" | null>(null);
@@ -472,6 +563,16 @@ export function NetworkV2({
     } catch { /* The address bar is cosmetic here. */ }
   }, [initialConnectionId, inbox, inboxFresh, openConnection]);
 
+  // Leaving, removing, deleting or blocking drops the conversation from the inbox, which closes its
+  // pane. A group whose members changed needs its member list refetched too.
+  function refreshAfterChange(groupId?: string) {
+    if (groupId) {
+      invalidateCachedMembers(groupId);
+      void loadMembers(groupId);
+    }
+    void loadInbox();
+  }
+
   function selectConversation(kind: "dm" | "group", id: string) {
     setSelectedKind(kind);
     setSelectedId(id);
@@ -610,6 +711,12 @@ export function NetworkV2({
     <main className="nv2-page">
       {notice && <div className="nv2-notice" role="status">{notice}</div>}
       {loadError && <div className="nv2-notice" role="alert">{loadError}</div>}
+      {sessionEnded && (
+        <div className="nv2-notice" role="alert">
+          Your sign-in has ended.{" "}
+          <Link href={`/auth?next=${encodeURIComponent("/network")}`}>Sign in again</Link> to keep messaging.
+        </div>
+      )}
       <div className={`nv2-shell${showMobileMain ? " is-open" : ""}`}>
         <aside className="nv2-sidebar">
           <div className="nv2-sidebar-head">
@@ -805,6 +912,7 @@ export function NetworkV2({
               onMembersNeeded={loadMembers}
               onInboxActivity={onInboxActivity}
               onConversationRead={onConversationRead}
+              onChanged={refreshAfterChange}
             />
           ) : (
             <div className="nv2-empty">
@@ -855,6 +963,7 @@ function ConversationPane({
   onMembersNeeded,
   onInboxActivity,
   onConversationRead,
+  onChanged,
 }: {
   token: string;
   userId: string;
@@ -866,6 +975,7 @@ function ConversationPane({
   onMembersNeeded: (groupId: string) => void;
   onInboxActivity: (kind: "dm" | "group", id: string, message: CardMessage, unreadDelta: number) => void;
   onConversationRead: (kind: "dm" | "group", id: string) => void;
+  onChanged: (groupId?: string) => void;
 }) {
   const isDm = conversation.kind === "dm";
   const conversationId = conversation.id;
@@ -876,6 +986,50 @@ function ConversationPane({
   const initialThread = getCachedThread(kind, conversationId);
   const connection = conversation.kind === "dm" ? conversation.connection : null;
   const group = conversation.kind === "group" ? conversation.group : null;
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [messageQuery, setMessageQuery] = useState("");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const messageNeedle = messageQuery.trim().toLowerCase();
+  const [activeMatchKey, setActiveMatchKey] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyCapped, setHistoryCapped] = useState(false);
+  const historySearching = useRef(false);
+
+  async function copyMessage(message: CardMessage) {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopiedId(message.id);
+      window.setTimeout(() => setCopiedId((current) => (current === message.id ? null : current)), 1500);
+    } catch {
+      // Clipboard access can be blocked; the text is still selectable in the bubble.
+    }
+  }
+  // Deleting takes two taps, like the settings buttons. The first tap stays armed for a few seconds.
+  const [armedDelete, setArmedDelete] = useState<string | null>(null);
+
+  async function deleteMessage(message: CardMessage) {
+    const key = rowKeyOf(message);
+    if (armedDelete !== key) {
+      setArmedDelete(key);
+      window.setTimeout(() => setArmedDelete((current) => (current === key ? null : current)), 4000);
+      return;
+    }
+    setArmedDelete(null);
+    const messageId = message.id;
+    const path = isDm
+      ? `/connections/${conversationId}/messages/${messageId}`
+      : `/groups/${conversationId}/messages/${messageId}`;
+    try {
+      await cardsNetworkRequest(path, token, "DELETE");
+      setMessages((current) => withoutMessage(current, messageId));
+      forgetCachedMessage(kind, conversationId, messageId);
+      onChanged();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Could not delete the message");
+    }
+  }
+
   const [threadId, setThreadId] = useState<string | null>(initialThread?.threadId ?? connection?.thread_id ?? null);
   const [messages, setMessages] = useState<CardMessage[]>(initialThread?.messages ?? []);
   const [loading, setLoading] = useState(!initialThread);
@@ -1027,8 +1181,8 @@ function ConversationPane({
   // A prefetch (or a second tab) can fill the cache while this pane is open.
   useEffect(() => {
     if (!cachedThread) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages((current) => mergeMessages(current, cachedThread.messages));
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLatestSeq((current) => Math.max(current, cachedThread.latestSeq));
     setPeerReadSeq((current) => Math.max(current, cachedThread.peerReadSeq));
     if (cachedThread.threadId) setThreadId(cachedThread.threadId);
@@ -1079,8 +1233,8 @@ function ConversationPane({
     // The pane is keyed by conversation. Seed from the cache first, then fetch
     // only what changed; the skeleton is reserved for a truly cold thread.
     const cached = getCachedThread(kind, conversationId);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages(cached?.messages ?? []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDraft("");
     setHasMore(cached?.hasMore ?? false);
     setLatestSeq(cached?.latestSeq ?? 0);
@@ -1153,6 +1307,15 @@ function ConversationPane({
   }, [conversationId, kind]);
 
   const handleRealtime = useCallback((event: NetworkRealtimeEvent) => {
+    if (event.event === "message_deleted") {
+      // Someone deleted their message: drop it here too, and refresh the inbox preview.
+      const deletedId = typeof event.payload.message_id === "string" ? event.payload.message_id : null;
+      if (!deletedId) return;
+      setMessages((current) => withoutMessage(current, deletedId));
+      forgetCachedMessage(kind, conversationId, deletedId);
+      onChanged();
+      return;
+    }
     if (event.event === "message") {
       const message = asMessage(event.payload.message);
       if (!message) return;
@@ -1212,12 +1375,12 @@ function ConversationPane({
       setStreams((current) => applyAgentStream(current, snapshot, Date.now()));
       if (snapshot.text.trim() && !atBottomRef.current) setHasNew(true);
     }
-  }, [conversationId, isDm, kind, markRemembered, markTyping, memoryOpen, onInboxActivity, scheduleRead, scrollToBottom, userId]);
+  }, [conversationId, isDm, kind, markRemembered, markTyping, memoryOpen, onChanged, onInboxActivity, scheduleRead, scrollToBottom, userId]);
 
   useNetworkRealtime({
     token,
     topic: isDm ? (threadId ? `cards:dm:${threadId}` : null) : `cards:group:${conversationId}`,
-    events: ["message", "read", "memory", "agent_typing", "agent_stream"],
+    events: ["message", "message_deleted", "read", "memory", "agent_typing", "agent_stream"],
     onEvent: handleRealtime,
     onReconnect: () => void load(undefined, latestSeq),
   });
@@ -1447,6 +1610,71 @@ function ConversationPane({
     return result;
   }, [messages]);
 
+  // Search keeps the whole thread on screen and walks through its matches, oldest to newest in
+  // `matchKeys`. The active match starts at the newest one.
+  const matchKeys = useMemo(
+    () => (messageNeedle ? messages.filter((message) => message.content.toLowerCase().includes(messageNeedle)).map(rowKeyOf) : []),
+    [messages, messageNeedle],
+  );
+  const matchSet = useMemo(() => new Set(matchKeys), [matchKeys]);
+  const activeMatch = activeMatchKey && matchSet.has(activeMatchKey) ? activeMatchKey : matchKeys[matchKeys.length - 1] ?? null;
+  const activeIndex = activeMatch ? matchKeys.indexOf(activeMatch) : -1;
+
+  // Enter goes to an older match (back up the thread), Shift+Enter to a newer one.
+  function stepMatch(direction: "older" | "newer") {
+    if (matchKeys.length === 0 || activeIndex < 0) return;
+    const step = direction === "older" ? -1 : 1;
+    setActiveMatchKey(matchKeys[(activeIndex + step + matchKeys.length) % matchKeys.length]);
+  }
+
+  useEffect(() => {
+    if (!activeMatch) return;
+    const root = scrollRef.current;
+    const row = root
+      ? Array.from(root.querySelectorAll<HTMLElement>("[data-message-key]")).find((node) => node.dataset.messageKey === activeMatch)
+      : undefined;
+    row?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [activeMatch]);
+
+  function closeSearch() {
+    setSearchOpen(false);
+    setMessageQuery("");
+    setActiveMatchKey(null);
+    setHistoryCapped(false);
+  }
+
+  // Search only sees what is loaded, so pull older pages first. Capped so a long group does not
+  // trigger dozens of requests from one keystroke.
+  async function searchHistory() {
+    if (historySearching.current || !hasMore) return;
+    historySearching.current = true;
+    setHistoryLoading(true);
+    let cursor = messages.find((message) => message.seq != null)?.seq;
+    let more: boolean = hasMore;
+    let pages = 0;
+    try {
+      while (more && cursor && pages < HISTORY_SEARCH_PAGES) {
+        const page = isDm
+          ? await fetchDmMessages(token, conversationId, { limit: 40, beforeSeq: cursor })
+          : await fetchGroupMessages(token, conversationId, { limit: 40, beforeSeq: cursor });
+        setMessages((current) => mergeMessages(page.messages, current));
+        cacheThreadPage(kind, conversationId, page, "older");
+        more = page.has_more;
+        setHasMore(page.has_more);
+        const seqs = page.messages.map((message) => message.seq).filter((seq): seq is number => seq != null);
+        if (seqs.length === 0) break;
+        cursor = Math.min(...seqs);
+        pages += 1;
+      }
+      setHistoryCapped(more);
+    } catch {
+      // Keep the matches already loaded; the counter still reflects them.
+    } finally {
+      historySearching.current = false;
+      setHistoryLoading(false);
+    }
+  }
+
   const liveStreams = useMemo(() => visibleStreams(streams, messages), [streams, messages]);
   const streamedChars = liveStreams.reduce((total, stream) => total + stream.text.length, 0);
   // Keep the newest words in view while you are at the bottom; otherwise the
@@ -1478,19 +1706,35 @@ function ConversationPane({
     ? `@${connection?.partner.handle || "card"}`
     : `${members?.length ?? 0} member${(members?.length ?? 0) === 1 ? "" : "s"}${group?.description ? ` · ${group.description}` : ""}`;
 
+  // In a DM the partner's avatar and name open their public Card.
+  const profileHref = isDm && connection?.partner.handle ? `/p/${encodeURIComponent(connection.partner.handle)}` : null;
+  const identityAvatar = isDm
+    ? <Avatar card={connection?.partner} size={40} />
+    : <Avatar name={group?.name} group size={40} />;
+  const identityTitle = (
+    <div className="nv2-conv-title">
+      <strong>{title}</strong>
+      <small>{subtitle}</small>
+    </div>
+  );
+
   return (
     <>
       <header className="nv2-conv-head">
         <button type="button" className="nv2-icon-button nv2-back" aria-label="Back to conversations" onClick={onBack}>
           <ArrowLeft size={18} />
         </button>
-        {isDm
-          ? <Avatar card={connection?.partner} size={40} />
-          : <Avatar name={group?.name} group size={40} />}
-        <div className="nv2-conv-title">
-          <strong>{title}</strong>
-          <small>{subtitle}</small>
-        </div>
+        {profileHref ? (
+          <Link href={profileHref} className="nv2-conv-identity" aria-label={`View ${title}'s profile`}>
+            {identityAvatar}
+            {identityTitle}
+          </Link>
+        ) : (
+          <div className="nv2-conv-identity">
+            {identityAvatar}
+            {identityTitle}
+          </div>
+        )}
         {!isDm && (members?.length ?? 0) > 0 && (
           <div className="nv2-member-strip" aria-label="Group members">
             {members!.slice(0, 5).map((member) => (
@@ -1509,6 +1753,27 @@ function ConversationPane({
             <Brain size={17} />
           </button>
         )}
+        <button
+          type="button"
+          className={`nv2-icon-button${searchOpen ? " is-active" : ""}`}
+          aria-label="Search messages"
+          aria-pressed={searchOpen}
+          onClick={() => {
+            setSearchOpen((current) => !current);
+            setMessageQuery("");
+          }}
+        >
+          <Search size={17} />
+        </button>
+        <button
+          type="button"
+          className={`nv2-icon-button${settingsOpen ? " is-active" : ""}`}
+          aria-label={isDm ? "Conversation settings" : "Group settings"}
+          aria-pressed={settingsOpen}
+          onClick={() => setSettingsOpen((current) => !current)}
+        >
+          <Settings size={17} />
+        </button>
         {!isDm && group?.my_role === "owner" && (
           <button
             type="button"
@@ -1520,6 +1785,114 @@ function ConversationPane({
           </button>
         )}
       </header>
+
+      {inviteOpen && group && (
+        <section className="nv2-invite-panel" aria-label="Invite people to group">
+          <div className="nv2-invite-search">
+            <input
+              className="nv2-field"
+              style={{ margin: 0 }}
+              value={personQuery}
+              onChange={(event) => setPersonQuery(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchPeople(); } }}
+              placeholder="Search connected Cards to invite"
+              aria-label="Search connected Cards"
+              maxLength={120}
+            />
+            <button type="button" className="nv2-small-button" aria-label="Search people to invite" disabled={inviteBusy} onClick={() => void searchPeople()}>
+              {inviteBusy ? <Loader2 size={14} className="nv2-spin" aria-hidden="true" /> : <Search size={14} />}
+            </button>
+          </div>
+          {inviteNotice && <p className="nv2-invite-notice" role="status">{inviteNotice}</p>}
+          {people.map((person) => (
+            <div className="nv2-invite-row" key={person.user_id}>
+              <Avatar card={person} size={28} small />
+              <span>{person.name} <small style={{ color: "#7f8796" }}>@{person.handle}</small></span>
+              <button type="button" className="nv2-small-button" disabled={inviteBusy} onClick={() => void invite(person.handle || "")}>
+                Invite
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {searchOpen && (
+        <div className="nv2-message-search" role="search">
+          <Search size={14} aria-hidden="true" />
+          <input
+            autoFocus
+            value={messageQuery}
+            onChange={(event) => {
+              setMessageQuery(event.target.value);
+              setActiveMatchKey(null);
+              if (event.target.value.trim()) void searchHistory();
+              else setHistoryCapped(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                stepMatch(event.shiftKey ? "newer" : "older");
+              } else if (event.key === "Escape") {
+                closeSearch();
+              }
+            }}
+            placeholder={isDm ? "Search this conversation" : "Search this group"}
+            aria-label="Search messages"
+            maxLength={200}
+          />
+          {messageNeedle && (
+            <span className="nv2-message-count" aria-live="polite">
+              {matchKeys.length === 0
+                ? historyLoading ? "Searching…" : "No matches"
+                : `${activeIndex + 1} of ${matchKeys.length}${historyLoading ? "…" : ""}`}
+              {historyCapped && !historyLoading ? " · latest only" : ""}
+            </span>
+          )}
+          <button
+            type="button"
+            className="nv2-icon-button nv2-match-step"
+            aria-label="Newer match"
+            title="Newer match (Shift+Enter)"
+            disabled={matchKeys.length < 2}
+            onClick={() => stepMatch("newer")}
+          >
+            <ChevronUp size={14} />
+          </button>
+          <button
+            type="button"
+            className="nv2-icon-button nv2-match-step"
+            aria-label="Older match"
+            title="Older match (Enter)"
+            disabled={matchKeys.length < 2}
+            onClick={() => stepMatch("older")}
+          >
+            <ChevronDown size={14} />
+          </button>
+          <button type="button" className="nv2-icon-button" aria-label="Close message search" onClick={closeSearch}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {settingsOpen && connection && (
+        <DmSettingsPanel
+          token={token}
+          connection={connection}
+          onClose={() => setSettingsOpen(false)}
+          onChanged={() => onChanged()}
+        />
+      )}
+
+      {settingsOpen && group && (
+        <GroupSettingsPanel
+          token={token}
+          userId={userId}
+          group={group}
+          members={members}
+          onClose={() => setSettingsOpen(false)}
+          onChanged={onChanged}
+        />
+      )}
 
       {!isDm && groupMemoryEnabled && memoryOpen && group && (
         <section className="nv2-memory-panel" aria-label="Group memory">
@@ -1623,14 +1996,19 @@ function ConversationPane({
                   const senderName = senderCard?.name || "Member";
                   return (
                     <div
-                      key={message.client_id ?? message.id}
-                      className={`nv2-msg-row${mine ? " is-mine" : ""}${agent ? " is-agent" : ""}`}
+                      key={rowKeyOf(message)}
+                      data-message-key={rowKeyOf(message)}
+                      className={`nv2-msg-row${mine ? " is-mine" : ""}${agent ? " is-agent" : ""}${activeMatch === rowKeyOf(message) ? " is-search-current" : ""}`}
                     >
                       {!mine && (
                         agent ? (
                           <AgentAvatar card={senderCard} name={senderCard?.name || "Member"} />
+                        ) : senderCard?.handle ? (
+                          <Link href={`/p/${encodeURIComponent(senderCard.handle)}`} className="nv2-avatar-link" aria-label={`View ${senderName}'s profile`}>
+                            <Avatar card={senderCard} name={senderName} size={26} small />
+                          </Link>
                         ) : (
-                          <Avatar card={senderCard} name={senderCard?.name || "Member"} size={26} small />
+                          <Avatar card={senderCard} name={senderName} size={26} small />
                         )
                       )}
                       <div className="nv2-msg-stack">
@@ -1646,8 +2024,10 @@ function ConversationPane({
                             sources={message.client_id ? agentSources[message.client_id] : undefined}
                           />
                         ) : (
-                          <div className={`nv2-bubble${message.pending ? " is-pending" : ""}${message.remembered ? " is-remembered" : ""}`}>
-                            {renderMessageContent(message.content)}
+                          <div
+                            className={`nv2-bubble${message.pending ? " is-pending" : ""}${message.remembered ? " is-remembered" : ""}${matchSet.has(rowKeyOf(message)) ? " is-match" : ""}${activeMatch === rowKeyOf(message) ? " is-current" : ""}`}
+                          >
+                            {renderMessageContent(message.content, matchSet.has(rowKeyOf(message)) ? messageNeedle : "")}
                           </div>
                         )}
                         <div className="nv2-msg-meta">
@@ -1667,6 +2047,29 @@ function ConversationPane({
                             >
                               {remembering === message.id ? <Loader2 size={11} className="nv2-spin" /> : <Bookmark size={11} />}
                               Remember
+                            </button>
+                          )}
+                          {!agent && !message.pending && message.content && (
+                            <button
+                              type="button"
+                              className="nv2-copy-button"
+                              aria-label={copiedId === message.id ? "Copied" : "Copy message"}
+                              title={copiedId === message.id ? "Copied" : "Copy"}
+                              onClick={() => void copyMessage(message)}
+                            >
+                              {copiedId === message.id ? <Check size={11} /> : <Copy size={11} />}
+                            </button>
+                          )}
+                          {mine && !agent && !message.pending && (
+                            <button
+                              type="button"
+                              className={`nv2-meta-button${armedDelete === rowKeyOf(message) ? " is-armed" : ""}`}
+                              aria-label={armedDelete === rowKeyOf(message) ? "Confirm delete" : "Delete message"}
+                              title="Delete your message"
+                              onClick={() => void deleteMessage(message)}
+                            >
+                              <Trash2 size={11} />
+                              {armedDelete === rowKeyOf(message) && "Confirm"}
                             </button>
                           )}
                           {mine && !agent && isDm && !message.pending && (message.seq ?? 0) > 0 && peerReadSeq >= (message.seq ?? 0) && (
@@ -1735,35 +2138,6 @@ function ConversationPane({
 
       <div className="nv2-composer">
         {error && <p className="nv2-error" role="alert">{error}</p>}
-        {inviteOpen && group && (
-          <div className="nv2-invite-panel">
-            <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-              <input
-                className="nv2-field"
-                style={{ margin: 0 }}
-                value={personQuery}
-                onChange={(event) => setPersonQuery(event.target.value)}
-                onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchPeople(); } }}
-                placeholder="Search connected Cards to invite"
-                aria-label="Search connected Cards"
-                maxLength={120}
-              />
-              <button type="button" className="nv2-small-button" aria-label="Search people to invite" disabled={inviteBusy} onClick={() => void searchPeople()}>
-                <Search size={14} />
-              </button>
-            </div>
-            {inviteNotice && <p style={{ margin: "4px 0", color: "#a5b4fc", fontSize: 11.5 }}>{inviteNotice}</p>}
-            {people.map((person) => (
-              <div className="nv2-invite-row" key={person.user_id}>
-                <Avatar card={person} size={28} small />
-                <span>{person.name} <small style={{ color: "#7f8796" }}>@{person.handle}</small></span>
-                <button type="button" className="nv2-small-button" disabled={inviteBusy} onClick={() => void invite(person.handle || "")}>
-                  Invite
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
         {!isDm && mentionQuery !== null && (
           <div className="nv2-mention-menu" role="listbox" aria-label="Tag a group member">
             {members === undefined ? (
@@ -1851,6 +2225,278 @@ function ConversationPane({
         </div>
       </div>
     </>
+  );
+}
+
+function GroupSettingsPanel({
+  token,
+  userId,
+  group,
+  members,
+  onClose,
+  onChanged,
+}: {
+  token: string;
+  userId: string;
+  group: CardGroup;
+  members?: CardGroupMember[];
+  onClose: () => void;
+  onChanged: (groupId?: string) => void;
+}) {
+  const isOwner = group.my_role === "owner";
+  const [name, setName] = useState(group.name);
+  const [description, setDescription] = useState(group.description ?? "");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+  // Destructive buttons take two taps: the first arms the label, the second runs the action.
+  const [armed, setArmed] = useState<string | null>(null);
+  const [invitations, setInvitations] = useState<CardGroupInvitation[] | null>(null);
+  const [refresh, setRefresh] = useState(0);
+
+  const trimmedName = name.trim();
+  const dirty = trimmedName !== group.name || description.trim() !== (group.description ?? "");
+
+  useEffect(() => {
+    if (!isOwner) return;
+    let ignore = false;
+    cardsNetworkRequest<{ invitations: CardGroupInvitation[] }>(`/groups/${group.id}/invitations`, token)
+      .then((result) => { if (!ignore) setInvitations(result.invitations); })
+      .catch(() => { if (!ignore) setInvitations([]); });
+    return () => { ignore = true; };
+  }, [group.id, isOwner, token, refresh]);
+
+  async function act(path: string, method: string, body?: unknown) {
+    setBusy(true);
+    setError("");
+    setSaved(false);
+    try {
+      await cardsNetworkRequest(path, token, method, body);
+      setArmed(null);
+      if (method === "PATCH") setSaved(true);
+      setRefresh((count) => count + 1);
+      onChanged(group.id);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Something went wrong");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function tap(key: string, run: () => void) {
+    if (armed === key) run();
+    else setArmed(key);
+  }
+
+  return (
+    <section className="nv2-settings-panel" aria-label="Group settings">
+      <div className="nv2-settings-head">
+        <div>
+          <span className="nv2-eyebrow">Group settings</span>
+          <strong>{group.name}</strong>
+        </div>
+        <button type="button" className="nv2-icon-button" aria-label="Close group settings" onClick={onClose}>
+          <X size={15} />
+        </button>
+      </div>
+
+      {isOwner ? (
+        <div className="nv2-settings-section">
+          <input
+            className="nv2-field"
+            aria-label="Group name"
+            value={name}
+            maxLength={80}
+            onChange={(event) => { setName(event.target.value); setSaved(false); }}
+          />
+          <textarea
+            className="nv2-field"
+            aria-label="Group description"
+            value={description}
+            maxLength={500}
+            rows={2}
+            placeholder="Description (optional)"
+            onChange={(event) => { setDescription(event.target.value); setSaved(false); }}
+          />
+          <div className="nv2-settings-actions">
+            <button
+              type="button"
+              className="nv2-small-button"
+              disabled={busy || !trimmedName || !dirty}
+              onClick={() => void act(`/groups/${group.id}`, "PATCH", { name: trimmedName, description: description.trim() })}
+            >
+              Save changes
+            </button>
+            {saved && <span className="nv2-invite-notice" role="status">Saved</span>}
+          </div>
+        </div>
+      ) : (
+        <p className="nv2-settings-note">{group.description || "No description yet."}</p>
+      )}
+
+      <div className="nv2-settings-section">
+        <div className="nv2-section-label">
+          <span>Members</span>
+          <span>{members?.length ?? 0}</span>
+        </div>
+        {!members && <p className="nv2-settings-note">Loading members…</p>}
+        {members?.map((member) => {
+          const key = `remove:${member.user_id}`;
+          const isSelf = member.user_id === userId;
+          return (
+            <div className="nv2-settings-row" key={member.user_id}>
+              <Avatar card={member.card} name={member.card?.name || member.user_id} size={26} small />
+              <span className="nv2-settings-name">
+                {member.card?.name || "Member"}
+                {isSelf && <small className="nv2-role-chip">You</small>}
+                {member.role === "owner" && <small className="nv2-role-chip is-owner">Owner</small>}
+              </span>
+              {member.card?.handle && (
+                <Link className="nv2-small-button" href={`/p/${member.card.handle}`} aria-label={`View ${member.card.name || "member"}'s profile`}>
+                  Profile
+                </Link>
+              )}
+              {isOwner && !isSelf && member.role !== "owner" && (
+                <button
+                  type="button"
+                  className="nv2-small-button"
+                  disabled={busy}
+                  onClick={() => tap(`transfer:${member.user_id}`, () => void act(`/groups/${group.id}/transfer`, "POST", { user_id: member.user_id }))}
+                >
+                  {armed === `transfer:${member.user_id}` ? "Confirm" : "Make owner"}
+                </button>
+              )}
+              {isOwner && !isSelf && member.role !== "owner" && (
+                <button
+                  type="button"
+                  className="nv2-small-button is-danger"
+                  disabled={busy}
+                  aria-label={`Remove ${member.card?.name || "member"} from group`}
+                  onClick={() => tap(key, () => void act(`/groups/${group.id}/members/${member.user_id}`, "DELETE"))}
+                >
+                  <UserMinus size={13} aria-hidden="true" /> {armed === key ? "Confirm" : "Remove"}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {isOwner && invitations && invitations.length > 0 && (
+        <div className="nv2-settings-section">
+          <div className="nv2-section-label">
+            <span>Pending invites</span>
+            <span>{invitations.length}</span>
+          </div>
+          {invitations.map((invitation) => {
+            const key = `cancel:${invitation.id}`;
+            const inviteeName = invitation.invitee?.name || "Invited Card";
+            return (
+              <div className="nv2-settings-row" key={invitation.id}>
+                <Avatar card={invitation.invitee} name={inviteeName} size={26} small />
+                <span className="nv2-settings-name">
+                  {inviteeName}
+                  {invitation.invitee?.handle && <small> · @{invitation.invitee.handle}</small>}
+                </span>
+                <button
+                  type="button"
+                  className="nv2-small-button"
+                  disabled={busy}
+                  onClick={() => tap(key, () => void act(`/groups/${group.id}/invitations/${invitation.id}`, "DELETE"))}
+                >
+                  {armed === key ? "Confirm" : "Cancel invite"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="nv2-settings-actions">
+        {isOwner ? (
+          <button
+            type="button"
+            className="nv2-small-button is-danger"
+            disabled={busy}
+            onClick={() => tap("delete", () => void act(`/groups/${group.id}`, "DELETE"))}
+          >
+            <Trash2 size={13} aria-hidden="true" /> {armed === "delete" ? "Confirm delete" : "Delete group"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="nv2-small-button is-danger"
+            disabled={busy}
+            onClick={() => tap("leave", () => void act(`/groups/${group.id}/leave`, "POST"))}
+          >
+            <LogOut size={13} aria-hidden="true" /> {armed === "leave" ? "Confirm leave" : "Leave group"}
+          </button>
+        )}
+      </div>
+      {isOwner && <p className="nv2-settings-note">Deleting hides the group for every member. Nothing is erased.</p>}
+      {error && <p className="nv2-error" role="alert">{error}</p>}
+    </section>
+  );
+}
+
+function DmSettingsPanel({
+  token,
+  connection,
+  onClose,
+  onChanged,
+}: {
+  token: string;
+  connection: CardConnection;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [armed, setArmed] = useState<"revoke" | "block" | null>(null);
+  const [error, setError] = useState("");
+  const name = connection.partner.name;
+
+  async function act(action: "revoke" | "block") {
+    if (armed !== action) {
+      setArmed(action);
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await cardsNetworkRequest(`/connections/${connection.id}/respond`, token, "POST", { action });
+      onChanged();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Could not update this connection");
+      setArmed(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="nv2-settings-panel" aria-label="Conversation settings">
+      <div className="nv2-settings-head">
+        <div>
+          <span className="nv2-eyebrow">Conversation</span>
+          <strong>{name}</strong>
+        </div>
+        <button type="button" className="nv2-icon-button" aria-label="Close conversation settings" onClick={onClose}>
+          <X size={15} />
+        </button>
+      </div>
+      <p className="nv2-settings-note">
+        Removing ends this connection. Blocking ends it too, and stops {name} from sending you requests.
+      </p>
+      <div className="nv2-settings-actions">
+        <button type="button" className="nv2-small-button is-danger" disabled={busy} onClick={() => void act("revoke")}>
+          <UserMinus size={13} aria-hidden="true" /> {armed === "revoke" ? "Confirm remove" : "Remove connection"}
+        </button>
+        <button type="button" className="nv2-small-button is-danger" disabled={busy} onClick={() => void act("block")}>
+          <Ban size={13} aria-hidden="true" /> {armed === "block" ? "Confirm block" : "Block"}
+        </button>
+      </div>
+      {error && <p className="nv2-error" role="alert">{error}</p>}
+    </section>
   );
 }
 

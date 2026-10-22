@@ -10,7 +10,7 @@
   min-height: 600px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 370px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 24px;
@@ -18,6 +18,13 @@
     radial-gradient(900px 500px at 70% -10%, rgba(99, 102, 241, 0.16), transparent 60%),
     #080a12;
   box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
+}
+
+.nv2-notice a {
+  color: inherit;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .nv2-notice {
@@ -44,7 +51,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 22px 20px 0;
+  padding: 34px 20px 0;
 }
 
 .nv2-eyebrow {
@@ -131,7 +138,7 @@
 
 .nv2-search-wrap {
   position: relative;
-  margin: 12px 16px 8px;
+  margin: 18px 16px 8px;
 }
 
 .nv2-search-icon {
@@ -165,7 +172,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px 10px 18px;
+  padding: 10px 16px 18px;
 }
 
 .nv2-section-label {
@@ -577,12 +584,292 @@
   cursor: default;
 }
 
+/* Sits under the conversation header, so results show where the eye already is. */
 .nv2-invite-panel {
-  margin-bottom: 10px;
+  flex: 0 0 auto;
+  max-height: 260px;
+  margin: 12px 16px 0;
   padding: 10px;
+  overflow-y: auto;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 13px;
   background: #0f1320;
+}
+
+.nv2-invite-search {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.nv2-invite-notice {
+  margin: 4px 0;
+  color: #a5b4fc;
+  font-size: 11.5px;
+}
+
+/* Group and DM settings. Same card as the invite and memory panels, so they read as one family. */
+.nv2-settings-panel {
+  flex: 0 0 auto;
+  max-height: 380px;
+  margin: 12px 16px 0;
+  padding: 12px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 13px;
+  background: #0f1320;
+}
+
+.nv2-settings-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.nv2-settings-head strong {
+  font-size: 14px;
+}
+
+.nv2-settings-section {
+  margin-top: 14px;
+}
+
+.nv2-settings-section .nv2-field {
+  margin: 0 0 8px;
+}
+
+.nv2-settings-note {
+  margin: 6px 0;
+  color: #7f8796;
+  font-size: 11.5px;
+}
+
+.nv2-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 2px;
+}
+
+.nv2-settings-row + .nv2-settings-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* A class on the name, not a bare span selector: the avatar is a span too. */
+.nv2-settings-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv2-settings-name small {
+  color: #7f8796;
+}
+
+.nv2-settings-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.nv2-settings-actions .nv2-invite-notice {
+  margin: 0;
+}
+
+.nv2-settings-row {
+  border-radius: 10px;
+  transition: background 0.15s ease;
+}
+
+.nv2-settings-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.nv2-settings-row .nv2-small-button {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  font-size: 11.5px;
+}
+
+.nv2-settings-name .nv2-role-chip {
+  margin-left: 7px;
+}
+
+.nv2-role-chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  color: #9ca3af;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+
+.nv2-role-chip.is-owner {
+  border-color: rgba(167, 139, 250, 0.45);
+  background: rgba(139, 92, 246, 0.16);
+  color: #c4b5fd;
+}
+
+/* In-conversation search: sits under the header, like the other panels. */
+.nv2-message-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 16px 0;
+  padding: 6px 8px 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.22);
+  color: #6b7280;
+}
+
+.nv2-message-search:focus-within {
+  border-color: rgba(139, 92, 246, 0.55);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.12);
+}
+
+.nv2-message-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #f8fafc;
+  font: inherit;
+  font-size: 13px;
+}
+
+.nv2-message-count {
+  color: #9ca3af;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.nv2-copy-button {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.nv2-copy-button:hover,
+.nv2-copy-button:focus-visible {
+  opacity: 1;
+  color: #c4b5fd;
+}
+
+.nv2-meta-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b7280;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.nv2-meta-button:hover,
+.nv2-meta-button:focus-visible {
+  opacity: 1;
+  color: #fca5a5;
+}
+
+.nv2-meta-button.is-armed {
+  opacity: 1;
+  background: rgba(248, 113, 113, 0.14);
+  color: #fecaca;
+}
+
+.nv2-match-step {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+
+.nv2-match-step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Search hits: every match is marked, the match you are on is brighter and its row is ringed. */
+.nv2-bubble mark {
+  padding: 0 2px;
+  border-radius: 4px;
+  background: rgba(250, 204, 21, 0.28);
+  color: inherit;
+}
+
+.nv2-bubble.is-current mark {
+  background: rgba(250, 204, 21, 0.85);
+  color: #111827;
+}
+
+.nv2-msg-row.is-search-current {
+  border-radius: 14px;
+  background: rgba(139, 92, 246, 0.07);
+}
+
+.nv2-msg-row.is-search-current .nv2-bubble {
+  box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.7);
+}
+
+/* The profile link in a DM header: avatar and name read as one target. */
+.nv2-conv-identity {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  border-radius: 14px;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.nv2-conv-identity:hover .nv2-conv-title strong {
+  text-decoration: underline;
+  text-decoration-color: rgba(196, 181, 253, 0.6);
+  text-underline-offset: 3px;
+}
+
+.nv2-avatar-link {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+}
+
+.nv2-avatar-link:hover {
+  transform: scale(1.06);
+}
+
+/* Keyboard focus is visible everywhere on the page; the default outline was lost on dark. */
+.nv2-page :focus-visible {
+  outline: 2px solid rgba(167, 139, 250, 0.85);
+  outline-offset: 2px;
 }
 
 .nv2-invite-row {
@@ -596,7 +883,8 @@
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.nv2-invite-row span {
+/* Only the name, not the avatar: the avatar is a span too and must keep its size. */
+.nv2-invite-row > span:not(.nv2-avatar) {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -606,11 +894,15 @@
 }
 
 .nv2-small-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 6px 9px;
   border: 1px solid rgba(139, 92, 246, 0.35);
   border-radius: 8px;
   background: rgba(139, 92, 246, 0.16);
   color: #ddd6fe;
+  text-decoration: none;
   font: inherit;
   font-size: 11px;
   font-weight: 700;

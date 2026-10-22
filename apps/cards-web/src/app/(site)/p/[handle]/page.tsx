@@ -691,6 +691,8 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
         .pf-connect { display:flex; flex-direction:column; align-items:flex-start; gap:6px; max-width:100%; }
         .pf-connect-anchor { position:relative; display:inline-flex; max-width:100%; }
         .pf-connect-pill { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-width:104px; min-height:34px; padding:7px 14px; border:0; border-radius:999px; background:#fff; color:#4f46e5; font:inherit; font-size:0.75rem; font-weight:800; line-height:1; white-space:nowrap; text-decoration:none; cursor:pointer; transition:transform .15s, box-shadow .15s, opacity .15s; }
+        /* .pf-page a { color: inherit } would win over the pill and make its label white on white */
+        .pf-page a.pf-connect-pill { color:#4f46e5; }
         a.pf-connect-pill:hover, button.pf-connect-pill:not([aria-disabled="true"]):not(:disabled):hover { transform:translateY(-1px); box-shadow:0 8px 18px rgba(15,23,42,0.22); text-decoration:none; }
         .pf-connect-pill:focus-visible { outline:2px solid #fff; outline-offset:2px; }
         .pf-connect-pill[aria-disabled="true"], .pf-connect-pill:disabled { opacity:.62; cursor:default; }
@@ -828,12 +830,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
               <strong className="text-slate-800">@{card.handle || card.id}</strong>
             </div>
             <div className="pf-header-actions flex gap-2.5 items-center flex-wrap justify-end">
-              {claimed ? (
-                <span className="pf-synthesis-badge inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-[0.7rem] pf-mono font-bold text-emerald-700">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  LIVE{syncedAt ? ` · UPDATED ${syncedAt}` : " PROFILE"}
-                </span>
-              ) : (
+              {!claimed && (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-200 text-[0.7rem] pf-mono font-bold text-amber-700">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                   UNCLAIMED

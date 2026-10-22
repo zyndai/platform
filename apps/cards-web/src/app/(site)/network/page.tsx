@@ -28,7 +28,7 @@ export default async function NetworkPage({ searchParams }: { searchParams: Prom
         userId={session.user.id}
         initialConnectionId={connectionId}
         groupMemoryEnabled={process.env.FEATURE_GROUP_MEMORY === "true"}
-        groupAgentRepliesEnabled={process.env.FEATURE_GROUP_AGENT_REPLIES === "true"}
+        groupAgentRepliesEnabled={process.env.FEATURE_GROUP_AGENT_REPLIES !== "false"}
       />
     )
     : <NetworkClient token={session.access_token} userId={session.user.id} />;

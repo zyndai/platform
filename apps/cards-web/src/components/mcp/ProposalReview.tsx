@@ -25,7 +25,7 @@ export function ProposalReview({ id }: { id: string }) {
   return (
     <main className={styles.page}>
       <section className={styles.panel} aria-labelledby="review-title">
-        <p className={styles.eyebrow}>ZYND / CHATGPT</p>
+        <p className={styles.eyebrow}>ZYND / AI ASSISTANT</p>
         <h1 id="review-title">Review your proposal</h1>
         {!ready ? <p role="status">Checking your session...</p> : !user ? (
           <SignIn id={id} />
@@ -37,7 +37,7 @@ export function ProposalReview({ id }: { id: string }) {
 
 function SignIn({ id }: { id: string }) {
   return <div>
-    <p>Sign in to the Zynd account connected to ChatGPT to review this proposal.</p>
+    <p>Sign in to the Zynd account connected to your AI assistant to review this proposal.</p>
     <Link className={styles.primary} href={`/auth?next=${encodeURIComponent(`/review/${encodeURIComponent(id)}`)}`}>
       Sign in to review
     </Link>
@@ -74,11 +74,11 @@ function SignedInReview({ id }: { id: string }) {
     if (!response.ok) {
       const messages: Record<number, string> = {
         401: "Your session has expired. Sign in again to continue.",
-        403: "This proposal belongs to another account. Sign in with the account connected to ChatGPT.",
-        404: "This proposal is unavailable. Check the link or ask ChatGPT for a new proposal.",
+        403: "This proposal belongs to another account. Sign in with the account connected to your AI assistant.",
+        404: "This proposal is unavailable. Check the link or ask your AI assistant for a new proposal.",
         409: "This proposal changed or was already decided. Reload to review its current state.",
-        410: "This proposal or confirmation has expired. Ask ChatGPT for a new proposal.",
-        422: "This text cannot be published as a card fact. Reject it and ask ChatGPT for a new proposal.",
+        410: "This proposal or confirmation has expired. Ask your AI assistant for a new proposal.",
+        422: "This text cannot be published as a card fact. Reject it and ask your AI assistant for a new proposal.",
       };
       throw new Error(messages[response.status] || "Could not complete the request. Please try again.");
     }
@@ -156,8 +156,8 @@ function SignedInReview({ id }: { id: string }) {
       <p>{publish ? "Publishing makes the exact text below visible on your public card and discoverable by people and AI agents." : "Saving adds this text to your private memory. It will not publish anything to your card."}</p>
       <h2>Proposed memory</h2>
       <div className={styles.text}>{proposal.text}</div>
-      {!pending ? <p role="status">This proposal is {proposal.status}. It cannot be submitted again.</p> : expired ? <p role="status">This proposal has expired. Ask ChatGPT for a new proposal.</p> : !supported ? <p role="alert">This proposal type is unsupported.</p> : <>
-        {publish && !preview && <><h2>Proposed public card text</h2><div className={styles.text}>{proposal.public_text}</div><p>To change this text, reject this proposal and ask ChatGPT for a new one.</p></>}
+      {!pending ? <p role="status">This proposal is {proposal.status}. It cannot be submitted again.</p> : expired ? <p role="status">This proposal has expired. Ask your AI assistant for a new proposal.</p> : !supported ? <p role="alert">This proposal type is unsupported.</p> : <>
+        {publish && !preview && <><h2>Proposed public card text</h2><div className={styles.text}>{proposal.public_text}</div><p>To change this text, reject this proposal and ask your AI assistant for a new one.</p></>}
         {preview ? <div className={styles.confirmation}>
           <h2>{publish ? "Step 2: Confirm publication" : "Confirm private save"}</h2>
           <p>{publish ? "This exact text will be public:" : "This exact text will be saved privately:"}</p>

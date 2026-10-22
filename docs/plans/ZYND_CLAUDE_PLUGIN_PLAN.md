@@ -1,8 +1,10 @@
 # ZYND Claude Plugin — Plan
 
-> **Status:** proposed, not started (2026-10-22). Phase 1 changes memory's
-> OAuth (audience-bound plugin tokens), so it needs a human sign-off before it
-> reaches prod (AGENTS.md §6: auth). No schema change.
+> **Status (2026-10-22):** phases 1-3 are on `dev`: the `/claude/mcp` server and
+> audience-bound plugin OAuth, the bundle in `services/claude-plugin/package/`, and
+> the `cards.zynd.ai/claude` page. Phase 4 (live test on dev, PR to `main`, prod env
+> vars and deploy, submission) is open. Phase 1 changes memory's OAuth, so it needs a
+> human sign-off before it reaches prod (AGENTS.md §6: auth). No schema change.
 >
 > **Scope:** new `services/claude-plugin/` (server + plugin bundle), small
 > changes in `services/memory/app/oauth.py` and the token verifier, `infra/`

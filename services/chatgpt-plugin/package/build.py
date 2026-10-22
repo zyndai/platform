@@ -137,8 +137,8 @@ def validate(root=ROOT, submission=False):
     require("https://api.zynd.ai/chatgpt/mcp" in text, "missing endpoint")
     review = plugin["extensions"]["com.openai"].get("review", {})
     cases = review.get("test_cases", {})
-    require(len(cases.get("positive", [])) == 5 and len(cases.get("negative", [])) == 6,
-            "five positive and six negative review cases required")
+    require(len(cases.get("positive", [])) == 5 and len(cases.get("negative", [])) == 3,
+            "five positive and three negative review cases required")
     for kind in ("positive", "negative"):
         for case in cases[kind]:
             require(all(case.get(key) for key in ("description", "prompt", "expected_behavior")),

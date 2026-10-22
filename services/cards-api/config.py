@@ -48,7 +48,7 @@ FEATURE_A2_INVITE_TO_CLAIM: bool = os.getenv("FEATURE_A2_INVITE_TO_CLAIM", "fals
 # Group memory + Card assistant replies (packages/db cards 0026). Both stay
 # off until the migration is applied and the dev flow is verified.
 FEATURE_GROUP_MEMORY: bool = os.getenv("FEATURE_GROUP_MEMORY", "false").lower() in ("1", "true", "yes")
-FEATURE_GROUP_AGENT_REPLIES: bool = os.getenv("FEATURE_GROUP_AGENT_REPLIES", "false").lower() in ("1", "true", "yes")
+FEATURE_GROUP_AGENT_REPLIES: bool = os.getenv("FEATURE_GROUP_AGENT_REPLIES", "true").lower() in ("1", "true", "yes")
 GROUP_MEMORY_SUMMARY_EVERY: int = int(os.getenv("GROUP_MEMORY_SUMMARY_EVERY", "30"))
 GROUP_MEMORY_RECENT_MESSAGES: int = int(os.getenv("GROUP_MEMORY_RECENT_MESSAGES", "50"))
 GROUP_MEMORY_SEARCH_LIMIT: int = int(os.getenv("GROUP_MEMORY_SEARCH_LIMIT", "8"))

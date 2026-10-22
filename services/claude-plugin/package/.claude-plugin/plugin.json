@@ -1,0 +1,16 @@
+{
+  "name": "zynd",
+  "displayName": "Zynd",
+  "version": "0.1.0",
+  "description": "Recall private facts on explicit request and propose exact memory or card facts for signed-in Zynd web review.",
+  "author": {"name": "ZYND", "url": "https://cards.zynd.ai"},
+  "homepage": "https://cards.zynd.ai/claude",
+  "repository": "https://github.com/zyndai/platform",
+  "license": "MIT",
+  "keywords": ["memory", "context", "profile"],
+  "icon": "./assets/zynd-logo.png",
+  "documentationUrl": "https://cards.zynd.ai/claude",
+  "supportUrl": "https://cards.zynd.ai/support",
+  "privacyPolicyUrl": "https://cards.zynd.ai/privacy",
+  "termsOfServiceUrl": "https://cards.zynd.ai/terms"
+}

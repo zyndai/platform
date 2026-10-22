@@ -11,7 +11,7 @@ export const metadata: Metadata = pageMetadata({
 
 export default function TermsPage() {
   return (
-    <LegalPage title="Terms of Service" updated="October 21, 2026">
+    <LegalPage title="Terms of Service" updated="October 22, 2026">
       <LegalSection title="1. Acceptance">
         <p>
           These terms are an agreement between you and Zynd AI Inc (&ldquo;Zynd,&rdquo;
@@ -81,7 +81,7 @@ export default function TermsPage() {
 
       <LegalSection title="6. Third-party services and AI assistants">
         <p>
-          You sign in through LinkedIn and may use Zynd through assistants such as ChatGPT.
+          You sign in through LinkedIn and may use Zynd through assistants such as ChatGPT or Claude.
           Those services are not ours and are governed by their own terms and privacy
           policies. When Zynd returns information to an assistant, the assistant&rsquo;s
           provider receives it as part of your conversation.

@@ -12,12 +12,12 @@ export const metadata: Metadata = pageMetadata({
 
 export default function PrivacyPage() {
   return (
-    <LegalPage title="Privacy Policy" updated="October 21, 2026">
+    <LegalPage title="Privacy Policy" updated="October 22, 2026">
       <p className="mb-10 leading-relaxed text-zinc-300">
         Zynd AI Inc (&ldquo;Zynd,&rdquo; &ldquo;we,&rdquo; &ldquo;us&rdquo;), a Delaware
         corporation, runs Zynd Cards at cards.zynd.ai and the Zynd memory service at
         api.zynd.ai. This policy covers both, including the Zynd plugin that lets an AI
-        assistant such as ChatGPT recall your facts and propose new ones. Persona
+        assistant such as ChatGPT or Claude recall your facts and propose new ones. Persona
         (persona.zynd.ai) and the ZyndAI developer platform (zynd.ai) are separate products
         with their own policies.
       </p>
@@ -124,7 +124,7 @@ export default function PrivacyPage() {
             <strong className="text-white">The assistant you connected.</strong> Whatever
             Zynd returns to an assistant becomes part of your conversation with it and is
             handled under that provider&rsquo;s own terms and privacy policy (for example,
-            OpenAI for ChatGPT).
+            OpenAI for ChatGPT or Anthropic for Claude).
           </li>
           <li>
             <strong className="text-white">Service providers</strong> that run our

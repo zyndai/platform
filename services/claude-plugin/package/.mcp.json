@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "zynd": {
+      "type": "http",
+      "url": "https://api.zynd.ai/claude/mcp"
+    }
+  }
+}

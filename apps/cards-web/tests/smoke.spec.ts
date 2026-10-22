@@ -51,14 +51,88 @@ test("share sheet opens with tabs and QR actions", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Fullscreen" })).toBeVisible();
 });
 
-/** S13: /find renders with its own light canvas (no invisible dark-on-dark text). */
-test("find page loads with a light canvas", async ({ page }) => {
-  await page.goto("/find");
+/** S13: /find was folded into the directory; old links land on its ranked search, on a light canvas (no invisible dark-on-dark text). */
+test("find redirects into the directory's ranked search", async ({ page }) => {
+  await page.goto("/find?q=react+engineer&limit=25");
+
+  await expect(page).toHaveURL(/\/directory\?/);
+  const url = new URL(page.url());
+  expect(url.searchParams.get("q")).toBe("react engineer");
+  expect(url.searchParams.get("limit")).toBe("25");
+  expect(url.searchParams.get("match")).toBe("1");
+  await expect(page.locator("li.dc-result")).toHaveCount(2);
+  await expect(page.getByLabel("Matches to show")).toHaveValue("25");
 
   const main = page.locator("main").first();
-  await expect(main).toBeVisible();
   const bg = await main.evaluate((el) => getComputedStyle(el).backgroundColor);
-  expect(bg).toBe("rgb(247, 246, 242)");
+  expect(bg).toBe("rgb(243, 241, 251)");
+
+  await page.goto("/find");
+  await expect(page).toHaveURL(/\/directory$/);
+});
+
+/** /directory: the name search narrows the grid, keeps the query in the URL, and Escape clears it. */
+test("directory search filters people by name", async ({ page }) => {
+  await page.goto("/directory");
+  const people = page.locator("li.dc-person");
+  await expect(people).toHaveCount(3);
+
+  const search = page.getByRole("searchbox", { name: "Search people by name" });
+  await search.fill("chen");
+  await expect(people).toHaveCount(1);
+  await expect(people.first()).toContainText("Alice Chen");
+  await expect(page).toHaveURL(/q=chen/);
+
+  await search.press("Escape");
+  await expect(people).toHaveCount(3);
+});
+
+/** /directory: a refine chip ranks people by match instead of filtering names; All people goes back. */
+test("directory chips rank people with scores and reasons", async ({ page }) => {
+  await page.goto("/directory");
+
+  const chip = page.getByRole("button", { name: "Remote" });
+  await expect(chip).toHaveAttribute("aria-pressed", "false");
+  await chip.click();
+  await expect(page).toHaveURL(/q=remote&match=1/);
+
+  const rows = page.locator("li.dc-result");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText("Alice Chen");
+  await expect(rows.first().getByRole("img", { name: "92% match" })).toBeVisible();
+  await expect(rows.first()).toContainText("Matches your search terms");
+  await expect(page.getByText("Search dimensions")).toBeVisible();
+  await expect(page.getByText("2 results for “remote”")).toBeVisible();
+  await expect(chip).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("searchbox", { name: "Search people by name" })).toHaveValue("remote");
+
+  await page.getByRole("button", { name: "Verified" }).click();
+  await expect(rows).toHaveCount(1);
+
+  await page.getByRole("button", { name: "All people" }).click();
+  await expect(page).toHaveURL(/\/directory$/);
+  await expect(page.locator("li.dc-person")).toHaveCount(3);
+});
+
+/** /directory: Match ranks what is typed; a name that matches no one offers it, and a miss says so. */
+test("directory Match ranks a typed query", async ({ page }) => {
+  await page.goto("/directory");
+  const search = page.getByRole("searchbox", { name: "Search people by name" });
+  const match = page.getByRole("button", { name: /Search by skills, location or availability/ });
+
+  await search.fill("react engineer");
+  await expect(page.getByText("No one named “react engineer”")).toBeVisible();
+  await match.click();
+  await expect(page).toHaveURL(/q=react\+engineer&match=1/);
+  await expect(page.locator("li.dc-result")).toHaveCount(2);
+
+  await search.fill("nobody at all");
+  await search.press("Enter");
+  await expect(page.getByText("No one matches that search")).toBeVisible();
+
+  await search.press("Escape");
+  await expect(page).toHaveURL(/\/directory$/);
+  await expect(page.locator("li.dc-person")).toHaveCount(3);
 });
 
 /** S08 v1 escape: quiz path still works when cookie forces off. */

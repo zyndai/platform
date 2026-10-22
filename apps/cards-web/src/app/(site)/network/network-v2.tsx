@@ -708,7 +708,7 @@ export function NetworkV2({
   const showMobileMain = Boolean(mobileOpen && selected);
 
   return (
-    <main className="nv2-page">
+    <div className="nv2-page">
       {notice && <div className="nv2-notice" role="status">{notice}</div>}
       {loadError && <div className="nv2-notice" role="alert">{loadError}</div>}
       {sessionEnded && (
@@ -722,7 +722,8 @@ export function NetworkV2({
           <div className="nv2-sidebar-head">
             <div>
               <span className="nv2-eyebrow">Cards network</span>
-              <h1 className="nv2-title">Messages</h1>
+              {/* div, not h1: globals.css makes every h1 uppercase gradient text */}
+              <div role="heading" aria-level={1} className="nv2-title">Messages</div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button type="button" className="nv2-icon-button" aria-label="Start a connection" onClick={() => setComposer("connection")}>
@@ -854,7 +855,7 @@ export function NetworkV2({
                       <span>{conversationItems.length}</span>
                     </div>
                     {conversationItems.length === 0 ? (
-                      <div style={{ padding: "18px 10px", color: "#7f8796", fontSize: 12, lineHeight: 1.6 }}>
+                      <div className="nv2-list-empty">
                         {query ? "No conversations match that search." : tab === "groups" ? "No groups yet. Create one to start a shared conversation." : "No conversations yet. Connect with a verified Card to start a DM."}
                       </div>
                     ) : conversationItems.map((item) => {
@@ -948,7 +949,7 @@ export function NetworkV2({
           }}
         />
       )}
-    </main>
+    </div>
   );
 }
 
@@ -1807,7 +1808,7 @@ function ConversationPane({
           {people.map((person) => (
             <div className="nv2-invite-row" key={person.user_id}>
               <Avatar card={person} size={28} small />
-              <span>{person.name} <small style={{ color: "#7f8796" }}>@{person.handle}</small></span>
+              <span>{person.name} <small>@{person.handle}</small></span>
               <button type="button" className="nv2-small-button" disabled={inviteBusy} onClick={() => void invite(person.handle || "")}>
                 Invite
               </button>

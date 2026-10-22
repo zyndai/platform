@@ -1,23 +1,53 @@
+/* The messenger, in the public card's look: lavender canvas (from DiscoverShell),
+ * one white rounded panel, the edition accent and fonts. The tokens mirror
+ * components/discover/discover.css. Class names are unchanged from the dark
+ * theme this replaces, so the markup and the tests did not have to move. */
 .nv2-page {
-  min-height: calc(100vh - 80px);
-  padding: 28px 20px 56px;
-  color: #f8fafc;
+  --nv2-ink: #1E1B4B;
+  --nv2-soft: #5B5B7E;
+  --nv2-faint: #8B8AA8;
+  --nv2-accent: #6C5CE7;
+  --nv2-accent-hi: #5B4BD6;
+  --nv2-accent-grad: linear-gradient(135deg, #7C6CF0, #6C5CE7);
+  --nv2-line: #E6E3F6;
+  --nv2-edge: #D7D1FF;
+  --nv2-tint: #F3F1FF;
+  --nv2-chip-line: #E1DCFF;
+  --nv2-chip-ink: #4C3FC9;
+  --nv2-surface: #FBFAFF;
+  --nv2-canvas: #F8F7FD;
+  --nv2-danger: #B91C1C;
+  --nv2-danger-bg: #FEF2F2;
+  --nv2-danger-line: #FECACA;
+  --nv2-ui: var(--dc-ui, "Plus Jakarta Sans", system-ui, sans-serif);
+  --nv2-mono: var(--dc-mono, "Space Mono", ui-monospace, monospace);
+  color: var(--nv2-ink);
+  font-family: var(--nv2-ui);
+}
+
+/* globals.css and zynd-ui.css style bare h1/h2 as uppercase gradient display
+   headings (with !important); none of that belongs in a messenger. */
+.nv2-page :is(h1, h2, h3, h4) {
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  font-family: var(--nv2-ui) !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.02em !important;
+  text-transform: none !important;
 }
 
 .nv2-shell {
-  width: min(1240px, 100%);
-  height: calc(100vh - 150px);
-  min-height: 600px;
+  width: 100%;
+  height: calc(100dvh - 92px);
+  min-height: 560px;
   margin: 0 auto;
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--nv2-line);
   border-radius: 24px;
-  background:
-    radial-gradient(900px 500px at 70% -10%, rgba(99, 102, 241, 0.16), transparent 60%),
-    #080a12;
-  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
+  background: #fff;
+  box-shadow: 0 18px 40px -34px rgba(30, 27, 75, 0.45);
 }
 
 .nv2-notice a {
@@ -28,13 +58,13 @@
 }
 
 .nv2-notice {
-  width: min(1240px, 100%);
+  width: 100%;
   margin: 0 auto 12px;
   padding: 11px 16px;
-  border: 1px solid rgba(129, 140, 248, 0.35);
-  border-radius: 12px;
-  background: rgba(49, 46, 129, 0.35);
-  color: #c7d2fe;
+  border: 1px solid var(--nv2-edge);
+  border-radius: 14px;
+  background: var(--nv2-tint);
+  color: var(--nv2-accent-hi);
   font-size: 13px;
 }
 
@@ -42,8 +72,8 @@
   display: flex;
   min-height: 0;
   flex-direction: column;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(10, 13, 22, 0.82);
+  border-right: 1px solid var(--nv2-line);
+  background: var(--nv2-surface);
 }
 
 .nv2-sidebar-head {
@@ -51,26 +81,27 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 34px 20px 0;
+  padding: 18px 18px 0;
 }
 
 .nv2-eyebrow {
   display: block;
   margin-bottom: 4px;
-  color: #a78bfa;
+  color: var(--nv2-accent-hi);
+  font-family: var(--nv2-mono);
   font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
+  font-weight: 700;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
 .nv2-title {
   margin: 0;
-  color: #fff;
-  font-size: 30px;
-  font-weight: 500;
-  letter-spacing: -0.04em;
-  line-height: 1.05;
+  color: var(--nv2-ink);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
 }
 
 .nv2-icon-button {
@@ -78,22 +109,24 @@
   place-items: center;
   width: 38px;
   height: 38px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--nv2-line);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
-  color: #e5e7eb;
+  background: #fff;
+  color: var(--nv2-soft);
   cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
 .nv2-icon-button:hover {
-  border-color: rgba(167, 139, 250, 0.5);
-  background: rgba(139, 92, 246, 0.15);
+  border-color: var(--nv2-edge);
+  background: var(--nv2-tint);
+  color: var(--nv2-accent-hi);
 }
 
 .nv2-tabs {
   display: flex;
-  gap: 4px;
-  padding: 16px 14px 0;
+  gap: 2px;
+  padding: 14px 10px 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -105,23 +138,28 @@
 .nv2-tab {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex: 0 0 auto;
-  padding: 7px 11px;
+  padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--nv2-soft);
   font: inherit;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.nv2-tab:hover {
+  color: var(--nv2-ink);
 }
 
 .nv2-tab.is-active {
-  border-color: rgba(139, 92, 246, 0.4);
-  background: rgba(139, 92, 246, 0.16);
-  color: #ddd6fe;
+  border-color: var(--nv2-edge);
+  background: var(--nv2-tint);
+  color: var(--nv2-accent-hi);
 }
 
 .nv2-tab-count {
@@ -131,21 +169,21 @@
   height: 17px;
   padding: 0 4px;
   border-radius: 999px;
-  background: #7c3aed;
+  background: var(--nv2-accent);
   color: #fff;
   font-size: 10px;
 }
 
 .nv2-search-wrap {
   position: relative;
-  margin: 18px 16px 8px;
+  margin: 14px 14px 6px;
 }
 
 .nv2-search-icon {
   position: absolute;
   top: 50%;
   left: 12px;
-  color: #6b7280;
+  color: var(--nv2-accent);
   transform: translateY(-50%);
   pointer-events: none;
 }
@@ -154,25 +192,39 @@
   width: 100%;
   box-sizing: border-box;
   padding: 10px 12px 10px 34px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 11px;
+  border: 1px solid var(--nv2-edge);
+  border-radius: 13px;
   outline: none;
-  background: rgba(0, 0, 0, 0.22);
-  color: #f8fafc;
+  background: #fff;
+  color: var(--nv2-ink);
   font: inherit;
   font-size: 13px;
+  font-weight: 500;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.nv2-search::placeholder {
+  color: var(--nv2-faint);
 }
 
 .nv2-search:focus {
-  border-color: rgba(139, 92, 246, 0.55);
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.12);
+  border-color: var(--nv2-accent);
+  box-shadow: 0 0 0 4px rgba(108, 92, 231, 0.14);
 }
 
 .nv2-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px 16px 18px;
+  padding: 8px 12px 16px;
+  scrollbar-color: var(--nv2-edge) transparent;
+}
+
+.nv2-list-empty {
+  padding: 18px 10px;
+  color: var(--nv2-soft);
+  font-size: 12.5px;
+  line-height: 1.6;
 }
 
 .nv2-section-label {
@@ -180,10 +232,11 @@
   align-items: center;
   justify-content: space-between;
   margin: 14px 8px 6px;
-  color: #6b7280;
+  color: var(--nv2-faint);
+  font-family: var(--nv2-mono);
   font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
+  font-weight: 700;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
@@ -195,20 +248,21 @@
   box-sizing: border-box;
   padding: 10px;
   border: 1px solid transparent;
-  border-radius: 14px;
+  border-radius: 16px;
   background: transparent;
   color: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .nv2-item:hover {
-  background: rgba(255, 255, 255, 0.035);
+  background: rgba(108, 92, 231, 0.06);
 }
 
 .nv2-item.is-active {
-  border-color: rgba(139, 92, 246, 0.35);
-  background: rgba(139, 92, 246, 0.14);
+  border-color: var(--nv2-edge);
+  background: var(--nv2-tint);
 }
 
 .nv2-item-main {
@@ -225,16 +279,16 @@
 
 .nv2-item-name {
   overflow: hidden;
-  color: #f4f4f5;
+  color: var(--nv2-ink);
   font-size: 13.5px;
-  font-weight: 650;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .nv2-item-time {
   flex: 0 0 auto;
-  color: #6b7280;
+  color: var(--nv2-faint);
   font-size: 10.5px;
 }
 
@@ -244,7 +298,7 @@
   gap: 6px;
   margin-top: 3px;
   overflow: hidden;
-  color: #8b93a1;
+  color: var(--nv2-soft);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -263,7 +317,7 @@
   height: 19px;
   padding: 0 5px;
   border-radius: 999px;
-  background: #7c3aed;
+  background: var(--nv2-accent);
   color: #fff;
   font-size: 10px;
   font-weight: 800;
@@ -276,7 +330,7 @@
   flex: 0 0 auto;
   overflow: hidden;
   border-radius: 50%;
-  background: linear-gradient(145deg, #6d28d9, #4f46e5);
+  background: linear-gradient(135deg, #8B7CF6, #C4B5FD);
   color: #fff;
   font-weight: 800;
   text-transform: uppercase;
@@ -293,7 +347,7 @@
 
 .nv2-avatar.is-group {
   border-radius: 14px;
-  background: linear-gradient(145deg, #1e293b, #312e81);
+  background: linear-gradient(145deg, #93C5FD, #8B7CF6);
 }
 
 .nv2-avatar.is-small {
@@ -318,28 +372,27 @@
 .nv2-empty-icon {
   display: inline-grid;
   place-items: center;
-  width: 68px;
-  height: 68px;
+  width: 64px;
+  height: 64px;
   margin-bottom: 16px;
-  border: 1px solid rgba(139, 92, 246, 0.25);
-  border-radius: 22px;
-  background: rgba(139, 92, 246, 0.12);
-  color: #c4b5fd;
+  border: 1px solid var(--nv2-chip-line);
+  border-radius: 20px;
+  background: var(--nv2-tint);
+  color: var(--nv2-accent);
 }
 
 .nv2-empty h2 {
   margin: 0 0 8px;
-  color: #f4f4f5;
+  color: var(--nv2-ink);
   font-size: 22px;
-  font-weight: 500;
   letter-spacing: -0.03em;
 }
 
 .nv2-empty p {
   max-width: 390px;
   margin: 0 auto;
-  color: #8b93a1;
-  font-size: 13px;
+  color: var(--nv2-soft);
+  font-size: 13.5px;
   line-height: 1.6;
 }
 
@@ -347,10 +400,9 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(8, 10, 18, 0.72);
-  backdrop-filter: blur(14px);
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--nv2-line);
+  background: #fff;
 }
 
 .nv2-back {
@@ -365,9 +417,10 @@
 .nv2-conv-title strong {
   display: block;
   overflow: hidden;
-  color: #f4f4f5;
+  color: var(--nv2-ink);
   font-size: 15px;
-  font-weight: 650;
+  font-weight: 800;
+  letter-spacing: -0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -376,7 +429,7 @@
   display: block;
   margin-top: 2px;
   overflow: hidden;
-  color: #7f8796;
+  color: var(--nv2-soft);
   font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -390,7 +443,7 @@
 
 .nv2-member-strip .nv2-avatar {
   margin-left: -6px;
-  border: 2px solid #0a0d16;
+  border: 2px solid #fff;
 }
 
 .nv2-member-strip .nv2-avatar:first-child {
@@ -406,15 +459,19 @@
   gap: 4px;
   overflow-y: auto;
   padding: 22px 24px 12px;
+  background: var(--nv2-canvas);
+  scrollbar-color: var(--nv2-edge) transparent;
 }
 
 .nv2-day {
   align-self: center;
   margin: 14px 0 8px;
-  padding: 4px 10px;
+  padding: 4px 11px;
+  border: 1px solid var(--nv2-line);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  color: #7f8796;
+  background: #fff;
+  color: var(--nv2-faint);
+  font-family: var(--nv2-mono);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -440,28 +497,30 @@
 
 .nv2-msg-sender {
   margin: 0 0 3px 4px;
-  color: #a78bfa;
+  color: var(--nv2-accent-hi);
   font-size: 10.5px;
   font-weight: 700;
 }
 
 .nv2-bubble {
   padding: 9px 13px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 16px 16px 16px 5px;
-  background: #171c28;
-  color: #e5e7eb;
+  border: 1px solid var(--nv2-line);
+  border-radius: 18px 18px 18px 6px;
+  background: #fff;
+  color: var(--nv2-ink);
   font-size: 13.5px;
   line-height: 1.45;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+  box-shadow: 0 1px 0 rgba(30, 27, 75, 0.03);
 }
 
 .nv2-msg-row.is-mine .nv2-bubble {
-  border-color: rgba(139, 92, 246, 0.25);
-  border-radius: 16px 16px 5px 16px;
-  background: linear-gradient(135deg, #6d28d9, #4f46e5);
+  border-color: transparent;
+  border-radius: 18px 18px 6px 18px;
+  background: linear-gradient(135deg, #7C6CF0, #6C5CE7);
   color: #fff;
+  box-shadow: 0 10px 20px -14px rgba(108, 92, 231, 0.85);
 }
 
 .nv2-bubble.is-pending {
@@ -473,7 +532,7 @@
   justify-content: flex-end;
   gap: 6px;
   margin-top: 3px;
-  color: #6b7280;
+  color: var(--nv2-faint);
   font-size: 10px;
 }
 
@@ -487,49 +546,55 @@
 }
 
 .nv2-seen {
-  color: #a78bfa;
+  color: var(--nv2-accent-hi);
 }
 
 .nv2-new-pill {
   position: sticky;
   bottom: 8px;
   align-self: center;
-  padding: 7px 13px;
-  border: 1px solid rgba(139, 92, 246, 0.45);
+  padding: 7px 14px;
+  border: 0;
   border-radius: 999px;
-  background: #2e1065;
-  color: #ddd6fe;
+  background: var(--nv2-accent);
+  color: #fff;
   font-size: 11px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 24px -12px rgba(108, 92, 231, 0.9);
 }
 
 .nv2-load-older {
   align-self: center;
   margin-bottom: 8px;
   padding: 6px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--nv2-edge);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  color: #9ca3af;
+  background: #fff;
+  color: var(--nv2-soft);
   font: inherit;
   font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
 }
 
+.nv2-load-older:hover {
+  color: var(--nv2-accent-hi);
+}
+
 .nv2-composer {
-  padding: 10px 18px 18px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  background: rgba(8, 10, 18, 0.72);
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--nv2-line);
+  background: #fff;
 }
 
 .nv2-error {
   margin: 0 0 8px;
   padding: 7px 10px;
-  border-radius: 9px;
-  background: rgba(127, 29, 29, 0.35);
-  color: #fecaca;
+  border: 1px solid var(--nv2-danger-line);
+  border-radius: 10px;
+  background: var(--nv2-danger-bg);
+  color: var(--nv2-danger);
   font-size: 11.5px;
 }
 
@@ -537,15 +602,16 @@
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 7px 7px 7px 13px;
-  border: 1px solid rgba(255, 255, 255, 0.11);
+  padding: 7px 7px 7px 14px;
+  border: 1px solid var(--nv2-edge);
   border-radius: 16px;
-  background: #111522;
+  background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .nv2-composer-box:focus-within {
-  border-color: rgba(139, 92, 246, 0.55);
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+  border-color: var(--nv2-accent);
+  box-shadow: 0 0 0 4px rgba(108, 92, 231, 0.14);
 }
 
 .nv2-textarea {
@@ -556,15 +622,16 @@
   border: 0;
   outline: none;
   background: transparent;
-  color: #f8fafc;
+  color: var(--nv2-ink);
   font: inherit;
   font-size: 13.5px;
+  font-weight: 500;
   line-height: 1.45;
   resize: none;
 }
 
 .nv2-textarea::placeholder {
-  color: #6b7280;
+  color: var(--nv2-faint);
 }
 
 .nv2-send {
@@ -574,9 +641,10 @@
   height: 36px;
   border: 0;
   border-radius: 11px;
-  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  background: var(--nv2-accent-grad);
   color: #fff;
   cursor: pointer;
+  box-shadow: 0 10px 18px -12px rgba(108, 92, 231, 0.9);
 }
 
 .nv2-send:disabled {
@@ -591,9 +659,9 @@
   margin: 12px 16px 0;
   padding: 10px;
   overflow-y: auto;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 13px;
-  background: #0f1320;
+  border: 1px solid var(--nv2-line);
+  border-radius: 16px;
+  background: var(--nv2-surface);
 }
 
 .nv2-invite-search {
@@ -604,7 +672,7 @@
 
 .nv2-invite-notice {
   margin: 4px 0;
-  color: #a5b4fc;
+  color: var(--nv2-accent-hi);
   font-size: 11.5px;
 }
 
@@ -615,9 +683,9 @@
   margin: 12px 16px 0;
   padding: 12px;
   overflow-y: auto;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 13px;
-  background: #0f1320;
+  border: 1px solid var(--nv2-line);
+  border-radius: 16px;
+  background: var(--nv2-surface);
 }
 
 .nv2-settings-head {
@@ -630,6 +698,7 @@
 
 .nv2-settings-head strong {
   font-size: 14px;
+  font-weight: 800;
 }
 
 .nv2-settings-section {
@@ -642,7 +711,7 @@
 
 .nv2-settings-note {
   margin: 6px 0;
-  color: #7f8796;
+  color: var(--nv2-soft);
   font-size: 11.5px;
 }
 
@@ -654,7 +723,7 @@
 }
 
 .nv2-settings-row + .nv2-settings-row {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--nv2-line);
 }
 
 /* A class on the name, not a bare span selector: the avatar is a span too. */
@@ -667,8 +736,9 @@
   white-space: nowrap;
 }
 
-.nv2-settings-name small {
-  color: #7f8796;
+.nv2-settings-name small,
+.nv2-invite-row small {
+  color: var(--nv2-soft);
 }
 
 .nv2-settings-actions {
@@ -689,7 +759,7 @@
 }
 
 .nv2-settings-row:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(108, 92, 231, 0.05);
 }
 
 .nv2-settings-row .nv2-small-button {
@@ -705,9 +775,9 @@
 .nv2-role-chip {
   display: inline-block;
   padding: 1px 7px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--nv2-line);
   border-radius: 999px;
-  color: #9ca3af;
+  color: var(--nv2-soft);
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -716,9 +786,9 @@
 }
 
 .nv2-role-chip.is-owner {
-  border-color: rgba(167, 139, 250, 0.45);
-  background: rgba(139, 92, 246, 0.16);
-  color: #c4b5fd;
+  border-color: var(--nv2-chip-line);
+  background: var(--nv2-tint);
+  color: var(--nv2-chip-ink);
 }
 
 /* In-conversation search: sits under the header, like the other panels. */
@@ -728,15 +798,16 @@
   gap: 8px;
   margin: 10px 16px 0;
   padding: 6px 8px 6px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  background: rgba(0, 0, 0, 0.22);
-  color: #6b7280;
+  border: 1px solid var(--nv2-edge);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--nv2-accent);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .nv2-message-search:focus-within {
-  border-color: rgba(139, 92, 246, 0.55);
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.12);
+  border-color: var(--nv2-accent);
+  box-shadow: 0 0 0 4px rgba(108, 92, 231, 0.14);
 }
 
 .nv2-message-search input {
@@ -746,13 +817,14 @@
   border: 0;
   outline: none;
   background: transparent;
-  color: #f8fafc;
+  color: var(--nv2-ink);
   font: inherit;
   font-size: 13px;
+  font-weight: 500;
 }
 
 .nv2-message-count {
-  color: #9ca3af;
+  color: var(--nv2-soft);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -766,15 +838,15 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #6b7280;
+  color: var(--nv2-faint);
   cursor: pointer;
-  opacity: 0.55;
+  opacity: 0.7;
 }
 
 .nv2-copy-button:hover,
 .nv2-copy-button:focus-visible {
   opacity: 1;
-  color: #c4b5fd;
+  color: var(--nv2-accent-hi);
 }
 
 .nv2-meta-button {
@@ -785,23 +857,23 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #6b7280;
+  color: var(--nv2-faint);
   font: inherit;
   font-size: 10px;
   cursor: pointer;
-  opacity: 0.55;
+  opacity: 0.7;
 }
 
 .nv2-meta-button:hover,
 .nv2-meta-button:focus-visible {
   opacity: 1;
-  color: #fca5a5;
+  color: var(--nv2-danger);
 }
 
 .nv2-meta-button.is-armed {
   opacity: 1;
-  background: rgba(248, 113, 113, 0.14);
-  color: #fecaca;
+  background: var(--nv2-danger-bg);
+  color: var(--nv2-danger);
 }
 
 .nv2-match-step {
@@ -819,22 +891,22 @@
 .nv2-bubble mark {
   padding: 0 2px;
   border-radius: 4px;
-  background: rgba(250, 204, 21, 0.28);
+  background: rgba(250, 204, 21, 0.4);
   color: inherit;
 }
 
 .nv2-bubble.is-current mark {
-  background: rgba(250, 204, 21, 0.85);
+  background: rgba(250, 204, 21, 0.95);
   color: #111827;
 }
 
 .nv2-msg-row.is-search-current {
-  border-radius: 14px;
-  background: rgba(139, 92, 246, 0.07);
+  border-radius: 16px;
+  background: rgba(108, 92, 231, 0.08);
 }
 
 .nv2-msg-row.is-search-current .nv2-bubble {
-  box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.7);
+  box-shadow: 0 0 0 2px rgba(108, 92, 231, 0.7);
 }
 
 /* The profile link in a DM header: avatar and name read as one target. */
@@ -851,7 +923,7 @@
 
 a.nv2-conv-identity:hover .nv2-conv-title strong {
   text-decoration: underline;
-  text-decoration-color: rgba(196, 181, 253, 0.6);
+  text-decoration-color: rgba(108, 92, 231, 0.55);
   text-underline-offset: 3px;
 }
 
@@ -866,10 +938,20 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   transform: scale(1.06);
 }
 
-/* Keyboard focus is visible everywhere on the page; the default outline was lost on dark. */
+/* Keyboard focus is visible everywhere on the page. */
 .nv2-page :focus-visible {
-  outline: 2px solid rgba(167, 139, 250, 0.85);
+  outline: 2px solid var(--nv2-accent);
   outline-offset: 2px;
+}
+
+/* These already show a ring around the whole box (or on themselves); a second
+   outline on the bare input inside would be a rectangle within a rounded box. */
+.nv2-page .nv2-textarea:focus-visible,
+.nv2-page .nv2-message-search input:focus-visible,
+.nv2-page .nv2-memory-search input:focus-visible,
+.nv2-page .nv2-search:focus-visible,
+.nv2-page .nv2-field:focus-visible {
+  outline: none;
 }
 
 .nv2-invite-row {
@@ -880,7 +962,7 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 }
 
 .nv2-invite-row + .nv2-invite-row {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--nv2-line);
 }
 
 /* Only the name, not the avatar: the avatar is a span too and must keep its size. */
@@ -898,21 +980,30 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   align-items: center;
   gap: 5px;
   padding: 6px 9px;
-  border: 1px solid rgba(139, 92, 246, 0.35);
-  border-radius: 8px;
-  background: rgba(139, 92, 246, 0.16);
-  color: #ddd6fe;
+  border: 1px solid var(--nv2-chip-line);
+  border-radius: 9px;
+  background: var(--nv2-tint);
+  color: var(--nv2-accent-hi);
   text-decoration: none;
   font: inherit;
   font-size: 11px;
   font-weight: 700;
   cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.nv2-small-button:hover {
+  background: #E8E4FF;
 }
 
 .nv2-small-button.is-danger {
-  border-color: rgba(248, 113, 113, 0.3);
-  background: rgba(127, 29, 29, 0.28);
-  color: #fecaca;
+  border-color: var(--nv2-danger-line);
+  background: var(--nv2-danger-bg);
+  color: var(--nv2-danger);
+}
+
+.nv2-small-button.is-danger:hover {
+  background: #FEE2E2;
 }
 
 .nv2-request-actions {
@@ -928,18 +1019,19 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(0, 0, 0, 0.68);
-  backdrop-filter: blur(8px);
+  background: rgba(30, 27, 75, 0.38);
+  backdrop-filter: blur(6px);
 }
 
 .nv2-modal {
   width: min(460px, 100%);
   box-sizing: border-box;
   padding: 22px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 20px;
-  background: #0c0f19;
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--nv2-line);
+  border-radius: 24px;
+  background: #fff;
+  color: var(--nv2-ink);
+  box-shadow: 0 30px 80px -30px rgba(30, 27, 75, 0.5);
 }
 
 .nv2-modal-head {
@@ -952,16 +1044,15 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 
 .nv2-modal-head h2 {
   margin: 0;
-  color: #f4f4f5;
+  color: var(--nv2-ink);
   font-size: 20px;
-  font-weight: 500;
   letter-spacing: -0.03em;
 }
 
 .nv2-modal-head p {
   margin: 5px 0 0;
-  color: #8b93a1;
-  font-size: 12px;
+  color: var(--nv2-soft);
+  font-size: 12.5px;
   line-height: 1.5;
 }
 
@@ -971,17 +1062,24 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   box-sizing: border-box;
   margin-bottom: 10px;
   padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
+  border: 1px solid var(--nv2-edge);
+  border-radius: 12px;
   outline: none;
-  background: rgba(0, 0, 0, 0.24);
-  color: #f8fafc;
+  background: #fff;
+  color: var(--nv2-ink);
   font: inherit;
   font-size: 13px;
+  font-weight: 500;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.nv2-field::placeholder {
+  color: var(--nv2-faint);
 }
 
 .nv2-field:focus {
-  border-color: rgba(139, 92, 246, 0.55);
+  border-color: var(--nv2-accent);
+  box-shadow: 0 0 0 4px rgba(108, 92, 231, 0.14);
 }
 
 .nv2-primary {
@@ -990,15 +1088,16 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   justify-content: center;
   gap: 7px;
   width: 100%;
-  padding: 10px 14px;
+  padding: 11px 14px;
   border: 0;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  border-radius: 12px;
+  background: var(--nv2-accent-grad);
   color: #fff;
   font: inherit;
   font-size: 13px;
   font-weight: 750;
   cursor: pointer;
+  box-shadow: 0 12px 24px -14px rgba(108, 92, 231, 0.9);
 }
 
 .nv2-primary:disabled {
@@ -1009,8 +1108,8 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 .nv2-skeleton {
   height: 58px;
   margin: 6px 8px;
-  border-radius: 13px;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.04));
+  border-radius: 14px;
+  background: linear-gradient(90deg, rgba(108, 92, 231, 0.06), rgba(108, 92, 231, 0.13), rgba(108, 92, 231, 0.06));
   background-size: 200% 100%;
   animation: nv2-shimmer 1.2s linear infinite;
 }
@@ -1020,21 +1119,14 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 }
 
 @media (max-width: 860px) {
-  .nv2-page {
-    min-height: calc(100dvh - 72px);
-    padding: 0;
-  }
-
+  /* minmax(0, ...): a long preview must not widen the column past the panel. */
   .nv2-shell {
-    width: 100%;
-    height: calc(100dvh - 72px);
-    min-height: 0;
-    grid-template-columns: 1fr;
-    border: 0;
-    border-radius: 0;
+    grid-template-columns: minmax(0, 1fr);
+    border-radius: 20px;
   }
 
   .nv2-sidebar {
+    min-width: 0;
     border-right: 0;
   }
 
@@ -1067,21 +1159,45 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   }
 }
 
+/* On a phone the header is the back arrow, the title and four buttons: the member photos
+   would squeeze the title out, and the same people are listed in the group's settings. */
+@media (max-width: 560px) {
+  .nv2-member-strip {
+    display: none;
+  }
+
+  /* Smaller buttons and no group tile, so "Launch crew" fits beside the four actions. */
+  .nv2-conv-head {
+    gap: 6px;
+    padding: 10px;
+  }
+
+  .nv2-conv-head .nv2-icon-button {
+    width: 34px;
+    height: 34px;
+    border-radius: 11px;
+  }
+
+  .nv2-conv-head .nv2-avatar.is-group {
+    display: none;
+  }
+}
+
 /* Group memory, remembered messages, and Card assistant replies. */
 .nv2-icon-button.is-active {
-  border-color: rgba(167, 139, 250, 0.55);
-  background: rgba(139, 92, 246, 0.2);
-  color: #ddd6fe;
+  border-color: var(--nv2-edge);
+  background: var(--nv2-tint);
+  color: var(--nv2-accent-hi);
 }
 
 .nv2-memory-panel {
   max-height: 44vh;
   overflow-y: auto;
   padding: 14px 20px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--nv2-line);
   background:
-    radial-gradient(500px 180px at 20% 0%, rgba(139, 92, 246, 0.12), transparent 70%),
-    #0b0e18;
+    radial-gradient(500px 180px at 20% 0%, rgba(108, 92, 231, 0.08), transparent 70%),
+    var(--nv2-surface);
 }
 
 .nv2-memory-head {
@@ -1093,13 +1209,14 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 
 .nv2-memory-head strong {
   display: block;
-  color: #f4f4f5;
+  color: var(--nv2-ink);
   font-size: 14px;
+  font-weight: 800;
 }
 
 .nv2-memory-note {
   margin: 7px 0 10px;
-  color: #8b93a1;
+  color: var(--nv2-soft);
   font-size: 11.5px;
   line-height: 1.5;
 }
@@ -1109,10 +1226,10 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   align-items: center;
   gap: 8px;
   padding: 7px 8px 7px 11px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 11px;
-  background: #111522;
-  color: #6b7280;
+  border: 1px solid var(--nv2-edge);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--nv2-accent);
 }
 
 .nv2-memory-search input {
@@ -1121,26 +1238,27 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   border: 0;
   outline: none;
   background: transparent;
-  color: #f8fafc;
+  color: var(--nv2-ink);
   font: inherit;
   font-size: 12px;
+  font-weight: 500;
 }
 
 .nv2-memory-search input::placeholder {
-  color: #6b7280;
+  color: var(--nv2-faint);
 }
 
 .nv2-memory-summary {
   margin-top: 12px;
   padding: 10px 12px;
-  border: 1px solid rgba(167, 139, 250, 0.22);
-  border-radius: 12px;
-  background: rgba(139, 92, 246, 0.08);
+  border: 1px solid var(--nv2-chip-line);
+  border-radius: 14px;
+  background: var(--nv2-tint);
 }
 
 .nv2-memory-summary p {
   margin: 5px 0 0;
-  color: #d1d5db;
+  color: var(--nv2-ink);
   font-size: 12px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -1150,9 +1268,10 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #c4b5fd;
+  color: var(--nv2-accent-hi);
+  font-family: var(--nv2-mono);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -1167,21 +1286,21 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   justify-content: space-between;
   gap: 10px;
   padding: 8px 2px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  color: #d1d5db;
+  border-top: 1px solid var(--nv2-line);
+  color: var(--nv2-ink);
   font-size: 12px;
   line-height: 1.45;
 }
 
 .nv2-memory-fact small {
   flex: 0 0 auto;
-  color: #8b93a1;
+  color: var(--nv2-faint);
   font-size: 10px;
 }
 
 .nv2-memory-empty {
   margin: 7px 0;
-  color: #7f8796;
+  color: var(--nv2-soft);
   font-size: 11.5px;
   line-height: 1.5;
 }
@@ -1191,13 +1310,13 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   align-items: center;
   gap: 8px;
   margin-top: 12px;
-  color: #9ca3af;
+  color: var(--nv2-soft);
   font-size: 11.5px;
   line-height: 1.4;
 }
 
 .nv2-agent-toggle input {
-  accent-color: #8b5cf6;
+  accent-color: var(--nv2-accent);
 }
 
 .nv2-msg-row.is-agent {
@@ -1219,17 +1338,17 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   place-items: center;
   width: 16px;
   height: 16px;
-  border: 2px solid #0a0d16;
+  border: 2px solid var(--nv2-canvas);
   border-radius: 50%;
-  background: #6d28d9;
-  color: #ede9fe;
+  background: var(--nv2-accent);
+  color: #fff;
 }
 
 .nv2-msg-sender.is-agent {
   display: flex;
   align-items: center;
   gap: 4px;
-  color: #c4b5fd;
+  color: var(--nv2-accent-hi);
 }
 
 .nv2-msg-row.is-mine .nv2-msg-sender.is-agent {
@@ -1237,45 +1356,42 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 }
 
 .nv2-agent-handle {
-  color: #8b93a1;
+  color: var(--nv2-faint);
   font-weight: 500;
 }
 
 .nv2-bubble.is-agent {
-  border-color: rgba(167, 139, 250, 0.24);
-  background: #141a2a;
+  border-color: var(--nv2-edge);
+  background: var(--nv2-tint);
 }
 
-/* Your own assistant: on your side, but a dark violet glass bubble with a
-   bright rim rather than the solid gradient of something you typed. */
+/* Your own assistant: on your side, but a soft violet panel with a firm rim
+   rather than the solid accent of something you typed. */
 .nv2-bubble.is-agent.is-own {
-  border-color: rgba(196, 181, 253, 0.5);
-  border-radius: 16px 16px 5px 16px;
-  background:
-    linear-gradient(135deg, rgba(124, 58, 237, 0.34), rgba(79, 70, 229, 0.22)),
-    #161033;
-  color: #f5f3ff;
-  box-shadow: 0 6px 20px rgba(76, 29, 149, 0.22);
+  border-color: #B6A9FF;
+  border-radius: 18px 18px 6px 18px;
+  background: linear-gradient(135deg, #EFEBFF, #E6E0FF);
+  color: var(--nv2-ink);
+  box-shadow: 0 10px 22px -16px rgba(108, 92, 231, 0.6);
 }
 
 .nv2-bubble.is-remembered {
-  border-color: rgba(167, 139, 250, 0.75);
-  background:
-    linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(79, 70, 229, 0.1)),
-    #171c28;
-  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.2), 0 0 24px rgba(139, 92, 246, 0.16);
+  border-color: var(--nv2-accent);
+  background: linear-gradient(135deg, #F3F1FF, #FFFFFF);
+  box-shadow: 0 0 0 3px rgba(108, 92, 231, 0.12);
 }
 
 .nv2-msg-row.is-mine .nv2-bubble.is-remembered {
-  border-color: rgba(196, 181, 253, 0.8);
-  box-shadow: 0 0 0 1px rgba(196, 181, 253, 0.25), 0 0 24px rgba(139, 92, 246, 0.22);
+  border-color: #fff;
+  background: linear-gradient(135deg, #7C6CF0, #6C5CE7);
+  box-shadow: 0 0 0 3px rgba(108, 92, 231, 0.28);
 }
 
 .nv2-remembered-badge {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  color: #c4b5fd;
+  color: var(--nv2-accent-hi);
   font-weight: 700;
 }
 
@@ -1286,7 +1402,7 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   padding: 0;
   border: 0;
   background: transparent;
-  color: #6b7280;
+  color: var(--nv2-faint);
   font: inherit;
   font-size: 10px;
   cursor: pointer;
@@ -1300,15 +1416,20 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 }
 
 .nv2-remember-button:hover {
-  color: #c4b5fd;
+  color: var(--nv2-accent-hi);
 }
 
 .nv2-mention {
   padding: 0 2px;
   border-radius: 4px;
-  background: rgba(139, 92, 246, 0.16);
-  color: #ddd6fe;
+  background: rgba(108, 92, 231, 0.12);
+  color: var(--nv2-accent-hi);
   font-weight: 700;
+}
+
+.nv2-msg-row.is-mine .nv2-bubble .nv2-mention {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
 }
 
 .nv2-typing-row {
@@ -1318,10 +1439,10 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   align-self: flex-start;
   margin: 6px 0;
   padding: 7px 11px;
-  border: 1px solid rgba(167, 139, 250, 0.18);
-  border-radius: 13px;
-  background: rgba(139, 92, 246, 0.07);
-  color: #a5b4fc;
+  border: 1px solid var(--nv2-chip-line);
+  border-radius: 14px;
+  background: var(--nv2-tint);
+  color: var(--nv2-accent-hi);
   font-size: 11.5px;
 }
 
@@ -1336,7 +1457,7 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: #a78bfa;
+  background: var(--nv2-accent);
   animation: nv2-typing 1.1s infinite ease-in-out;
 }
 
@@ -1359,7 +1480,7 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   gap: 5px;
   align-self: flex-start;
   margin: 4px 0;
-  color: #fca5a5;
+  color: var(--nv2-danger);
   font-size: 11px;
 }
 
@@ -1386,10 +1507,10 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   margin-bottom: 8px;
   overflow-y: auto;
   padding: 5px;
-  border: 1px solid rgba(167, 139, 250, 0.35);
-  border-radius: 13px;
-  background: #111522;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--nv2-edge);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 16px 40px -18px rgba(30, 27, 75, 0.35);
 }
 
 .nv2-mention-option {
@@ -1399,9 +1520,9 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   width: 100%;
   padding: 7px 8px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 10px;
   background: transparent;
-  color: #e5e7eb;
+  color: var(--nv2-ink);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -1409,7 +1530,7 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 
 .nv2-mention-option:hover,
 .nv2-mention-option.is-active {
-  background: rgba(139, 92, 246, 0.18);
+  background: var(--nv2-tint);
 }
 
 .nv2-mention-name {
@@ -1417,19 +1538,20 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   min-width: 0;
   overflow: hidden;
   font-size: 12.5px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .nv2-mention-handle {
   flex: 0 0 auto;
-  color: #a78bfa;
+  color: var(--nv2-accent-hi);
   font-size: 11px;
 }
 
 .nv2-mention-empty {
   padding: 9px 10px;
-  color: #8b93a1;
+  color: var(--nv2-soft);
   font-size: 11.5px;
 }
 
@@ -1438,14 +1560,14 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   align-items: center;
   gap: 5px;
   margin-bottom: 7px;
-  color: #c4b5fd;
+  color: var(--nv2-accent-hi);
   font-size: 11px;
   font-weight: 650;
 }
 
 .nv2-composer-box.is-remember-intent {
-  border-color: rgba(167, 139, 250, 0.8);
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.14), 0 0 22px rgba(139, 92, 246, 0.12);
+  border-color: var(--nv2-accent);
+  box-shadow: 0 0 0 4px rgba(108, 92, 231, 0.16);
 }
 
 .nv2-remember-button {
@@ -1458,7 +1580,7 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   }
 }
 
-/* "Start a connection": name-or-handle combobox. Same dark menu as .nv2-mention-menu. */
+/* "Start a connection": name-or-handle combobox. Same menu as .nv2-mention-menu. */
 .nv2-combo {
   position: relative;
 }
@@ -1483,10 +1605,10 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   max-height: 272px;
   overflow-y: auto;
   padding: 5px;
-  border: 1px solid rgba(167, 139, 250, 0.35);
-  border-radius: 13px;
-  background: #111522;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--nv2-edge);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 16px 40px -18px rgba(30, 27, 75, 0.35);
 }
 
 .nv2-combo-list {
@@ -1505,13 +1627,13 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   align-items: center;
   gap: 9px;
   padding: 7px 8px;
-  border-radius: 9px;
-  color: #e5e7eb;
+  border-radius: 10px;
+  color: var(--nv2-ink);
   cursor: pointer;
 }
 
 .nv2-combo-option.is-active {
-  background: rgba(139, 92, 246, 0.18);
+  background: var(--nv2-tint);
 }
 
 .nv2-combo-option[aria-disabled="true"] {
@@ -1538,35 +1660,35 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 }
 
 .nv2-combo-name {
-  color: #f4f4f5;
+  color: var(--nv2-ink);
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .nv2-combo-sub {
-  color: #8b93a1;
+  color: var(--nv2-soft);
   font-size: 11px;
 }
 
 .nv2-combo-tag {
   flex: 0 0 auto;
-  color: #a78bfa;
+  color: var(--nv2-accent-hi);
   font-size: 10.5px;
   font-weight: 650;
 }
 
 .nv2-combo-tag strong {
-  color: #ddd6fe;
+  color: var(--nv2-chip-ink);
   font-weight: 800;
 }
 
 .nv2-combo-tag.is-muted {
-  color: #8b93a1;
+  color: var(--nv2-faint);
 }
 
 .nv2-combo-empty {
   padding: 9px 10px;
-  color: #8b93a1;
+  color: var(--nv2-soft);
   font-size: 11.5px;
   line-height: 1.5;
 }
@@ -1577,9 +1699,9 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   gap: 9px;
   margin-bottom: 10px;
   padding: 7px 8px;
-  border: 1px solid rgba(139, 92, 246, 0.45);
-  border-radius: 10px;
-  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid var(--nv2-edge);
+  border-radius: 12px;
+  background: var(--nv2-tint);
 }
 
 /* Markdown in Card assistant replies. .nv2-bubble is pre-wrap for plain text;
@@ -1602,9 +1724,7 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   margin: 0 0 6px;
 }
 
-/* globals.css and zynd-ui.css style bare h1/h2 as uppercase gradient display
-   headings (with !important) and h3 in the accent colour; none of that belongs
-   in a chat bubble. */
+/* A chat bubble is not a page: headings inside one stay body-sized. */
 .nv2-md h1,
 .nv2-md h2,
 .nv2-md h3,
@@ -1662,7 +1782,7 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 .nv2-md input[type="checkbox"] {
   margin: 0 6px 0 -18px;
   vertical-align: middle;
-  accent-color: #8b5cf6;
+  accent-color: var(--nv2-accent);
 }
 
 .nv2-md strong {
@@ -1674,23 +1794,19 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 }
 
 .nv2-md a {
-  color: #c4b5fd;
+  color: var(--nv2-accent-hi);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .nv2-md a:hover {
-  color: #ddd6fe;
-}
-
-.nv2-bubble.is-own .nv2-md a {
-  color: #fff;
+  color: var(--nv2-chip-ink);
 }
 
 .nv2-md code {
   padding: 1px 5px;
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(30, 27, 75, 0.07);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
 }
@@ -1701,7 +1817,7 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
   padding: 9px 11px;
   overflow-x: auto;
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.34);
+  background: rgba(30, 27, 75, 0.06);
   overflow-wrap: normal;
   white-space: pre;
 }
@@ -1716,21 +1832,16 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 .nv2-md blockquote {
   margin: 6px 0;
   padding: 2px 0 2px 10px;
-  border-left: 3px solid rgba(167, 139, 250, 0.55);
-  color: #c7cbd6;
+  border-left: 3px solid rgba(108, 92, 231, 0.55);
+  color: var(--nv2-soft);
   font-size: inherit;
   line-height: inherit;
-}
-
-.nv2-bubble.is-own .nv2-md blockquote {
-  border-left-color: rgba(221, 214, 254, 0.7);
-  color: #e4defc;
 }
 
 .nv2-md hr {
   margin: 10px 0;
   border: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.16);
+  border-top: 1px solid var(--nv2-edge);
 }
 
 .nv2-md-scroll {
@@ -1748,7 +1859,7 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 .nv2-md th,
 .nv2-md td {
   padding: 4px 9px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--nv2-edge);
   /* Break between words, not inside them: a narrow table scrolls instead. */
   overflow-wrap: normal;
   text-align: left;
@@ -1756,7 +1867,7 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 }
 
 .nv2-md th {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(108, 92, 231, 0.08);
   font-weight: 700;
 }
 
@@ -1786,13 +1897,13 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 }
 
 .nv2-typing-activity {
-  color: #8b93a1;
+  color: var(--nv2-soft);
 }
 
 /* Dev-only "where did this come from" panel under an assistant reply. */
 .nv2-sources {
   margin: 4px 0 0 4px;
-  color: #8b93a1;
+  color: var(--nv2-soft);
   font-size: 10.5px;
   line-height: 1.45;
 }
@@ -1803,7 +1914,7 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 
 .nv2-sources > summary {
   display: inline-block;
-  color: #a78bfa;
+  color: var(--nv2-accent-hi);
   font-weight: 700;
   cursor: pointer;
 }
@@ -1811,9 +1922,9 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 .nv2-sources-body {
   margin-top: 4px;
   padding: 7px 10px;
-  border: 1px dashed rgba(167, 139, 250, 0.3);
-  border-radius: 10px;
-  background: rgba(10, 13, 22, 0.55);
+  border: 1px dashed var(--nv2-edge);
+  border-radius: 12px;
+  background: #fff;
   overflow-wrap: anywhere;
 }
 
@@ -1823,7 +1934,7 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 
 .nv2-sources-body h4 {
   margin: 0 0 2px;
-  color: #c4b5fd;
+  color: var(--nv2-accent-hi);
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1841,17 +1952,17 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 
 .nv2-sources-body q {
   display: block;
-  color: #b4bcc9;
+  color: var(--nv2-soft);
   quotes: "\201c" "\201d";
 }
 
 .nv2-sources-items {
-  color: #b4bcc9;
+  color: var(--nv2-soft);
   list-style: square;
 }
 
 .nv2-sources-body code {
-  color: #ddd6fe;
+  color: var(--nv2-chip-ink);
   font-size: 10.5px;
 }
 
@@ -1861,9 +1972,9 @@ a.nv2-conv-identity:hover .nv2-conv-title strong {
 }
 
 .nv2-sources-result {
-  color: #b4bcc9;
+  color: var(--nv2-soft);
 }
 
 .nv2-sources-body li.is-failed .nv2-sources-result {
-  color: #fca5a5;
+  color: var(--nv2-danger);
 }

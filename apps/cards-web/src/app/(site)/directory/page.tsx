@@ -1,24 +1,74 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 
-import { Navbar } from "@/components/Navbar";
-import { listCards, cardCanonicalUrl } from "@/lib/cards";
+import {
+  DirectoryBrowser,
+  type DirectoryPerson,
+  type RankedSearch,
+} from "@/components/discover/directory-browser";
+import { DiscoverShell } from "@/components/discover/discover-shell";
+import type { RankedRow } from "@/components/discover/ranked-results";
+import { DEFAULT_LIMIT, MAX_QUERY } from "@/components/discover/search-terms";
+import { cardAvatarSrc } from "@/lib/avatar";
+import { CARDS_API, listCards, cardCanonicalUrl, formatMatchReason, type AgentProfileCard } from "@/lib/cards";
+import { verifiedLabels, type MatchReason } from "@/lib/match-reason";
 import { pageMetadata } from "@/lib/seo";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = pageMetadata({
-  title: "People Directory — Zynd",
-  description:
-    "Browse every person profile on Zynd, the AI agent discovery network.",
-  path: "/directory",
-});
+type Param = string | string[] | undefined;
+
+interface PageProps {
+  searchParams: Promise<{ q?: Param; match?: Param; limit?: Param }>;
+}
+
+const first = (value: Param): string => (Array.isArray(value) ? value[0] : value) ?? "";
+
+export async function generateMetadata({ searchParams }: PageProps): Promise<Metadata> {
+  const q = first((await searchParams).q).trim();
+  const base = pageMetadata({
+    title: "People Directory — Zynd",
+    description: "Browse every person profile on Zynd, the AI agent discovery network.",
+    path: "/directory",
+  });
+  // A search is a view of the directory, not a page of its own.
+  return q ? { ...base, title: `${q} — People Directory — Zynd`, robots: { index: false, follow: false } } : base;
+}
+
+interface SearchResult {
+  handle: string;
+  agent_id: string;
+  name: string;
+  headline: string;
+  location: string;
+  skills: string[];
+  availability: string;
+  experience_years: number | null;
+  match_reasons: MatchReason[];
+  verified?: string[];
+  match_score: number;
+  claimed?: boolean;
+}
+
+async function searchPeople(q: string, limit: number): Promise<SearchResult[] | null> {
+  try {
+    // The website's own directory UI may include unclaimed cards (labelled).
+    const url = `${CARDS_API}/ask?q=${encodeURIComponent(q)}&limit=${limit}&include_unclaimed=true`;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data?.results) ? data.results : null;
+  } catch {
+    return null;
+  }
+}
+
+const SKILLS_SHOWN = 4;
 
 function encodeSkill(name: string): string {
   return encodeURIComponent(name.toLowerCase().replace(/\s+/g, "-"));
 }
 
-function buildJsonLd(cards: Awaited<ReturnType<typeof listCards>>) {
+function buildJsonLd(cards: AgentProfileCard[]) {
   return {
     "@context": "https://schema.org",
     "@type": "CollectionPage",
@@ -43,119 +93,87 @@ function buildJsonLd(cards: Awaited<ReturnType<typeof listCards>>) {
   };
 }
 
-export default async function DirectoryPage() {
-  const cards = await listCards();
+function avatarOf(card: AgentProfileCard): string | undefined {
+  const avatar = card.identity.avatar_url;
+  return avatar && /^https?:\/\//.test(avatar) ? cardAvatarSrc({ avatar_url: avatar, handle: card.handle }) : undefined;
+}
+
+/** Only what the grid draws, so the page does not ship whole cards to the browser. */
+function toPerson(card: AgentProfileCard): DirectoryPerson {
+  return {
+    id: card.id,
+    href: card.handle ? `/p/${encodeURIComponent(card.handle)}` : `/profile/${card.id}`,
+    name: card.identity.name,
+    headline: card.identity.headline ?? "",
+    location: card.identity.location ?? "",
+    avatar: avatarOf(card),
+    claimed: card.claimed !== false,
+    skills: card.skills.slice(0, SKILLS_SHOWN).map((s) => ({ name: s.name, href: `/tag/${encodeSkill(s.name)}` })),
+    moreSkills: Math.max(0, card.skills.length - SKILLS_SHOWN),
+  };
+}
+
+export default async function DirectoryPage({ searchParams }: PageProps) {
+  const params = await searchParams;
+  const q = first(params.q).slice(0, MAX_QUERY);
+  const limit = Math.min(Math.max(parseInt(first(params.limit), 10) || DEFAULT_LIMIT, 1), 50);
+  const wantsMatch = first(params.match) === "1" && q.trim() !== "";
+
+  const [cards, results] = await Promise.all([listCards(), wantsMatch ? searchPeople(q.trim(), limit) : null]);
+
+  let ranked: RankedSearch | null = null;
+  if (wantsMatch) {
+    // The ask API ranks people but has no photos; the directory list does.
+    const photos = new Map<string, string>();
+    for (const card of cards) {
+      const src = card.handle ? avatarOf(card) : undefined;
+      if (card.handle && src) photos.set(card.handle, src);
+    }
+    const rows: RankedRow[] | null = results
+      ? results.map((r, i) => ({
+          key: r.handle || r.agent_id,
+          rank: i + 1,
+          href: `/p/${r.handle || r.agent_id}`,
+          name: r.name,
+          headline: r.headline ?? "",
+          location: r.location ?? "",
+          availability: r.availability ?? "",
+          years: r.experience_years ?? null,
+          skills: r.skills ?? [],
+          reasons: (r.match_reasons ?? []).map(formatMatchReason).filter((reason): reason is string => Boolean(reason)),
+          verified: verifiedLabels(r.verified),
+          claimed: r.claimed,
+          score: r.match_score,
+          avatar: photos.get(r.handle),
+        }))
+      : null;
+    ranked = { query: q.trim(), limit, rows };
+  }
 
   return (
-    <>
-      <Navbar />
+    <DiscoverShell active="directory">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
           __html: JSON.stringify(buildJsonLd(cards)).replace(/</g, "\\u003c"),
         }}
       />
-      <article className="text-white selection:bg-[#5b7cfa]/30 antialiased font-sans pb-32">
-        <div className="mx-auto w-full max-w-[1000px] px-6 pt-12">
-          <header className="mb-12">
-            {/* div not h1 — globals.css sets h1 { font-size: 6rem } */}
-            <div className="text-4xl font-bold text-white md:text-5xl">
-              People on Zynd
-            </div>
-            <p className="mt-4 max-w-2xl text-lg text-zinc-400">
+      <DirectoryBrowser
+        people={cards.map(toPerson)}
+        initialQuery={ranked ? ranked.query : q}
+        ranked={ranked}
+        intro={
+          <>
+            {/* div, not h1: globals.css makes every h1 uppercase gradient text */}
+            <div role="heading" aria-level={1} className="dc-title">People on Zynd</div>
+            <p className="dc-lede">
               Profiles on Zynd, the AI agent discovery network. Each entry is one
               person, one page — skills and work synthesized from public GitHub
               activity and résumés.
             </p>
-          </header>
-
-          {cards.length === 0 ? (
-            <div className="rounded-lg border border-white/[0.08] bg-white/[0.02] p-8 text-zinc-400">
-              No profiles published yet.{" "}
-              <Link href="/create" className="text-[#5b7cfa] hover:text-white">
-                Be the first — create your profile.
-              </Link>
-            </div>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {cards.map((card) => (
-                <div
-                  key={card.id}
-                  className="group relative flex flex-col rounded-lg border border-white/[0.08] bg-white/[0.02] p-5 transition-colors hover:border-[#5b7cfa]/40"
-                >
-                  {/* Full-coverage card link — skill chips sit above it via z-index */}
-                  <Link
-                    href={cardCanonicalUrl(card)}
-                    className="absolute inset-0 z-[1] rounded-lg"
-                    aria-label={`View ${card.identity.name}'s profile`}
-                  />
-                  <div className="flex items-center gap-3 mb-3">
-                    {card.identity.avatar_url && /^https?:\/\//.test(card.identity.avatar_url) ? (
-                      <img
-                        src={card.identity.avatar_url}
-                        alt={card.identity.name}
-                        width={36}
-                        height={36}
-                        className="rounded-full object-cover flex-shrink-0"
-                      />
-                    ) : (
-                      <div className="w-9 h-9 rounded-full flex-shrink-0 bg-gradient-to-br from-[#5b7cfa]/20 to-[#a78bfa]/20 border border-[#5b7cfa]/20 flex items-center justify-center text-[#a78bfa] text-xs font-bold">
-                        {(card.identity.name || "?")
-                          .split(/\s+/)
-                          .map((p) => p[0])
-                          .filter(Boolean)
-                          .slice(0, 2)
-                          .join("")
-                          .toUpperCase()}
-                      </div>
-                    )}
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div className="text-base font-semibold text-white group-hover:text-[#a5b4fc] truncate">
-                          {card.identity.name}
-                        </div>
-                        {card.claimed === false && (
-                          <span className="shrink-0 rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-                            Unclaimed
-                          </span>
-                        )}
-                      </div>
-                      {card.identity.location && (
-                        <div className="text-xs text-zinc-500 truncate">{card.identity.location}</div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="text-sm text-zinc-400 mb-4 line-clamp-2 flex-1">
-                    {card.identity.headline}
-                  </div>
-
-                  <div className="relative z-[2] flex flex-wrap gap-1.5">
-                    {card.skills.slice(0, 4).map((s) => (
-                      <Link
-                        key={s.name}
-                        href={`/tag/${encodeSkill(s.name)}`}
-                        className="inline-flex rounded-full border border-[#5b7cfa]/30 bg-[#5b7cfa]/10 px-2.5 py-0.5 text-xs text-[#a5b4fc] hover:bg-[#5b7cfa]/20 transition-colors"
-                      >
-                        {s.name}
-                      </Link>
-                    ))}
-                    {card.skills.length > 4 && (
-                      <span className="inline-flex px-1.5 py-0.5 text-xs text-zinc-600">
-                        +{card.skills.length - 4}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="mt-16 text-center text-sm text-zinc-600">
-            {cards.length} {cards.length === 1 ? "profile" : "profiles"} published
-          </div>
-        </div>
-      </article>
-    </>
+          </>
+        }
+      />
+    </DiscoverShell>
   );
 }

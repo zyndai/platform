@@ -4,7 +4,7 @@
  * Cards.zynd.ai nav — structurally the same shell as the dashboard's Navbar
  * (same Webflow-derived classes from zynd-ui.css, same mobile sheet) but with
  * cards-only links. Registry/Docs/Blogs/Team/Dashboard belong to the
- * dashboard product and are dropped; Directory/Find/Create replace them.
+ * dashboard product and are dropped; Directory/Create replace them.
  */
 
 import Link from "next/link";
@@ -177,7 +177,6 @@ export function Navbar(): React.ReactElement {
                       <div className="navbar-menu-b">
                         <div className="navbar-link-b">
                           <Link href="/directory" className="navbar-link w-nav-link">Directory</Link>
-                          <Link href="/find" className="navbar-link w-nav-link">Find</Link>
                           <Link href="/for-ai" className="navbar-link w-nav-link">For AI</Link>
                           {authenticated && <Link href="/network" className="navbar-link w-nav-link">Network</Link>}
                         </div>
@@ -265,7 +264,6 @@ export function Navbar(): React.ReactElement {
               </button>
             </div>
             <Link href="/directory" onClick={() => setMobileOpen(false)}>Directory</Link>
-            <Link href="/find" onClick={() => setMobileOpen(false)}>Find</Link>
             <Link href="/for-ai" onClick={() => setMobileOpen(false)}>For AI</Link>
             {authenticated && <Link href="/network" onClick={() => setMobileOpen(false)}>Network</Link>}
             {authenticated && (

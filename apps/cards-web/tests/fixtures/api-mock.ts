@@ -101,6 +101,24 @@ export function startFixtureServer(): Promise<void> {
     };
 
     if (req.method === "OPTIONS") return json(200, {});
+    // The directory list (/directory): two claimed people and one unclaimed.
+    if (req.method === "GET" && path === "/cards") {
+      return json(200, [cardFixture("alice"), cardFixture("bob", { name: "Bob Okafor" }), cardFixture("unclaimed", { claimed: false })]);
+    }
+    // The directory's ranked search: Alice (verified, freelance) then Bob; a query with "nobody" in it finds no one.
+    if (req.method === "GET" && path === "/ask") {
+      const q = url.searchParams.get("q") ?? "";
+      const hit = (handle: string, name: string, score: number, extra: Record<string, unknown> = {}) => ({
+        agent_id: `id-${handle}`, handle, name, headline: "Engineer", location: "Bangalore", skills: ["TypeScript"],
+        availability: "", experience_years: 4, match_reasons: ["Matches your search terms"], verified: [],
+        match_score: score, url: `http://127.0.0.1:3010/p/${handle}`, claimed: true, ...extra,
+      });
+      const results = q.includes("nobody") ? [] : [
+        hit("alice", "Alice Chen", 0.92, { availability: "freelance", verified: ["github"] }),
+        hit("bob", "Bob Okafor", 0.61),
+      ];
+      return json(200, { query: q, results, numberOfItems: results.length });
+    }
     if (path === "/cards/by-handle/owner/beacon") {
       if (!req.headers.authorization) return json(401, { detail: "Unauthorized" });
       if (req.method === "DELETE") { ownerCard = { ...ownerCard, beacon: null }; return json(204, {}); }

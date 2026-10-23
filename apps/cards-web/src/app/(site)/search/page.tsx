@@ -5,12 +5,29 @@ import { formatMatchReason, searchAgents } from "@/lib/cards";
 import { verifiedLabels } from "@/lib/match-reason";
 import { pageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = pageMetadata({
-  title: "Search People — Zynd",
-  description:
-    "Search Zynd's directory of AI-discoverable people by role, skills, location, industry, and availability.",
-  path: "/search",
-});
+export async function generateMetadata({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }): Promise<Metadata> {
+  const sp = await searchParams;
+  const qRaw = sp.q;
+  const skillsRaw = sp.skills;
+  const q = Array.isArray(qRaw) ? qRaw[0] : qRaw ?? "";
+  const skills = Array.isArray(skillsRaw) ? skillsRaw[0] : skillsRaw ?? "";
+
+  const baseDesc = "Find people on Zynd — search the directory of AI-discoverable people by role, skills, location, industry, and availability.";
+  const truncate = (s: string, n = 40) => (s.length > n ? `${s.slice(0, n)}…` : s);
+
+  let description = baseDesc;
+  if (skills) {
+    description = `${baseDesc} Skills: ${truncate(skills, 40)}.`;
+  } else if (q) {
+    description = `${baseDesc} Query: \"${truncate(q, 40)}\".`;
+  }
+
+  return pageMetadata({
+    title: "Search People — Zynd",
+    description,
+    path: "/search",
+  });
+}
 
 const INPUT =
   "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-[#5b7cfa]/60 focus:bg-white/[0.06]";

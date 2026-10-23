@@ -291,6 +291,31 @@ async def test_weekly_job_is_idempotent_per_owner_and_honors_optout(monkeypatch)
     assert adapter.send.call_count == 1
 
 
+def test_timezone_requires_auth(client):
+    assert client.patch("/cards/mine/timezone", json={"timezone": "Asia/Kolkata"}).status_code == 401
+
+
+def test_timezone_is_saved_for_the_verified_owner_only(client, monkeypatch):
+    sb = MagicMock()
+    monkeypatch.setattr(config, "get_supabase", lambda: sb)
+    response = client.patch("/cards/mine/timezone?email=other@example.com", headers={"Authorization": "Bearer owner"},
+                            json={"timezone": " America/Los_Angeles "})
+    assert response.status_code == 200
+    assert response.json() == {"timezone": "America/Los_Angeles"}
+    q = sb.table.return_value
+    q.update.assert_called_once_with({"timezone": "America/Los_Angeles"})
+    q.update.return_value.ilike.assert_called_once_with("owner_email", "alice@example.com")
+
+
+@pytest.mark.parametrize("bad", ["", "Not/AZone", "../etc/passwd", "x" * 65])
+def test_timezone_rejects_unknown_zones(client, monkeypatch, bad):
+    sb = MagicMock()
+    monkeypatch.setattr(config, "get_supabase", lambda: sb)
+    response = client.patch("/cards/mine/timezone", headers={"Authorization": "Bearer owner"}, json={"timezone": bad})
+    assert response.status_code == 422
+    sb.table.assert_not_called()
+
+
 def test_unsubscribe_get_does_not_mutate_preferences(client, monkeypatch):
     sb = MagicMock()
     monkeypatch.setattr(config, "get_supabase", lambda: sb)

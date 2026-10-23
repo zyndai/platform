@@ -28,6 +28,8 @@ export interface OwnerStatus {
   };
   visitors?: { available: boolean; items: { name: string; handle?: string | null; visited_at: string; visits: number }[] };
   notification_prefs: { weekly_digest: boolean; email_nudges: boolean };
+  /** IANA zone the morning digest is timed to; null until the owner has opened /home on a build that records it. */
+  timezone?: string | null;
   duplicates: { id: string; handle: string; name: string; status: string }[];
   unclaimed_duplicates?: { handle: string; name: string }[];
   possible_duplicates?: { handle: string; name: string; matched_socials: string[]; mergeable: false }[];

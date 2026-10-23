@@ -180,6 +180,10 @@ SMTP_USER: str = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM: str = os.getenv("SMTP_FROM", "")
 CRON_SECRET: str = os.getenv("CRON_SECRET", "")
+# The digest goes out at 07:00 in each owner's stored timezone. Owners without one (haven't
+# opened /home since it started recording it) get 07:00 here, which is what everyone got
+# when the digest was a single fixed-time run.
+DIGEST_DEFAULT_TIMEZONE: str = os.getenv("DIGEST_DEFAULT_TIMEZONE") or "Asia/Kolkata"
 
 # S10: enabled by default; requires migrations 0010/0011 on the cards schema.
 # Set FEATURE_S10_HOME=false to disable owner-home operations explicitly.

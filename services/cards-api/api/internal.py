@@ -127,9 +127,12 @@ def morning_digest(
     authorization: str | None = Header(default=None),
     dry_run: bool = Query(default=False),
     handle: str | None = Query(default=None),
+    ignore_schedule: bool = Query(default=False),
 ):
+    """Sends to owners whose local time is in their 07:00 window; the workflow calls this
+    every 30 minutes. `ignore_schedule` sends to everyone regardless of local time."""
     _require_cron(authorization)
-    return run_digest(dry_run=dry_run, handle=handle)
+    return run_digest(dry_run=dry_run, handle=handle, ignore_schedule=ignore_schedule)
 
 
 @router.post("/clear-suggested-posts")

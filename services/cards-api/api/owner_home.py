@@ -14,6 +14,7 @@ import config
 from api.mcp import _principal, _owner_email
 from models.card import AgentProfileCard
 from services import owner_home, cards
+from services.digest import valid_zone
 from services.zynd_memory import ping_revalidate
 
 router = APIRouter()
@@ -66,6 +67,23 @@ async def preferences(body: Preferences, authorization: str | None = Header(defa
         return config.get_supabase().table("agent_profile_cards").update({"notification_prefs": body.model_dump()}).ilike("owner_email", cards._like_literal(email)).execute()
     await asyncio.to_thread(save)
     return body.model_dump()
+
+
+class OwnerTimezone(BaseModel):
+    timezone: str = Field(max_length=64)
+
+
+@router.patch("/mine/timezone")
+async def owner_timezone(body: OwnerTimezone, authorization: str | None = Header(default=None)):
+    """The browser's IANA zone, so the morning digest arrives at 07:00 where the owner is."""
+    email = email_for(authorization)
+    zone = valid_zone(body.timezone)
+    if zone is None:
+        raise HTTPException(422, "Unknown timezone")
+    def save():
+        return config.get_supabase().table("agent_profile_cards").update({"timezone": zone.key}).ilike("owner_email", cards._like_literal(email)).execute()
+    await asyncio.to_thread(save)
+    return {"timezone": zone.key}
 
 
 class Visibility(BaseModel):

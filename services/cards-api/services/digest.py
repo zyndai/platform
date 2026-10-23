@@ -6,6 +6,9 @@ import logging
 import smtplib
 from datetime import datetime, timezone
 from email.message import EmailMessage
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from postgrest.exceptions import APIError
 
 import config
 from services import cards as cards_service
@@ -13,6 +16,12 @@ from services.suggested_people import get_suggested_people
 from services.suggested_posts import get_suggested_posts
 
 logger = logging.getLogger(__name__)
+
+# The digest goes out at 07:00 in each owner's own timezone. The workflow ticks every 30
+# minutes (so half-hour zones like IST land on time), but GitHub delays and sometimes skips
+# scheduled runs, so a tick up to DIGEST_GRACE_HOURS after 07:00 local still sends it.
+DIGEST_LOCAL_HOUR = 7
+DIGEST_GRACE_HOURS = 3
 
 # Gmail-safe palette from the digest mock (inline only — no Tailwind/CDN).
 _BG = "#faf8ff"
@@ -301,6 +310,40 @@ def send_smtp(*, to: str, subject: str, body: str, html: str | None = None) -> N
         smtp.send_message(msg)
 
 
+def valid_zone(name: str | None) -> ZoneInfo | None:
+    """The IANA zone for `name`, or None when it is empty or unknown."""
+    try:
+        return ZoneInfo((name or "").strip())
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return None
+
+
+def resolve_zone(name: str | None) -> ZoneInfo:
+    """The owner's zone, or the default for owners who have not stored a usable one.
+
+    The default is not caught: a bad DIGEST_DEFAULT_TIMEZONE should fail the run loudly
+    rather than quietly send every digest at the wrong hour.
+    """
+    return valid_zone(name) or ZoneInfo(config.DIGEST_DEFAULT_TIMEZONE)
+
+
+def _in_send_window(local: datetime) -> bool:
+    return DIGEST_LOCAL_HOUR <= local.hour < DIGEST_LOCAL_HOUR + DIGEST_GRACE_HOURS
+
+
+def _list_digest_rows() -> list[dict]:
+    columns = "handle,owner_email,suggested_posts,card"
+    try:
+        return cards_service.list_published_rows(columns=columns + ",timezone")
+    except APIError as exc:
+        # 42703 = undefined column: cards-api is deployed ahead of migration 0029 (or still on
+        # the pre-cards schema). Everyone gets the default zone, as before, instead of no digest.
+        if str(exc.code) != "42703":
+            raise
+        logger.warning("digest: timezone column missing, using %s for everyone", config.DIGEST_DEFAULT_TIMEZONE)
+        return cards_service.list_published_rows(columns=columns)
+
+
 def _mark_sent(handle: str, day: str, snap: dict | None) -> None:
     payload = dict(snap or {})
     payload["digest_sent_on"] = day
@@ -323,11 +366,24 @@ def clear_suggested_posts(*, handle: str | None = None) -> dict:
     return stats
 
 
-def run_digest(*, today: str | None = None, dry_run: bool = False, handle: str | None = None) -> dict:
-    day = today or datetime.now(timezone.utc).date().isoformat()
-    stats = {"sent": 0, "skipped_no_email": 0, "skipped_already": 0, "errors": 0}
+def run_digest(
+    *,
+    now: datetime | None = None,
+    dry_run: bool = False,
+    handle: str | None = None,
+    ignore_schedule: bool = False,
+) -> dict:
+    """Send the digest to every owner whose local clock is inside their 07:00 window.
+
+    Meant to be called every 30 minutes. `digest_sent_on` holds the owner's local date, so
+    repeated ticks send at most one digest per owner per local day. `handle` or
+    `ignore_schedule` skips the window check (previews, manual sends); the sent-today check
+    still applies.
+    """
+    now = now or datetime.now(timezone.utc)
+    stats = {"sent": 0, "skipped_no_email": 0, "skipped_not_due": 0, "skipped_already": 0, "errors": 0}
     want = (handle or "").strip().lstrip("@").lower()
-    rows = cards_service.list_published_rows(columns="handle,owner_email,suggested_posts,card")
+    rows = _list_digest_rows()
     if want:
         rows = [r for r in rows if (r.get("handle") or "").lower() == want]
         if not rows:
@@ -344,6 +400,11 @@ def run_digest(*, today: str | None = None, dry_run: bool = False, handle: str |
         if not email:
             stats["skipped_no_email"] += 1
             continue
+        local = now.astimezone(resolve_zone(row.get("timezone")))
+        if not (want or ignore_schedule or _in_send_window(local)):
+            stats["skipped_not_due"] += 1
+            continue
+        day = local.date().isoformat()
         if snap.get("digest_sent_on") == day:
             stats["skipped_already"] += 1
             continue
@@ -356,16 +417,19 @@ def run_digest(*, today: str | None = None, dry_run: bool = False, handle: str |
             if dry_run:
                 stats["previews"].append({"handle": handle, "to": email, "body": body, "html": html})
             else:
+                merged = dict(snap)
+                if isinstance(posts, dict):
+                    merged.update({k: posts[k] for k in ("date", "posts", "summary", "shown_urls", "queries_hash") if k in posts})
+                # Claim the day before sending. The next tick is 30 minutes away, so if the
+                # marker were written after SMTP and that write failed, the owner would get
+                # the same digest on every tick in the window. A failed send costs one day.
+                _mark_sent(handle, day, merged)
                 send_smtp(
                     to=email,
                     subject=f"Your Zynd morning digest @{handle}",
                     body=body,
                     html=html,
                 )
-                merged = dict(snap)
-                if isinstance(posts, dict):
-                    merged.update({k: posts[k] for k in ("date", "posts", "summary", "shown_urls", "queries_hash") if k in posts})
-                _mark_sent(handle, day, merged)
             stats["sent"] += 1
         except Exception as exc:
             logger.warning("digest failed handle=%s err=%s", handle, exc)

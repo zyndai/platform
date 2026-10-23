@@ -70,13 +70,32 @@ test("expired proposals cannot be approved", async ({ page, context }) => {
   await expect(page.getByRole("main").getByRole("button")).toHaveCount(0);
 });
 
-for (const status of [401, 403, 409]) {
+const alertText: Record<number, string> = {
+  403: "another account",
+  404: "not found for the account you are signed in with",
+  409: "already decided",
+};
+
+for (const status of [401, 403, 404, 409]) {
   test(`failed proposal request (${status}) exposes no approval controls`, async ({ page, context }) => {
     await signIn(context);
     await page.route("**/me/plugin/proposals/proposal-1", route => route.fulfill({ status, json: {} }));
     await page.goto("/review/proposal-1");
+    const main = page.getByRole("main");
     if (status === 401) await expect(page.getByRole("link", { name: "Sign in to review" })).toBeVisible();
-    else await expect(page.getByRole("main").getByRole("alert")).toContainText(status === 403 ? "another account" : "already decided");
-    await expect(page.getByRole("main").getByRole("button")).toHaveCount(0);
+    else await expect(main.getByRole("alert")).toContainText(alertText[status]);
+    // Wrong-account errors offer a way to switch accounts, and nothing else.
+    if (status === 403 || status === 404) await expect(main.getByRole("button")).toHaveText(["Sign in with a different account"]);
+    else await expect(main.getByRole("button")).toHaveCount(0);
   });
 }
+
+test("a proposal that isn't found names the signed-in account and offers to switch", async ({ page, context }) => {
+  await signIn(context);
+  await page.route("**/me/plugin/proposals/proposal-1", route => route.fulfill({ status: 404, json: {} }));
+  await page.goto("/review/proposal-1");
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("owner@example.test");
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("connected to a different Zynd account");
+  await page.getByRole("button", { name: "Sign in with a different account" }).click();
+  await page.waitForURL("**/auth?next=%2Freview%2Fproposal-1");
+});

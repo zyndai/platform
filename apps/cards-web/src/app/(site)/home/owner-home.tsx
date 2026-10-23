@@ -72,6 +72,22 @@ export function OwnerHome({
   }, [modalOpen, busy]);
 
   useEffect(() => {
+    // The morning digest lands at 07:00 in this zone. Report the browser's zone when it
+    // differs from the stored one (first visit, or the owner moved). Best effort: on failure
+    // the digest keeps its default hour.
+    let zone = "";
+    try {
+      zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    } catch {
+      return;
+    }
+    if (!zone || zone === initial.timezone) return;
+    ownerRequest("mine/timezone", token, "PATCH", { timezone: zone })
+      .then(() => setData((current) => ({ ...current, timezone: zone })))
+      .catch(() => {});
+  }, [token, initial.timezone]);
+
+  useEffect(() => {
     let active = true;
     const refresh = async () => {
       if (busy || document.visibilityState !== "visible") return;

@@ -1,0 +1,13 @@
+-- owner: cards
+-- The morning digest lands at 07:00 in each owner's own timezone instead of one
+-- fixed 07:00 IST for everyone. cards-web sends the browser's IANA zone name
+-- (Intl.DateTimeFormat().resolvedOptions().timeZone) when an owner opens /home,
+-- and cards-api validates it before storing it here.
+-- Nullable with no default: owners who haven't opened /home since this shipped
+-- keep getting the digest at cards-api's DIGEST_DEFAULT_TIMEZONE (Asia/Kolkata),
+-- which is what they get today. Expand-only; nothing reads it until cards-api
+-- is deployed, so apply this before that deploy. Do not apply to prod without a
+-- human (AGENTS.md §6).
+-- Rollback:
+--   ALTER TABLE cards.agent_profile_cards DROP COLUMN IF EXISTS timezone;
+ALTER TABLE "cards"."agent_profile_cards" ADD COLUMN "timezone" text;

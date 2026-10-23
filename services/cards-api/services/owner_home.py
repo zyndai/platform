@@ -273,4 +273,5 @@ async def status(email: str, *, persist: bool = True) -> dict | None:
                         for s in card.sources],
             "activity": metrics, "duplicates": candidates, "unclaimed_duplicates": unclaimed, "possible_duplicates": possible, "nudges": nudges,
             "notification_prefs": {**DEFAULT_PREFS, **(row.get("notification_prefs") or {})},
+            "timezone": row.get("timezone"),
             "visibility": "public" if row["status"] == "published" else "private"}

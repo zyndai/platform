@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { signOutAndLeave } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/client";
 import { MEMORY_API } from "@/lib/memory";
 import styles from "./ProposalReview.module.css";
@@ -19,6 +20,9 @@ type Proposal = {
 };
 type Preview = Omit<Proposal, "id" | "status"> & { nonce: string };
 class SignInRequired extends Error {}
+// The server answers 404 for a proposal that belongs to someone else (so a link can't be used to
+// probe for other people's proposals), so 404 and 403 both mean "maybe the wrong account".
+class WrongAccount extends Error {}
 
 export function ProposalReview({ id }: { id: string }) {
   const { ready, user } = useAuth();
@@ -29,7 +33,7 @@ export function ProposalReview({ id }: { id: string }) {
         <h1 id="review-title">Review your proposal</h1>
         {!ready ? <p role="status">Checking your session...</p> : !user ? (
           <SignIn id={id} />
-        ) : <SignedInReview key={`${user.id}:${id}`} id={id} />}
+        ) : <SignedInReview key={`${user.id}:${id}`} id={id} email={user.email} />}
       </section>
     </main>
   );
@@ -44,12 +48,13 @@ function SignIn({ id }: { id: string }) {
   </div>;
 }
 
-function SignedInReview({ id }: { id: string }) {
+function SignedInReview({ id, email }: { id: string; email?: string }) {
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [needsLogin, setNeedsLogin] = useState(false);
+  const [wrongAccount, setWrongAccount] = useState(false);
   const [result, setResult] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const inFlight = useRef(false);
@@ -72,15 +77,17 @@ function SignedInReview({ id }: { id: string }) {
     });
     if (response.status === 401) throw new SignInRequired("Your session has expired. Sign in again to continue.");
     if (!response.ok) {
+      const who = email ? ` (${email})` : "";
       const messages: Record<number, string> = {
         401: "Your session has expired. Sign in again to continue.",
-        403: "This proposal belongs to another account. Sign in with the account connected to your AI assistant.",
-        404: "This proposal is unavailable. Check the link or ask your AI assistant for a new proposal.",
+        403: `This proposal belongs to another account. You are signed in as this account${who}. Sign in with the account connected to your AI assistant.`,
+        404: `This proposal was not found for the account you are signed in with${who}. If your AI assistant is connected to a different Zynd account, sign in with that one. Otherwise ask your AI assistant for a new proposal.`,
         409: "This proposal changed or was already decided. Reload to review its current state.",
         410: "This proposal or confirmation has expired. Ask your AI assistant for a new proposal.",
         422: "This text cannot be published as a card fact. Reject it and ask your AI assistant for a new proposal.",
       };
-      throw new Error(messages[response.status] || "Could not complete the request. Please try again.");
+      const message = messages[response.status] || "Could not complete the request. Please try again.";
+      throw response.status === 403 || response.status === 404 ? new WrongAccount(message) : new Error(message);
     }
     return response.json() as Promise<T>;
   }
@@ -93,6 +100,7 @@ function SignedInReview({ id }: { id: string }) {
     }).catch((err: unknown) => {
       if (!controller.signal.aborted) {
         setNeedsLogin(err instanceof SignInRequired);
+        setWrongAccount(err instanceof WrongAccount);
         setError(err instanceof Error ? err.message : "Could not load this proposal.");
       }
     });
@@ -139,6 +147,7 @@ function SignedInReview({ id }: { id: string }) {
     } catch (err) {
       if (decision) setPreview(null);
       setNeedsLogin(err instanceof SignInRequired);
+      setWrongAccount(err instanceof WrongAccount);
       setError(err instanceof Error ? err.message : "Could not complete the request.");
     } finally {
       inFlight.current = false;
@@ -151,6 +160,11 @@ function SignedInReview({ id }: { id: string }) {
 
   return <>
     {error && <p className={styles.error} role="alert">{error}</p>}
+    {wrongAccount && <div className={styles.actions}>
+      <button className={styles.primary} onClick={() => void signOutAndLeave(`/auth?next=${encodeURIComponent(`/review/${encodeURIComponent(id)}`)}`)}>
+        Sign in with a different account
+      </button>
+    </div>}
     {!proposal ? (!error && <p role="status">Loading proposal...</p>) : <>
       <p className={styles.eyebrow}>{publish ? "PUBLIC CARD FACT" : "PRIVATE MEMORY"}</p>
       <p>{publish ? "Publishing makes the exact text below visible on your public card and discoverable by people and AI agents." : "Saving adds this text to your private memory. It will not publish anything to your card."}</p>

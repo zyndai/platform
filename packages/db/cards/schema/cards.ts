@@ -57,6 +57,9 @@ export const agentProfileCards = cards.table(
     lastLookingForNudgeOn: date('last_looking_for_nudge_on'),
     lastOwnerDigestOn: date('last_owner_digest_on'),
     lookingForExpiresAt: tstz('looking_for_expires_at'),
+    // IANA zone name (e.g. 'Asia/Kolkata') the morning digest uses to land at 07:00
+    // local. Set from the owner's browser on /home; NULL falls back to cards-api's default.
+    timezone: text('timezone'),
   },
   (t) => [
     fk('agent_profile_cards_owner_user_id_fkey', t.ownerUserId, authUsers.id, 'set null'),

@@ -906,12 +906,12 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                 )}
                 <div style={{ minWidth: 0, flex: 1, paddingTop: 4 }}>
                   <div style={{ fontSize: "0.72rem", fontWeight: 600, opacity: 0.8 }}>I&apos;m</div>
-                  <div className="pf-hero-name" style={{ fontSize: "1.45rem", fontWeight: 800, lineHeight: 1.05, margin: "2px 0 0", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <h1 className="pf-hero-name" style={{ fontSize: "1.45rem", fontWeight: 800, lineHeight: 1.05, margin: "2px 0 0", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span>{nameLines.map((line, i) => <span key={i}>{line}{i < nameLines.length - 1 ? " " : ""}</span>)}</span>
                     {linkedinLinked && (
                       <BadgeCheck size={22} color="#FBBF24" fill="#FBBF24" stroke="#6d64f6" strokeWidth={1.5} aria-label="LinkedIn linked" />
                     )}
-                  </div>
+                  </h1>
                   {showConnect && (
                     <div style={{ marginTop: 10 }}>
                       <ConnectionButton key={card.handle ?? handle} handle={card.handle ?? handle} name={identity.name || undefined} />

@@ -49,9 +49,9 @@ export default async function SearchPage({ searchParams }: PageProps) {
         <div className="mx-auto w-full max-w-[1000px] px-6 pt-12">
           <header className="mb-10">
             {/* div not h1 — globals.css sets h1 { font-size: 6rem } */}
-            <div className="text-4xl font-bold text-white md:text-5xl">
+            <h1 className="text-4xl font-bold text-white md:text-5xl">
               Find people on Zynd
-            </div>
+            </h1>
             <p className="mt-4 max-w-2xl text-lg text-zinc-400">
               Search Zynd&apos;s directory of AI-discoverable people by role,
               skills, location, industry, and availability.

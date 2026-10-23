@@ -84,10 +84,10 @@ export function EditionHero(props: Props) {
           )}
           <div className="ed-id-who">
             <div className="ed-id-im">I&apos;m</div>
-            <div className="ed-id-name">
+            <h1 className="ed-id-name">
               <span>{nameLines.map((line, i) => <span key={i}>{line}{i < nameLines.length - 1 ? " " : ""}</span>)}</span>
               {verified && <BadgeCheck size={26} className="ed-id-verified" aria-label="LinkedIn linked" />}
-            </div>
+            </h1>
             {headline && <div className="ed-id-headline">{headline}</div>}
             {(location || role || updated) && (
               <div className="ed-id-meta">

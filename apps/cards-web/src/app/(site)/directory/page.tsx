@@ -165,7 +165,7 @@ export default async function DirectoryPage({ searchParams }: PageProps) {
         intro={
           <>
             {/* div, not h1: globals.css makes every h1 uppercase gradient text */}
-            <div role="heading" aria-level={1} className="dc-title">People on Zynd</div>
+            <h1 className="dc-title">People on Zynd</h1>
             <p className="dc-lede">
               Profiles on Zynd, the AI agent discovery network. Each entry is one
               person, one page — skills and work synthesized from public GitHub

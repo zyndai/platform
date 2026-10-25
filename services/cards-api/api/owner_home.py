@@ -58,15 +58,23 @@ async def mine_activity(authorization: str | None = Header(default=None)):
 class Preferences(BaseModel):
     weekly_digest: bool
     email_nudges: bool
+    # Optional so a client that predates the morning digest toggle can't switch it back on.
+    morning_digest: bool | None = None
 
 
 @router.patch("/mine/notification-prefs")
 async def preferences(body: Preferences, authorization: str | None = Header(default=None)):
     email = email_for(authorization)
+    prefs = body.model_dump(exclude_none=True)
     def save():
-        return config.get_supabase().table("agent_profile_cards").update({"notification_prefs": body.model_dump()}).ilike("owner_email", cards._like_literal(email)).execute()
+        sb = config.get_supabase()
+        if "morning_digest" not in prefs:
+            rows = sb.table("agent_profile_cards").select("notification_prefs").ilike("owner_email", cards._like_literal(email)).limit(1).execute().data or []
+            stored = (rows[0].get("notification_prefs") or {}) if rows else {}
+            prefs["morning_digest"] = stored.get("morning_digest", owner_home.DEFAULT_PREFS["morning_digest"])
+        return sb.table("agent_profile_cards").update({"notification_prefs": prefs}).ilike("owner_email", cards._like_literal(email)).execute()
     await asyncio.to_thread(save)
-    return body.model_dump()
+    return prefs
 
 
 class OwnerTimezone(BaseModel):
@@ -277,7 +285,7 @@ def unsubscribe(token: UUID):
     rows = sb.table("agent_profile_cards").select("owner_email").eq("unsubscribe_token", str(token)).execute().data or []
     if not rows or not rows[0].get("owner_email"):
         raise HTTPException(404, "Link not found")
-    sb.table("agent_profile_cards").update({"notification_prefs": {"weekly_digest": False, "email_nudges": False}}).ilike("owner_email", cards._like_literal(rows[0]["owner_email"])).execute()
+    sb.table("agent_profile_cards").update({"notification_prefs": {"weekly_digest": False, "email_nudges": False, "morning_digest": False}}).ilike("owner_email", cards._like_literal(rows[0]["owner_email"])).execute()
     return HTMLResponse('<!doctype html><title>Unsubscribed</title><h1>You are unsubscribed</h1><p>Your card stays available. You can change email preferences in your owner home.</p><a href="' + html.escape(config.SITE_BASE_URL.rstrip('/') + '/home', quote=True) + '">Owner home</a>', headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 

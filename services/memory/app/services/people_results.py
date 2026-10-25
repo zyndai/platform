@@ -62,7 +62,7 @@ def person_from_card(row: dict) -> dict:
     """A Cards search hit (see people_discovery.search_cards)."""
     handle = row.get("handle") or None
     claimed = row.get("claimed") is True
-    return {
+    person = {
         "handle": handle,
         "name": row.get("name") or "",
         "headline": row.get("headline") or "",
@@ -77,6 +77,9 @@ def person_from_card(row: dict) -> dict:
         "linkedin_url": row.get("linkedin_url") or "",
         "verified": list(row.get("verified") or []),
     }
+    if row.get("relaxed"):
+        person["relaxed"] = list(row["relaxed"])   # which filters Cards had to loosen to include them
+    return person
 
 
 def person_from_zynd(row: dict, card: dict, card_url: str) -> dict:
@@ -108,11 +111,13 @@ def person_from_external(row: dict, index: int) -> dict:
         "handle": None,
         "name": row.get("name") or "",
         "headline": headline,
-        "location": "",
+        "location": row.get("location") or "",
         "why": ["Found on LinkedIn" + (f" · {headline}" if headline else "")],
         "sources": ["linkedin"],
         "claimed": False,
-        "score": round(max(EXTERNAL_BASE - EXTERNAL_STEP * index, 0.0), 3),
+        # a re-ranked row carries its own score; otherwise keep the provider's order
+        "score": _score(row["score"]) if isinstance(row.get("score"), (int, float))
+                 else round(max(EXTERNAL_BASE - EXTERNAL_STEP * index, 0.0), 3),
         "next_action": "view_profile",
         "url": row.get("linkedin_url") or "",
         "skills": [],
@@ -142,6 +147,8 @@ def _absorb(base: dict, other: dict) -> None:
     for field in ("name", "headline", "location", "url", "linkedin_url"):
         if not base.get(field) and other.get(field):
             base[field] = other[field]
+    if other.get("relaxed") and not base.get("relaxed"):
+        base["relaxed"] = other["relaxed"]
     if not base["handle"] and other["handle"]:
         base["handle"], base["claimed"] = other["handle"], other["claimed"]
         base["next_action"] = other["next_action"]

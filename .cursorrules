@@ -23,6 +23,11 @@ non-negotiable rules are repeated below as a safety net.
    rotation, DNS/Vercel/GitHub settings, deleting data, or anything touching
    auth/payments/schema. Never edit the separate `dashboard` or
    `zynd-bridge` repos from here.
+6. **No new env vars or feature flags.** Assume a new feature is wanted and
+   ship it enabled; don't add a `FEATURE_*` toggle or a tuning setting for
+   it (use a named constant in code). Add an env var only when it is truly
+   needed: a secret, a URL or credential that differs per environment, or
+   something that cannot be a constant. See `AGENTS.md` §9.
 
 This repo is mid-migration (three formerly separate repos, merged with full
 git history 2026-09-26). `infra/` describes the target deploy layout, not

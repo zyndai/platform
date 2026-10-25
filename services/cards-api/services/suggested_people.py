@@ -9,6 +9,7 @@ import httpx
 import config
 from models.card import AgentProfileCard
 from services import cards as cards_service
+from services.two_way import kinds_of, two_way_match
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +234,8 @@ def search_outside(card: AgentProfileCard, _taken: set[str]) -> list[dict]:
     return out
 
 
-def _public_person(card: AgentProfileCard, handle: str, matched: dict[str, list[str]]) -> dict:
+def _public_person(card: AgentProfileCard, handle: str, matched: dict[str, list[str]],
+                   two_way: bool = False) -> dict:
     return {
         "handle": handle,
         "name": card.identity.name,
@@ -243,6 +245,7 @@ def _public_person(card: AgentProfileCard, handle: str, matched: dict[str, list[
         "url": f"{config.SITE_BASE_URL.rstrip('/')}/p/{handle}",
         "match_score": sum(map(len, matched.values())),
         "matched_fields": matched,
+        "two_way": two_way,
     }
 
 
@@ -256,6 +259,7 @@ def get_suggested_people(handle: str) -> dict | None:
     if not requester:
         return None
     interests = _card_interests(requester)
+    requester_kinds = kinds_of(requester)
     if not any(interests.values()):
         return {"handle": handle, "people": [], "outside": []}
 
@@ -282,9 +286,11 @@ def get_suggested_people(handle: str) -> dict | None:
         matched = {field: words for field, words in matched.items() if words}
         if matched:
             candidate.handle = candidate_handle
-            results.append(_public_person(candidate, candidate_handle, matched))
+            results.append(_public_person(
+                candidate, candidate_handle, matched, bool(two_way_match(requester_kinds, candidate))))
 
-    results.sort(key=lambda person: (-person["match_score"], person["handle"].casefold()))
+    # People who also want to meet someone like the requester come first (the digest leads with them).
+    results.sort(key=lambda person: (not person["two_way"], -person["match_score"], person["handle"].casefold()))
     outside = []
     if outside_search_enabled():
         for person in search_outside(requester, taken):

@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 import config
 from services import cards as cards_service
 from services import events as events_service
+from services import lookup as lookup_service
 from services import search as search_service
 
 router = APIRouter()
@@ -18,6 +19,8 @@ SEARCHABLE_ATTRIBUTES = [
     {"name": "availability", "type": "string", "description": "fulltime | contract | freelance | open"},
     {"name": "experience_min", "type": "integer", "description": "Minimum years of experience"},
     {"name": "include_unclaimed", "type": "boolean", "description": "Include unclaimed (scraped) cards; default false for agent callers"},
+    {"name": "topics", "type": "string", "description": "Comma-separated topics: they raise the score of cards that mention them and never remove a card (unlike skills)"},
+    {"name": "relax", "type": "boolean", "description": "If fewer than `limit` cards pass every filter, loosen skills, then location, then role; looser matches rank last and carry `relaxed`"},
     {"name": "less_like", "type": "string", "description": "Comma-separated Card handles the searcher wants to see less of"},
     {"name": "as_handle", "type": "string", "description": "The searcher's own Card handle: results who want to meet people like them rank higher"},
 ]
@@ -52,6 +55,8 @@ async def search_agents(
     include_unclaimed: bool = Query(False),
     as_handle: str = Query("", max_length=64),
     less_like: str = Query("", max_length=700),
+    topics: str = Query("", max_length=200),
+    relax: bool = Query(False),
 ):
     keep_unclaimed = include_unclaimed or not config.FEATURE_S03_UNCLAIMED_TIERING
     searcher = await asyncio.to_thread(cards_service.get_card_by_handle, as_handle.strip().lstrip("@")) if as_handle.strip() else None
@@ -70,6 +75,8 @@ async def search_agents(
         keep_unclaimed,
         searcher,
         disliked or None,
+        **({"topics": topics} if topics else {}),
+        **({"relax": True} if relax else {}),
     )
     claimed = cards_service.claimed_by_handles([r["handle"] for r in results if r.get("handle")])
     kept = []
@@ -92,6 +99,8 @@ async def search_agents(
             "role": role,
             "location": location,
             "skills": skills,
+            "topics": topics,
+            "relax": relax,
             "industry": industry,
             "availability": availability,
             "experience_min": experience_min,
@@ -100,6 +109,32 @@ async def search_agents(
         "searchable_attributes": SEARCHABLE_ATTRIBUTES,
         "results": results,
     }
+
+
+@router.get("/lookup")
+async def lookup_agents(
+    request: Request,
+    name: str = Query(..., min_length=2, max_length=100),
+    limit: int = Query(5, ge=1, le=10),
+    include_unclaimed: bool = Query(False),
+):
+    """Find one specific person by name or handle. Public Card data only (the same as /search):
+    no contact fields. Exact full-name match first, then a name that starts with the text, then
+    one that contains it."""
+    if not lookup_service.allow(request):
+        raise HTTPException(status_code=429, detail="too many lookups, try again in a minute")
+    keep_unclaimed = include_unclaimed or not config.FEATURE_S03_UNCLAIMED_TIERING
+    results = await asyncio.to_thread(lookup_service.lookup_by_name, name.strip().lstrip("@"), limit, keep_unclaimed)
+    claimed = cards_service.claimed_by_handles([r["handle"] for r in results if r.get("handle")])
+    for r in results:
+        r["claimed"] = claimed.get(r.get("handle"), False)
+    from services import trust
+    verified = trust.verified_by_card_ids([r["agent_id"] for r in results if r.get("agent_id")])
+    for r in results:
+        if verified:
+            r["verified"] = verified.get(r.get("agent_id"), [])
+    _record_search(request, results, has_query=True, name="lookup")
+    return {"query": {"name": name, "include_unclaimed": include_unclaimed}, "results": results}
 
 
 @router.get("/{agent_id}")

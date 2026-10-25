@@ -316,6 +316,29 @@ def test_timezone_rejects_unknown_zones(client, monkeypatch, bad):
     sb.table.assert_not_called()
 
 
+def test_prefs_save_keeps_morning_digest_when_an_old_client_leaves_it_out(client, monkeypatch):
+    sb = MagicMock()
+    q = sb.table.return_value
+    q.select.return_value.ilike.return_value.limit.return_value.execute.return_value.data = [
+        {"notification_prefs": {"weekly_digest": True, "email_nudges": False, "morning_digest": False}}]
+    monkeypatch.setattr(config, "get_supabase", lambda: sb)
+    response = client.patch("/cards/mine/notification-prefs", headers={"Authorization": "Bearer owner"},
+                            json={"weekly_digest": False, "email_nudges": True})
+    assert response.status_code == 200
+    saved = {"weekly_digest": False, "email_nudges": True, "morning_digest": False}
+    assert response.json() == saved
+    q.update.assert_called_once_with({"notification_prefs": saved})
+
+
+def test_prefs_save_sets_morning_digest_when_sent(client, monkeypatch):
+    sb = MagicMock()
+    monkeypatch.setattr(config, "get_supabase", lambda: sb)
+    response = client.patch("/cards/mine/notification-prefs", headers={"Authorization": "Bearer owner"},
+                            json={"weekly_digest": True, "email_nudges": False, "morning_digest": True})
+    assert response.json() == {"weekly_digest": True, "email_nudges": False, "morning_digest": True}
+    sb.table.return_value.select.assert_not_called()
+
+
 def test_unsubscribe_get_does_not_mutate_preferences(client, monkeypatch):
     sb = MagicMock()
     monkeypatch.setattr(config, "get_supabase", lambda: sb)
@@ -331,7 +354,7 @@ def test_unsubscribe_updates_all_cards_for_only_matching_owner(client, monkeypat
     monkeypatch.setattr(config, "get_supabase", lambda: sb)
     response = client.post("/cards/notifications/unsubscribe/11111111-1111-4111-8111-111111111111")
     assert response.status_code == 200
-    q.update.assert_called_once_with({"notification_prefs": {"weekly_digest": False, "email_nudges": False}})
+    q.update.assert_called_once_with({"notification_prefs": {"weekly_digest": False, "email_nudges": False, "morning_digest": False}})
     q.update.return_value.ilike.assert_called_once_with("owner_email", "alice@example.com")
 
 

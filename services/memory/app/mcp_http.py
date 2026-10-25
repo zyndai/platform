@@ -579,7 +579,14 @@ async def find_people(
     connection is accepted.
 
     Pass a natural-language target description (e.g. "seed-stage investor who
-    backs dev-tools in India"). sources is "all" unless the user explicitly restricts it
+    backs dev-tools in India"). To find one specific person, pass their name, and their
+    company if known ("Chandan Kumar", "Priya from Stripe", or a Card @handle). Without a
+    company a name can only be looked up among Zynd Cards: if warnings contain
+    name_needs_company, ask the user which company they work at and search again with it.
+    When a person's `relaxed` list is present, the search had too few exact matches and
+    loosened that filter (location, role, skills) to include them: call these "closest
+    matches", not matches, and say what was loosened. A `note` in the result is meant for
+    the user. sources is "all" unless the user explicitly restricts it
     to "cards", "zynd" and/or "quickenrich". A source that failed, or is not configured,
     is listed in warnings; the others are still returned.
 

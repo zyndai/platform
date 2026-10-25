@@ -59,7 +59,7 @@ def build_rows(doc: dict) -> list[dict]:
     for c in doc["cards"]:
         card = AgentProfileCard(
             id=f"id-{c['handle']}", status="published", handle=c["handle"],
-            identity={"name": c["handle"], "headline": c["headline"], "location": c["location"],
+            identity={"name": c.get("name") or c["handle"], "headline": c["headline"], "location": c["location"],
                       "avatar_url": "", "links": {}},
             summary=c["summary"], skills=[{"name": s} for s in c["skills"]], industries=c["industries"],
             connect_with=c.get("connect_with", []),
@@ -96,6 +96,9 @@ def evaluate(doc: dict | None = None, search_service=None) -> list[QueryResult]:
             extra = {}
             if "searcher" in inspect.signature(search_service.search_agents).parameters:   # older scorers lack it
                 extra["searcher"] = cards_by_handle.get(query.get("as_handle") or "")
+            for key in ("topics", "relax"):    # memory's soft topics and filter relaxation
+                if key in query and key in inspect.signature(search_service.search_agents).parameters:
+                    extra[key] = query[key]
             found = search_service.search_agents(
                 q=query["q"], role=query["role"], location=query["location"],
                 skills=query["skills"], limit=5, include_unclaimed=True, **extra)

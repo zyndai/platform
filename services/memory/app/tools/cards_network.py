@@ -98,9 +98,14 @@ async def send_group_message(pool, uid: str, group_id: str, content: str) -> dic
     return await _call(pool, uid, "POST", f"/groups/{group_id}/messages", json={"content": content})
 
 
-async def group_search(pool, uid: str, group_id: str, q: str, role: str, location: str, skills: str, limit: int) -> dict:
-    return await _call(pool, uid, "GET", f"/groups/{group_id}/search", params={
-        "q": q, "role": role, "location": location, "skills": skills, "limit": max(1, min(limit, 50))})
+async def group_search(pool, uid: str, group_id: str, q: str, role: str, location: str, skills: str, limit: int,
+                       topics: str = "", relax: bool = False) -> dict:
+    params = {"q": q, "role": role, "location": location, "skills": skills, "limit": max(1, min(limit, 50))}
+    if topics:
+        params["topics"] = topics      # soft: scored, never required
+    if relax:
+        params["relax"] = "true"       # loosen the filters when too few members match
+    return await _call(pool, uid, "GET", f"/groups/{group_id}/search", params=params)
 
 
 async def preferences(pool, uid: str) -> dict:

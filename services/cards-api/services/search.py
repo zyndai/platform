@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import config
 from models.card import AgentProfileCard
 from services import cards as cards_service
+from services import geo
 from services.embed import card_search_text, embed_text
 from services.search_constraints import Constraints, explicit_query_constraints, skill_matches
 from services.two_way import LESS_LIKE_PENALTY, TWO_WAY_BOOST, kinds_of, too_much_like, two_way_match
@@ -125,31 +126,100 @@ def search_agents(
     searcher: AgentProfileCard | None = None,
     less_like: list[AgentProfileCard] | None = None,
     candidate_rows: list[dict] | None = None,
+    topics: str = "",
+    relax: bool = False,
 ) -> list[dict]:
     """Score published cards against a query.
 
     candidate_rows scopes the search to those rows (a group's members) instead of every card;
-    less_like are Cards the searcher asked to see less of."""
-    # Stopwords out, whole words only: "in", "who" and "ai" used to substring-match nearly
-    # every card ("ai" is inside "maintain").
+    less_like are Cards the searcher asked to see less of.
+
+    topics are guesses about what the person works on (a caller parsed them out of free text):
+    they add to the score and never remove a card, unlike skills, which are a requirement.
+
+    relax=True keeps the role, location and skills as requirements first, then, while fewer than
+    `limit` cards qualify, drops them one at a time: skills, then a city widened to its country,
+    then the location, then the role. Cards found by a looser pass always rank below those found
+    by a stricter one and say what was relaxed (`relaxed`, plus a match reason)."""
     q_terms = query_terms(q)
     if q and not q_terms and not any((role, location, skills, industry, availability, experience_min is not None)):
         return []   # "who is in the": nothing to look for, and embedding it would match noise
     inferred_location, inferred_skills = explicit_query_constraints(q)
     location = location or inferred_location
     skills = skills or ",".join(inferred_skills)
-    constraints = Constraints(role, location, tuple(s.strip() for s in skills.split(",") if s.strip()), industry, availability, experience_min)
     query_vec = embed_text(q) if q else []
+    rows = _rows_for(q, query_vec, include_unclaimed, candidate_rows,
+                     Constraints(role, location, tuple(s.strip() for s in skills.split(",") if s.strip()),
+                                 industry, availability, experience_min).active)
+    common = dict(q=q, query_vec=query_vec, rows=rows, industry=industry, availability=availability,
+                  experience_min=experience_min, searcher=searcher, less_like=less_like, topics=topics)
+    results = _search_pass(role=role, location=location, skills=skills, **common)
+    if not relax or len(results) >= limit:
+        return results[:limit]
+
+    seen = {r["handle"] for r in results if r.get("handle")}
+    for dropped, stage_role, stage_location, stage_skills, note in _relaxations(role, location, skills):
+        if len(results) >= limit:
+            break
+        for r in _search_pass(role=stage_role, location=stage_location, skills=stage_skills, **common):
+            if r.get("handle") in seen:
+                continue
+            seen.add(r.get("handle"))
+            r["relaxed"] = dropped
+            r["match_reasons"] = [*r["match_reasons"], note]
+            results.append(r)
+    return results[:limit]
+
+
+def _relaxations(role: str, location: str, skills: str):
+    """(dropped, role, location, skills, reason) for each looser pass, each also loosened as the
+    ones before it were."""
+    dropped: list[str] = []
+    if skills:
+        skills = ""
+        dropped.append("skills")
+        yield list(dropped), role, location, skills, "Skill filter relaxed (closest match)"
+    if location:
+        country = geo.widen(location)
+        if country:
+            if "location" not in dropped:
+                dropped.append("location")
+            yield list(dropped), role, country, skills, f"Not in {location} (closest match: {country})"
+        if "location" not in dropped:
+            dropped.append("location")
+        yield list(dropped), role, "", skills, f"Not in {location} (closest match)"
+        location = ""
+    if role:
+        dropped.append("role")
+        yield list(dropped), "", location, skills, f"Not a {role} (closest match)"
+
+
+def _rows_for(
+    q: str, query_vec: list[float], include_unclaimed: bool, candidate_rows: list[dict] | None, constrained: bool,
+) -> list[dict]:
     if candidate_rows is not None:
-        rows = candidate_rows
-    elif constraints.active:
+        return candidate_rows
+    if constrained:
         # Page the published corpus: pre-limited vector candidates can omit the
         # only valid city/skill match. Filter before ranking or applying a limit.
         rows = cards_service.list_published_rows()
         if not include_unclaimed:
             rows = [r for r in rows if bool((r.get("owner_email") or "").strip())]
-    else:
-        rows = _candidates(q, query_vec, include_unclaimed)
+        return rows
+    return _candidates(q, query_vec, include_unclaimed)
+
+
+def _search_pass(
+    *, q: str, query_vec: list[float], rows: list[dict], role: str, location: str, skills: str,
+    industry: str, availability: str, experience_min: int | None,
+    searcher: AgentProfileCard | None, less_like: list[AgentProfileCard] | None, topics: str,
+) -> list[dict]:
+    """One scoring pass over `rows` with exactly these requirements; best match first, unlimited."""
+    q_terms = query_terms(q)
+    # Topic words only ever add to a card's score: they are not part of the query's coverage (an
+    # unmatched topic would dilute it under the floor) and never a requirement.
+    topic_terms = [t for t in query_terms(topics.replace(",", " ")) if t not in q_terms]
+    constraints = Constraints(role, location, tuple(s.strip() for s in skills.split(",") if s.strip()), industry, availability, experience_min)
     skill_list = [s.strip() for s in skills.split(",") if s.strip()] if skills else []
     industry_norm = _norm(industry)
     role_norm = _norm(role)
@@ -221,6 +291,16 @@ def search_agents(
                 else:
                     reasons.append("Approved fact")
 
+        if topic_terms:
+            topic_hits = [t for t in topic_terms if t in text_tokens]
+            if topic_hits:
+                score += 0.15 * (len(topic_hits) / len(topic_terms))
+                reasons.append("Mentions " + ", ".join(topic_hits))
+            from services.card_view import fact_object, live_facts
+            fact_cover = max((len([t for t in topic_terms if t in token_set(fact_object(f))]) / len(topic_terms)
+                              for f in live_facts(card.zynd_memory)), default=0.0)
+            score += 0.1 * fact_cover
+
         if role_norm:
             if role_matches(token_set(card.identity.headline), role):
                 score += 0.25            # their headline says it: the strongest role signal
@@ -229,7 +309,10 @@ def search_agents(
                 score += 0.1             # mentioned somewhere on the card
                 reasons.append("Role match")
 
-        if location_want and all(t in location_tokens(card.identity.location) for t in location_want):
+        if location_want and (
+            all(t in location_tokens(card.identity.location) for t in location_want)
+            or geo.same_country(location, card.identity.location)
+        ):
             score += 0.3
             reasons.append(f"Based in {card.identity.location}")
 
@@ -284,4 +367,4 @@ def search_agents(
     results.sort(key=lambda r: r["match_score"], reverse=True)
     if q:
         results = [r for r in results if r["match_score"] >= 0.2]
-    return results[:limit]
+    return results

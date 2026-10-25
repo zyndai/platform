@@ -80,7 +80,7 @@ export function startFixtureServer(): Promise<void> {
   let humanViews = 12;
   let namedVisits = 0;
   const namedVisitIds = new Set<string>();
-  let prefs = { weekly_digest: true, email_nudges: false };
+  let prefs = { weekly_digest: true, email_nudges: false, morning_digest: true };
   const ownerStatus = () => ({
     handle: "owner", card_id: "id-owner", name: "Alice Chen", visibility: ownerCard.status === "private" ? "private" : "public",
     completeness: { score: 75, actions: [{ section: "projects", title: "Add a project", href: "/p/owner/edit#projects" }] },
@@ -169,7 +169,7 @@ export function startFixtureServer(): Promise<void> {
     }
     if (path === "/__s10/reset") {
       namedVisitIds.clear();
-      ownerCard = cardFixture("owner"); hasDuplicate = true; anonymousMode = true; humanViews = 12; namedVisits = 0; prefs = { weekly_digest: true, email_nudges: false };
+      ownerCard = cardFixture("owner"); hasDuplicate = true; anonymousMode = true; humanViews = 12; namedVisits = 0; prefs = { weekly_digest: true, email_nudges: false, morning_digest: true };
       return json(200, {});
     }
     if (path === "/events") {

@@ -24,6 +24,8 @@ MAX_TOPICS = 3
 _LLM_TIMEOUT = 6.0
 _CACHE_MAX = 256
 
+LIKE_ME = frozenset({"like_me", "like me", "people like me", "similar to me"})
+
 
 @dataclass(frozen=True)
 class TargetQuery:
@@ -36,6 +38,7 @@ class TargetQuery:
     country_code: str = ""            # ISO 3166-1 alpha-2 when recognised
     locality: str = ""                # city when one was named
     company_hint: bool = False        # the target is described via their company
+    required_skills: tuple[str, ...] = ()   # skills the user explicitly asked for ("knows Rust")
 
     @property
     def role_label(self) -> str:
@@ -257,6 +260,31 @@ def query_from_filters(
     )
 
 
+# Programming languages: the one kind of skill a request names unambiguously.
+LANGUAGES = ("javascript", "typescript", "python", "golang", "rust", "kotlin", "swift", "ruby", "java",
+             "scala", "elixir", "haskell", "c++", "c#", "sql", "go")
+_SKILL_ALIASES = {"golang": "go"}
+_SKILL_CUE = re.compile(r"\b(?:knows?|engineers?|developers?|programmers?|skills?|proficient|using)\b", re.I)
+
+
+def _required_skills(raw: str) -> tuple[str, ...]:
+    """Skills that are a requirement, not a guess: "knows Rust", "Go engineer". Same rule as
+    Cards' explicit_query_constraints (services/cards-api/services/search_constraints.py), so a
+    topic like "AI dev tools" is never one. "Rust or Python" is an alternative, so no requirement."""
+    if not _SKILL_CUE.search(raw):
+        return ()
+    skills: list[str] = []
+    for language in LANGUAGES:
+        if re.search(r"(?<![\w+#])" + re.escape(language) + r"(?![\w+#])", raw, re.I):
+            if language == "go" and re.search(r"\bgo[- ]to[- ]market\b", raw, re.I):
+                continue
+            skills.append(_SKILL_ALIASES.get(language, language))
+    skills = list(dict.fromkeys(skills))
+    if len(skills) > 1 and re.search(r"\bor\b", raw, re.I):
+        return ()
+    return tuple(skills)
+
+
 def parse_target_heuristic(target: str) -> TargetQuery:
     raw = " ".join((target or "").split())
     if not raw:
@@ -300,6 +328,7 @@ def parse_target_heuristic(target: str) -> TargetQuery:
         country_code=code,
         locality=locality,
         company_hint=bool(role in _COMPANY_ROLES or (set(norm.split()) & _COMPANY_WORDS)),
+        required_skills=_required_skills(raw),
     )
 
 
@@ -330,6 +359,17 @@ def _llm_enabled() -> bool:
     return bool(settings.deepseek_api_key) and not settings.mock_llm
 
 
+def _stem(word: str) -> str:
+    return word[:-1] if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")) else word
+
+
+def _grounded(topics: list, raw: str) -> list:
+    """Keep only the LLM topics with a word (plural-insensitive) that the user actually wrote.
+    The model returned "technology innovation" for an investor query that never said it."""
+    said = {_stem(w) for w in _norm(raw).split()}
+    return [t for t in topics if isinstance(t, str) and any(_stem(w) in said for w in _norm(t).split())]
+
+
 def _merge_llm(base: TargetQuery, payload: dict) -> TargetQuery:
     """Overlay validated LLM output on the heuristic result. The LLM can add, never erase,
     something the heuristic found with a code (country) or a known role."""
@@ -339,6 +379,7 @@ def _merge_llm(base: TargetQuery, payload: dict) -> TargetQuery:
     role_key, _ = _detect_role(role_text) if role_text else ("", "")
     stage = str(payload.get("stage") or "").strip().lower()[:30] or base.stage
     topics_raw = payload.get("topics") if isinstance(payload.get("topics"), list) else []
+    topics_raw = _grounded(topics_raw, base.raw)    # the model must not invent topics
     topics = tuple(
         t.strip()[:60] for t in topics_raw if isinstance(t, str) and t.strip()
     )[:MAX_TOPICS] or base.topics
@@ -354,6 +395,7 @@ def _merge_llm(base: TargetQuery, payload: dict) -> TargetQuery:
         raw=base.raw, role=role, titles=ROLES[role][1] if role else base.titles, stage=stage,
         topics=topics, location=location, country_code=code, locality=locality,
         company_hint=base.company_hint or role in _COMPANY_ROLES,
+        required_skills=base.required_skills,
     )
 
 
@@ -381,3 +423,124 @@ async def parse_target(target: str) -> TargetQuery:
         _cache.pop(next(iter(_cache)))
     _cache[key] = parsed
     return parsed
+
+
+# ── Intent: is this a person's name? ───────────────────────────────────────────────
+#
+# "chandan" or "send a request to Chandan from Zynd" is not a role/topic/location description.
+# Run through that parser, a name became a topic, and a topic became a required skill.
+
+@dataclass(frozen=True)
+class Intent:
+    kind: str            # "name" | "target" | "like_me"
+    name: str = ""       # the person's name, or the @handle when one was given
+    company: str = ""    # "from Zynd" / "at Stripe", when given
+
+
+_LEAD = re.compile(
+    r"^(?:(?:can|could|would|will) you\s+|please\s+|pls\s+|i (?:want|need|would like|'d like) to\s+|let'?s\s+|help me\s+)*"
+    r"(?:(?:send|make|create|draft)\s+(?:a\s+|an\s+|my\s+)?(?:connection\s+|connect\s+|intro\s+|introduction\s+)?"
+    r"(?:request|invite|invitation|message|dm)\s+(?:to|for)\s+"
+    r"|connect\s+(?:me\s+)?(?:with|to)\s+|introduce\s+me\s+to\s+|message\s+|dm\s+"
+    r"|(?:find|look\s*up|search\s+for|search|show\s+me|who\s+is|who'?s|tell\s+me\s+about|get)\s+(?:me\s+)?(?:the\s+)?)?"
+    r"(?:(?:the\s+)?(?:people|persons?|someone|user|guy|girl)\s+)?(?:(?:named|called)\s+)?",
+    re.I)
+_COMPANY_SPLIT = re.compile(r"\s+(?:from|at|@|of|works?\s+at|working\s+at)\s+", re.I)
+_TRAIL = re.compile(r"\s*(?:on\s+zynd\b)?[\s?.!]*$", re.I)
+_NAME_WORD = re.compile(r"[A-Za-z][A-Za-z'.-]*\Z")
+_HANDLE_TOKEN = re.compile(r"@?[A-Za-z0-9][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)+\Z")
+
+# Words that mean the query describes a kind of person or a field, never a person's name.
+_TOPIC_WORDS = frozenset({
+    "ai", "ml", "llm", "llms", "genai", "agents", "agent", "fintech", "saas", "climate", "climatetech",
+    "health", "healthcare", "healthtech", "biotech", "crypto", "web3", "blockchain", "edtech", "education",
+    "devtools", "developer", "tools", "marketing", "design", "software", "hardware", "robotics", "data",
+    "cloud", "security", "cybersecurity", "gaming", "games", "ecommerce", "commerce", "retail", "logistics",
+    "energy", "mobility", "agtech", "proptech", "insurtech", "legaltech", "martech", "adtech", "b2b", "b2c",
+    "consumer", "enterprise", "deeptech", "infra", "infrastructure", "product", "growth", "finance",
+    "banking", "payments", "payment", "quantum", "space", "automotive", "founder", "investor", "engineer",
+})
+
+
+def _guard_words() -> frozenset[str]:
+    words: set[str] = set(_STOP) | set(_FILLER) | set(_TOPIC_WORDS) | set(LANGUAGES)
+    for spellings, _titles in ROLES.values():
+        for spelling in spellings:
+            words.update(_norm(spelling).split())
+    for stage in _STAGES:
+        words.update(_norm(stage).split())
+    for place in (*COUNTRIES, *CITIES):
+        words.update(_norm(place).split())
+    return frozenset(words)
+
+
+_GUARD = _guard_words()
+
+
+def detect_intent(target: str) -> Intent:
+    """name, target or like_me. Precision first: anything that could be a description of people
+    ("AI", "rust engineer", "investor from India") stays a target; only a short run of plain words
+    nobody would use as a role, field or place is read as a name."""
+    raw = " ".join((target or "").split())
+    if raw.lower() in LIKE_ME:
+        return Intent("like_me")
+    text = _TRAIL.sub("", _LEAD.sub("", raw, count=1)).strip()
+    if not text:
+        return Intent("target")
+    name_part, company = text, ""
+    split = _COMPANY_SPLIT.split(text, maxsplit=1)
+    if len(split) == 2:
+        name_part, company = split[0].strip(), split[1].strip(" .,")
+        if not company or len(company.split()) > 3:
+            return Intent("target")
+    tokens = name_part.split()
+    if len(tokens) == 1 and _HANDLE_TOKEN.fullmatch(tokens[0]):
+        return Intent("name", name=tokens[0].lstrip("@"), company=company)
+    if not 1 <= len(tokens) <= 3:
+        return Intent("target")
+    for token in tokens:
+        bare = token.lstrip("@")
+        if not _NAME_WORD.fullmatch(bare):
+            return Intent("target")
+        if bare.lower() in _GUARD or (bare.isupper() and len(bare) <= 4 and len(bare) > 1):
+            return Intent("target")   # "AI", "VC", "investor", "India"
+    return Intent("name", name=" ".join(t.lstrip("@") for t in tokens), company=company)
+
+
+# ── QuickEnrich title filters per role ─────────────────────────────────────────────
+#
+# A bare include list matched "Investor Grievance Officer" for an investor search. Each role
+# has the titles that are the role and the words that make a title something else. QuickEnrich
+# matches a title by substring (Q1 in the plan, unconfirmed), so "Principal" is fenced with
+# exclusions for the engineers and teachers who also carry it.
+
+ROLE_TITLE_FILTERS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "investor": (("Investor", "Angel Investor", "Venture Partner", "General Partner", "Managing Partner",
+                  "Principal", "Venture Capitalist"),
+                 ("Grievance", "Relations", "Communications", "Compliance", "Services", "Relationship",
+                  "Officer", "Engineer", "Software", "Teacher")),
+    "founder": (("Founder", "Co-Founder", "CEO"), ("Assistant", "Executive Assistant")),
+    "cto": (("CTO", "VP Engineering", "Head of Engineering"), ("Assistant",)),
+    "engineer": (("Software Engineer", "Developer", "Engineer"), ("Sales Engineer", "Support")),
+    "ml": (("Machine Learning Engineer", "ML Engineer", "Data Scientist", "Research Scientist"),
+           ("Sales", "Support", "Intern")),
+    "designer": (("Designer", "Product Designer"), ("Interior", "Fashion")),
+    "pm": (("Product Manager", "Head of Product"), ("Assistant",)),
+    "recruiter": (("Recruiter", "Talent"), ()),
+    "marketer": (("Marketing", "Growth"), ("Assistant", "Intern")),
+    "sales": (("Sales", "Account Executive"), ("Assistant", "Intern")),
+    "researcher": (("Researcher", "Scientist"), ("Intern",)),
+    "advisor": (("Advisor", "Mentor"), ("Financial Advisor", "Insurance Advisor")),
+    "devrel": (("Developer Advocate", "Developer Relations"), ()),
+    "lawyer": (("Counsel", "Attorney"), ("Paralegal", "Assistant")),
+    "operator": (("COO", "Chief of Staff"), ("Assistant",)),
+}
+assert set(ROLE_TITLE_FILTERS) == set(ROLES), "every role needs a title filter row"
+
+
+def title_filters(query: TargetQuery) -> tuple[list[str], list[str]]:
+    """(include, exclude) title words for a title-based source."""
+    row = ROLE_TITLE_FILTERS.get(query.role)
+    if row:
+        return list(row[0]), list(row[1])
+    return list(query.titles), []

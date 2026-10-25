@@ -164,3 +164,18 @@ is new).
 | `semantic_search_nodes` | Finding functions/classes by name or keyword |
 | `get_architecture_overview` | Understanding high-level codebase structure |
 | `refactor_tool` | Planning renames, finding dead code |
+
+## 9. No new env vars, no feature flags
+
+- **Ship features enabled.** Assume a new feature or fix is wanted by default.
+  Don't gate it behind a `FEATURE_*` / `*_ENABLED` setting, and don't add
+  settings just to tune a number (thresholds, TTLs, limits): use a named
+  constant in the code, where it can be read, tested and changed in review.
+- **An env var is for the very important and truly needed**: a secret, a
+  per-environment URL or credential, or a value that really can't live in
+  code. If you think you need one, say why in your summary and expect to be
+  asked.
+- If a risky change needs a staged rollout, say so and let a human decide;
+  don't add the flag on your own.
+- The flags that already exist (`FEATURE_FACT_MATCHING`, `FEATURE_RANKED_CONTEXT`,
+  …) stay as they are. Don't copy the pattern.

@@ -72,19 +72,6 @@ class Settings(BaseSettings):
     # (top 3 per person, current-state predicates weighted up) instead of one averaged
     # profile vector. Off = the previous cluster-vector ranking.
     feature_fact_matching: bool = False
-    # People search v2 (docs/plans/ZYND_PEOPLE_SEARCH_PLAN.md Phase 0): parsed topics are soft
-    # (never a required skill), filters relax instead of returning nothing, a name is looked up as
-    # a name, LLM topics must come from the query, Zynd hits have a floor, and QuickEnrich gets
-    # per-role title include/exclude, real locations, a cache and an early start. Off = the
-    # previous behaviour. Deploy cards-api first: it ignores `topics` and `relax` until it has them.
-    feature_people_search_v2: bool = False
-    # Minimum similarity for a person found ONLY through their Zynd profile: per-fact matching
-    # (FEATURE_FACT_MATCHING) and the blurrier averaged profile vector. Tune with the golden set.
-    zynd_min_score_fact: float = 0.35
-    zynd_min_score_avg: float = 0.45
-    # How long a QuickEnrich contact-finder response is reused (identical request body).
-    quickenrich_cache_ttl_seconds: int = 7 * 24 * 3600
-
     # Cards networking A2: results who have no claimed Card can be invited to claim one
     # (next_action invite_to_claim, tool invite_to_claim). Needs Cards' FEATURE_A2_INVITE_TO_CLAIM
     # and packages/db migration 0024. Off by default.

@@ -71,21 +71,6 @@ _GENERIC_TOPIC_WORDS = frozenset({
 })
 
 
-def company_keywords(query: TargetQuery, limit: int = 2) -> list[str]:
-    """Words that would appear in the About text of the person's COMPANY, e.g. a fund that
-    "backs AI dev tools". Topic words only, deduplicated, generic nouns dropped. Short words
-    such as "AI" are kept: they are the signal, not noise."""
-    words: list[str] = []
-    for topic in query.topics:
-        for word in re.findall(r"[A-Za-z0-9][A-Za-z0-9+#.-]*", topic):
-            if word.lower() in _GENERIC_TOPIC_WORDS or word.lower() in (w.lower() for w in words):
-                continue
-            words.append(word)
-            if len(words) >= limit:
-                return words
-    return words
-
-
 _SHORT_SIGNALS = frozenset({"ai", "ml", "vr", "ar", "ux", "ui", "it", "b2b", "b2c"})
 
 
@@ -121,9 +106,8 @@ def quickenrich_body(query: TargetQuery, limit: int) -> dict | None:
     About text, so it only gets topic keywords when the target is described through their
     company (an investor, a founder), never for "a Rust engineer".
     """
-    v2 = settings.feature_people_search_v2
     body: dict = {"page": 1, "per_page": max(1, min(limit, 10))}
-    keywords = (company_phrases(query) if v2 else company_keywords(query)) if query.company_hint else []
+    keywords = company_phrases(query) if query.company_hint else []
     include, exclude = title_filters(query)
     if include:
         body["title"] = {"include": include, "exclude": exclude}
@@ -184,17 +168,14 @@ def cards_search_params(
         params["role"] = query.role_noun
     if query.locality or query.location:
         params["location"] = query.locality or query.location
-    if settings.feature_people_search_v2:
-        # Topics are guesses about what the person works on: they raise a score, never filter.
-        # Only a skill the user explicitly asked for ("knows Rust") is a requirement, and when
-        # the filters leave too few people Cards loosens them instead of returning nothing.
-        if query.topics:
-            params["topics"] = ",".join(query.topics)[:200]
-        if query.required_skills:
-            params["skills"] = ",".join(query.required_skills)[:200]
-        params["relax"] = "true"
-    elif query.topics:
-        params["skills"] = ",".join(query.topics)[:200]
+    # Topics are guesses about what the person works on: they raise a score, never filter.
+    # Only a skill the user explicitly asked for ("knows Rust") is a requirement, and when
+    # the filters leave too few people Cards loosens them instead of returning nothing.
+    if query.topics:
+        params["topics"] = ",".join(query.topics)[:200]
+    if query.required_skills:
+        params["skills"] = ",".join(query.required_skills)[:200]
+    params["relax"] = "true"
     return params
 
 
@@ -312,14 +293,13 @@ def _qe_location(record: dict) -> str:
 
 def _shape_qe(records: list) -> list[dict]:
     """Sanitized QuickEnrich people: public fields and has_email/has_phone flags, never the values."""
-    v2 = settings.feature_people_search_v2
     out: list[dict] = []
     seen: set[str] = set()
     for record in records:
         if not isinstance(record, dict):
             continue
         name = " ".join(part for part in (_na(record.get("first_name")), _na(record.get("last_name"))) if part)
-        link = _public_url(_linkedin_with_scheme(record.get("employee_linkedin")) if v2 else record.get("employee_linkedin"))
+        link = _public_url(_linkedin_with_scheme(record.get("employee_linkedin")))
         key = link or name
         if not key or key in seen:
             continue
@@ -334,10 +314,9 @@ def _shape_qe(records: list) -> list[dict]:
             "has_phone": record.get("has_phone") is True,
             "connection_eligible": False,
         }
-        if v2:
-            row["location"] = _qe_location(record)
-            row["city"] = _public_text(_na(record.get("city")) or _na(record.get("locality")), 80)
-            row["country_code"] = _na(record.get("country_code")).upper()[:2]
+        row["location"] = _qe_location(record)
+        row["city"] = _public_text(_na(record.get("city")) or _na(record.get("locality")), 80)
+        row["country_code"] = _na(record.get("country_code")).upper()[:2]
         out.append(row)
     return out
 
@@ -375,6 +354,7 @@ def rank_quickenrich(rows: list[dict], query: TargetQuery) -> list[dict]:
 
 
 _redis = None
+_CACHE_TTL_SECONDS = 7 * 24 * 3600     # an identical contact-finder request is reused for a week
 
 
 def _cache_key(body: dict) -> str:
@@ -399,17 +379,16 @@ async def _cache_get(key: str) -> list[dict] | None:
 async def _cache_set(key: str, rows: list[dict]) -> None:
     try:
         if _redis is not None:
-            await _redis.set(key, json.dumps(rows), ex=settings.quickenrich_cache_ttl_seconds)
+            await _redis.set(key, json.dumps(rows), ex=_CACHE_TTL_SECONDS)
     except Exception as exc:  # noqa: BLE001
         logger.debug("quickenrich cache write skipped: %s", exc)
 
 
 async def _quickenrich_rows(body: dict) -> tuple[list[dict], str | None]:
-    """Run one contact-finder request. Under people search v2 an identical request in the last
-    week is answered from the cache; only the sanitized rows (flags, never values) are stored."""
-    v2 = settings.feature_people_search_v2
+    """Run one contact-finder request. An identical request in the last week is answered from the
+    cache; only the sanitized rows (flags, never values) are stored."""
     key = _cache_key(body)
-    if v2 and (cached := await _cache_get(key)) is not None:
+    if (cached := await _cache_get(key)) is not None:
         return cached, None
     url = f"{settings.quickenrich_base_url.rstrip('/')}/api/employees/contact-finder"
     try:
@@ -427,8 +406,7 @@ async def _quickenrich_rows(body: dict) -> tuple[list[dict], str | None]:
     if not isinstance(records, list):
         return [], "quickenrich_unavailable"
     rows = _shape_qe(records)
-    if v2:
-        await _cache_set(key, rows)
+    await _cache_set(key, rows)
     return rows, None
 
 
@@ -449,9 +427,7 @@ async def search_quickenrich(
     rows, warning = await _quickenrich_rows(body)
     if warning:
         return [], warning
-    if settings.feature_people_search_v2:
-        rows = rank_quickenrich(rows, query)
-    return rows[:limit], None
+    return rank_quickenrich(rows, query)[:limit], None
 
 
 def _name_words(text: str) -> list[str]:

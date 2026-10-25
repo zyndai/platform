@@ -379,8 +379,7 @@ def _merge_llm(base: TargetQuery, payload: dict) -> TargetQuery:
     role_key, _ = _detect_role(role_text) if role_text else ("", "")
     stage = str(payload.get("stage") or "").strip().lower()[:30] or base.stage
     topics_raw = payload.get("topics") if isinstance(payload.get("topics"), list) else []
-    if settings.feature_people_search_v2:
-        topics_raw = _grounded(topics_raw, base.raw)    # the model must not invent topics
+    topics_raw = _grounded(topics_raw, base.raw)    # the model must not invent topics
     topics = tuple(
         t.strip()[:60] for t in topics_raw if isinstance(t, str) and t.strip()
     )[:MAX_TOPICS] or base.topics
@@ -541,7 +540,7 @@ assert set(ROLE_TITLE_FILTERS) == set(ROLES), "every role needs a title filter r
 
 def title_filters(query: TargetQuery) -> tuple[list[str], list[str]]:
     """(include, exclude) title words for a title-based source."""
-    row = ROLE_TITLE_FILTERS.get(query.role) if settings.feature_people_search_v2 else None
+    row = ROLE_TITLE_FILTERS.get(query.role)
     if row:
         return list(row[0]), list(row[1])
     return list(query.titles), []

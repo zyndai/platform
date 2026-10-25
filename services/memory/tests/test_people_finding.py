@@ -1,4 +1,4 @@
-"""People search v2, Phase 0 (docs/plans/ZYND_PEOPLE_SEARCH_PLAN.md): names, soft topics, grounded LLM
+"""People search Phase 0 (docs/plans/ZYND_PEOPLE_SEARCH_PLAN.md): names, soft topics, grounded LLM
 topics, the Zynd floor, and QuickEnrich requests, results and cache."""
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,11 +10,6 @@ from app.services import people_query as pq
 from app.services import people_results as pr
 from app.services import people_search
 from app.services.people_query import Intent, detect_intent, parse_target_heuristic
-
-
-@pytest.fixture(autouse=True)
-def v2(monkeypatch):
-    monkeypatch.setattr(pq.settings, "feature_people_search_v2", True)
 
 
 # ── 0.3 intent ───────────────────────────────────────────────────────────────────
@@ -64,10 +59,6 @@ def test_only_an_explicit_skill_is_required():
     assert parse_target_heuristic("seed investor AI dev tools").required_skills == ()
 
 
-def test_the_old_behaviour_is_still_there_with_the_flag_off(monkeypatch):
-    monkeypatch.setattr(pq.settings, "feature_people_search_v2", False)
-    params = discovery.cards_search_params("t", 10, parse_target_heuristic("seed investor who backs AI dev tools"))
-    assert params["skills"] == "AI dev tools" and "topics" not in params and "relax" not in params
 
 
 # ── 0.4 grounded LLM topics ──────────────────────────────────────────────────────
@@ -85,11 +76,8 @@ def test_when_every_llm_topic_is_invented_the_heuristic_topics_are_kept():
     assert merged.topics == base.topics
 
 
-def test_grounding_is_plural_insensitive_and_off_with_the_flag(monkeypatch):
+def test_grounding_is_plural_insensitive():
     assert pq._grounded(["developer tool"], "backs developer tools") == ["developer tool"]
-    monkeypatch.setattr(pq.settings, "feature_people_search_v2", False)
-    base = parse_target_heuristic("investor who backs AI dev tools")
-    assert pq._merge_llm(base, {"topics": ["technology innovation"]}).topics == ("technology innovation",)
 
 
 # ── 0.6 QuickEnrich request ──────────────────────────────────────────────────────
@@ -152,10 +140,6 @@ def test_shaping_keeps_location_fixes_the_url_and_never_the_contact_values():
     assert "a@b.c" not in repr(rows) and "555" not in repr(rows) and asha["has_email"] is True
 
 
-def test_shaping_without_the_flag_is_unchanged(monkeypatch):
-    monkeypatch.setattr(pq.settings, "feature_people_search_v2", False)
-    rows = discovery._shape_qe(RAW)
-    assert rows[1]["linkedin_url"] == "" and "location" not in rows[1]
 
 
 def test_linkedin_people_are_ranked_by_fit():
@@ -217,12 +201,6 @@ async def test_an_identical_request_is_served_from_the_cache(qe):
     assert "a@b.c" not in repr(qe) and "555" not in repr(qe)       # the cache holds flags, never contact values
 
 
-async def test_the_cache_is_not_used_with_the_flag_off(qe, monkeypatch):
-    monkeypatch.setattr(pq.settings, "feature_people_search_v2", False)
-    query = parse_target_heuristic("investor in Bengaluru")
-    await discovery.search_quickenrich("x", 5, query=query)
-    await discovery.search_quickenrich("x", 5, query=query)
-    assert FakeHTTP.calls == 2 and qe == {}
 
 
 # ── 0.3 names in QuickEnrich ─────────────────────────────────────────────────────

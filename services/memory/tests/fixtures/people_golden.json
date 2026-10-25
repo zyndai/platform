@@ -1,5 +1,5 @@
 {
- "_about": "What find_people sends to Cards for each target with FEATURE_PEOPLE_SEARCH_V2 on, and the cards (by handle, in services/cards-api/tests/fixtures/search_golden.json) it must surface. services/memory/tests/test_people_golden.py checks the mapping; services/cards-api/tests/test_search_golden.py runs these exact params through Cards' scorer. Change either side and both fail: that is the point (the plan's R17 -- memory's real filters were never tested against Cards).",
+ "_about": "What find_people sends to Cards for each target, and the cards (by handle, in services/cards-api/tests/fixtures/search_golden.json) it must surface. services/memory/tests/test_people_golden.py checks the mapping; services/cards-api/tests/test_search_golden.py runs these exact params through Cards' scorer. Change either side and both fail: that is the point (the plan's R17 -- memory's real filters were never tested against Cards).",
  "cases": [
   {
    "target": "seed-stage investor who backs AI dev tools in India",

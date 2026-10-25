@@ -1,7 +1,7 @@
 # ZYND People Search, Suggestions & Recommendations Plan
 
-> **Status:** proposed 2026-10-26. **Phase 0 is implemented on `dev`** (see "Phase 0 as built" below), behind
-> `FEATURE_PEOPLE_SEARCH_V2` (off by default, on in the dev compose). Phases 1–3 are not started.
+> **Status:** proposed 2026-10-26. **Phase 0 is implemented on `dev`** (see "Phase 0 as built" below), enabled
+> with no flag (AGENTS.md §9: no new env vars). Phases 1–3 are not started.
 >
 > **Builds on** [`ZYND_MEMORY_QUALITY_PLAN.md`](./ZYND_MEMORY_QUALITY_PLAN.md) Part B (F1–F9, A1–A8), which
 > shipped behind flags (see its §17). This plan does not redo that work. It fixes what Part B left broken
@@ -381,10 +381,9 @@ All of 0.1–0.10 is in. What differs from the text above, and what is still ope
   `test_people_golden.py` checks the parameters it sends, cards-api's `test_search_golden.py` runs those exact
   parameters through the scorer. With the old parameters (topics as `skills`) both "chandan" and the investor
   query return nothing; with the new ones they find `chandan_kumar` and `inv_seed_ai_in`.
-- **Flag.** Everything on the memory side is behind `FEATURE_PEOPLE_SEARCH_V2`. Cards needs no flag: `topics`,
-  `relax` and `/v1/agents/lookup` are opt-in. **Deploy cards-api first.** Two things apply to every caller
-  without the flag, as strict improvements: a country filter ("India") now matches a city-only card
-  ("Gurgaon"), and suggested people carry `two_way` (0.9).
+- **No flag.** Phase 0 ships enabled; there is no `FEATURE_PEOPLE_SEARCH_V2` and no new env var (AGENTS.md §9).
+  The Zynd floors and the 7-day QuickEnrich cache TTL are constants in code. **Deploy cards-api first**: it
+  ignores `topics` and `relax` until it has them, so memory first would drop the topics. Rollback is a revert.
 - **Name lookup (0.3).** If nobody is found by the name, the search continues as a normal target search with a
   `note`, so a word wrongly read as a name still gets results. The QuickEnrich name search reads two pages
   of 10 people at the company. `/v1/agents/lookup` is rate-limited in-process (30 per minute per client IP;
@@ -399,8 +398,8 @@ All of 0.1–0.10 is in. What differs from the text above, and what is still ope
   - Q1 and Q2 are **not answered**: they need three manual QuickEnrich calls and one raw record, and this
     session had no QuickEnrich credentials. The code assumes OR and substring matching and a scheme-less
     LinkedIn URL; `_linkedin_with_scheme` and the exclude lists are harmless if wrong, but confirm.
-  - Turning on `FEATURE_PEOPLE_SEARCH_V2` and `FEATURE_FACT_MATCHING` in prod (§8). The Zynd floors
-    (`ZYND_MIN_SCORE_FACT` 0.35, `ZYND_MIN_SCORE_AVG` 0.45) are starting values to tune on dev.
+  - Turning on `FEATURE_FACT_MATCHING` in prod (§8). The Zynd floors (`ZYND_MIN_SCORE_FACT` 0.35,
+    `ZYND_MIN_SCORE_AVG` 0.45, constants in `people_search.py`) are starting values to tune on dev.
   - The Phase 0 "done when" checks are unit-tested but not yet checked against live dev.
 
 ### Phase 1: One calibrated scorer (~1–2 weeks)
@@ -584,10 +583,11 @@ Run each service's tests before and after, against the AGENTS.md §5 baselines.
 
 | Flag | Service | Covers | Dev | Prod |
 |---|---|---|---|---|
-| `FEATURE_PEOPLE_SEARCH_V2` | memory | 0.1 memory side, 0.3, 0.4, 0.5 floor, 0.6–0.8, 1.2–1.5 | on | **human OK** |
-| `FEATURE_SCORER_V2` | cards-api | 1.1 | on | **human OK** |
-| `FEATURE_SUGGESTIONS_V2` | cards-api | Phase 2 | on after migration | **human OK** |
 | `FEATURE_FACT_MATCHING` | memory | existing | on | **human OK** (after `FEATURE_FACT_FAMILIES`) |
+
+> **Superseded by AGENTS.md §9:** this plan first proposed `FEATURE_SCORER_V2` and `FEATURE_SUGGESTIONS_V2`.
+> There are no new flags: Phases 1 and 2 ship enabled, gated by tests and the golden set, and Phase 2 by the
+> human-applied migration. If a risky phase needs a staged rollout, a human decides how.
 
 - **Deploy order:** Cards first, then memory. Cards ignores unknown parameters, so if memory deploys
   first, `topics` is dropped silently and searches get *worse* (no topics at all).

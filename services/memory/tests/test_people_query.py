@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.services import people_query as pq
-from app.services.people_discovery import company_keywords, quickenrich_body
+from app.services.people_discovery import company_phrases, quickenrich_body
 from app.services.people_query import parse_target, parse_target_heuristic
 
 
@@ -65,10 +65,11 @@ def test_search_text_is_compact_and_readable():
 def test_quickenrich_body_uses_title_country_and_company_keywords():
     q = parse_target_heuristic("seed-stage investor who backs AI dev tools in India")
     body = quickenrich_body(q, 10)
-    assert body["title"]["include"] == ["Investor", "Venture Partner", "General Partner"]
+    assert body["title"]["include"][:3] == ["Investor", "Angel Investor", "Venture Partner"]
+    assert "Grievance" in body["title"]["exclude"]
     assert body["country_code"] == {"include": ["IN"], "exclude": []}
-    # "AI" survives (the old 3-letter rule dropped it) and "tools" is generic noise.
-    assert body["bio_li"]["include"] == ["AI", "dev"]
+    # the stage and the whole topic phrase, "AI" included (the old 3-letter rule dropped it)
+    assert body["bio_li"]["include"] == ["seed", "AI dev tools"]
     assert "locality" not in body and body["per_page"] == 10
 
 
@@ -81,7 +82,7 @@ def test_quickenrich_body_adds_locality_for_a_city():
 def test_bio_li_is_for_company_keywords_only_never_for_a_persons_skills():
     body = quickenrich_body(parse_target_heuristic("rust engineer in Berlin"), 5)
     assert "bio_li" not in body            # an engineer's skills are not their company's About text
-    assert body["title"]["include"] == ["Software Engineer", "Developer"]
+    assert body["title"]["include"] == ["Software Engineer", "Developer", "Engineer"]
     assert body["country_code"]["include"] == ["DE"]
 
 
@@ -90,9 +91,9 @@ def test_a_location_alone_is_too_vague_to_search():
     assert quickenrich_body(parse_target_heuristic(""), 5) is None
 
 
-def test_company_keywords_drop_generic_words_and_dedupe():
+def test_company_phrases_keep_topics_whole_and_drop_generic_ones():
     q = parse_target_heuristic("investor who backs developer tools and AI tools")
-    assert company_keywords(q, limit=5) == ["developer", "AI"]
+    assert company_phrases(q) == ["developer tools", "AI tools"]
 
 
 # ── LLM refinement ──────────────────────────────────────────────────────────────

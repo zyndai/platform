@@ -94,7 +94,7 @@ async def test_a_zynd_member_and_their_card_are_one_person(world):
     (ada,) = result["people"]
     assert sorted(ada["sources"]) == ["card", "zynd"]
     assert ada["score"] == 0.8                                   # best of the two + the agreement bonus
-    assert "Matches their Zynd profile" in ada["why"] and "Matches your search terms" in ada["why"]
+    assert ada["why"] == ["Matches your search terms"]          # a blurry Zynd hit adds no generic reason
 
 
 async def test_every_zynd_result_is_resolved_to_a_card_handle_or_dropped(world):
@@ -125,9 +125,10 @@ async def test_the_callers_own_card_is_never_a_result(world):
 async def test_linkedin_runs_only_when_too_few_strong_matches(world):
     world["cards"] = ([card(f"h{i}", 0.9) for i in range(3)], None)
     result = await run(k=3)
-    world["mocks"]["external_search"].assert_not_awaited()
-    assert "quickenrich" not in result["searched"]
+    # LinkedIn may start early for a role search, but its answer is dropped when Cards are enough
+    assert "quickenrich" not in result["searched"] and all(p["sources"] == ["card"] for p in result["people"])
 
+    world["mocks"]["external_search"].reset_mock()
     world["cards"] = ([card("weak", 0.2)], None)
     world["external"] = ([{"source": "quickenrich", "name": "Grace", "title": "Partner", "company": "Acme Ventures",
                            "linkedin_url": "https://www.linkedin.com/in/grace"}], None)

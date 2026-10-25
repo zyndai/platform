@@ -16,11 +16,6 @@ from app.services.people_query import detect_intent, parse_target_heuristic
 CASES = json.loads((pathlib.Path(__file__).parent / "fixtures" / "people_golden.json").read_text())["cases"]
 
 
-@pytest.fixture(autouse=True)
-def v2(monkeypatch):
-    monkeypatch.setattr(discovery.settings, "feature_people_search_v2", True)
-
-
 @pytest.mark.parametrize("case", CASES, ids=[c["target"] for c in CASES])
 def test_memory_sends_cards_the_recorded_parameters(case):
     intent = detect_intent(case["target"])

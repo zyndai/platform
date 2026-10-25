@@ -8,7 +8,7 @@ people. Every source that fails or is not configured says so in `warnings`.
 
     find_people("seed-stage investor who backs AI dev tools in India")
     find_people("like_me")        # people close to the caller's own profile
-    find_people("Chandan from Zynd")   # a name: looked up as a name (FEATURE_PEOPLE_SEARCH_V2)
+    find_people("Chandan from Zynd")   # a name: looked up as a name
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from app.services import card_directory, people_discovery, people_results
 from app.services.export import active_context
 from app.services.matching import match_users, search_by_query
 from app.services.people_query import (
-    LIKE_ME, Intent, TargetQuery, detect_intent, parse_target, parse_target_heuristic)
+    Intent, TargetQuery, detect_intent, parse_target, parse_target_heuristic)
 from app.tools import cards_network
 
 logger = logging.getLogger("zynd.find_people")
@@ -30,6 +30,10 @@ logger = logging.getLogger("zynd.find_people")
 SOURCES = frozenset({"cards", "zynd", "quickenrich"})
 _PROFILE_PREDICATES = ("is_building", "is_creating", "is_working_on", "has_expertise_in", "has_skill", "is_learning")
 _PROFILE_TOPICS = 4
+# Least similarity for a person found ONLY through their Zynd profile: per-fact matching, and the
+# blurrier averaged profile vector. Starting values, to tune with the golden set.
+ZYND_MIN_SCORE_FACT = 0.35
+ZYND_MIN_SCORE_AVG = 0.45
 
 
 def requested_sources(sources: str) -> tuple[set[str], set[str]]:
@@ -72,17 +76,16 @@ async def _zynd_people(
     if cards is None:
         warnings.append("cards_unavailable")
         return []
-    v2 = settings.feature_people_search_v2 and not like_me
     people = []
     for row in rows:
         card = cards.get(row["user_id"])
         if card and card.get("handle"):   # no published Card = nobody to connect to
             person = people_results.person_from_zynd(row, card, people_discovery.card_url(card["handle"]))
-            if v2:
+            if not like_me:
                 per_fact = bool(row.get("matched_on"))
-                floor = settings.zynd_min_score_fact if per_fact else settings.zynd_min_score_avg
-                # Kept only if Cards also found them (see drop_weak_zynd). No generic reason either:
-                # "Matches their Zynd profile" says nothing the person's presence does not.
+                floor = ZYND_MIN_SCORE_FACT if per_fact else ZYND_MIN_SCORE_AVG
+                # Kept only if Cards also found them (see the filter in find). No generic reason
+                # either: "Matches their Zynd profile" says nothing the person's presence does not.
                 person["_weak"] = person["score"] < floor
                 if not per_fact:
                     person["why"] = []
@@ -105,15 +108,10 @@ async def _group_people(
     pool: asyncpg.Pool, uid: str, group_id: str, text: str, query: TargetQuery, limit: int,
 ) -> tuple[list[dict], str | None]:
     """A7: search only the Cards of one group's members. Cards enforces that the caller is a member."""
-    if settings.feature_people_search_v2:
-        # Topics are soft and only an explicit skill is required, as in a Cards search.
-        result = await cards_network.group_search(
-            pool, uid, group_id, text, query.role_noun, query.locality or query.location,
-            ",".join(query.required_skills)[:200], limit, topics=",".join(query.topics)[:200], relax=True)
-    else:
-        result = await cards_network.group_search(
-            pool, uid, group_id, text, query.role_noun, query.locality or query.location,
-            ",".join(query.topics)[:200], limit)
+    # Topics are soft and only an explicit skill is required, as in a Cards search.
+    result = await cards_network.group_search(
+        pool, uid, group_id, text, query.role_noun, query.locality or query.location,
+        ",".join(query.required_skills)[:200], limit, topics=",".join(query.topics)[:200], relax=True)
     if not result.get("ok"):
         return [], "group_unavailable: " + str(result.get("error") or "not a member of that group")[:120]
     return [
@@ -170,8 +168,7 @@ async def find(
     group_id: str = "",
 ) -> dict:
     target = (target or "").strip()
-    v2 = settings.feature_people_search_v2
-    intent = detect_intent(target) if v2 else Intent("like_me" if target.lower() in LIKE_ME else "target")
+    intent = detect_intent(target)
     like_me = intent.kind == "like_me"
     warnings: list[str] = []
     searched: set[str] = set()
@@ -188,7 +185,7 @@ async def find(
         text = target
 
     prefs = await _preferences(pool, uid)
-    if v2 and intent.kind == "name" and not group_id:
+    if intent.kind == "name" and not group_id:
         own = await _own_handle(pool, uid)
         people, name_searched = await _find_by_name(
             pool, uid, intent, limit=limit, wanted=wanted, prefs=prefs, own=own, warnings=warnings)
@@ -214,8 +211,7 @@ async def find(
         query = await parse_target(target)
     elif not like_me:
         query = await parse_target(target)
-    if v2:
-        extra["intent"] = "like_me" if like_me else "target"
+    extra["intent"] = "like_me" if like_me else "target"
 
     if group_id:
         # Scoped to one group (an event, a community): its members' Cards only, no other source.
@@ -240,7 +236,7 @@ async def find(
     # A role described through their company is the case Cards most often comes up short on, so
     # LinkedIn starts now instead of after Cards and Zynd; the answer is dropped if not needed.
     early_qe = None
-    if v2 and "quickenrich" in wanted and not like_me and query.role and query.company_hint:
+    if "quickenrich" in wanted and not like_me and query.role and query.company_hint:
         early_qe = asyncio.ensure_future(people_discovery.search_quickenrich(text, limit, query=query))
     try:
         results = dict(zip(coros, await asyncio.gather(*coros.values(), return_exceptions=True)))

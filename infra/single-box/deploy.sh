@@ -156,6 +156,9 @@ build_web() { # <dir>
     if dep_changed "^${dir}/package-lock\.json$" || [[ ! -d node_modules ]]; then
       log "$dir: npm ci"; npm ci --no-audit --no-fund
     fi
+    # Dev-mode runs leave .next/dev behind; its generated types can name routes
+    # that no longer exist and fail the build's type check (TS2307), so drop it.
+    rm -rf .next/dev
     rm -rf .next.prev
     [[ -d .next ]] && cp -a .next .next.prev
     log "$dir: npm run build"

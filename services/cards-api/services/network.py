@@ -557,7 +557,8 @@ def leave_group(user_id: str, group_id: str) -> dict:
 
 
 def search_group(user_id: str, group_id: str, *, q: str = "", role: str = "", location: str = "",
-                 skills: str = "", limit: int = 10) -> dict:
+                 skills: str = "", limit: int = 10, topics: str = "",
+                 relax: bool = False) -> dict:
     """A7: people search scoped to one group (an event, a community). Only members can ask, only
     the group's own Cards are searched, and the caller never finds themselves."""
     from models.card import AgentProfileCard
@@ -576,7 +577,8 @@ def search_group(user_id: str, group_id: str, *, q: str = "", role: str = "", lo
         searcher.handle = mine.get("handle") or searcher.handle
     results = search_service.search_agents(
         q=q, role=role, location=location, skills=skills, limit=max(1, min(limit, 50)),
-        include_unclaimed=True, searcher=searcher, candidate_rows=rows)
+        include_unclaimed=True, searcher=searcher, candidate_rows=rows,
+        topics=topics, relax=relax)
     verified = trust.verified_by_card_ids([r["agent_id"] for r in results])
     for r in results:
         r["claimed"] = True

@@ -1,6 +1,7 @@
 # ZYND People Search, Suggestions & Recommendations Plan
 
-> **Status:** proposed 2026-10-26, not started. Nothing in this doc is built.
+> **Status:** proposed 2026-10-26. **Phase 0 is implemented on `dev`** (see "Phase 0 as built" below), behind
+> `FEATURE_PEOPLE_SEARCH_V2` (off by default, on in the dev compose). Phases 1–3 are not started.
 >
 > **Builds on** [`ZYND_MEMORY_QUALITY_PLAN.md`](./ZYND_MEMORY_QUALITY_PLAN.md) Part B (F1–F9, A1–A8), which
 > shipped behind flags (see its §17). This plan does not redo that work. It fixes what Part B left broken
@@ -366,6 +367,41 @@ cases users hit. Phases 1–3 are larger.
 - The investor query: no Grievance, Relations or Communications titles; at least 90% of LinkedIn
   results have a URL and a location; Cards results are investors, or are marked `relaxed`.
 - Golden set precision@5 is no lower than the recorded baseline, and the name cases pass.
+
+#### Phase 0 as built (2026-10-26)
+
+All of 0.1–0.10 is in. What differs from the text above, and what is still open:
+
+- **Baseline (0.10).** Golden set before any change: 52 queries, precision@k and recall@5 both **0.754**.
+  The 52 existing queries still send topics as `skills` (the bug's shape) and are left as the baseline.
+  After adding 2 cards and 9 queries (names, Gurgaon, relaxation, memory's real parameters): 61 queries,
+  **0.790**. The CI floor in `search_golden.json` was 0.0 and is now 0.75. Tests: memory 693 → 774 passing,
+  cards-api 680 → 694 passing; the only failures are the 2 known `test_x_bot.py` ones.
+- **End-to-end test (0.10).** `services/memory/tests/fixtures/people_golden.json` is shared: memory's
+  `test_people_golden.py` checks the parameters it sends, cards-api's `test_search_golden.py` runs those exact
+  parameters through the scorer. With the old parameters (topics as `skills`) both "chandan" and the investor
+  query return nothing; with the new ones they find `chandan_kumar` and `inv_seed_ai_in`.
+- **Flag.** Everything on the memory side is behind `FEATURE_PEOPLE_SEARCH_V2`. Cards needs no flag: `topics`,
+  `relax` and `/v1/agents/lookup` are opt-in. **Deploy cards-api first.** Two things apply to every caller
+  without the flag, as strict improvements: a country filter ("India") now matches a city-only card
+  ("Gurgaon"), and suggested people carry `two_way` (0.9).
+- **Name lookup (0.3).** If nobody is found by the name, the search continues as a normal target search with a
+  `note`, so a word wrongly read as a name still gets results. The QuickEnrich name search reads two pages
+  of 10 people at the company. `/v1/agents/lookup` is rate-limited in-process (30 per minute per client IP;
+  per worker, which stops a script but is not a global limit).
+- **Relaxing (0.2).** Group search takes `topics` and `relax` too (memory sends both). The final step (drop the
+  role) can fill the list with loose matches when memory asks for its pool of `2 × k`; they are marked
+  `relaxed` and rank last, and Phase 1's single scorer is where they should be cut.
+- **Investor title exclusions (0.6)** also list Engineer, Software and Teacher, because `Principal` is in the
+  include list. Short words like "AI" are kept in `bio_li` phrases (the plan's "drop one- or two-letter words"
+  rule would have dropped the signal).
+- **Still open, needs a human or live access:**
+  - Q1 and Q2 are **not answered**: they need three manual QuickEnrich calls and one raw record, and this
+    session had no QuickEnrich credentials. The code assumes OR and substring matching and a scheme-less
+    LinkedIn URL; `_linkedin_with_scheme` and the exclude lists are harmless if wrong, but confirm.
+  - Turning on `FEATURE_PEOPLE_SEARCH_V2` and `FEATURE_FACT_MATCHING` in prod (§8). The Zynd floors
+    (`ZYND_MIN_SCORE_FACT` 0.35, `ZYND_MIN_SCORE_AVG` 0.45) are starting values to tune on dev.
+  - The Phase 0 "done when" checks are unit-tested but not yet checked against live dev.
 
 ### Phase 1: One calibrated scorer (~1–2 weeks)
 

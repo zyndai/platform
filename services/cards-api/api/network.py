@@ -482,12 +482,13 @@ async def connection_brief_route(connection_id: UUID, authorization: str | None 
 async def search_group(
     group_id: UUID, q: str = Query("", max_length=200), role: str = Query("", max_length=100),
     location: str = Query("", max_length=100), skills: str = Query("", max_length=200),
-    limit: int = Query(10, ge=1, le=50),
+    limit: int = Query(10, ge=1, le=50), topics: str = Query("", max_length=200),
+    relax: bool = Query(False),
     authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None),
 ):
     """A7: search only the Cards of one group's members. Members only."""
     return network.search_group(_uid(authorization, x_zynd_user), str(group_id), q=q, role=role,
-                                location=location, skills=skills, limit=limit)
+                                location=location, skills=skills, limit=limit, topics=topics, relax=relax)
 
 
 @router.post("/network/saved-searches")

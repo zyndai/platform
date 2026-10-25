@@ -1,0 +1,145 @@
+{
+ "_about": "What find_people sends to Cards for each target with FEATURE_PEOPLE_SEARCH_V2 on, and the cards (by handle, in services/cards-api/tests/fixtures/search_golden.json) it must surface. services/memory/tests/test_people_golden.py checks the mapping; services/cards-api/tests/test_search_golden.py runs these exact params through Cards' scorer. Change either side and both fail: that is the point (the plan's R17 -- memory's real filters were never tested against Cards).",
+ "cases": [
+  {
+   "target": "seed-stage investor who backs AI dev tools in India",
+   "intent": "target",
+   "name": "",
+   "company": "",
+   "params": {
+    "q": "seed-stage investor who backs AI dev tools in India",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "role": "investor",
+    "location": "India",
+    "topics": "AI dev tools",
+    "relax": "true"
+   },
+   "relevant": [
+    "inv_seed_ai_in"
+   ]
+  },
+  {
+   "target": "investors in India",
+   "intent": "target",
+   "name": "",
+   "company": "",
+   "params": {
+    "q": "investors in India",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "role": "investor",
+    "location": "India",
+    "relax": "true"
+   },
+   "relevant": [
+    "inv_seed_ai_in",
+    "inv_seed_fintech_in",
+    "inv_angel_consumer_in",
+    "inv_seed_health_gurgaon"
+   ]
+  },
+  {
+   "target": "chandan",
+   "intent": "name",
+   "name": "chandan",
+   "company": "",
+   "params": {
+    "q": "chandan",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "topics": "chandan",
+    "relax": "true"
+   },
+   "relevant": [
+    "chandan_kumar"
+   ]
+  },
+  {
+   "target": "Chandan Kumar",
+   "intent": "name",
+   "name": "Chandan Kumar",
+   "company": "",
+   "params": {
+    "q": "Chandan Kumar",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "topics": "Chandan Kumar",
+    "relax": "true"
+   },
+   "relevant": [
+    "chandan_kumar"
+   ]
+  },
+  {
+   "target": "chandan from zynd",
+   "intent": "name",
+   "name": "chandan",
+   "company": "zynd",
+   "params": {
+    "q": "chandan from zynd",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "topics": "chandan,zynd",
+    "relax": "true"
+   },
+   "relevant": [
+    "chandan_kumar"
+   ]
+  },
+  {
+   "target": "find me someone who knows Rust",
+   "intent": "target",
+   "name": "",
+   "company": "",
+   "params": {
+    "q": "find me someone who knows Rust",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "topics": "Rust",
+    "skills": "rust",
+    "relax": "true"
+   },
+   "relevant": [
+    "eng_rust_berlin",
+    "devrel_rust_berlin",
+    "fnd_devtools_sf"
+   ]
+  },
+  {
+   "target": "biotech investor in Pune",
+   "intent": "target",
+   "name": "",
+   "company": "",
+   "params": {
+    "q": "biotech investor in Pune",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "role": "investor",
+    "location": "Pune",
+    "topics": "biotech",
+    "relax": "true"
+   },
+   "relevant": [
+    "inv_angel_consumer_in"
+   ]
+  },
+  {
+   "target": "startup lawyer in Pune",
+   "intent": "target",
+   "name": "",
+   "company": "",
+   "params": {
+    "q": "startup lawyer in Pune",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "role": "lawyer",
+    "location": "Pune",
+    "relax": "true"
+   },
+   "relevant": [
+    "law_startups_london"
+   ]
+  }
+ ]
+}

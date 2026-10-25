@@ -3,6 +3,7 @@ import re
 from dataclasses import dataclass
 
 from models.card import AgentProfileCard
+from services import geo
 from services.search_text import contains_all, location_terms, location_tokens, role_matches, token_set
 
 SKILL_ALIASES = {"js": "javascript", "ts": "typescript", "golang": "go", "python3": "python", "reactjs": "react", "nodejs": "node.js", "postgres": "postgresql"}
@@ -62,7 +63,10 @@ class Constraints:
                      if fact_predicate(f) in ("has_skill", "has_expertise_in")]
         if self.skills and not all(any(skill_matches(w, h) for h in evidence) for w in self.skills):
             return False
-        if self.location and not set(location_terms(self.location)) <= location_tokens(card.identity.location):
+        if self.location and not (
+            set(location_terms(self.location)) <= location_tokens(card.identity.location)
+            or geo.same_country(self.location, card.identity.location)   # "India" matches "Gurgaon"
+        ):
             return False
         roles = [card.identity.headline, *[str(j.get("title") or "") for j in (card.work_experience or []) if isinstance(j, dict)]]
         if any(fact_predicate(f) == "is_founder_of" for f in live_facts(card.zynd_memory)):

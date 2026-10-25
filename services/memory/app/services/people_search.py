@@ -8,6 +8,7 @@ people. Every source that fails or is not configured says so in `warnings`.
 
     find_people("seed-stage investor who backs AI dev tools in India")
     find_people("like_me")        # people close to the caller's own profile
+    find_people("Chandan from Zynd")   # a name: looked up as a name (FEATURE_PEOPLE_SEARCH_V2)
 """
 from __future__ import annotations
 
@@ -20,13 +21,13 @@ from app.config import settings
 from app.services import card_directory, people_discovery, people_results
 from app.services.export import active_context
 from app.services.matching import match_users, search_by_query
-from app.services.people_query import TargetQuery, parse_target, parse_target_heuristic
+from app.services.people_query import (
+    LIKE_ME, Intent, TargetQuery, detect_intent, parse_target, parse_target_heuristic)
 from app.tools import cards_network
 
 logger = logging.getLogger("zynd.find_people")
 
 SOURCES = frozenset({"cards", "zynd", "quickenrich"})
-LIKE_ME = frozenset({"like_me", "like me", "people like me", "similar to me"})
 _PROFILE_PREDICATES = ("is_building", "is_creating", "is_working_on", "has_expertise_in", "has_skill", "is_learning")
 _PROFILE_TOPICS = 4
 
@@ -71,11 +72,21 @@ async def _zynd_people(
     if cards is None:
         warnings.append("cards_unavailable")
         return []
+    v2 = settings.feature_people_search_v2 and not like_me
     people = []
     for row in rows:
         card = cards.get(row["user_id"])
         if card and card.get("handle"):   # no published Card = nobody to connect to
-            people.append(people_results.person_from_zynd(row, card, people_discovery.card_url(card["handle"])))
+            person = people_results.person_from_zynd(row, card, people_discovery.card_url(card["handle"]))
+            if v2:
+                per_fact = bool(row.get("matched_on"))
+                floor = settings.zynd_min_score_fact if per_fact else settings.zynd_min_score_avg
+                # Kept only if Cards also found them (see drop_weak_zynd). No generic reason either:
+                # "Matches their Zynd profile" says nothing the person's presence does not.
+                person["_weak"] = person["score"] < floor
+                if not per_fact:
+                    person["why"] = []
+            people.append(person)
     return people
 
 
@@ -94,9 +105,15 @@ async def _group_people(
     pool: asyncpg.Pool, uid: str, group_id: str, text: str, query: TargetQuery, limit: int,
 ) -> tuple[list[dict], str | None]:
     """A7: search only the Cards of one group's members. Cards enforces that the caller is a member."""
-    result = await cards_network.group_search(
-        pool, uid, group_id, text, query.role_noun, query.locality or query.location,
-        ",".join(query.topics)[:200], limit)
+    if settings.feature_people_search_v2:
+        # Topics are soft and only an explicit skill is required, as in a Cards search.
+        result = await cards_network.group_search(
+            pool, uid, group_id, text, query.role_noun, query.locality or query.location,
+            ",".join(query.required_skills)[:200], limit, topics=",".join(query.topics)[:200], relax=True)
+    else:
+        result = await cards_network.group_search(
+            pool, uid, group_id, text, query.role_noun, query.locality or query.location,
+            ",".join(query.topics)[:200], limit)
     if not result.get("ok"):
         return [], "group_unavailable: " + str(result.get("error") or "not a member of that group")[:120]
     return [
@@ -108,14 +125,57 @@ async def _group_people(
     ], None
 
 
+def _parsed(query: TargetQuery) -> dict:
+    return {k: v for k, v in query.as_dict().items() if v and k not in ("raw", "titles")}
+
+
+async def _find_by_name(
+    pool: asyncpg.Pool, uid: str, intent: Intent, *, limit: int, wanted: set[str], prefs: dict, own: str | None,
+    warnings: list[str],
+) -> tuple[list[dict], set[str]]:
+    """Look one person up by name: Cards' own name search, and when a company was given the
+    company's LinkedIn people filtered by name (the contact-finder cannot search by name).
+    Returns (people, sources searched). Empty people = nobody by that name."""
+    coros: dict[str, object] = {}
+    if "cards" in wanted:
+        coros["cards"] = people_discovery.lookup_cards(intent.name, limit)
+    if intent.company and "quickenrich" in wanted:
+        coros["quickenrich"] = people_discovery.search_quickenrich_by_name(intent.name, intent.company, limit)
+    results = dict(zip(coros, await asyncio.gather(*coros.values(), return_exceptions=True)))
+    people: list[dict] = []
+    for name, outcome in results.items():
+        if isinstance(outcome, BaseException):
+            logger.warning("%s name lookup failed: %s", name, outcome)
+            warnings.append(f"{name}_unavailable")
+            continue
+        rows, warning = outcome
+        if warning:
+            warnings.append(warning)
+        if name == "cards":
+            people.extend(people_results.person_from_card(r) for r in rows)
+        else:
+            people.extend(people_results.person_from_external(r, i) for i, r in enumerate(rows))
+    people = people_results.apply_preferences(people_results.merge_people(people), prefs)
+    if own:
+        people = [p for p in people if (p["handle"] or "").lower() != own.lower()]
+    for person in people:
+        exact = (sorted(people_discovery._name_words(person["name"])) == sorted(people_discovery._name_words(intent.name))
+                 or (person["handle"] or "").lower() == intent.name.lower())
+        person["match_quality"] = "exact" if exact else "close"
+    return people[:limit], set(results)
+
+
 async def find(
     pool: asyncpg.Pool, uid: str, target: str, *, limit: int, wanted: set[str], explicit: set[str],
     group_id: str = "",
 ) -> dict:
     target = (target or "").strip()
-    like_me = target.lower() in LIKE_ME
+    v2 = settings.feature_people_search_v2
+    intent = detect_intent(target) if v2 else Intent("like_me" if target.lower() in LIKE_ME else "target")
+    like_me = intent.kind == "like_me"
     warnings: list[str] = []
     searched: set[str] = set()
+    extra: dict = {}
 
     if like_me:
         text = await _profile_text(pool, uid)
@@ -126,16 +186,43 @@ async def find(
         query: TargetQuery = parse_target_heuristic(text)
     else:
         text = target
-        query = await parse_target(target)
 
     prefs = await _preferences(pool, uid)
+    if v2 and intent.kind == "name" and not group_id:
+        own = await _own_handle(pool, uid)
+        people, name_searched = await _find_by_name(
+            pool, uid, intent, limit=limit, wanted=wanted, prefs=prefs, own=own, warnings=warnings)
+        exact = any(p["match_quality"] == "exact" for p in people)
+        if not intent.company and not exact:
+            # Without a company there is nothing to search LinkedIn with: the assistant should ask.
+            warnings.append("name_needs_company: ask which company they work at, then search again with it")
+        if people:
+            result = {
+                "target": target, "mode": "target", "intent": "name",
+                "parsed": {"name": intent.name, **({"company": intent.company} if intent.company else {})},
+                "people": people_results.with_invites(people, uid, settings.feature_invite_to_claim),
+                "sources": sorted(wanted), "searched": sorted(name_searched),
+            }
+            if len(people) > 1:
+                result["note"] = (f"{len(people)} people match \"{intent.name}\": tell them apart by "
+                                  "headline and location before connecting.")
+            if warnings:
+                result["warnings"] = list(dict.fromkeys(warnings))
+            return result
+        searched |= name_searched
+        extra["note"] = f"Nobody named \"{intent.name}\" was found; showing the closest matches for the text."
+        query = await parse_target(target)
+    elif not like_me:
+        query = await parse_target(target)
+    if v2:
+        extra["intent"] = "like_me" if like_me else "target"
+
     if group_id:
         # Scoped to one group (an event, a community): its members' Cards only, no other source.
         found, warning = await _group_people(pool, uid, group_id, text, query, limit)
         people = people_results.apply_preferences(
             people_results.merge_people([people_results.person_from_card(r) for r in found]), prefs)
-        result = {"target": target, "mode": "group", "group_id": group_id,
-                  "parsed": {k: v for k, v in query.as_dict().items() if v and k not in ("raw", "titles")},
+        result = {"target": target, "mode": "group", "group_id": group_id, "parsed": _parsed(query),
                   "people": people[:limit], "sources": ["group"], "searched": ["group"]}
         if warning:
             result["warnings"] = [warning]
@@ -150,7 +237,17 @@ async def find(
             text, pool_size, query=query, as_handle=own or "", less_like=prefs.get("less_like_this"))
     if "zynd" in wanted:
         coros["zynd"] = _zynd_people(pool, uid, text, like_me, pool_size, warnings, query)
-    results = dict(zip(coros, await asyncio.gather(*coros.values(), return_exceptions=True)))
+    # A role described through their company is the case Cards most often comes up short on, so
+    # LinkedIn starts now instead of after Cards and Zynd; the answer is dropped if not needed.
+    early_qe = None
+    if v2 and "quickenrich" in wanted and not like_me and query.role and query.company_hint:
+        early_qe = asyncio.ensure_future(people_discovery.search_quickenrich(text, limit, query=query))
+    try:
+        results = dict(zip(coros, await asyncio.gather(*coros.values(), return_exceptions=True)))
+    except BaseException:
+        if early_qe:
+            early_qe.cancel()
+        raise
 
     people: list[dict] = []
     for name, outcome in results.items():
@@ -167,6 +264,10 @@ async def find(
             people.extend(outcome)
 
     people = people_results.apply_preferences(people_results.merge_people(people), prefs)
+    # A Zynd hit below the floor stays only when Cards found the same person.
+    people = [p for p in people if not (p.get("_weak") and p["sources"] == ["zynd"])]
+    for person in people:
+        person.pop("_weak", None)
     if own:
         people = [p for p in people if (p["handle"] or "").lower() != own.lower()]
 
@@ -175,20 +276,26 @@ async def find(
         "quickenrich" in explicit or people_results.strong_count(people) < limit
     ):
         searched.add("quickenrich")
-        found, warning = await people_discovery.search_quickenrich(text, limit, query=query)
+        if early_qe is not None:
+            found, warning = await early_qe
+        else:
+            found, warning = await people_discovery.search_quickenrich(text, limit, query=query)
         if warning:
             warnings.append(warning)
         people = people_results.merge_people(
             people + [people_results.person_from_external(r, i) for i, r in enumerate(found)])
+    elif early_qe is not None:
+        early_qe.cancel()
 
     people = people_results.with_invites(people[:limit], uid, settings.feature_invite_to_claim)
     result = {
         "target": target,
         "mode": "like_me" if like_me else "target",
-        "parsed": {} if like_me else {k: v for k, v in query.as_dict().items() if v and k not in ("raw", "titles")},
+        "parsed": {} if like_me else _parsed(query),
         "people": people,
         "sources": sorted(wanted),
         "searched": sorted(searched),
+        **extra,
     }
     if like_me:
         result["compared_with"] = text

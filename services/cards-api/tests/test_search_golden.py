@@ -28,3 +28,36 @@ def test_stopword_only_query_returns_nothing():
 
 def pytest_fail():
     raise AssertionError("embedding a stopword-only query would match noise")
+
+
+def test_memorys_real_parameters_surface_the_right_people():
+    """The parameters memory's find_people sends (services/memory/tests/fixtures/people_golden.json),
+    run through the scorer as the API would: topics soft, skills only when explicit, filters relaxed."""
+    import json
+    import pathlib
+    from unittest.mock import MagicMock, patch
+
+    from services import search as search_service
+
+    path = pathlib.Path(__file__).resolve().parents[2] / "memory" / "tests" / "fixtures" / "people_golden.json"
+    if not path.exists():
+        import pytest
+        pytest.skip("memory's fixture is not in this checkout")
+    doc = search_golden.load()
+    rows = search_golden.build_rows(doc)
+    sb = MagicMock()
+    sb.rpc.side_effect = RuntimeError("no rpc: score the whole corpus")
+    misses = []
+    with patch.object(search_service.config, "get_supabase", lambda: sb), \
+         patch.object(search_service, "embed_text", search_golden.hash_embed), \
+         patch.object(search_service.cards_service, "list_published_rows", lambda **kw: rows):
+        for case in json.loads(path.read_text())["cases"]:
+            p = case["params"]
+            found = search_service.search_agents(
+                q=p["q"], role=p.get("role", ""), location=p.get("location", ""), skills=p.get("skills", ""),
+                topics=p.get("topics", ""), relax=p.get("relax") == "true", limit=5, include_unclaimed=True)
+            top = [r["handle"] for r in found]
+            k = min(5, len(case["relevant"]))
+            if not set(top[:k]) <= set(case["relevant"]) or not set(case["relevant"]) <= set(top):
+                misses.append(f"{case['target']!r}: want {case['relevant']} got {top}")
+    assert not misses, misses

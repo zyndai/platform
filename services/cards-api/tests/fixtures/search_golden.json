@@ -1,8 +1,8 @@
 {
- "_about": "Synthetic corpus and golden queries for card search. relevant = every card that truly matches (labelled over the whole corpus). Metric: precision@min(5,|relevant|) and recall@5. q/role/location/skills are what Memory's find_people sends after parsing the target. Embeddings are a hashed bag-of-words stand-in, so this guards lexical scoring regressions; it is not a substitute for judging real embeddings.",
+ "_about": "Synthetic corpus and golden queries for card search. relevant = every card that truly matches (labelled over the whole corpus). Metric: precision@min(5,|relevant|) and recall@5. q/role/location/skills (and topics/relax, when set) are what Memory's find_people sends after parsing the target. Embeddings are a hashed bag-of-words stand-in, so this guards lexical scoring regressions; it is not a substitute for judging real embeddings.",
  "targets": {
-  "precision_at_k": 0.0,
-  "recall_at_5": 0.0
+  "precision_at_k": 0.75,
+  "recall_at_5": 0.75
  },
  "cards": [
   {
@@ -414,6 +414,25 @@
    "summary": "People who live in the area and work with the land.",
    "memory": [],
    "connect_with": []
+  },
+  {
+   "handle": "chandan_kumar",
+   "name": "Chandan Kumar",
+   "headline": "Building agent networking at Zynd",
+   "location": "Gurgaon",
+   "skills": ["Backend"],
+   "industries": ["Software"],
+   "summary": "Works on how software agents find and talk to each other.",
+   "memory": []
+  },
+  {
+   "handle": "inv_seed_health_gurgaon",
+   "headline": "Seed investor in healthtech",
+   "location": "Gurgaon",
+   "skills": ["Investing"],
+   "industries": ["Healthcare", "Venture capital"],
+   "summary": "Writes first cheques into healthtech teams.",
+   "memory": []
   }
  ],
  "queries": [
@@ -432,7 +451,7 @@
    "role": "investor",
    "location": "India",
    "skills": "",
-   "relevant": ["inv_seed_ai_in", "inv_seed_fintech_in", "inv_angel_consumer_in"],
+   "relevant": ["inv_seed_ai_in", "inv_seed_fintech_in", "inv_angel_consumer_in", "inv_seed_health_gurgaon"],
    "as_handle": ""
   },
   {
@@ -884,6 +903,97 @@
    "skills": "AI",
    "relevant": ["inv_seed_ai_uk", "inv_seed_ai_in"],
    "as_handle": "eng_ml_blr"
+  },
+  {
+   "target": "name: first name only",
+   "q": "chandan",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "relevant": ["chandan_kumar"],
+   "as_handle": ""
+  },
+  {
+   "target": "name: full name",
+   "q": "Chandan Kumar",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "relevant": ["chandan_kumar"],
+   "as_handle": ""
+  },
+  {
+   "target": "name: with a company",
+   "q": "chandan from zynd",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "relevant": ["chandan_kumar"],
+   "as_handle": ""
+  },
+  {
+   "target": "name sent as a topic, as memory did before the fix",
+   "q": "chandan",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "relevant": ["chandan_kumar"],
+   "as_handle": "",
+   "topics": "chandan",
+   "relax": true
+  },
+  {
+   "target": "investor query as memory sends it now (topics are soft, filters relax)",
+   "q": "seed-stage investor who backs AI dev tools in India",
+   "role": "investor",
+   "location": "India",
+   "skills": "",
+   "relevant": ["inv_seed_ai_in"],
+   "as_handle": "",
+   "topics": "AI dev tools",
+   "relax": true
+  },
+  {
+   "target": "invented topics never remove the investor",
+   "q": "seed-stage investor who backs AI dev tools in India",
+   "role": "investor",
+   "location": "India",
+   "skills": "",
+   "relevant": ["inv_seed_ai_in"],
+   "as_handle": "",
+   "topics": "technology innovation,software innovation",
+   "relax": true
+  },
+  {
+   "target": "country search finds a city-only card",
+   "q": "investors in India",
+   "role": "investor",
+   "location": "India",
+   "skills": "",
+   "relevant": ["inv_seed_ai_in", "inv_seed_fintech_in", "inv_angel_consumer_in", "inv_seed_health_gurgaon"],
+   "as_handle": "",
+   "relax": true
+  },
+  {
+   "target": "biotech investor in Pune: the Pune investor, then looser matches",
+   "q": "biotech investor in Pune",
+   "role": "investor",
+   "location": "Pune",
+   "skills": "",
+   "relevant": ["inv_angel_consumer_in"],
+   "as_handle": "",
+   "topics": "biotech",
+   "relax": true
+  },
+  {
+   "target": "no lawyer in Pune: relax to the closest lawyer",
+   "q": "startup lawyer in Pune",
+   "role": "lawyer",
+   "location": "Pune",
+   "skills": "",
+   "relevant": ["law_startups_london"],
+   "as_handle": "",
+   "relax": true
   }
  ]
 }

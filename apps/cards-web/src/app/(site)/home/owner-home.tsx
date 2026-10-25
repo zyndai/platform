@@ -115,7 +115,7 @@ export function OwnerHome({
   }
 
   async function preference(
-    key: "weekly_digest" | "email_nudges",
+    key: "weekly_digest" | "email_nudges" | "morning_digest",
     checked: boolean,
   ) {
     const previous = data.notification_prefs;
@@ -307,6 +307,20 @@ export function OwnerHome({
                 checked={data.visibility === "public"}
                 disabled={busy}
                 onChange={(e) => void visibility(e.target.checked)}
+              />
+            </label>
+            <label className="oh-toggle">
+              <span>
+                Morning digest
+                <small>Your card&apos;s week, topic news and people, daily at 7am</small>
+              </span>
+              <input
+                type="checkbox"
+                checked={data.notification_prefs.morning_digest !== false}
+                disabled={busy}
+                onChange={(e) =>
+                  void preference("morning_digest", e.target.checked)
+                }
               />
             </label>
             <label className="oh-toggle">

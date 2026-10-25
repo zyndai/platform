@@ -13,77 +13,153 @@ from services import digest as digest_service
 IST_7AM = datetime(2026, 10, 1, 1, 30, tzinfo=timezone.utc)
 
 
+_real_owner_extras = digest_service._owner_extras
+
+
 @pytest.fixture(autouse=True)
 def default_zone(monkeypatch):
     monkeypatch.setattr(digest_service.config, "DIGEST_DEFAULT_TIMEZONE", "Asia/Kolkata")
+    # The owner-only blocks read Supabase and Memory; tests that want them pass extras directly.
+    monkeypatch.setattr(digest_service, "_owner_extras", lambda row, rows, now, local: {"date": "Thu, 1 Oct"})
 
 
-def test_render_digest_includes_summary_posts_and_people():
+def test_render_digest_includes_topics_posts_and_people():
     posts = {
-        "summary": "AI is busy today.",
+        "summary": "Building with AI: AI is busy today.",
         "posts": [
-            {"field": "working_on", "query": "Building with AI", "excerpt": "shipped agents", "url": "https://x.com/a/1"},
+            {"field": "working_on", "query": "Building with AI", "excerpt": "shipped agents", "url": "https://x.com/a/1",
+             "platform": "x", "author": "@dev"},
             None,
         ],
     }
     people = {
-        "people": [{"handle": "bob", "name": "Bob", "headline": "Founder", "url": "https://zynd.ai/p/bob"}],
+        "people": [{"handle": "bob", "name": "Bob", "headline": "Founder", "url": "https://zynd.ai/p/bob",
+                    "matched_fields": {"working_on": ["Building with AI"]}}],
         "outside": [{"name": "Pat", "title": "Recruiter", "company": "Acme", "linkedin_url": "https://linkedin.com/in/pat"}],
     }
     body = digest_service.render_digest("alice", posts, people, name="Alice Chen")
+    assert "Good morning, Alice\n" in body
+    assert "TODAY IN YOUR FIELD" in body
+    assert "Building with AI" in body
     assert "AI is busy today" in body
     assert "https://x.com/a/1" in body
     assert "Bob" in body
     assert "https://zynd.ai/p/bob" in body
-    assert "Pat" in body
+    assert "Pat, Recruiter at Acme (LinkedIn)" in body
     assert "https://linkedin.com/in/pat" in body
     assert "working_on" not in body
 
     html = digest_service.render_digest_html("alice", posts, people, name="Alice Chen")
     assert "<table" in html
+    assert "Good morning, Alice</div>" in html
+    assert "Good morning, @alice" not in html
+    assert "Today in your field" in html
     assert "AI is busy today" in html
+    assert "Read on X" in html
     assert "https://x.com/a/1" in html
-    assert "Bob" in html
-    assert "https://zynd.ai/p/bob" in html
-    assert "Pat" in html
+    assert "People for you" in html
+    assert "Bob" in html and "https://zynd.ai/p/bob" in html
+    assert "Recruiter at Acme &middot; on LinkedIn" in html
     assert "https://linkedin.com/in/pat" in html
     assert "zynd.ai/p/alice" in html
-    assert "Good morning, Alice Chen!" in html
-    assert "Good morning, @alice" not in html
-    assert "Curated Posts" in html
-    assert "People on Zynd" in html
-    assert "Outside Network" in html
-    assert "View Zynd Profile" in html
-    assert "Connect on LinkedIn" in html
-    assert "Working On" not in html
-    assert "Can Help With" not in html
-    assert "Connect With" not in html
-    assert "Love Talking About" not in html
-    assert "Founder" in html
-    assert "Recruiter at Acme" in html
-    assert "#554ac0" in html
-    assert "#faf8ff" in html
-    assert "tailwind" not in html.lower()
+    assert "/assets/zynd-logo.png" in html
+    assert "Open your dashboard" in html
+    assert "#4338ca" in html
+    assert "working_on" not in html
+    # Blocks without data are left out entirely, with no "none today" filler.
+    assert "Your card this week" not in html
+    assert "From your network" not in html
+    assert "none today" not in html.lower()
     assert "<script" not in html.lower()
-    assert "googleapis.com" not in html
     assert "Unsubscribe" not in html
-    assert "Edition #" not in html
 
 
-def test_digest_summary_drops_topic_labels():
+def test_empty_sections_are_left_out():
+    html = digest_service.render_digest_html("alice", {"summary": "", "posts": [None]}, {"people": [], "outside": []})
+    for block in ("Your card this week", "Today in your field", "People for you", "From your network"):
+        assert block not in html
+    assert "Here&#x27;s what&#x27;s new in the topics you follow." in html
+    assert "Open your dashboard" in html
+
+
+def test_owner_blocks_render_from_extras():
+    extras = {
+        "date": "Mon, 26 Oct",
+        "activity": {"available": True, "views": 48, "agent_hits": 112,
+                     "queries": [{"query": "fintech founder Bengaluru", "count": 6}]},
+        "visitors": ["Karan Shah", "Ines Duarte", "Tom Becker"],
+        "to_review": 3,
+        "network": {"connection_updates": [{"handle": "ada", "name": "Ada", "change": "Looking for investment", "when": "2d"}],
+                    "saved_search_hits": ["New match for “fintech”: Sam"]},
+        "unsubscribe_url": "https://api.test/cards/notifications/unsubscribe/tok",
+    }
+    people = {"people": [
+        {"handle": "lena", "name": "Lena Fischer", "url": "https://zynd.ai/p/lena"},
+        {"handle": "arjun", "name": "Arjun Mehta", "url": "https://zynd.ai/p/arjun", "two_way": ["Founders"], "verified": True,
+         "matched_fields": {"working_on": ["Fintech"], "can_help_with": ["Developer tools", "Payments"]}},
+    ], "outside": []}
+    html = digest_service.render_digest_html("alice", None, people, name="Alice", extras=extras)
+    assert "Mon, 26 Oct" in html
+    assert "Your card this week" in html
+    assert ">48<" in html and "Profile views" in html
+    assert ">112<" in html and "AI agent lookups" in html
+    assert "/p/alice/edit#inbox" in html and "Facts to review" in html
+    assert "fintech founder Bengaluru" in html and "&times;6" in html
+    assert "Karan Shah</b> and 2 others viewed your card" in html
+    assert "Wants to meet you" in html and "LinkedIn verified" in html
+    # Two-way matches go first, and leave room for two match tags.
+    assert html.index("Arjun Mehta") < html.index("Lena Fischer")
+    assert "Developer tools" in html and "Payments" not in html
+    assert "From your network" in html and "Looking for investment &middot; 2d" in html
+    assert "New match for “fintech”: Sam" in html
+    assert 'href="https://api.test/cards/notifications/unsubscribe/tok"' in html
+    assert "Your card had 48 views this week." in html
+
+    d = digest_service.build_digest("alice", None, people, "Alice", extras)
+    assert digest_service.digest_subject(d) == "Arjun wants to meet you too"
+    body = digest_service.render_digest("alice", None, people, name="Alice", extras=extras)
+    assert "48 profile views · 112 AI agent lookups · 3 facts to review" in body
+    assert "Arjun Mehta (wants to meet you too)" in body
+    assert "Unsubscribe: https://api.test/cards/notifications/unsubscribe/tok" in body
+
+
+def test_unknown_review_count_is_left_out_not_zero():
+    extras = {"activity": {"available": False, "views": None, "agent_hits": None, "queries": []}}
+    d = digest_service.build_digest("alice", None, None, None, extras)
+    assert d["stats"] == []
+    assert "Your card this week" not in digest_service.render_digest_html("alice", None, None, extras=extras)
+
+
+@pytest.mark.parametrize("people, views, subject", [
+    ({"people": [{"handle": "b", "name": "Bob"}], "outside": [{"name": "Pat"}]}, None, "2 people to meet today"),
+    ({"people": [{"handle": "b", "name": "Bob"}], "outside": []}, None, "1 person to meet today"),
+    (None, 12, "12 views on your card this week"),
+    (None, None, "Your Zynd morning digest"),
+])
+def test_subject_names_the_best_thing_in_the_email(people, views, subject):
+    extras = {"activity": {"available": views is not None, "views": views, "agent_hits": None, "queries": []}}
+    assert digest_service.digest_subject(digest_service.build_digest("alice", None, people, None, extras)) == subject
+
+
+def test_topics_pair_each_brief_with_its_post_by_name():
     raw = (
         "Doing research: There is a growing emphasis on research.\n\n"
         "Technical interviews: Interviews are getting harder.\n\n"
-        "Product Managers: PMs are navigating PR and storytelling."
+        "A paragraph with no label. It still shows."
     )
-    text = digest_service.digest_summary(raw)
-    assert "Doing research:" not in text
-    assert "Technical interviews:" not in text
-    assert "Product Managers:" not in text
-    assert "growing emphasis on research" in text
-    assert "Interviews are getting harder" in text
-    html = digest_service.render_digest_html("alice", {"summary": raw, "posts": []}, None)
-    assert "Doing research" not in html
+    posts = [
+        {"query": "Technical interviews", "excerpt": "leetcode is back", "url": "https://x.com/a/2"},
+        None,
+        {"query": "Product Managers", "excerpt": "PM storytelling", "url": "https://x.com/a/3"},
+    ]
+    topics = digest_service.digest_topics({"summary": raw, "posts": posts})
+    assert [t["topic"] for t in topics] == ["Doing research", "Technical interviews", "", "Product Managers"]
+    assert topics[0]["post"] is None
+    assert topics[1]["post"]["url"] == "https://x.com/a/2"
+    assert topics[2]["brief"] == "A paragraph with no label. It still shows."
+    assert topics[3]["brief"] == "" and topics[3]["post"]["url"] == "https://x.com/a/3"
+    html = digest_service.render_digest_html("alice", {"summary": raw, "posts": posts}, None)
+    assert "Doing research:" not in html
     assert "growing emphasis on research" in html
 
 
@@ -94,9 +170,13 @@ def test_clip_summary_caps_at_100_words():
     assert clipped.startswith("w1 ")
     assert clipped.endswith("w100")
     assert digest_service.clip_summary("short note") == "short note"
-    html = digest_service.render_digest_html("alice", {"summary": words, "posts": []}, None)
-    assert "w101" not in html
-    assert "w100" in html
+
+
+def test_topic_brief_caps_at_45_words():
+    words = " ".join(f"w{i}" for i in range(1, 140))
+    html = digest_service.render_digest_html("alice", {"summary": f"AI: {words}", "posts": []}, None)
+    assert "w45 " in html or "w45<" in html
+    assert "w46" not in html
 
 
 def test_post_excerpt_caps_at_30_words():
@@ -198,7 +278,7 @@ def test_run_digest_greets_with_identity_name(monkeypatch):
     monkeypatch.setattr(digest_service, "_mark_sent", lambda *a: None)
 
     stats = digest_service.run_digest(now=IST_7AM, dry_run=True)
-    assert "Good morning, Alice Chen!" in stats["previews"][0]["html"]
+    assert "Good morning, Alice</div>" in stats["previews"][0]["html"]
     assert "Good morning, @alice" not in stats["previews"][0]["html"]
 
 
@@ -236,7 +316,7 @@ def test_run_digest_handle_only_processes_that_card(monkeypatch):
     assert sent == []
     assert stats["sent"] == 1
     assert stats["previews"][0]["handle"] == "bob"
-    assert "Morning digest for @bob" in stats["previews"][0]["body"]
+    assert "Good morning, @bob" in stats["previews"][0]["body"]
     assert "<table" in stats["previews"][0]["html"]
     assert "@bob" in stats["previews"][0]["html"]
 
@@ -418,8 +498,86 @@ def test_missing_timezone_column_falls_back_to_the_default_zone(monkeypatch):
     monkeypatch.setattr(digest_service.cards_service, "list_published_rows", list_rows)
 
     assert digest_service._list_digest_rows() == [row]
-    assert columns_asked == ["handle,owner_email,suggested_posts,card,timezone",
-                             "handle,owner_email,suggested_posts,card"]
+    assert columns_asked == list(digest_service._DIGEST_COLUMNS)
+
+
+def test_missing_prefs_columns_keep_the_timezone(monkeypatch):
+    columns_asked = []
+    row = {"handle": "a", "owner_email": "a@x.io", "timezone": "Asia/Kolkata"}
+
+    def list_rows(columns, **_):
+        columns_asked.append(columns)
+        if "unsubscribe_token" in columns:
+            raise APIError({"code": "42703", "message": "column does not exist", "details": None, "hint": None})
+        return [row]
+
+    monkeypatch.setattr(digest_service.cards_service, "list_published_rows", list_rows)
+    assert digest_service._list_digest_rows() == [row]
+    assert columns_asked == list(digest_service._DIGEST_COLUMNS[:2])
+
+
+def test_turned_off_digest_is_not_sent_but_still_previews(mailbox):
+    off = owner("off")
+    off["notification_prefs"] = {"weekly_digest": True, "morning_digest": False}
+    mailbox.rows = [off, owner("on")]
+
+    stats = digest_service.run_digest(now=IST_7AM)
+    assert [m["to"] for m in mailbox.sent] == ["on@x.io"]
+    assert stats["skipped_unsubscribed"] == 1
+
+    preview = digest_service.run_digest(now=IST_7AM, handle="off", dry_run=True)
+    assert preview["sent"] == 1
+
+
+def test_send_carries_the_unsubscribe_link(mailbox, monkeypatch):
+    monkeypatch.setattr(digest_service, "_owner_extras",
+                        lambda row, rows, now, local: {"unsubscribe_url": "https://api.test/u/tok"})
+    mailbox.rows = [owner("ist")]
+    digest_service.run_digest(now=IST_7AM)
+    assert mailbox.sent[0]["unsubscribe_url"] == "https://api.test/u/tok"
+    assert "https://api.test/u/tok" in mailbox.sent[0]["html"]
+
+
+def test_owner_extras_without_owner_home_only_dates_and_links(monkeypatch):
+    from services import owner_home
+    monkeypatch.setattr(owner_home, "enabled", lambda: False)
+    monkeypatch.setattr(digest_service.config, "API_BASE_URL", "https://api.test")
+    local = datetime(2026, 10, 26, 7, 0, tzinfo=timezone.utc)
+    extras = _real_owner_extras({"handle": "a", "owner_email": "a@x.io", "unsubscribe_token": "tok"}, [], local, local)
+    assert extras == {"date": "Mon, 26 Oct", "unsubscribe_url": "https://api.test/cards/notifications/unsubscribe/tok"}
+
+
+def test_owner_extras_survive_each_failing_source(monkeypatch):
+    from services import owner_home, visitor_privacy, owner_notifications
+    monkeypatch.setattr(owner_home, "enabled", lambda: True)
+    monkeypatch.setattr(owner_home, "activity", lambda handle, now=None: (_ for _ in ()).throw(RuntimeError("db down")))
+    monkeypatch.setattr(visitor_privacy, "named_visitors", lambda h, e: {"available": True, "items": [{"name": "Ana"}, {"name": ""}]})
+    monkeypatch.setattr(owner_notifications, "_network_section", lambda e, r, rows: {
+        "mutual_matches": [], "saved_search_hits": [],
+        "connection_updates": [{"handle": "ada", "name": "Ada", "change": "x", "approved_at": "2026-10-24T07:00:00+00:00"}]})
+    monkeypatch.setattr(digest_service.config, "MEMORY_SERVICE_TOKEN", "")
+    now = datetime(2026, 10, 26, 7, 0, tzinfo=timezone.utc)
+    extras = _real_owner_extras({"handle": "a", "owner_email": "a@x.io"}, [], now, now)
+    assert "activity" not in extras
+    assert "to_review" not in extras
+    assert extras["visitors"] == ["Ana"]
+    assert extras["network"]["connection_updates"][0]["when"] == "2d"
+
+
+def test_mark_people_flags_two_way_and_verified(monkeypatch):
+    from services import trust
+    me = {"handle": "alice", "id": "c-alice",
+          "card": {"id": "c-alice", "identity": {"name": "Alice", "headline": "Founder of a fintech startup"}}}
+    bob = {"handle": "bob", "id": "c-bob",
+           "card": {"id": "c-bob", "identity": {"name": "Bob", "headline": "Seed investor"}, "connect_with": ["Founders"]}}
+    cy = {"handle": "cy", "id": "c-cy", "card": {"id": "c-cy", "identity": {"name": "Cy", "headline": "Designer"}}}
+    monkeypatch.setattr(trust, "verified_by_card_ids", lambda ids: {"c-bob": ["linkedin"], "c-cy": ["github"]})
+    people = {"people": [{"handle": "bob"}, {"handle": "cy"}, {"handle": "ghost"}]}
+    digest_service._mark_people(me, people, [me, bob, cy])
+    bob_p, cy_p, ghost = people["people"]
+    assert bob_p["two_way"] == ["Founders"] and bob_p["verified"] is True
+    assert not cy_p.get("two_way") and cy_p["verified"] is False
+    assert "verified" not in ghost
 
 
 def test_other_database_errors_are_not_swallowed(monkeypatch):

@@ -13,7 +13,7 @@ from services import cards, events, zynd_mcp, zynd_memory
 from services.card_view import expires_at, fact_predicate, _parse_ts
 from services.completeness import completeness
 
-DEFAULT_PREFS = {"weekly_digest": True, "email_nudges": False}
+DEFAULT_PREFS = {"weekly_digest": True, "email_nudges": False, "morning_digest": True}
 
 
 def enabled() -> bool:

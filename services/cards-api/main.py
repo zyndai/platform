@@ -51,6 +51,9 @@ async def lifespan(app: FastAPI):
         from services.group_agent import group_memory_loop
         group_memory_task = asyncio.create_task(group_memory_loop())
         logger.info("group memory worker started")
+    from services import card_cache
+    card_cache.warm()       # the first search after a deploy should not pay for reading every card
+
     group_agent_task = None
     if config.FEATURE_GROUP_AGENT_REPLIES:
         from services.group_agent import agent_reply_loop

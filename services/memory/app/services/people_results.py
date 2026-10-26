@@ -193,7 +193,13 @@ def merge_people(people: list[dict]) -> list[dict]:
 
 
 def _words(text: str) -> set[str]:
-    return set(_WORD.findall((text or "").lower()))
+    """Whole words, plus the parts of hyphenated or dotted ones: "Co-Founder" is also "founder"."""
+    out: set[str] = set()
+    for word in _WORD.findall((text or "").lower()):
+        out.add(word.rstrip(".-"))
+        if "-" in word or "." in word:
+            out.update(p for p in __import__("re").split(r"[.-]", word) if p)
+    return out
 
 
 def _stem(word: str) -> str:
@@ -214,14 +220,28 @@ def features(person: dict, query) -> dict:
     topics = [{_stem(w) for w in _words(t)} - {"a", "of", "the"} for t in query.topics]
     place = {_stem(w) for w in _words(query.locality or query.location)}
     out: dict = {"role_fit": None, "topic_fit": None, "location_fit": None}
+    sources = person.get("sources") or ()
+    is_card = "card" in sources
     if role:
         out["role_fit"] = 1.0 if role <= headline else (0.9 if role <= around else 0.0)
-        if "linkedin" in (person.get("sources") or ()):
+        # Cards read the whole card (job titles, approved facts) and says "Role match" when the role is
+        # there; it no longer counts who someone wants to meet, so the reason can be trusted, unless the
+        # role is what Cards had to loosen to find them (the role only in passing, "Not an investor").
+        loosened_role = "role" in (person.get("relaxed") or ()) or any(
+            isinstance(w, str) and w.lower().startswith(("not a ", "not an ")) for w in person.get("why") or [])
+        if is_card and out["role_fit"] == 0.0 and "Role match" in (person.get("why") or []) and not loosened_role:
+            out["role_fit"] = 0.9
+        if "linkedin" in sources:
             out["role_fit"] = _linkedin_role_fit(person, query)
     # A LinkedIn record has a title and a company, nothing that says what the person works on, so
-    # its topic fit is unknown, not missed (the request already asked the company's About text).
-    if topics and "linkedin" not in (person.get("sources") or ()):
+    # its topic fit is unknown, not missed (rescore marks it unchecked: close at best).
+    if topics and "linkedin" not in sources:
         out["topic_fit"] = sum(1 for t in topics if t and t <= around) / len(topics)
+        # Memory sees a card's headline, skills and reasons only. A Card that passed every filter and
+        # that Cards scored strong was judged on its whole text: no topic word here is not a miss.
+        if (out["topic_fit"] == 0.0 and is_card and not person.get("relaxed")
+                and person.get("score", 0) >= STRONG_CARD):
+            out["topic_fit"] = None
     if place:
         out["location_fit"] = 1.0 if (place <= {_stem(w) for w in _words(person.get("location"))}
                                       or _in_country(person.get("location") or "", query)) else 0.0
@@ -290,6 +310,8 @@ def rescore(people: list[dict], query) -> list[dict]:
     not the role cannot."""
     for person in people:
         person["_features"] = feats = features(person, query)
+        if "linkedin" in person["sources"] and query.topics:
+            person["_topic_unchecked"] = True
         if person["sources"] != ["card"]:
             person["score"] = round(person["score"] * fit_factor(feats), 3)
     return people
@@ -373,7 +395,8 @@ def _quality(person: dict) -> str:
     # what was missed or loosened, each once: a loosened place the person also is not in is one miss
     missed = {name.removesuffix("_fit").replace("topic", "topics") for name, v in feats.items() if v == 0.0}
     missed |= set(relaxed)
-    partial = role_fit is not None and role_fit < 0.9
+    # each doubt counts once: a broad title, a LinkedIn record that cannot show the asked topic
+    partial = int(role_fit is not None and role_fit < 0.9) + int(bool(person.get("_topic_unchecked")))
     if not missed and not partial:
         return "exact"
     if len(missed) + partial <= 1:
@@ -400,6 +423,7 @@ def label_quality(people: list[dict]) -> str:
         if person.get("match_quality") not in QUALITY_ORDER:
             person["match_quality"] = _quality(person)
         person.pop("_features", None)
+        person.pop("_topic_unchecked", None)
     if people and not any(p["match_quality"] == "exact" for p in people):
         return "No exact matches; these are the closest."
     return ""

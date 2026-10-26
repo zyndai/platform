@@ -96,3 +96,30 @@ def test_a_name_lookup_reads_the_snapshot(monkeypatch):
     reads = _corpus(monkeypatch, rows)
     found = lookup.lookup_by_name("chandan", 5, include_unclaimed=True)
     assert found and found[0]["handle"] == "chandan_kumar" and len(reads) == 1
+
+
+def test_an_old_copy_keeps_serving_while_a_new_one_loads(monkeypatch):
+    import threading
+    rows = search_golden.build_rows(search_golden.load())
+    reads = _corpus(monkeypatch, rows)
+    first = card_cache.snapshot()
+    monkeypatch.setattr(card_cache, "SNAPSHOT_TTL_SECONDS", 0.0)
+    started = threading.Event()
+    real_load = card_cache._load
+    monkeypatch.setattr(card_cache, "_load", lambda: (started.set(), real_load())[1])
+    assert card_cache.snapshot() is first, "past the TTL the old copy answers at once"
+    assert started.wait(2)
+    for _ in range(100):                     # the background load replaces it
+        if card_cache._snapshot is not first and card_cache._snapshot is not None:
+            break
+        threading.Event().wait(0.01)
+    assert card_cache._snapshot is not first and len(reads) == 2
+
+
+def test_a_load_that_overlapped_a_write_is_not_kept(monkeypatch):
+    rows = search_golden.build_rows(search_golden.load())
+    _corpus(monkeypatch, rows)
+    real_load = card_cache._load
+    monkeypatch.setattr(card_cache, "_load", lambda: (card_cache.invalidate(), real_load())[1])
+    assert card_cache.snapshot() is not None       # this caller gets an answer
+    assert card_cache._snapshot is None            # but the next search reads again

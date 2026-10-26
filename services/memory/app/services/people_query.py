@@ -530,7 +530,7 @@ ROLE_TITLE_FILTERS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "investor": (("Investor", "Angel Investor", "Venture Partner", "General Partner", "Managing Partner",
                   "Principal", "Venture Capitalist"),
                  ("Grievance", "Relations", "Relation", "Communications", "Compliance", "Services", "Relationship",
-                  "Officer", "Engineer", "Software", "Teacher")),   # the provider matches whole words: list both forms
+                  "Officer", "Engineer", "Software", "Teacher", "Consultant", "Consulting")),   # whole words: list each form
     "founder": (("Founder", "Co-Founder", "CEO"), ("Assistant", "Executive Assistant")),
     "cto": (("CTO", "VP Engineering", "Head of Engineering"), ("Assistant",)),
     "engineer": (("Software Engineer", "Developer", "Engineer"), ("Sales Engineer", "Support")),
@@ -556,7 +556,7 @@ ROLE_STRONG_TITLES: dict[str, tuple[str, ...]] = {
     "investor": ("Investor", "Angel Investor", "General Partner", "Venture Partner", "Venture Capitalist"),
 }
 ROLE_COMPANY_WORDS: dict[str, tuple[str, ...]] = {
-    "investor": ("Ventures", "Venture", "Capital", "Partners", "Fund", "Funds", "Investments", "VC", "Angels"),
+    "investor": ("Ventures", "Venture", "Capital", "Partners", "Fund", "Funds", "Investments", "Invest", "VC", "Angels"),
 }
 
 

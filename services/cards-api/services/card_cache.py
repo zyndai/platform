@@ -7,7 +7,10 @@ read every SNAPSHOT_TTL_SECONDS serves every search: the cards parsed once, thei
 normalised once, so a cosine is a dot product.
 
 cards-api is the only writer of agent_profile_cards and runs one worker, so its own writes clear the
-copy at once (invalidate()); the TTL covers anything else. Above SNAPSHOT_MAX_CARDS the copy would
+copy at once (invalidate()) and the next search reads the database. Past the TTL the old copy keeps
+serving while one background thread reads a new one: reloading on the request made the first search
+after 30 idle seconds take ~2.5 s, which on a quiet day is most searches. The copy is also loaded at
+startup (warm()). Above SNAPSHOT_MAX_CARDS the copy would
 cost too much memory and pure-Python cosine too much time: snapshot() returns None and search uses
 the database functions as before.
 """
@@ -34,9 +37,12 @@ class Snapshot:
     loaded_at: float = 0.0
 
 
-_lock = threading.Lock()
+_lock = threading.Lock()                     # guards the state below; never held during a database read
+_load_lock = threading.Lock()                # one load at a time
 _snapshot: Snapshot | None = None
 _too_big_at: float | None = None             # when the corpus was last found too big to copy
+_generation = 0                              # bumped by invalidate(): a load that overlapped a write is dropped
+_refreshing = False
 
 
 def unit(vector) -> list[float]:
@@ -85,27 +91,58 @@ def _load() -> Snapshot | None:
     return Snapshot(rows=rows, by_handle={r["handle"]: r for r in rows if r.get("handle")}, loaded_at=time.monotonic())
 
 
-def snapshot() -> Snapshot | None:
-    """The published cards, at most SNAPSHOT_TTL_SECONDS old; None when there are too many to copy
-    or the database could not be read (search then reads it the old way). The load holds the lock, so
-    a write that lands during it waits in invalidate() and clears the copy right after."""
+def _load_now(force: bool = False) -> Snapshot | None:
+    """Read the cards and keep the copy, unless a write landed meanwhile (then the copy is returned to
+    this caller but not kept: the next search reads again)."""
     global _snapshot, _too_big_at
-    now = time.monotonic()
     with _lock:
-        if _snapshot is not None and now - _snapshot.loaded_at < SNAPSHOT_TTL_SECONDS:
-            return _snapshot
-        if _too_big_at is not None and now - _too_big_at < SNAPSHOT_TTL_SECONDS:
-            return None
+        generation = _generation
+    with _load_lock:
+        with _lock:
+            if not force and _snapshot is not None and generation == _generation:
+                return _snapshot                 # another thread loaded it while this one waited
+        now = time.monotonic()
         try:
             loaded = _load()
         except Exception as exc:  # noqa: BLE001 — no copy: search falls back to the database
             logger.warning("card snapshot unavailable (%s); searching the database", exc)
             return None
-        if loaded is None:
-            _too_big_at, _snapshot = now, None
-            return None
-        _too_big_at, _snapshot = None, loaded
+        with _lock:
+            if generation == _generation:
+                _too_big_at, _snapshot = (now, None) if loaded is None else (None, loaded)
         return loaded
+
+
+def _refresh() -> None:
+    global _refreshing
+    try:
+        _load_now(force=True)
+    finally:
+        with _lock:
+            _refreshing = False
+
+
+def snapshot() -> Snapshot | None:
+    """The published cards; None when there are too many to copy or the database could not be read
+    (search then reads it the old way). A copy older than SNAPSHOT_TTL_SECONDS is still returned, and
+    a background thread replaces it."""
+    global _refreshing
+    now = time.monotonic()
+    with _lock:
+        current = _snapshot
+        if current is not None:
+            if now - current.loaded_at >= SNAPSHOT_TTL_SECONDS and not _refreshing:
+                _refreshing = True
+                threading.Thread(target=_refresh, name="card-snapshot", daemon=True).start()
+            return current
+        if _too_big_at is not None and now - _too_big_at < SNAPSHOT_TTL_SECONDS:
+            return None
+    return _load_now()
+
+
+def warm() -> None:
+    """Load the copy in the background (at startup), so the first search does not pay for it."""
+    threading.Thread(target=lambda: snapshot(), name="card-snapshot-warm", daemon=True).start()
 
 
 def published_card(snap: Snapshot | None, handle: str):
@@ -124,6 +161,7 @@ def claimed_for(snap: Snapshot | None, handles: list[str]) -> dict[str, bool] | 
 
 def invalidate() -> None:
     """A card was written: the next search reads the database again."""
-    global _snapshot, _too_big_at
+    global _snapshot, _too_big_at, _generation
     with _lock:
         _snapshot, _too_big_at = None, None
+        _generation += 1

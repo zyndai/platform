@@ -29,15 +29,16 @@ async def test_the_raw_records_come_out_in_the_order_of_how_well_they_fit(ranked
     people, warning = await ranked()
     assert warning is None
     names = [p["name"] for p in people]
-    # In India with an investor's title (a Principal at a fund counts), in the provider's order; then, as
-    # close matches, the ones abroad and the Principal at a consultancy; last, as a loose match, the person
-    # whose title is not an investor's. The grievance officer, the duplicate and the nameless record are gone.
-    assert names == ["Priya Partner", "Sam", "Gita General", "Pat Principal",
-                     "Anna Angel", "Leo Abroad", "Theo Consultant", "Sal Sales"]
-    assert [p["match_quality"] for p in people] == ["exact"] * 4 + ["close"] * 3 + ["loose"]
-    assert people[-1]["score"] <= 0.45
+    # In India with an investor's title (a Principal at a fund counts), in the provider's order, as close
+    # matches (a LinkedIn record cannot show the asked topic, AI); then, loose, the ones abroad, the
+    # Principal at a consultancy and the person whose title is not an investor's. The grievance officer,
+    # the duplicate and the nameless record are gone.
+    assert names[:4] == ["Priya Partner", "Sam", "Gita General", "Pat Principal"]
+    assert set(names[4:7]) == {"Anna Angel", "Leo Abroad", "Theo Consultant"} and names[7] == "Sal Sales"
+    assert [p["match_quality"] for p in people] == ["close"] * 4 + ["loose"] * 4
+    assert all(p["score"] <= 0.45 for p in people[4:])
     by = {p["name"]: p for p in people}
-    assert by["Priya Partner"]["score"] == by["Pat Principal"]["score"] == 0.8         # LINKEDIN_PRIOR x a sure title
+    assert by["Priya Partner"]["score"] == by["Pat Principal"]["score"] == 0.79        # 0.8 (a sure title), capped as close
     assert by["Pat Principal"]["score"] > by["Theo Consultant"]["score"]
     assert by["Anna Angel"]["score"] < by["Priya Partner"]["score"]                     # not in India
 

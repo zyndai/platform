@@ -2,7 +2,8 @@
 
 > **Status:** proposed 2026-10-26. **Phase 0 is implemented on `dev`** (see "Phase 0 as built" below), enabled
 > with no flag (AGENTS.md §9: no new env vars). **Phase 1 is implemented** (see "Phase 1 as built"). **Phase 2 is
-> implemented** (see "Phase 2 as built"; its two tables need a human to apply `cards/0031`). Phase 3 is not started.
+> implemented** (see "Phase 2 as built"; `cards/0031` applied to aafo 2026-10-26). Phase 3 is not started. What is
+> still unapplied or unchecked is collected in §11 "Left for the end".
 >
 > **Builds on** [`ZYND_MEMORY_QUALITY_PLAN.md`](./ZYND_MEMORY_QUALITY_PLAN.md) Part B (F1–F9, A1–A8), which
 > shipped behind flags (see its §17). This plan does not redo that work. It fixes what Part B left broken
@@ -602,8 +603,9 @@ How it works:
   5 golden owners over the search corpus), memory 777 → 778, persona 366 → 367, `packages/db` SQL tests on a local
   Postgres (migration count 32). Only the 2 known `test_x_bot.py` failures remain.
 - Check script: `services/cards-api/scripts/check_suggestions.py` (read-only; V11 below).
-- **Deploy order:** cards-api (works with or without 0031), memory, cards-web; apply 0031 any time after review.
-- Known cost: until 0031 is applied, each owner-home refresh (every 60 s while open) computes live, up to 3 searches.
+- **Deploy order:** cards-api, memory, cards-web. 0031 is already applied (2026-10-26).
+- Known cost: until the first nightly refresh has run, each owner-home refresh (every 60 s while open) computes
+  live, up to 3 searches.
 
 ### Phase 3: One pipeline everywhere, and measurement (~1 week, then ongoing)
 
@@ -716,8 +718,25 @@ coding session does not have. Run them in this order, and record each result her
 | V7 | `FEATURE_FACT_MATCHING` in prod | Human decision (section 8), after `FEATURE_FACT_FAMILIES` is on | flipped after V5 and V6 | open |
 | V8 | cards-web | Open `/search` and `/directory` on dev: scores display sensibly on the new scale, `relaxed` shows | looks right | open |
 | V9 | QuickEnrich questions Q1 and Q2 | Three manual calls (OR/AND and substring/whole word for `include`) and one raw record (is the LinkedIn URL scheme-less?) | answers written into section 9 | open |
-| V10 | Migration 0031 applied | `db:migrate --project cards --yes` after review (`packages/db/README.md` step 6) | `cards.card_suggestions` and `cards.card_suggestion_impressions` exist; the next `suggestions-refresh` run returns `written > 0` | open |
+| V10 | Migration 0031 applied | `db:migrate --project cards --yes` | applied 2026-10-26; `cards.card_suggestions` and `cards.card_suggestion_impressions` exist | ✅ done (first refresh: see "Left for the end") |
 | V11 | Phase 2 "done when" | `cd services/cards-api && python scripts/check_suggestions.py` (read-only; embeds each target) | 0 exclusion violations; digest rotation ≥ 60%; every card that could get a two-way suggestion gets one | open |
 | V12 | Owner home and digest on dev | Open `/home` on dev: "People to meet" shows, Hide / Not relevant remove a person and they stay gone after reload; a digest preview (`?dry_run=true&handle=`) shows reasons and the feedback links | looks right | open |
 
 Deploy order for everything above: cards-api, then memory.
+
+### Left for the end
+
+Everything below is written and tested in code but not yet live or not yet checked. Do it once, at the end,
+in this order.
+
+| # | What | How | Status |
+|---|---|---|---|
+| E1 | Push `feature/people-search` and merge to `dev` | PR to `dev` (never `main` directly). Phases 1 and 2 are on the branch, not pushed | open |
+| E2 | Deploy cards-api, then memory, then cards-web | Cards and memory still run from their old checkouts (AGENTS.md §3, §7): deploy on the box by hand; cards-web: build, then `pm2 restart cards-web` | open |
+| E3 | First suggestions refresh | `curl -X POST "$CARDS_API/internal/suggestions/refresh" -H "Authorization: Bearer $CRON_SECRET"`; expect `written > 0`, `errors: 0`. If it times out behind the proxy, run it per handle or move it to a background job | open |
+| E4 | Nightly schedule | `.github/workflows/suggestions-refresh.yml` only runs on a schedule once it is on `main` (GitHub runs schedules from the default branch). Until then, E3 by hand or the workflow's manual run | open |
+| E5 | V11 and V12 | `scripts/check_suggestions.py` on live data; owner home and a digest dry run on dev | open |
+| E6 | V2–V9 | Phase 0–1 checks above (speed, `SEM_*` fit, saved-search threshold, live Chandan/investor checks, 20 real queries, `FEATURE_FACT_MATCHING`, cards-web scores, QuickEnrich Q1/Q2) | open |
+| E7 | Q7 | Ask the persona owner whether `/dashboard/people` is still used (2.8) | open |
+
+Already applied: `cards/0030_filter_cards` (2026-10-27), `cards/0031_card_suggestions` (2026-10-26).

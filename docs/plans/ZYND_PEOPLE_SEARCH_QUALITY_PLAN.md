@@ -458,3 +458,22 @@ and the `_merge_llm` change in A4; Cards' phrase scoring covers the case that wa
 
 **Still open:** deploy (cards-api first, then memory), then the live checks L1–L6 in §6; A3 re-embed and the
 F2 archive with the owner's OK; §7 server logs to confirm the new timings.
+
+## 11. Live checks after deploy (2026-10-27, prod and dev)
+
+| # | Result |
+|---|---|
+| L1 | ✅ Cards, memory's investor params: no "Role match" on a non-investor, no "Mentions development, developer"; top non-investor 0.32 (was 0.70–0.75). Same on dev |
+| L2 | ✅ `find_people` investor query: 6 Indian VC partners first (Java Capital, 247VC, Volt VC, Eximius, Warmup Ventures), score 0.8, all with a LinkedIn URL. Leaks fixed in the follow-up: "Principal Consultant at Growexx" (now excluded), "Managing Partner at Speciale Invest" read as a broad title (Invest is now a fund word) |
+| L3 | ✅ No doubled country, no "Palo Alto, India" |
+| L4 | ✅ "Chandan Kumar" exact, "chandan from zynd" first |
+| L5 | ✅ relaxed search 0.77–1.0 s from outside (was 6.4–9.1 s), plain 0.54–0.74 s. ❌ the first search after 30 idle seconds took ~3 s: the snapshot reloaded on the request. Fixed in the follow-up: past the TTL the old copy serves while a background thread reloads, and the copy is loaded at startup |
+| L6 | not testable from outside (suggestions need CRON_SECRET or an owner login) |
+
+**Regression found and fixed in the follow-up:** "founders building AI agents in India" returned only LinkedIn
+founders. LinkedIn records counted as `exact` though their topic cannot be checked, while the Cards that Cards
+itself ranked first (Revanth 0.84, Chandan 0.77) were `close`/`loose` in memory: memory's word split kept
+"Co-Founder" whole, ignored Cards' "Role match" (job history), and judged the topic on the headline only. Now:
+a LinkedIn record with an asked topic is `close` at best; memory splits hyphenated words; trusts "Role match"
+unless the role was loosened; and does not count a topic as missed for a strict-pass Card that Cards scored
+strong (≥ 0.5).

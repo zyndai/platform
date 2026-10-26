@@ -51,8 +51,9 @@ def test_quality_labels_and_the_note_when_nothing_is_exact():
     a = external("Asha", "Investor at Developer Tools Fund", "Pune")
     b = external("Tom", "Investor at Bank", "Paris")
     pr.rescore([a, b], QUERY)
-    # Tom is an investor in the wrong city: a close match (a LinkedIn record cannot miss a topic, it has none)
-    assert pr.label_quality([a, b]) == "" and (a["match_quality"], b["match_quality"]) == ("exact", "close")
+    # neither LinkedIn record can show the topic asked (developer tools): Asha in the right city is close,
+    # Tom, also in the wrong city, is loose
+    assert "closest" in pr.label_quality([a, b]) and (a["match_quality"], b["match_quality"]) == ("close", "loose")
     c = external("Cy", "Designer at Studio", "Paris")
     pr.rescore([c], QUERY)
     assert "closest" in pr.label_quality([c]) and c["match_quality"] == "loose" and "_features" not in c
@@ -164,8 +165,8 @@ def test_a_close_linkedin_investor_outranks_a_loose_card_that_scored_higher():
     dev = relaxed_card("dev", 0.85)
     ordered = pr.order_by_quality(pr.rescore([dev, li], INDIA))
     assert [p["name"] for p in ordered] == ["Gita", "Dev"]
-    # the LinkedIn investor meets the role and the place (a topic cannot be checked on a LinkedIn record)
-    assert (ordered[0]["match_quality"], ordered[1]["match_quality"]) == ("exact", "loose")
+    # the LinkedIn investor meets the role and the place; the topic cannot be checked on LinkedIn: close
+    assert (ordered[0]["match_quality"], ordered[1]["match_quality"]) == ("close", "loose")
 
 
 def test_a_score_never_says_more_than_its_label():
@@ -208,3 +209,36 @@ def test_a_city_counts_as_being_in_its_country():
 def test_a_linkedin_record_cannot_miss_a_topic():
     feats = pr.features({"headline": "General Partner at Fund X", "location": "Pune, India", "sources": ["linkedin"]}, INDIA)
     assert feats["topic_fit"] is None
+
+
+FOUNDERS = parse_target_heuristic("founders building AI agents in India")
+
+
+def test_a_strong_card_cards_found_strictly_beats_linkedin_records_that_cannot_show_the_topic():
+    """Live, 2026-10-27: LinkedIn founders (topic unknown) were "exact" and pushed out every Card,
+    including the founders Cards ranked first."""
+    revanth = pr.person_from_card({"handle": "revanth", "name": "Revanth", "headline": "Co-Founder at Evolune EdgeTech",
+                                   "location": "India", "claimed": True, "match_score": 0.838,
+                                   "why": ["Matches your search terms", "Based in India"]})
+    chandan = pr.person_from_card({"handle": "chandan", "name": "Chandan", "location": "Gurgaon", "claimed": True,
+                                   "headline": "Building Verusa and zynd | AI Agents for Stablecoin Compliance",
+                                   "match_score": 0.765, "why": ["Strong overall match for your query", "Role match"]})
+    li = pr.person_from_external({"name": "Satwik", "title": "Co-Founder", "company": "strivelabs.ai",
+                                  "location": "Chennai, India", "linkedin_url": "https://linkedin.com/in/s", "score": 0.8}, 0)
+    ordered = pr.order_by_quality(pr.rescore([li, chandan, revanth], FOUNDERS))
+    assert [p["name"] for p in ordered] == ["Revanth", "Chandan", "Satwik"]
+    assert [p["match_quality"] for p in ordered] == ["exact", "exact", "close"]
+
+
+def test_role_match_is_not_trusted_when_the_role_was_loosened():
+    person = pr.person_from_card({"handle": "d", "name": "D", "headline": "Developer", "location": "India", "claimed": True,
+                                  "match_score": 0.3, "why": ["Role match", "Not a founder (closest match)"]})
+    assert pr.features(person, FOUNDERS)["role_fit"] == 0.0
+
+
+def test_a_principal_consultant_is_not_an_investor_and_an_invest_fund_is_a_fund():
+    def fit(title, company):
+        return pr.features({"headline": f"{title} at {company}", "sources": ["linkedin"], "location": "Pune, India"},
+                           INDIA)["role_fit"]
+    assert fit("Principal Consultant", "Growexx") == 0.0
+    assert fit("Managing Partner", "Speciale Invest") == 1.0

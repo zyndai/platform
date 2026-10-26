@@ -93,8 +93,9 @@ async def test_a_zynd_member_and_their_card_are_one_person(world):
     result = await run()
     (ada,) = result["people"]
     assert sorted(ada["sources"]) == ["card", "zynd"]
-    assert ada["score"] == 0.65                                  # best of the two + the agreement bonus
-    assert ada["why"] == ["Investor (headline)"]                # specific: no generic reason from either source
+    # best of the two + the agreement bonus: the Zynd side (0.9) wins now that "Pune" counts as in India
+    assert ada["score"] == 0.95
+    assert ada["why"] == ["Investor (headline)", "Pune"]        # specific: no generic reason from either source
 
 
 async def test_every_zynd_result_is_resolved_to_a_card_handle_or_dropped(world):

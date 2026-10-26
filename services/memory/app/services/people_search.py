@@ -322,7 +322,7 @@ async def _search(
         people, text, query, early_qe, limit=limit, wanted=wanted, explicit=explicit, like_me=like_me,
         searcher=searcher, searched=searched, warnings=warnings)
 
-    people = people[:limit]
+    people = people_results.order_by_quality(people)[:limit]
     stats["strong"] = people_results.strong_count(people)
     if like_me:
         people_results.cap_why(people)
@@ -358,7 +358,8 @@ async def outside(query: TargetQuery, limit: int) -> tuple[list[dict], str | Non
         query.raw, min(limit * 2, 10), query=query)        # room to drop wrong-role titles
     rows = [r for r in rows if not people_discovery.has_excluded_title(r, query)]
     people = people_results.rescore([people_results.person_from_external(r, i) for i, r in enumerate(rows)], query)
-    ranked = sorted(zip(people, rows), key=lambda pair: -pair[0]["score"])   # stable: the provider's order breaks ties
+    order = {id(p): i for i, p in enumerate(people_results.order_by_quality(list(people)))}
+    ranked = sorted(zip(people, rows), key=lambda pair: order[id(pair[0])])   # stable: the provider's order breaks ties
     seen: set[str] = set()
     for person, row in list(ranked):        # one person once, however their profile URL is spelled (www, no scheme)
         key = people_results.linkedin_key(person.get("linkedin_url"))

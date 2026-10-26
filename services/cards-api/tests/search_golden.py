@@ -18,7 +18,7 @@ import math
 import pathlib
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -47,6 +47,7 @@ class QueryResult:
     top: list[str]
     precision: float
     recall: float
+    scores: dict[str, float] = field(default_factory=dict)
 
 
 def load() -> dict:
@@ -67,6 +68,9 @@ def build_rows(doc: dict) -> list[dict]:
                       "avatar_url": "", "links": {}},
             summary=c["summary"], skills=[{"name": s} for s in c["skills"]], industries=c["industries"],
             connect_with=c.get("connect_with", []),
+            # what cards-web's create page writes for these answers, as on every prod card
+            searchable_facts=[f"{c.get('name') or c['handle']} — looking to connect with {', '.join(c['connect_with'])} — Zynd"]
+            if c.get("connect_with") else [],
             zynd_memory=[{"predicate": "is_building", "object": o, "source": "declared",
                           "approved_at": datetime.now(timezone.utc).isoformat(), "confidence": 0.9}
                          for o in c["memory"]],
@@ -117,7 +121,8 @@ def evaluate(doc: dict | None = None, search_service=None) -> list[QueryResult]:
             else:
                 # nothing should match: success is an empty result
                 precision = recall = 1.0 if not top else 0.0
-            out.append(QueryResult(query["target"], relevant, top, precision, recall))
+            out.append(QueryResult(query["target"], relevant, top, precision, recall,
+                                   {r["handle"]: r["match_score"] for r in found}))
     return out
 
 

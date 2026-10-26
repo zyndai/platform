@@ -529,8 +529,8 @@ def detect_intent(target: str) -> Intent:
 ROLE_TITLE_FILTERS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "investor": (("Investor", "Angel Investor", "Venture Partner", "General Partner", "Managing Partner",
                   "Principal", "Venture Capitalist"),
-                 ("Grievance", "Relations", "Communications", "Compliance", "Services", "Relationship",
-                  "Officer", "Engineer", "Software", "Teacher")),
+                 ("Grievance", "Relations", "Relation", "Communications", "Compliance", "Services", "Relationship",
+                  "Officer", "Engineer", "Software", "Teacher")),   # the provider matches whole words: list both forms
     "founder": (("Founder", "Co-Founder", "CEO"), ("Assistant", "Executive Assistant")),
     "cto": (("CTO", "VP Engineering", "Head of Engineering"), ("Assistant",)),
     "engineer": (("Software Engineer", "Developer", "Engineer"), ("Sales Engineer", "Support")),
@@ -548,6 +548,16 @@ ROLE_TITLE_FILTERS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "operator": (("COO", "Chief of Staff"), ("Assistant",)),
 }
 assert set(ROLE_TITLE_FILTERS) == set(ROLES), "every role needs a title filter row"
+
+
+# Titles that say the role outright. Any other include word ("Principal", "Managing Partner") names
+# the role only at a company that looks like one: a consultancy has principals and managing partners too.
+ROLE_STRONG_TITLES: dict[str, tuple[str, ...]] = {
+    "investor": ("Investor", "Angel Investor", "General Partner", "Venture Partner", "Venture Capitalist"),
+}
+ROLE_COMPANY_WORDS: dict[str, tuple[str, ...]] = {
+    "investor": ("Ventures", "Venture", "Capital", "Partners", "Fund", "Funds", "Investments", "VC", "Angels"),
+}
 
 
 def title_filters(query: TargetQuery) -> tuple[list[str], list[str]]:

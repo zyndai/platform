@@ -7,7 +7,7 @@ import config
 from models.card import AgentProfileCard
 from services import cards as cards_service
 from services import geo
-from services.embed import card_search_text, embed_text
+from services.embed import card_search_text, describes_person, embed_text
 from services.search_constraints import SKILL_ALIASES, Constraints, explicit_query_constraints, skill_key, skill_matches
 from services.two_way import TWO_WAY_BOOST, kinds_of, too_much_like, two_way_match
 from services.search_text import (
@@ -16,10 +16,14 @@ from services.search_text import (
     contains_all,
     location_terms,
     location_tokens,
+    phrase_score,
     query_terms,
     role_matches,
     role_tokens,
+    term_sequence,
     token_set,
+    topic_phrases,
+    topic_terms,
 )
 
 logger = logging.getLogger(__name__)
@@ -389,7 +393,7 @@ def _search_pass(
     q_terms = query_terms(q)
     # Topic words only ever add to a card's relevance: they are not part of the query's coverage
     # (an unmatched topic would dilute it) and never a requirement.
-    topic_terms = [t for t in query_terms(topics.replace(",", " ")) if t not in q_terms]
+    topics_scored = topic_phrases(topics, {c for t in q_terms for c in topic_terms(t)})
     constraints = Constraints(role, location, tuple(s.strip() for s in skills.split(",") if s.strip()), industry, availability, experience_min)
     skill_list = [s.strip() for s in want_skills.split(",") if s.strip()] if want_skills else []
     industry_norm = _norm(industry)
@@ -414,6 +418,7 @@ def _search_pass(
             search_text += " " + beacon.text.lower()
         text_tokens = token_set(search_text)
         facts = live_facts(card.zynd_memory)
+        about = [f for f in facts if describes_person(f)]      # not what they are looking for
         reasons: list = []
 
         # relevance: meaning and words
@@ -432,7 +437,7 @@ def _search_pass(
             # An approved fact earns lexical credit in proportion to how much of the query it
             # alone covers, so one shared word no longer counts as a full match.
             matched_memory = []
-            for fact in facts:
+            for fact in about:
                 blob = token_set(fact_object(fact))
                 covered = len([t for t in q_terms if t in blob]) / len(q_terms) if blob else 0.0
                 if covered:
@@ -453,13 +458,15 @@ def _search_pass(
                 lex = max(lex, BEACON_LEX)
                 reasons.insert(0, "Current beacon: " + beacon.text)
         topic = 0.0
-        if topic_terms:
-            topic_hits = [t for t in topic_terms if t in text_tokens]
-            if topic_hits:
-                reasons.append("Mentions " + ", ".join(topic_hits))
-            fact_cover = max((len([t for t in topic_terms if t in token_set(fact_object(f))]) / len(topic_terms)
-                              for f in facts), default=0.0)
-            topic = max(len(topic_hits) / len(topic_terms), fact_cover)
+        if topics_scored:
+            text_seq = term_sequence(search_text)
+            fact_seqs = [term_sequence(fact_object(f)) for f in about]
+            per_topic = [max([phrase_score(text_seq, terms), *(phrase_score(fs, terms) for fs in fact_seqs)])
+                         for _, terms in topics_scored]
+            found = [label for (label, _), got in zip(topics_scored, per_topic) if got >= 1.0]
+            if found:
+                reasons.append("Mentions " + ", ".join(found))
+            topic = sum(per_topic) / len(per_topic)
         # fit: how well the card meets each constraint the caller asked for
         fit = 1.0
         role_missing = False
@@ -469,7 +476,7 @@ def _search_pass(
                 reasons.append(card.identity.headline or "Role match")      # the strongest role signal
                 fit *= FIT_ROLE_HEADLINE
                 met.update(query_terms(want_role))
-            elif role_matches(role_tokens(search_text), want_role) or constraints.role:
+            elif role_matches(role_tokens(search_text), want_role, activities=False) or constraints.role:
                 # mentioned elsewhere on the card (work history, an approved fact)
                 reasons.append("Role match")
                 fit *= FIT_ROLE_ELSEWHERE
@@ -506,7 +513,7 @@ def _search_pass(
             # "investors in India" is answered by an investor in Gurgaon: words a met constraint
             # covers count as found even when the card's text does not repeat them.
             lex = max(lex, len(set(q_terms) & (met | {t for t in q_terms if t in text_tokens})) / len(q_terms))
-        relevance = relevance_score(sem, lex, topic, bool(q_terms or query_vec), bool(topic_terms))
+        relevance = relevance_score(sem, lex, topic, bool(q_terms or query_vec), bool(topics_scored))
         if met:
             relevance = max(relevance, MET_RELEVANCE)
 

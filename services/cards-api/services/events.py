@@ -10,6 +10,7 @@ import time
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID, uuid4
 
 from fastapi import Request
 
@@ -41,7 +42,15 @@ ALLOWED_EVENTS = frozenset({
 # cannot forge them and distort the networking funnel.
 SERVER_EVENTS = frozenset({
     "search",
+    "search_result_action",
 })
+
+# Who ran a search: the Cards website, Memory's find_people for a signed-in owner, the public
+# Cards MCP, or an agent calling /ask. Unknown or absent means the endpoint's own default. A caller can claim any of these, which is fine for a
+# count of searches; only the server-emitted search_result_action below is relied on.
+SEARCH_VIA = frozenset({"web", "memory", "mcp", "ask"})
+RESULT_SOURCES = frozenset({"card", "zynd", "linkedin"})
+RESULT_ACTIONS = frozenset({"connect", "invite"})
 
 _UTM_KEYS = ("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term")
 _MAX_BATCH = 20
@@ -247,6 +256,49 @@ def emit(
             _insert_rows([row])
         except Exception:
             logger.exception("card_events emit failed event=%s", event)
+
+
+def search_context(search_id: str | None, via: str | None, default: str = "web") -> tuple[str, str]:
+    """(search id, via) for one search: the caller's id when it is a UUID, else a new one."""
+    try:
+        sid = str(UUID((search_id or "").strip()))
+    except ValueError:
+        sid = str(uuid4())
+    kind = (via or "").strip().lower()
+    return sid, kind if kind in SEARCH_VIA else default
+
+
+def record_search(request: Request, results: list[dict], *, has_query: bool, search_id: str, via: str,
+                  **filters: str) -> None:
+    """Top of the networking funnel (docs/cards/s04-funnel.sql): how many searches, how many
+    people came back, which ones. No query text and no caller identity is stored."""
+    emit(
+        "search",
+        request=request,
+        meta={
+            "n": len(results),
+            "top": [r["handle"] for r in results[:5] if r.get("handle")],
+            "filters": sorted(name for name, value in filters.items() if value),
+            "text": has_query,
+            "search_id": search_id,
+            "via": via,
+        },
+    )
+
+
+def record_result_action(*, search_id: str, rank: int, source: str, action: str, handle: str | None,
+                         connection_id: str | None = None, invite_id: str | None = None) -> None:
+    """A search led to a connection request or an invitation (the next step of the funnel).
+    Emitted by the server for a trusted caller (Memory), never accepted from POST /events; carries
+    the search it came from, never the query or a user."""
+    if source not in RESULT_SOURCES or action not in RESULT_ACTIONS:
+        return
+    meta: dict = {"search_id": search_id, "rank": rank, "source": source, "action": action}
+    if connection_id:
+        meta["connection_id"] = connection_id
+    if invite_id:
+        meta["invite_id"] = invite_id
+    emit("search_result_action", handle=handle, meta=meta)
 
 
 def purge_older_than_days(days: int = 180) -> int:

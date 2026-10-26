@@ -165,3 +165,65 @@ def test_network_handlers_do_not_block_the_event_loop():
         network.mark_read,
     ):
         assert not inspect.iscoroutinefunction(handler), handler.__name__
+
+
+# ── Phase 3.5: a connection or invite that came from a find_people search ──────────
+
+SID = "3f2b8c4e-6a51-4c43-9d1e-0b5a1f7e2d90"
+SERVICE = {"Authorization": "Bearer memory-network-test", "X-Zynd-User": UID}
+
+
+def _actions(monkeypatch):
+    seen = []
+    monkeypatch.setattr(network.events_service, "record_result_action", lambda **kw: seen.append(kw))
+    return seen
+
+
+def test_a_new_connection_from_a_search_is_recorded_with_its_connection(monkeypatch):
+    app, seen = client(monkeypatch), _actions(monkeypatch)
+    monkeypatch.setattr(network.network, "request_connection",
+                        lambda uid, handle, message: {"connection": {"id": "conn-1"}, "existing": False})
+    body = {"target_handle": "@ada", "from_search": {"search_id": SID, "rank": 3, "source": "card"}}
+    assert app.post("/cards/network/connections", json=body, headers=SERVICE).status_code == 200
+    assert seen == [{"search_id": SID, "rank": 3, "source": "card", "action": "connect", "handle": "ada",
+                     "connection_id": "conn-1"}]
+
+
+def test_repeating_a_request_or_sending_none_records_nothing(monkeypatch):
+    app, seen = client(monkeypatch), _actions(monkeypatch)
+    state = {"existing": True}
+    monkeypatch.setattr(network.network, "request_connection",
+                        lambda uid, handle, message: {"connection": {"id": "conn-1"}, **state})
+    body = {"target_handle": "ada", "from_search": {"search_id": SID, "rank": 1, "source": "zynd"}}
+    app.post("/cards/network/connections", json=body, headers=SERVICE)          # already existed
+    state["existing"] = False
+    app.post("/cards/network/connections", json={"target_handle": "ada"}, headers=SERVICE)   # no search given
+    assert seen == []
+
+
+def test_only_the_service_caller_can_say_which_search_a_request_came_from():
+    body = network.ConnectionCreate(target_handle="ada", from_search={"search_id": SID, "rank": 1, "source": "card"})
+    assert network._from_search(body, "Bearer some-user-session") is None
+    assert network._from_search(body, None) is None
+
+
+def test_a_malformed_from_search_is_rejected(monkeypatch):
+    app = client(monkeypatch)
+    for bad in ({"search_id": "nope", "rank": 1, "source": "card"}, {"search_id": SID, "rank": 0, "source": "card"},
+                {"search_id": SID, "rank": 1, "source": "other"}, {"search_id": SID, "rank": 1, "source": "card", "q": "x"}):
+        resp = app.post("/cards/network/connections", json={"target_handle": "ada", "from_search": bad}, headers=SERVICE)
+        assert resp.status_code == 422
+
+
+def test_a_new_invite_from_a_search_is_recorded(monkeypatch):
+    app, seen = client(monkeypatch), _actions(monkeypatch)
+    state = {"created": True}
+    monkeypatch.setattr(network.invites, "create_invite", lambda uid, **kw: {
+        "invite": {"id": "inv-1", "target_handle": "grace-hopper"}, "created": state["created"]})
+    body = {"linkedin_url": "https://www.linkedin.com/in/grace-hopper", "name": "Grace Hopper",
+            "from_search": {"search_id": SID, "rank": 2, "source": "linkedin"}}
+    assert app.post("/cards/network/invites", json=body, headers=SERVICE).status_code == 200
+    state["created"] = False
+    app.post("/cards/network/invites", json=body, headers=SERVICE)               # the invite already existed
+    assert seen == [{"search_id": SID, "rank": 2, "source": "linkedin", "action": "invite",
+                     "handle": "grace-hopper", "invite_id": "inv-1"}]

@@ -173,3 +173,73 @@ async def test_quickenrich_query_too_vague_is_a_warning_not_silence(monkeypatch)
     monkeypatch.setattr(discovery.settings, "quickenrich_api_key", "k")
     rows, warning = await discovery.search_quickenrich("people in India", 3)
     assert rows == [] and warning == "quickenrich_query_too_vague"
+
+
+# ── A slow Cards call: the exact-match pass instead of nothing ─────────────────────
+
+def _cards_client(monkeypatch, outcomes):
+    """A Cards client that answers each call from `outcomes` (an exception is raised); returns the params it saw."""
+    monkeypatch.setattr(discovery.settings, "cards_api_base_url", "http://cards.test")
+    monkeypatch.setattr(discovery.settings, "cards_site_base_url", "https://cards.zynd.ai")
+    seen: list[dict] = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, params):
+            seen.append(dict(params))
+            outcome = outcomes[len(seen) - 1]
+            if isinstance(outcome, Exception):
+                raise outcome
+            resp = MagicMock()
+            resp.json.return_value = outcome
+            resp.raise_for_status.return_value = None
+            return resp
+
+    monkeypatch.setattr(discovery.httpx, "AsyncClient", FakeClient)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_relaxed_search_is_retried_without_relaxing(monkeypatch):
+    seen = _cards_client(monkeypatch, [httpx.ReadTimeout(""), {"results": [{"handle": "jane", "claimed": True, "name": "Jane"}]}])
+    rows, warning = await discovery.search_cards("founders in the USA", 5, search_id="sid-1")
+    assert [row["handle"] for row in rows] == ["jane"]
+    assert warning == discovery.CARDS_SLOW_WARNING and warning.startswith("cards_slow:")
+    assert seen[0]["relax"] == "true" and "relax" not in seen[1]
+    assert seen[1]["q"] == seen[0]["q"] and seen[1]["search_id"] == "sid-1"     # the same search, just not loosened
+
+
+@pytest.mark.asyncio
+async def test_a_search_that_times_out_twice_is_unavailable(monkeypatch):
+    seen = _cards_client(monkeypatch, [httpx.ReadTimeout(""), httpx.ConnectTimeout("")])
+    rows, warning = await discovery.search_cards("founders in the USA", 5)
+    assert rows == [] and warning == "cards_unavailable" and len(seen) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_search_with_pinned_filters_is_not_retried(monkeypatch):
+    seen = _cards_client(monkeypatch, [httpx.ReadTimeout("")])
+    rows, warning = await discovery.search_cards("engineer", 5, extra={"role": "engineer", "location": "Pune"})
+    assert rows == [] and warning == "cards_unavailable" and len(seen) == 1 and "relax" not in seen[0]
+
+
+@pytest.mark.asyncio
+async def test_an_error_that_is_not_a_timeout_is_not_retried(monkeypatch):
+    seen = _cards_client(monkeypatch, [httpx.ConnectError("down")])
+    rows, warning = await discovery.search_cards("founders in the USA", 5)
+    assert rows == [] and warning == "cards_unavailable" and len(seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cards_call_logs_the_kind_of_error_not_just_its_message(monkeypatch, caplog):
+    _cards_client(monkeypatch, [httpx.ReadTimeout(""), httpx.ReadTimeout("")])
+    await discovery.search_cards("founders in the USA", 5)
+    assert "ReadTimeout" in caplog.text      # an httpx timeout has an empty message: the type is all there is

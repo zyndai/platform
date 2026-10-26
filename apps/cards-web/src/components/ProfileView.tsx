@@ -3,11 +3,14 @@
 import { useEffect, useRef } from "react";
 import { eventsEnabled, track } from "@/lib/track";
 import { useAuth } from "@/hooks/useAuth";
+import type { SearchRef } from "@/lib/search-link";
 
 const RETRY_DELAYS = [500, 1500];
 
-/** Runs on an actual browser mount, never on a server fetch or Link prefetch. */
-export function ProfileView({ handle }: { handle: string }) {
+/** Runs on an actual browser mount, never on a server fetch or Link prefetch. `from` is the search
+ *  the visitor came from (its id and the person's rank), counted with the view and then taken out of
+ *  the address so a shared link does not carry it. */
+export function ProfileView({ handle, from }: { handle: string; from?: SearchRef | null }) {
   const { ready, user } = useAuth();
   const userId = user?.id;
   const lastHandle = useRef<string | null>(null);
@@ -17,9 +20,17 @@ export function ProfileView({ handle }: { handle: string }) {
     if (!eventsEnabled) return;
     if (lastHandle.current !== handle) {
       lastHandle.current = handle;
-      track("view", { endpoint: "profile-page" }, handle);
+      track("view", { endpoint: "profile-page", ...(from ? { search_id: from.searchId, rank: from.rank } : {}) }, handle);
+      if (from) {
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("sid");
+          url.searchParams.delete("r");
+          window.history.replaceState(window.history.state, "", url);
+        } catch { /* a link that cannot be tidied still works */ }
+      }
     }
-  }, [handle]);
+  }, [handle, from]);
 
   useEffect(() => {
     if (!eventsEnabled || !ready || !userId) return;

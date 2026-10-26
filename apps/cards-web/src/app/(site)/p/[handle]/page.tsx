@@ -29,6 +29,7 @@ import { CountUp } from "./count-up";
 import { AutoScroll } from "./auto-scroll";
 import { ContributionHeatmap } from "./contribution-heatmap";
 import { ProfileView } from "@/components/ProfileView";
+import { parseSearchRef } from "@/lib/search-link";
 import { ProfileChatWidget } from "@/components/ProfileChatWidget";
 import { FallbackAvatar } from "@/components/FallbackAvatar";
 import { WorkExperienceCard } from "./work-experience-card";
@@ -47,7 +48,7 @@ import { BookingAvailability } from "@/components/BookingAvailability";
 
 interface PageProps {
   params: Promise<{ handle: string }>;
-  searchParams: Promise<{ preview?: string }>;
+  searchParams: Promise<{ preview?: string; sid?: string; r?: string }>;
 }
 
 /* ─── utils ─────────────────────────────────────────────────────────────── */
@@ -374,7 +375,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function PersonPage({ params, searchParams }: PageProps) {
   const { handle } = await params;
-  const visitorPreview = (await searchParams).preview === "visitor";
+  const query = await searchParams;
+  const visitorPreview = query.preview === "visitor";
+  const fromSearch = parseSearchRef(query.sid, query.r);
   const card = await fetchCardByHandle(handle);
   const cardView = featureS06CardView() && card ? await fetchCardView(handle) : null;
   if (!card) {
@@ -642,7 +645,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
   return (
     <>
-      <ProfileView handle={handle} />
+      <ProfileView handle={handle} from={fromSearch} />
       <link rel="canonical" href={canonical} />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />

@@ -25,3 +25,21 @@ const VERIFIED_LABELS: Record<string, string> = { linkedin: "LinkedIn", github: 
 export function verifiedLabels(verified: readonly string[] | null | undefined): string[] {
   return (verified ?? []).map((v) => VERIFIED_LABELS[v]).filter((v): v is string => Boolean(v));
 }
+
+/** A Cards score (relevance x fit x quality, services/cards-api search.py) is calibrated, not a
+ *  probability, so a person sees a label instead of a percentage. STRONG is the same line saved-search
+ *  alerts use; below GOOD nothing is shown and the reasons do the explaining. */
+export const STRONG_MATCH_SCORE = 0.6;
+export const GOOD_MATCH_SCORE = 0.4;
+
+export interface MatchLabel {
+  text: "Strong match" | "Good match";
+  tone: "strong" | "good";
+}
+
+export function matchLabel(score: number | null | undefined): MatchLabel | null {
+  if (typeof score !== "number" || !Number.isFinite(score)) return null;
+  if (score >= STRONG_MATCH_SCORE) return { text: "Strong match", tone: "strong" };
+  if (score >= GOOD_MATCH_SCORE) return { text: "Good match", tone: "good" };
+  return null;
+}

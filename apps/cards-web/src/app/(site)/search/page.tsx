@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { formatMatchReason, searchAgents } from "@/lib/cards";
-import { verifiedLabels } from "@/lib/match-reason";
+import { matchLabel, verifiedLabels } from "@/lib/match-reason";
 import { pageMetadata } from "@/lib/seo";
+import { withSearch } from "@/lib/search-link";
 
 export const metadata: Metadata = pageMetadata({
   title: "Search People — Zynd",
@@ -40,7 +41,7 @@ export default async function SearchPage({ searchParams }: PageProps) {
     q || role || location || skills || industry || availability || experience_min,
   );
   const data = hasQuery
-    ? await searchAgents({ q, role, location, skills, industry, availability, experience_min, include_unclaimed: "true" })
+    ? await searchAgents({ q, role, location, skills, industry, availability, experience_min, include_unclaimed: "true", via: "web" })
     : null;
 
   return (
@@ -152,10 +153,10 @@ export default async function SearchPage({ searchParams }: PageProps) {
 
               {data && data.results.length > 0 ? (
                 <div className="grid gap-4 sm:grid-cols-2">
-                  {data.results.map((r) => (
+                  {data.results.map((r, index) => (
                     <Link
                       key={r.agent_id}
-                      href={r.handle ? `/p/${r.handle}` : `/profile/${r.agent_id}`}
+                      href={r.handle ? withSearch(`/p/${r.handle}`, data.search_id, index + 1) : `/profile/${r.agent_id}`}
                       className="group flex flex-col rounded-lg border border-white/[0.08] bg-white/[0.02] p-5 transition-colors hover:border-[#5b7cfa]/40"
                     >
                       <div className="mb-3 flex items-start justify-between gap-3">
@@ -184,9 +185,9 @@ export default async function SearchPage({ searchParams }: PageProps) {
                             <div className="mt-1 text-xs text-zinc-500">{r.location}</div>
                           )}
                         </div>
-                        {r.match_score > 0 && (
+                        {matchLabel(r.match_score) && (
                           <span className="flex-shrink-0 rounded-full border border-[#5b7cfa]/30 bg-[#5b7cfa]/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-[#a5b4fc]">
-                            {Math.round(r.match_score * 100)}%
+                            {matchLabel(r.match_score)?.text}
                           </span>
                         )}
                       </div>

@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ArrowUpRight, BadgeCheck, Briefcase, CircleCheck, MapPin, RotateCcw, SearchX, Sparkles } from "lucide-react";
+import { matchLabel } from "@/lib/match-reason";
 import { PersonAvatar } from "./person-avatar";
 import { LIMIT_CHOICES } from "./search-terms";
 
@@ -128,7 +129,7 @@ export function RankedResults({
       ) : (
         <ol className="dc-list" role="list">
           {visible.map((row) => {
-            const percent = Math.max(0, Math.min(100, Math.round(row.score * 100)));
+            const label = matchLabel(row.score);
             return (
               <li key={row.key} className="dc-result">
                 <PersonAvatar name={row.name} src={row.avatar} size={60} />
@@ -181,12 +182,13 @@ export function RankedResults({
                   </div>
                 </div>
 
-                <div className="dc-score-wrap">
-                  <div className="dc-score" style={{ "--p": percent } as CSSProperties} role="img" aria-label={`${percent}% match`}>
-                    <b>{percent}%</b>
+                {label && (
+                  <div className="dc-score-wrap">
+                    <span className={`dc-match dc-match-${label.tone}`}>
+                      {label.text.split(" ")[0]}<span className="dc-match-word"> match</span>
+                    </span>
                   </div>
-                  <span className="dc-score-label">match</span>
-                </div>
+                )}
               </li>
             );
           })}

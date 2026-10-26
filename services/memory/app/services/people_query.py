@@ -249,12 +249,14 @@ def query_from_filters(
 ) -> TargetQuery:
     """A TargetQuery from already-structured filters (what Cards' suggestions send), so one
     QuickEnrich request builder serves every caller. Keywords describe the person's
-    company, as everywhere else."""
+    company, as everywhere else. A title that names a known role ("Investor") sets the role,
+    so the per-role title include/exclude row applies (no "Investor Grievance" officers)."""
     place, code, locality = resolve_location(location)
     clean_titles = tuple(t.strip()[:60] for t in titles if isinstance(t, str) and t.strip())[:5]
     clean_keywords = tuple(k.strip()[:60] for k in keywords if isinstance(k, str) and k.strip())[:5]
+    role = next((key for t in clean_titles if (key := _detect_role(t)[0])), "")
     return TargetQuery(
-        raw=" ".join([*clean_titles, *clean_keywords, place]).strip(), titles=clean_titles,
+        raw=" ".join([*clean_titles, *clean_keywords, place]).strip(), role=role, titles=clean_titles,
         topics=clean_keywords, location=place, country_code=code, locality=locality,
         company_hint=True,
     )
@@ -462,8 +464,18 @@ _TOPIC_WORDS = frozenset({
 })
 
 
+# Tools and frameworks a person types as a one-word search ("Kubernetes", "Figma"): never a name.
+# Only the unambiguous ones: a word that is also a surname (Kafka, Spring) stays possible as a name.
+_TOOL_WORDS = frozenset({
+    "kubernetes", "k8s", "docker", "terraform", "ansible", "figma", "sketch", "react", "svelte", "angular",
+    "django", "flask", "fastapi", "postgres", "postgresql", "mysql", "mongodb", "redis", "airflow",
+    "snowflake", "pytorch", "tensorflow", "linux", "android", "flutter", "tailwind", "graphql", "webpack",
+    "next.js", "node.js", "vue.js",
+})
+
+
 def _guard_words() -> frozenset[str]:
-    words: set[str] = set(_STOP) | set(_FILLER) | set(_TOPIC_WORDS) | set(LANGUAGES)
+    words: set[str] = set(_STOP) | set(_FILLER) | set(_TOPIC_WORDS) | set(LANGUAGES) | set(_TOOL_WORDS)
     for spellings, _titles in ROLES.values():
         for spelling in spellings:
             words.update(_norm(spelling).split())

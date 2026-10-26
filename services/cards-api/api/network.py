@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 import config
 from api.auth import Principal, verify_supabase_jwt
 from services import connection_brief, group_memory, invites, match_prefs, network, saved_searches, trust
+from services import events as events_service
 
 _MENTION_RE = re.compile(r"(?<![\w.])@([A-Za-z0-9_.-]{1,64})")
 logger = logging.getLogger(__name__)
@@ -41,9 +42,20 @@ def _token_expired(token: str) -> bool:
     return isinstance(exp, (int, float)) and exp < time.time()
 
 
+def _is_service(authorization: str | None) -> bool:
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    return bool(config.MEMORY_SERVICE_TOKEN and hmac.compare_digest(token.encode(), config.MEMORY_SERVICE_TOKEN.encode()))
+
+
+def _from_search(body: "ConnectionCreate | InviteCreate", authorization: str | None) -> "FromSearch | None":
+    """The search a request came from, only when Memory (the service token) says so: a browser could
+    claim any search, and the funnel must not be moved by a request the server cannot vouch for."""
+    return body.from_search if _is_service(authorization) else None
+
+
 def _principal(authorization: str | None, zynd_user: str | None = None) -> Principal:
     token = (authorization or "").removeprefix("Bearer ").strip()
-    if config.MEMORY_SERVICE_TOKEN and hmac.compare_digest(token.encode(), config.MEMORY_SERVICE_TOKEN.encode()):
+    if _is_service(authorization):
         try:
             uid = str(UUID(zynd_user or ""))
         except ValueError as exc:
@@ -69,10 +81,20 @@ def _principal(authorization: str | None, zynd_user: str | None = None) -> Princ
     return principal
 
 
+class FromSearch(BaseModel):
+    """The find_people search a request came from, sent by Memory so the funnel can tell which
+    searches lead to connections. Only a service caller's value is used (see _from_search)."""
+    model_config = ConfigDict(extra="forbid")
+    search_id: UUID
+    rank: int = Field(ge=1, le=100)
+    source: str = Field(pattern="^(card|zynd|linkedin)$")
+
+
 class ConnectionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     target_handle: str = Field(min_length=1, max_length=128)
     message: str | None = Field(default=None, max_length=2000)
+    from_search: FromSearch | None = None
 
 
 class ConnectionDecision(BaseModel):
@@ -119,6 +141,7 @@ class InviteCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     headline: str = Field(default="", max_length=200)
     message: str | None = Field(default=None, max_length=500)
+    from_search: FromSearch | None = None
 
 
 class SavedSearchCreate(BaseModel):
@@ -255,7 +278,12 @@ def suggest_people(
 
 @router.post("/network/connections")
 def request_connection(body: ConnectionCreate, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
-    return network.request_connection(_uid(authorization, x_zynd_user), body.target_handle, body.message)
+    result = network.request_connection(_uid(authorization, x_zynd_user), body.target_handle, body.message)
+    if (found := _from_search(body, authorization)) and not result.get("existing"):
+        events_service.record_result_action(
+            search_id=str(found.search_id), rank=found.rank, source=found.source, action="connect",
+            handle=body.target_handle.strip().lstrip("@"), connection_id=result["connection"]["id"])
+    return result
 
 
 @router.post("/network/connections/{connection_id}/respond")
@@ -457,9 +485,15 @@ async def create_invite(body: InviteCreate, authorization: str | None = Header(d
     token = (authorization or "").removeprefix("Bearer ").strip()
     if not (config.MEMORY_SERVICE_TOKEN and hmac.compare_digest(token.encode(), config.MEMORY_SERVICE_TOKEN.encode())):
         raise HTTPException(403, "Invitations are prepared by the Zynd assistant, not the browser")
-    return invites.create_invite(
+    result = invites.create_invite(
         _uid(authorization, x_zynd_user), linkedin_url=body.linkedin_url, name=body.name,
         headline=body.headline, message=body.message or "")
+    if body.from_search and result.get("created"):     # this route is service-only, so it is vouched for
+        events_service.record_result_action(
+            search_id=str(body.from_search.search_id), rank=body.from_search.rank, source=body.from_search.source,
+            action="invite", handle=(result.get("invite") or {}).get("target_handle"),
+            invite_id=(result.get("invite") or {}).get("id"))
+    return result
 
 
 @router.get("/network/invites")

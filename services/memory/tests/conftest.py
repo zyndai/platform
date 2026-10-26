@@ -81,3 +81,27 @@ async def pg(_test_db):
     await pool.execute(f"TRUNCATE {_DERIVED_TABLES} RESTART IDENTITY CASCADE")
     yield pool
     await close_pool()
+
+
+class FakeRedis:
+    """In-memory stand-in for the two calls search_trail makes."""
+
+    def __init__(self) -> None:
+        self.data: dict[str, str] = {}
+        self.ttls: dict[str, int] = {}
+
+    async def set(self, key, value, ex=None):
+        self.data[key] = value
+        self.ttls[key] = ex
+
+    async def get(self, key):
+        return self.data.get(key)
+
+
+@pytest.fixture(autouse=True)
+def fake_search_trail_redis(monkeypatch):
+    """No test reaches a real Redis through the last-search record (plan 3.5)."""
+    from app.services import search_trail
+    fake = FakeRedis()
+    monkeypatch.setattr(search_trail, "_client", lambda: fake)
+    return fake

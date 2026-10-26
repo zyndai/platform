@@ -140,6 +140,148 @@
    "relevant": [
     "law_startups_london"
    ]
+  },
+  {
+   "target": "priya",
+   "intent": "name",
+   "name": "priya",
+   "company": "",
+   "params": {
+    "q": "priya",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "topics": "priya",
+    "relax": "true"
+   },
+   "relevant": [
+    "priya_sharma",
+    "priya_nair"
+   ]
+  },
+  {
+   "target": "Priya Nair",
+   "intent": "name",
+   "name": "Priya Nair",
+   "company": "",
+   "params": {
+    "q": "Priya Nair",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "topics": "Priya Nair",
+    "relax": "true"
+   },
+   "relevant": [
+    "priya_nair"
+   ]
+  },
+  {
+   "target": "designers in India",
+   "intent": "target",
+   "name": "",
+   "company": "",
+   "params": {
+    "q": "designers in India",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "role": "designer",
+    "location": "India",
+    "relax": "true"
+   },
+   "relevant": [
+    "des_product_blr"
+   ]
+  },
+  {
+   "target": "investors in the UK",
+   "intent": "target",
+   "name": "",
+   "company": "",
+   "params": {
+    "q": "investors in the UK",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "role": "investor",
+    "location": "UK",
+    "relax": "true"
+   },
+   "relevant": [
+    "inv_seed_ai_uk"
+   ]
+  },
+  {
+   "target": "AI investor in Germany",
+   "intent": "target",
+   "name": "",
+   "company": "",
+   "params": {
+    "q": "AI investor in Germany",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "role": "investor",
+    "location": "Germany",
+    "topics": "AI",
+    "relax": "true"
+   },
+   "relevant": [
+    "inv_growth_climate_de"
+   ]
+  },
+  {
+   "target": "designer in Chicago",
+   "intent": "target",
+   "name": "",
+   "company": "",
+   "params": {
+    "q": "designer in Chicago",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "role": "designer",
+    "location": "Chicago",
+    "relax": "true"
+   },
+   "relevant": [
+    "des_product_blr",
+    "des_brand_london",
+    "des_ux_sf",
+    "des_lead_berlin"
+   ]
+  },
+  {
+   "target": "Rust engineer in Tokyo",
+   "intent": "target",
+   "name": "",
+   "company": "",
+   "params": {
+    "q": "Rust engineer in Tokyo",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "role": "engineer",
+    "location": "Tokyo",
+    "topics": "Rust",
+    "skills": "rust",
+    "relax": "true"
+   },
+   "relevant": [
+    "eng_rust_berlin"
+   ]
+  },
+  {
+   "target": "Kubernetes",
+   "intent": "target",
+   "name": "",
+   "company": "",
+   "params": {
+    "q": "Kubernetes",
+    "limit": 10,
+    "include_unclaimed": "true",
+    "topics": "Kubernetes",
+    "relax": "true"
+   },
+   "relevant": [
+    "eng_go_blr",
+    "eng_devops_blr",
+    "fnd_aiinfra_nyc"
+   ]
   }
  ]
 }

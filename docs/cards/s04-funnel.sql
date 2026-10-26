@@ -116,3 +116,105 @@ SELECT count(*)                                                                A
        percentile_cont(0.5) WITHIN GROUP (ORDER BY decided_at - created_at)    AS median_time_to_accept
 FROM cards.connections c
 WHERE status = 'accepted' AND created_at > now() - interval '30 days';
+
+-- ─────────────────────────────────────────────────────────────────────────────────────
+-- Search funnel by search id (docs/plans/ZYND_PEOPLE_SEARCH_PLAN.md, Phase 3.5).
+--
+-- Every search has an id and says who ran it (`via`: web, memory = an owner's find_people,
+-- mcp = the public Cards MCP, ask = an agent calling /ask). `search_result_action` is emitted by
+-- the server when Memory says a connection request (`connect`, with the connection id) or an
+-- invitation (`invite`) came from one of an owner's searches. `view` carries the search id when a
+-- visitor opened a profile from /search or /directory. No query text and no user in any of them.
+-- Run in the Supabase SQL editor against aafo. packages/db/test/cards-search-funnel-sql.test.ts
+-- runs each query below against seeded data, so keep the `-- name:` lines.
+-- ─────────────────────────────────────────────────────────────────────────────────────
+
+-- name: empty_share_by_via
+-- Share of searches that found nobody, by who searched. A spike is a source or the parser failing.
+SELECT coalesce(meta->>'via', '(before via)') AS via,
+       count(*) AS searches,
+       count(*) FILTER (WHERE (meta->>'n')::int = 0) AS empty_searches,
+       round(count(*) FILTER (WHERE (meta->>'n')::int = 0)::numeric / count(*), 3) AS empty_share
+FROM cards.card_events
+WHERE event = 'search' AND ts > now() - interval '14 days'
+GROUP BY 1
+ORDER BY searches DESC;
+
+-- name: connects_per_search
+-- One row per search id (a find_people that fell back from a name lookup to a text search wrote two
+-- `search` events with one id): did it lead to a request or an invitation?
+WITH searches AS (
+  SELECT meta->>'search_id' AS search_id, min(meta->>'via') AS via
+  FROM cards.card_events
+  WHERE event = 'search' AND meta->>'search_id' IS NOT NULL AND ts > now() - interval '14 days'
+  GROUP BY 1
+),
+actions AS (
+  SELECT meta->>'search_id' AS search_id,
+         count(*) FILTER (WHERE meta->>'action' = 'connect') AS connects,
+         count(*) FILTER (WHERE meta->>'action' = 'invite')  AS invites
+  FROM cards.card_events
+  WHERE event = 'search_result_action' AND ts > now() - interval '15 days'
+  GROUP BY 1
+)
+SELECT s.via,
+       count(*) AS searches,
+       coalesce(sum(a.connects), 0) AS connects,
+       coalesce(sum(a.invites), 0) AS invites,
+       count(*) FILTER (WHERE a.connects > 0) AS searches_with_a_connect,
+       round(coalesce(sum(a.connects), 0)::numeric / count(*), 3) AS connects_per_search
+FROM searches s
+LEFT JOIN actions a USING (search_id)
+GROUP BY s.via
+ORDER BY searches DESC;
+
+-- name: acceptance_by_source
+-- Of the requests that came from a search, how many were accepted, by where the person was found
+-- (card, zynd = found through their Zynd profile, linkedin).
+SELECT a.meta->>'source' AS source,
+       count(*) AS requests,
+       count(*) FILTER (WHERE c.status IN ('accepted', 'revoked')) AS accepted,
+       round(count(*) FILTER (WHERE c.status IN ('accepted', 'revoked'))::numeric / count(*), 3) AS accepted_per_request
+FROM cards.card_events a
+JOIN cards.connections c ON c.id::text = a.meta->>'connection_id'
+WHERE a.event = 'search_result_action' AND a.meta->>'action' = 'connect'
+  AND a.ts > now() - interval '30 days'
+GROUP BY 1
+ORDER BY requests DESC;
+
+-- name: views_per_search
+-- Profile views that came from a search. Only the website (/search, /directory) links with a search
+-- id, so only via = web has views.
+WITH searches AS (
+  SELECT meta->>'search_id' AS search_id, min(meta->>'via') AS via
+  FROM cards.card_events
+  WHERE event = 'search' AND meta->>'search_id' IS NOT NULL AND ts > now() - interval '14 days'
+  GROUP BY 1
+),
+views AS (
+  SELECT meta->>'search_id' AS search_id, count(*) AS views
+  FROM cards.card_events
+  WHERE event = 'view' AND meta->>'search_id' IS NOT NULL AND ts > now() - interval '15 days'
+  GROUP BY 1
+)
+SELECT s.via,
+       count(*) AS searches,
+       coalesce(sum(v.views), 0) AS profile_views,
+       count(*) FILTER (WHERE v.views > 0) AS searches_with_a_view,
+       round(coalesce(sum(v.views), 0)::numeric / count(*), 3) AS views_per_search
+FROM searches s
+LEFT JOIN views v USING (search_id)
+GROUP BY s.via
+ORDER BY searches DESC;
+
+-- name: suggestion_connect_rate
+-- Suggestions (people to meet) shown, and what the owner did, by where they were shown.
+SELECT surface,
+       count(*) AS shown,
+       count(*) FILTER (WHERE action = 'connect') AS connected,
+       count(*) FILTER (WHERE action IN ('hide', 'not_relevant')) AS dismissed,
+       round(count(*) FILTER (WHERE action = 'connect')::numeric / count(*), 3) AS connect_rate
+FROM cards.card_suggestion_impressions
+WHERE shown_at > now() - interval '30 days'
+GROUP BY surface
+ORDER BY shown DESC;

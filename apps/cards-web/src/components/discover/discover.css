@@ -183,10 +183,10 @@ a.dc-chip:hover { background: #E8E4FF; }
 .dc-reasons li { display: inline-flex; align-items: center; gap: 5px; }
 .dc-reasons svg { flex-shrink: 0; color: var(--dc-accent); }
 .dc-score-wrap { display: flex; flex-direction: column; align-items: center; }
-.dc-score { --p: 0; position: relative; display: grid; place-items: center; width: 66px; height: 66px; border-radius: 50%; background: conic-gradient(var(--dc-accent) calc(var(--p) * 1%), #ECE9FB 0); }
-.dc-score::before { content: ""; position: absolute; inset: 6px; border-radius: 50%; background: #fff; }
-.dc-score b { position: relative; font: 800 15px/1 var(--dc-ui); letter-spacing: -.02em; }
-.dc-score-label { margin-top: 7px; font: 700 9.5px/1 var(--dc-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dc-faint); }
+/* The score is calibrated, not a percentage: a person sees how strong the match is, in words. */
+.dc-match { display: inline-flex; align-items: center; padding: 7px 12px; border-radius: 999px; font: 700 10.5px/1 var(--dc-mono); letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+.dc-match-strong { background: var(--dc-accent); color: #fff; }
+.dc-match-good { background: #ECE9FB; color: var(--dc-accent-hi); }
 
 
 .dc-find { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; margin-top: 16px; }
@@ -217,13 +217,11 @@ a.dc-chip:hover { background: #E8E4FF; }
   .dc-kbd { display: none; }
   .dc-result { grid-template-columns: 44px minmax(0, 1fr); gap: 14px; padding: 18px; }
   .dc-result .dc-avatar, .dc-result .dc-avatar-fallback { width: 44px !important; height: 44px !important; border-radius: 13px !important; font-size: 15px; }
-  /* The ring moves up beside the name; the name row is tall enough that the headline clears it. */
+  /* The label moves up beside the name; the name row is tall enough that the headline clears it. */
   .dc-score-wrap { position: absolute; top: 14px; right: 14px; }
-  .dc-score { width: 42px; height: 42px; }
-  .dc-score::before { inset: 5px; }
-  .dc-score b { font-size: 11.5px; }
-  .dc-score-label { display: none; }
-  .dc-result-name { min-height: 44px; align-items: flex-start; padding-right: 50px; }
+  .dc-match { padding: 6px 9px; font-size: 9.5px; }
+  .dc-match-word { display: none; }
+  .dc-result-name { min-height: 44px; align-items: flex-start; padding-right: 72px; }
   .dc-toolbar-end { margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) {

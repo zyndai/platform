@@ -190,6 +190,9 @@ def request_connection(user_id: str, target_handle: str, message: str | None = N
     row, existed = _create_connection(
         user_id, requester, recipient_user_id, recipient, message,
         before_insert=lambda: trust.check_request_limits(user_id, recipient_user_id))
+    if not existed:
+        from services import suggestions
+        suggestions.mark_connected(requester.get("id"), recipient.get("id"))
     return {"connection": _serialize_connection(row, user_id), "existing": existed}
 
 

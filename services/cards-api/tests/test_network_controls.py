@@ -501,6 +501,9 @@ def test_the_saved_search_runner_calls_the_real_search_correctly(world, monkeypa
     monkeypatch.setattr(search_service.config, "get_supabase", lambda: sb)
     rows = [row("c-a", "match", "u1", headline="Backend engineer", skills=[{"name": "Rust"}]),
             row("c-b", "unclaimed", "u2", headline="Backend engineer", claimed=False)]
+    for r in rows:
+        r["embedding"] = [1.0, 0.0]          # the same meaning as the query: a strong match needs one
+    monkeypatch.setattr(search_service, "embed_text", lambda q: [1.0, 0.0])
     monkeypatch.setattr(search_service.cards_service, "list_published_rows", lambda **kw: rows)
     got = saved_searches._strong("backend engineer", "engineer", "", "", "me", set())
     assert [r["handle"] for r in got] == ["match"]            # claimed only, strong only

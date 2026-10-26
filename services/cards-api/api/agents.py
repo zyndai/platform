@@ -23,22 +23,9 @@ SEARCHABLE_ATTRIBUTES = [
     {"name": "relax", "type": "boolean", "description": "If fewer than `limit` cards pass every filter, loosen skills, then location, then role; looser matches rank last and carry `relaxed`"},
     {"name": "less_like", "type": "string", "description": "Comma-separated Card handles the searcher wants to see less of"},
     {"name": "as_handle", "type": "string", "description": "The searcher's own Card handle: results who want to meet people like them rank higher"},
+    {"name": "search_id", "type": "string", "description": "Optional UUID naming this search; echoed back so a later action can be linked to it"},
+    {"name": "via", "type": "string", "description": "Who is searching: web (default), memory or mcp (counted separately in the funnel)"},
 ]
-
-
-def _record_search(request: Request, results: list[dict], *, has_query: bool, **filters: str) -> None:
-    """Top of the networking funnel (docs/cards/s04-funnel.sql): how many searches, how many
-    people came back, which ones. No query text and no caller identity is stored."""
-    events_service.emit(
-        "search",
-        request=request,
-        meta={
-            "n": len(results),
-            "top": [r["handle"] for r in results[:5] if r.get("handle")],
-            "filters": sorted(name for name, value in filters.items() if value),
-            "text": has_query,
-        },
-    )
 
 
 @router.get("/search")
@@ -57,7 +44,10 @@ async def search_agents(
     less_like: str = Query("", max_length=700),
     topics: str = Query("", max_length=200),
     relax: bool = Query(False),
+    search_id: str = Query("", max_length=64),
+    via: str = Query("", max_length=16),
 ):
+    search_id, via = events_service.search_context(search_id, via)
     keep_unclaimed = include_unclaimed or not config.FEATURE_S03_UNCLAIMED_TIERING
     searcher = await asyncio.to_thread(cards_service.get_card_by_handle, as_handle.strip().lstrip("@")) if as_handle.strip() else None
     disliked = [c for c in (await asyncio.to_thread(cards_service.get_card_by_handle, h.strip().lstrip("@"))
@@ -91,9 +81,11 @@ async def search_agents(
     for r in results:
         if verified:
             r["verified"] = verified.get(r.get("agent_id"), [])
-    _record_search(request, results, role=role, location=location, skills=skills,
-                   industry=industry, availability=availability, has_query=bool(q.strip()))
+    events_service.record_search(request, results, role=role, location=location, skills=skills,
+                                 industry=industry, availability=availability, has_query=bool(q.strip()),
+                                 search_id=search_id, via=via)
     return {
+        "search_id": search_id,
         "query": {
             "q": q,
             "role": role,
@@ -117,12 +109,15 @@ async def lookup_agents(
     name: str = Query(..., min_length=2, max_length=100),
     limit: int = Query(5, ge=1, le=10),
     include_unclaimed: bool = Query(False),
+    search_id: str = Query("", max_length=64),
+    via: str = Query("", max_length=16),
 ):
     """Find one specific person by name or handle. Public Card data only (the same as /search):
     no contact fields. Exact full-name match first, then a name that starts with the text, then
     one that contains it."""
     if not lookup_service.allow(request):
         raise HTTPException(status_code=429, detail="too many lookups, try again in a minute")
+    search_id, via = events_service.search_context(search_id, via)
     keep_unclaimed = include_unclaimed or not config.FEATURE_S03_UNCLAIMED_TIERING
     results = await asyncio.to_thread(lookup_service.lookup_by_name, name.strip().lstrip("@"), limit, keep_unclaimed)
     claimed = cards_service.claimed_by_handles([r["handle"] for r in results if r.get("handle")])
@@ -133,8 +128,9 @@ async def lookup_agents(
     for r in results:
         if verified:
             r["verified"] = verified.get(r.get("agent_id"), [])
-    _record_search(request, results, has_query=True, name="lookup")
-    return {"query": {"name": name, "include_unclaimed": include_unclaimed}, "results": results}
+    events_service.record_search(request, results, has_query=True, name="lookup", search_id=search_id, via=via)
+    return {"search_id": search_id, "query": {"name": name, "include_unclaimed": include_unclaimed},
+            "results": results}
 
 
 @router.get("/{agent_id}")

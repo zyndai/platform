@@ -35,7 +35,7 @@ from app.services.control import confirm_fact, forget_fact, near_matches
 from app.services.export import active_context, build_jsonld_export, context_slice
 from app.services.findability import get_card
 from app.services.ingest import clean_text, ingest_turns
-from app.services import people_search
+from app.services import people_search, search_trail
 from app.services.matching import match_users
 from app.services.self_context import load_self_context, normalize_profile, read_brief
 
@@ -570,10 +570,13 @@ async def find_people(
 
     Cards is the people index. Each result is one person:
       handle, name, headline, location, why (why they matched), sources, claimed,
-      score, url, and next_action:
+      score, match_quality (exact | close | loose), url, and next_action:
         connect          — a claimed Card: call request_card_connection(target_handle=handle)
         invite_to_claim  — no claimed Card yet: call invite_to_claim(invite_ref=...) (only offered when enabled)
         view_profile     — nothing to act on; url is their public page or LinkedIn
+    When the response has a `note` saying nothing matched exactly, call the people "the closest
+    matches" and say what differs (match_quality and `relaxed` show it); never present a loose
+    match as an exact one.
     LinkedIn people are searched only when too few strong matches were found (or when sources
     names "quickenrich"). Contact details are never in results; they are shared once a
     connection is accepted.
@@ -707,7 +710,9 @@ async def list_card_connections(uid: str = Depends(_uid)) -> dict:
 async def request_card_connection(target_handle: str, message: str = "",
                                   uid: str = Depends(_uid)) -> dict:
     """Send a connection request to a claimed, published Card by handle."""
-    return await cards_network_tools.request_connection(await _get_pool(), uid, target_handle, message)
+    return await cards_network_tools.request_connection(
+        await _get_pool(), uid, target_handle, message,
+        from_search=await search_trail.came_from(uid, handle=target_handle))
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
@@ -725,7 +730,8 @@ async def invite_to_claim(invite_ref: str, message: str = "", uid: str = Depends
     if person is None:
         return {"ok": False, "error": "Unknown or expired invite_ref: run find_people again and use its invite_ref"}
     return await cards_network_tools.create_invite(
-        await _get_pool(), uid, person["linkedin_url"], person["name"], person["headline"], _clip(message, 500))
+        await _get_pool(), uid, person["linkedin_url"], person["name"], person["headline"], _clip(message, 500),
+        from_search=await search_trail.came_from(uid, linkedin_url=person["linkedin_url"]))
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})

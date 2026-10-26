@@ -1,13 +1,17 @@
+"""The public suggested-people route and the outside (LinkedIn) step of suggestions. Who is
+suggested is tested in test_suggestions.py."""
 import pytest
 
 from models.card import AgentProfileCard
 from services import suggested_people as people_service
+from services import suggestions
 
 
 @pytest.fixture(autouse=True)
 def _disable_outside_search(monkeypatch):
     # External people come from Memory's service endpoint; off unless a test turns it on.
     monkeypatch.setattr(people_service.config, "MEMORY_SERVICE_TOKEN", "")
+    monkeypatch.setattr(people_service, "_zynd_linkedin", (0.0, set()))
 
 
 def _card(handle, **fields):
@@ -20,270 +24,56 @@ def _card(handle, **fields):
     )
 
 
-def test_matches_canonical_keywords_by_same_field(monkeypatch):
-    requester = _card(
-        "jane",
-        working_on=["Building with AI"],
-        can_help_with=["Code review"],
-    )
-    candidates = [
-        {"handle": "alex", "card": _card("alex", working_on=[" building with ai "]).model_dump()},
-        {"handle": "sam", "card": _card("sam", can_help_with=["Code review"]).model_dump()},
-        {"handle": "cross-field", "card": _card("cross-field", love_talking_about=["Building with AI"]).model_dump()},
-    ]
-    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
-    monkeypatch.setattr(people_service.cards_service, "list_published_rows", lambda **_kw: candidates)
+def _app():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
 
-    result = people_service.get_suggested_people("jane")
+    from api import cards as cards_api
 
-    assert [p["handle"] for p in result["people"]] == ["alex", "sam"]
-    assert result["people"][0]["matched_fields"] == {"working_on": ["Building with AI"]}
-    assert result["people"][1]["matched_fields"] == {"can_help_with": ["Code review"]}
-
-
-def test_legacy_aliases_map_to_canonical_keywords(monkeypatch):
-    requester = _card("jane", working_on=["Building with AI"])
-    candidates = [{
-        "handle": "alex",
-        "card": _card("alex", working_on=["developing AI agents"]).model_dump(),
-    }]
-    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
-    monkeypatch.setattr(people_service.cards_service, "list_published_rows", lambda **_kw: candidates)
-
-    result = people_service.get_suggested_people("jane")
-
-    assert result["people"][0]["matched_fields"] == {"working_on": ["Building with AI"]}
-
-
-def test_aliases_are_field_aware(monkeypatch):
-    requester = _card("jane", working_on=["ai technology"])
-    candidates = [{
-        "handle": "alex",
-        "card": _card("alex", love_talking_about=["AI / ML"]).model_dump(),
-    }]
-    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
-    monkeypatch.setattr(people_service.cards_service, "list_published_rows", lambda **_kw: candidates)
-
-    assert people_service.get_suggested_people("jane")["people"] == []
-
-
-def test_canonical_label_from_other_field_does_not_count(monkeypatch):
-    requester = _card("jane", working_on=["Design"])
-    candidates = [{
-        "handle": "alex",
-        "card": _card("alex", working_on=["Design"]).model_dump(),
-    }]
-    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
-    monkeypatch.setattr(people_service.cards_service, "list_published_rows", lambda **_kw: candidates)
-
-    assert people_service.get_suggested_people("jane")["people"] == []
-
-
-def test_higher_score_beats_handle_sort(monkeypatch):
-    requester = _card("jane", working_on=["Building with AI"], can_help_with=["Code review"])
-    candidates = [
-        {"handle": "aaa", "card": _card("aaa", working_on=["Building with AI"]).model_dump()},
-        {"handle": "zzz", "card": _card("zzz", working_on=["Building with AI"], can_help_with=["Code review"]).model_dump()},
-    ]
-    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
-    monkeypatch.setattr(people_service.cards_service, "list_published_rows", lambda **_kw: candidates)
-
-    result = people_service.get_suggested_people("jane")
-
-    assert result["people"][0]["handle"] == "zzz"
-    assert result["people"][0]["match_score"] == 2
-
-
-def test_malformed_candidate_is_skipped(monkeypatch):
-    requester = _card("jane", working_on=["Building with AI"])
-    candidates = [
-        {"handle": "bad", "card": {"id": "bad", "working_on": [123]}},
-        {"handle": "good", "card": _card("good", working_on=["Building with AI"]).model_dump()},
-    ]
-    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
-    monkeypatch.setattr(people_service.cards_service, "list_published_rows", lambda **_kw: candidates)
-
-    assert [p["handle"] for p in people_service.get_suggested_people("jane")["people"]] == ["good"]
-
-
-def test_dedupes_matches_excludes_self_and_caps_at_two(monkeypatch):
-    requester = _card("jane", working_on=["Building with AI", "building with ai"])
-    candidates = [
-        {"handle": "jane", "card": requester.model_dump()},
-        {"handle": "zed", "card": _card("zed", working_on=["Building with AI"]).model_dump()},
-        {"handle": "amy", "card": _card("amy", working_on=["Building with AI"]).model_dump()},
-        {"handle": "bob", "card": _card("bob", working_on=["Building with AI"]).model_dump()},
-    ]
-    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
-    monkeypatch.setattr(people_service.cards_service, "list_published_rows", lambda **_kw: candidates)
-
-    result = people_service.get_suggested_people("jane")
-
-    assert [p["handle"] for p in result["people"]] == ["amy", "bob"]
-    assert result["people"][0]["match_score"] == 1
-
-
-def test_no_matches_and_unknown_interest_return_empty(monkeypatch):
-    requester = _card("jane", working_on=["unmapped free text"])
-    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
-    monkeypatch.setattr(
-        people_service.cards_service,
-        "list_published_rows",
-        lambda **_kw: (_ for _ in ()).throw(AssertionError("should not scan without recognized interests")),
-    )
-
-    assert people_service.get_suggested_people("jane") == {"handle": "jane", "people": [], "outside": []}
-
-
-def test_missing_card_returns_none(monkeypatch):
-    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: None)
-    assert people_service.get_suggested_people("missing") is None
-
-
-def test_published_rows_loaded_with_only_card_and_handle(monkeypatch):
-    requester = _card("jane", working_on=["Building with AI"])
-    seen = {}
-
-    def list_rows(**kwargs):
-        seen.update(kwargs)
-        return []
-
-    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
-    monkeypatch.setattr(people_service.cards_service, "list_published_rows", list_rows)
-
-    people_service.get_suggested_people("jane")
-
-    assert seen == {"columns": "card,handle"}
+    app = FastAPI()
+    app.include_router(cards_api.router, prefix="/cards")
+    return TestClient(app)
 
 
 def test_public_endpoint_returns_404_for_missing_card(monkeypatch):
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    from api import cards as cards_api
-
-    monkeypatch.setattr(cards_api.cards_service, "get_card_by_handle", lambda _h: None)
-    app = FastAPI()
-    app.include_router(cards_api.router, prefix="/cards")
-
-    response = TestClient(app).get("/cards/by-handle/missing/suggested-people")
-
-    assert response.status_code == 404
+    monkeypatch.setattr(suggestions, "owner_row", lambda _h: None)
+    assert _app().get("/cards/by-handle/missing/suggested-people").status_code == 404
 
 
-def test_public_endpoint_returns_people(monkeypatch):
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
+def test_public_endpoint_returns_the_owners_suggestions(monkeypatch):
+    seen = {}
 
-    from api import cards as cards_api
+    def for_owner_row(row, surface, k):
+        seen.update(surface=surface, k=k)
+        return {"handle": "jane", "people": [{"handle": "alex"}], "outside": []}
 
-    monkeypatch.setattr(
-        people_service.cards_service,
-        "get_card_by_handle",
-        lambda _h: _card("jane", working_on=["Building with AI"]),
-    )
-    monkeypatch.setattr(
-        people_service.cards_service,
-        "list_published_rows",
-        lambda **_kw: [{
-            "handle": "alex",
-            "card": _card("alex", working_on=["Building with AI"]).model_dump(),
-        }],
-    )
-    monkeypatch.setattr(people_service.config, "MEMORY_SERVICE_TOKEN", "")
-    app = FastAPI()
-    app.include_router(cards_api.router, prefix="/cards")
-
-    response = TestClient(app).get("/cards/by-handle/jane/suggested-people")
-
+    monkeypatch.setattr(suggestions, "owner_row", lambda _h: {"id": "c-jane", "handle": "jane"})
+    monkeypatch.setattr(suggestions, "for_owner_row", for_owner_row)
+    response = _app().get("/cards/by-handle/jane/suggested-people")
     assert response.status_code == 200
-    assert response.json()["people"][0]["handle"] == "alex"
-    assert response.json()["outside"] == []
+    assert response.json() == {"handle": "jane", "people": [{"handle": "alex"}], "outside": []}
+    assert seen == {"surface": "api", "k": 2}          # no digest cooldown, nothing recorded
 
 
-def test_outside_empty_when_quickenrich_not_configured(monkeypatch):
-    requester = _card("jane", connect_with=["Founders"])
-    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
-    monkeypatch.setattr(people_service.cards_service, "list_published_rows", lambda **_kw: [])
-    monkeypatch.setattr(people_service, "search_outside", lambda _card, _rows: (_ for _ in ()).throw(AssertionError("should not search")))
-    monkeypatch.setattr(people_service.config, "MEMORY_SERVICE_TOKEN", "")
+# ── outside requests ─────────────────────────────────────────────────────────────────────
 
-    result = people_service.get_suggested_people("jane")
-
-    assert result["outside"] == []
-
-
-def test_outside_drops_zynd_linkedin_and_caps_at_two(monkeypatch):
-    requester = _card("jane", connect_with=["Founders"])
-    zynd = _card("alex", working_on=["Building with AI"])
-    zynd.identity.links = {"linkedin": "https://www.linkedin.com/in/alex"}
-    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
-    monkeypatch.setattr(
-        people_service.cards_service,
-        "list_published_rows",
-        lambda **_kw: [{"handle": "alex", "card": zynd.model_dump()}],
-    )
-    monkeypatch.setattr(people_service.config, "MEMORY_SERVICE_TOKEN", "k")
-    monkeypatch.setattr(
-        people_service,
-        "search_outside",
-        lambda _card, taken: [
-            {"name": "Alex", "title": "Founder", "company": "Acme", "linkedin_url": "https://www.linkedin.com/in/alex"},
-            {"name": "Pat", "title": "Founder", "company": "Beta", "linkedin_url": "https://linkedin.com/in/pat"},
-            {"name": "Sam", "title": "Founder", "company": "Gamma", "linkedin_url": "https://linkedin.com/in/sam"},
-            {"name": "NoUrl", "title": "Founder", "company": "Delta", "linkedin_url": ""},
-        ],
-    )
-
-    result = people_service.get_suggested_people("jane")
-
-    assert [p["linkedin_url"] for p in result["outside"]] == [
-        "https://linkedin.com/in/pat",
-        "https://linkedin.com/in/sam",
+def test_one_outside_request_per_kind_of_person_wanted_near_the_owner():
+    card = _card("jane", connect_with=["Founders", "Investors"],
+                 working_on=["Building with AI", "Open source"], love_talking_about=["Agentic AI"])
+    card.identity.location = "Pune, India"
+    assert people_service.outside_search_requests(card) == [
+        {"titles": ["Founder"], "keywords": ["AI", "open source"], "location": "Pune, India", "limit": 4},
+        {"titles": ["Investor"], "keywords": ["AI", "open source"], "location": "Pune, India", "limit": 4},
     ]
 
 
-def test_outside_keeps_people_without_linkedin(monkeypatch):
-    requester = _card("jane", connect_with=["Founders"])
-    monkeypatch.setattr(people_service.cards_service, "get_card_by_handle", lambda _h: requester)
-    monkeypatch.setattr(people_service.cards_service, "list_published_rows", lambda **_kw: [])
-    monkeypatch.setattr(people_service.config, "MEMORY_SERVICE_TOKEN", "k")
-    monkeypatch.setattr(
-        people_service,
-        "search_outside",
-        lambda _card, taken: [
-            {"name": "Pat", "title": "Mentor", "company": "Acme", "linkedin_url": ""},
-        ],
-    )
-
-    result = people_service.get_suggested_people("jane")
-
-    assert result["outside"][0]["name"] == "Pat"
-    assert "email" not in result["outside"][0]
-    assert result["outside"][0]["source"] == "quickenrich"
+def test_outside_request_by_keywords_when_nobody_is_named():
+    card = _card("jane", working_on=["Building with AI"])
+    assert people_service.outside_search_requests(card) == [
+        {"titles": [], "keywords": ["AI"], "location": "", "limit": 4}]    # not India-only: no country assumed
 
 
-def test_outside_search_requests_send_titles_then_keywords_near_the_owner():
-    card = _card(
-        "jane",
-        connect_with=["Founders", "Engineers", "Investors"],
-        working_on=["Building with AI", "Open source", "B2B SaaS"],
-        love_talking_about=["Agentic AI"],
-    )
-    card.identity.location = "Pune, India"
-    requests = people_service.outside_search_requests(card)
-    assert len(requests) == 2
-    assert requests[0] == {"titles": ["Founder", "Investor"], "keywords": [], "location": "Pune, India", "limit": 4}
-    assert requests[1] == {"titles": [], "keywords": ["AI", "open source"], "location": "Pune, India", "limit": 4}
-
-
-def test_outside_search_requests_assume_no_country_when_the_card_has_no_location():
-    card = _card("jane", working_on=["Building with AI"], connect_with=[])
-    requests = people_service.outside_search_requests(card)
-    assert requests == [{"titles": [], "keywords": ["AI"], "location": "", "limit": 4}]   # not India-only any more
-
-
-def test_outside_search_requests_empty_without_matching_interests():
+def test_no_outside_request_without_anything_to_search_with():
     assert people_service.outside_search_requests(_card("jane")) == []
 
 
@@ -309,37 +99,95 @@ def _memory_reply(monkeypatch, payload=None, status=200, exc=None):
     return sent
 
 
-def test_outside_search_asks_memory_and_takes_one_new_person_per_request(monkeypatch):
-    card = _card("jane", connect_with=["Founders"], working_on=["Building with AI"])
-    sent = _memory_reply(monkeypatch, {"people": [
-        {"name": "Pat", "title": "Founder", "company": "Acme", "linkedin_url": "https://linkedin.com/in/pat",
-         "has_email": True, "connection_eligible": False, "source": "quickenrich"},
-        {"name": "Sam", "title": "Founder", "company": "Beta", "linkedin_url": "https://linkedin.com/in/sam"},
-    ], "warning": None})
+PEOPLE = [
+    {"name": "Pat", "title": "Founder", "company": "Acme", "linkedin_url": "https://linkedin.com/in/pat",
+     "has_email": True, "connection_eligible": False, "source": "quickenrich"},
+    {"name": "Sam", "title": "Founder", "company": "Beta", "linkedin_url": "https://linkedin.com/in/sam"},
+    {"name": "Lee", "title": "Founder", "company": "Gamma", "linkedin_url": "https://linkedin.com/in/lee"},
+]
 
-    people = people_service.search_outside(card, set())
 
-    # Each request contributes its first person not already taken: Pat from the title request,
-    # then Sam from the keyword request (Pat was already taken).
-    assert [p["name"] for p in people] == ["Pat", "Sam"]
-    assert people[0] == {"name": "Pat", "title": "Founder", "company": "Acme",
-                         "linkedin_url": "https://linkedin.com/in/pat", "source": "quickenrich"}
+def test_outside_search_keeps_two_new_people_per_request(monkeypatch):
+    card = _card("jane", connect_with=["Founders", "Investors"])
+    sent = _memory_reply(monkeypatch, {"people": PEOPLE, "warning": None})
+    people = people_service.search_outside(card, {"linkedin.com/in/pat"})
+    # Founders: Sam and Lee (Pat is taken); Investors: the same three, all seen by now.
+    assert [p["name"] for p in people] == ["Sam", "Lee"]
+    assert people[0] == {"name": "Sam", "title": "Founder", "company": "Beta",
+                         "linkedin_url": "https://linkedin.com/in/sam", "source": "quickenrich"}
     url, body, headers = sent[0]
     assert url == "https://memory.example/v1/service/outside-people"
     assert headers["Authorization"] == "Bearer svc-token"
     assert body["titles"] == ["Founder"]
 
 
+def test_outside_search_keeps_where_memory_says_they_are_and_why(monkeypatch):
+    ranked = [{"name": "Pat", "title": "Venture Partner", "company": "Seed Fund", "location": "Pune, India",
+               "linkedin_url": "https://linkedin.com/in/pat", "score": 0.4, "match_quality": "close",
+               "why": ["Investor (title)", " ", 7, "Pune, India", "a", "b"]}]
+    _memory_reply(monkeypatch, {"people": ranked, "warning": None})
+    (pat,) = people_service.search_outside(_card("jane", connect_with=["Investors"]), set())
+    assert pat["location"] == "Pune, India"
+    assert pat["why"] == ["Investor (title)", "Pune, India", "a"]       # strings only, at most three
+    assert "score" not in pat and "match_quality" not in pat            # nothing else of memory's leaks through
+
+
+def test_outside_search_stops_asking_once_it_has_enough(monkeypatch):
+    card = _card("jane", connect_with=["Founders", "Investors"])
+    sent = _memory_reply(monkeypatch, {"people": PEOPLE, "warning": None})
+    assert len(people_service.search_outside(card, set(), limit=2)) == 2
+    assert len(sent) == 1                               # each request is a paid lookup
+
+
 @pytest.mark.parametrize("kwargs", [
     {"status": 503}, {"exc": RuntimeError("down")}, {"payload": {"people": "nope"}}, {"payload": []},
 ])
 def test_outside_search_degrades_to_nothing_when_memory_is_unavailable(monkeypatch, kwargs):
-    card = _card("jane", connect_with=["Founders"])
     _memory_reply(monkeypatch, **kwargs)
-    assert people_service.search_outside(card, set()) == []
+    assert people_service.search_outside(_card("jane", connect_with=["Founders"]), set()) == []
 
 
 def test_outside_search_is_off_without_the_service_token(monkeypatch):
-    monkeypatch.setattr(people_service.config, "MEMORY_SERVICE_TOKEN", "")
     monkeypatch.setattr(people_service.httpx, "post", lambda *a, **k: pytest.fail("must not call memory"))
     assert people_service.search_outside(_card("jane", connect_with=["Founders"]), set()) == []
+    assert people_service.outside_for(_card("jane", connect_with=["Founders"]), []) == []
+
+
+def test_outside_for_skips_people_already_on_zynd_and_caps_at_two(monkeypatch):
+    _memory_reply(monkeypatch, {"people": [{"name": "NoUrl", "title": "Founder", "linkedin_url": ""}, *PEOPLE]})
+    monkeypatch.setattr(people_service, "_zynd_linkedin_keys", lambda: {"linkedin.com/in/pat"})
+    from services import invites
+    monkeypatch.setattr(invites, "enabled", lambda: True)
+    owner = _card("jane", connect_with=["Founders"])
+    people = people_service.outside_for(owner, [])
+    assert [p["name"] for p in people] == ["NoUrl", "Sam"]
+    assert all(p["label"] == "Not on Zynd yet" for p in people)
+    assert [p["invitable"] for p in people] == [False, True]      # an invite needs their LinkedIn
+
+
+def test_zynd_linkedin_profiles_are_read_once_per_ttl(monkeypatch):
+    monkeypatch.setattr(people_service, "_zynd_linkedin", (float("-inf"), set()))     # whatever an earlier test cached
+    calls = []
+
+    def rows(**kw):
+        calls.append(kw)
+        return [{"card": {"identity": {"links": {"linkedin": "https://www.linkedin.com/in/alex/"}}}}]
+
+    monkeypatch.setattr("services.cards.list_published_rows", rows)
+    assert people_service._zynd_linkedin_keys() == {"linkedin.com/in/alex"}
+    assert people_service._zynd_linkedin_keys() == {"linkedin.com/in/alex"}
+    assert len(calls) == 1
+
+
+def test_the_first_read_happens_even_when_the_machine_has_only_just_booted(monkeypatch):
+    """time.monotonic() counts from boot, so on a server up for a few minutes an unread cache that started
+    at 0.0 looked fresh and the LinkedIn profiles already on Zynd were never read. Starts from the module's
+    own initial state (a reload), not from one the test sets up."""
+    import importlib
+    import time
+
+    fresh = importlib.reload(people_service)
+    monkeypatch.setattr(time, "monotonic", lambda: 5.0)
+    monkeypatch.setattr("services.cards.list_published_rows", lambda **kw: [
+        {"card": {"identity": {"links": {"linkedin": "https://www.linkedin.com/in/alex/"}}}}])
+    assert fresh._zynd_linkedin_keys() == {"linkedin.com/in/alex"}

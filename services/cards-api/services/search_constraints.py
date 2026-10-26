@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from models.card import AgentProfileCard
 from services import geo
-from services.search_text import contains_all, location_terms, location_tokens, role_matches, token_set
+from services.search_text import contains_all, location_terms, location_tokens, role_matches, role_tokens, token_set
 
 SKILL_ALIASES = {"js": "javascript", "ts": "typescript", "golang": "go", "python3": "python", "reactjs": "react", "nodejs": "node.js", "postgres": "postgresql"}
 LANGUAGES = ("javascript", "typescript", "python", "golang", "rust", "kotlin", "swift", "ruby", "java", "scala", "elixir", "haskell", "c++", "c#", "sql", "go")
@@ -71,7 +71,7 @@ class Constraints:
         roles = [card.identity.headline, *[str(j.get("title") or "") for j in (card.work_experience or []) if isinstance(j, dict)]]
         if any(fact_predicate(f) == "is_founder_of" for f in live_facts(card.zynd_memory)):
             roles.append("Founder")
-        if self.role and not any(role_matches(token_set(r), self.role) for r in roles):
+        if self.role and not any(role_matches(role_tokens(r), self.role) for r in roles):
             return False
         if self.industry and not any(contains_all(token_set(i), self.industry) for i in card.industries):
             return False

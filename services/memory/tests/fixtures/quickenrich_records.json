@@ -1,0 +1,13 @@
+{
+ "_about": "Raw contact-finder records shaped the way the provider returns them (first_name, last_name, title, company_name, employee_linkedin, city, locality, country_code, has_email), for the investor target in tests/test_quickenrich_records.py. They cover what the live results showed (plan section 2): an excluded title, N/A fields, a LinkedIn URL with no scheme, a city with no country code, a duplicate and a record with nothing to identify it by. The provider's own format is still unconfirmed (plan Q2): replace these with a real response when one is logged.",
+ "records": [
+  {"first_name": "Ivan", "last_name": "Grievance", "title": "Investor Grievance Officer", "company_name": "Dayco Securities", "employee_linkedin": "https://www.linkedin.com/in/ivan-grievance", "city": "Mumbai", "country_code": "IN", "has_email": true},
+  {"first_name": "Anna", "last_name": "Angel", "title": "Angel Investor", "company_name": "Self", "employee_linkedin": "https://www.linkedin.com/in/anna-angel", "city": "Berlin", "country_code": "DE", "has_email": true},
+  {"first_name": "Priya", "last_name": "Partner", "title": "Venture Partner", "company_name": "Seed Fund", "employee_linkedin": "linkedin.com/in/priya-partner", "city": "Pune", "country_code": "IN", "has_email": false},
+  {"first_name": "Sam", "last_name": "N/A", "title": "Investor", "company_name": "N/A", "employee_linkedin": "https://www.linkedin.com/in/sam-investor", "city": "N/A", "locality": "Gurgaon", "country_code": "IN", "has_email": false},
+  {"first_name": "Gita", "last_name": "General", "title": "General Partner", "company_name": "Fund X", "employee_linkedin": "https://www.linkedin.com/in/gita-general", "city": "Bengaluru", "country": "India", "has_email": true},
+  {"first_name": "Priya", "last_name": "Partner", "title": "Venture Partner", "company_name": "Seed Fund", "employee_linkedin": "https://www.linkedin.com/in/priya-partner", "city": "Pune", "country_code": "IN", "has_email": false},
+  {"first_name": "Sal", "last_name": "Sales", "title": "Sales Manager", "company_name": "Investor Relations Inc", "employee_linkedin": "https://www.linkedin.com/in/sal-sales", "city": "Delhi", "country_code": "IN", "has_email": true},
+  {"first_name": "N/A", "last_name": "N/A", "title": "Investor", "company_name": "Ghost Capital", "employee_linkedin": "N/A", "city": "Pune", "country_code": "IN", "has_email": false}
+ ]
+}

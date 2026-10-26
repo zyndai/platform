@@ -105,6 +105,16 @@ ROLE_SYNONYMS: dict[str, frozenset[str]] = {
 }
 
 
+# Phrases that contain a role word without naming a role: "backing AI developer tools" is not a
+# developer. Removed before a text is read for roles (role_tokens), never from its words otherwise.
+_NOT_A_ROLE = re.compile(r"\bdev(?:eloper)?[\s-]+tool(?:s|ing)?\b")
+
+
+def role_tokens(text: str) -> set[str]:
+    """token_set for role checks: the words of `text` minus phrases that only look like a role."""
+    return token_set(_NOT_A_ROLE.sub(" ", (text or "").lower()))
+
+
 def role_matches(haystack_tokens: set[str], role: str) -> bool:
     """Every meaningful word of `role` is present, or a close synonym of it is."""
     terms = query_terms(role)

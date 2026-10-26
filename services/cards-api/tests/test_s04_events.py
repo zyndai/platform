@@ -230,5 +230,93 @@ def test_agents_search_records_counts_and_handles_but_never_the_query(monkeypatc
     assert resp.status_code == 200
     (event, kw), = seen
     assert event == "search"
-    assert kw["meta"] == {"n": 7, "top": ["h0", "h1", "h2", "h3", "h4"], "filters": ["role"], "text": True}
+    meta = kw["meta"]
+    assert {k: meta[k] for k in ("n", "top", "filters", "text")} == {
+        "n": 7, "top": ["h0", "h1", "h2", "h3", "h4"], "filters": ["role"], "text": True}
+    assert meta["via"] == "web" and meta["search_id"] == resp.json()["search_id"]
     assert "secret" not in repr(kw)
+
+
+# ── Phase 3.5: search ids, who searched, and what a search led to ──────────────────
+
+def test_search_context_keeps_a_valid_uuid_and_makes_one_otherwise():
+    from services import events as events_service
+    mine = "3f2b8c4e-6a51-4c43-9d1e-0b5a1f7e2d90"
+    assert events_service.search_context(mine, "memory") == (mine, "memory")
+    assert events_service.search_context(mine.upper(), "MCP")[0] == mine           # normalised
+    for bad in ("", "not-a-uuid", "x" * 64, None):
+        sid, via = events_service.search_context(bad, "nonsense")
+        assert len(sid) == 36 and sid != mine and via == "web"                      # unknown via: the default
+    assert events_service.search_context(None, None, default="ask")[1] == "ask"
+
+
+def test_result_actions_are_a_server_event_the_public_endpoint_cannot_forge():
+    from services import events as events_service
+    assert "search_result_action" in events_service.SERVER_EVENTS
+    assert "search_result_action" not in events_service.ALLOWED_EVENTS
+
+
+def test_a_result_action_carries_the_search_never_the_query_or_a_user(monkeypatch):
+    from services import events as events_service
+    seen = []
+    monkeypatch.setattr(events_service, "emit", lambda event, **kw: seen.append((event, kw)))
+    sid = "3f2b8c4e-6a51-4c43-9d1e-0b5a1f7e2d90"
+    events_service.record_result_action(search_id=sid, rank=2, source="card", action="connect", handle="ada",
+                                        connection_id="c-1")
+    events_service.record_result_action(search_id=sid, rank=1, source="linkedin", action="invite", handle="grace",
+                                        invite_id="i-1")
+    events_service.record_result_action(search_id=sid, rank=1, source="made-up", action="connect", handle="x")
+    events_service.record_result_action(search_id=sid, rank=1, source="card", action="delete", handle="x")
+    assert seen == [
+        ("search_result_action", {"handle": "ada", "meta": {"search_id": sid, "rank": 2, "source": "card",
+                                                            "action": "connect", "connection_id": "c-1"}}),
+        ("search_result_action", {"handle": "grace", "meta": {"search_id": sid, "rank": 1, "source": "linkedin",
+                                                              "action": "invite", "invite_id": "i-1"}}),
+    ]                                                      # an unknown source or action is dropped
+
+
+def _agents_client(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api import agents as agents_api
+
+    seen = []
+    monkeypatch.setattr(agents_api.events_service, "emit", lambda event, **kw: seen.append((event, kw)))
+    monkeypatch.setattr(agents_api.search_service, "search_agents", lambda *a, **k: [{"handle": "h0", "match_score": 0.9}])
+    monkeypatch.setattr(agents_api.lookup_service, "lookup_by_name", lambda *a: [{"handle": "h0"}])
+    monkeypatch.setattr(agents_api.lookup_service, "allow", lambda request: True)
+    monkeypatch.setattr(agents_api.cards_service, "claimed_by_handles", lambda handles: {h: True for h in handles})
+    app = FastAPI()
+    app.include_router(agents_api.router, prefix="/v1/agents")
+    return TestClient(app), seen
+
+
+def test_search_and_lookup_echo_the_callers_search_id_and_record_who_searched(monkeypatch):
+    client, seen = _agents_client(monkeypatch)
+    sid = "3f2b8c4e-6a51-4c43-9d1e-0b5a1f7e2d90"
+    one = client.get("/v1/agents/search", params={"q": "x", "search_id": sid, "via": "memory"}).json()
+    two = client.get("/v1/agents/lookup", params={"name": "chandan", "search_id": sid, "via": "mcp"}).json()
+    assert one["search_id"] == two["search_id"] == sid
+    assert [(e, kw["meta"]["search_id"], kw["meta"]["via"]) for e, kw in seen] == [
+        ("search", sid, "memory"), ("search", sid, "mcp")]
+
+
+def test_ask_is_counted_as_a_search_of_its_own_kind(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api import ask as ask_api
+
+    seen = []
+    monkeypatch.setattr(ask_api.events_service, "emit", lambda event, **kw: seen.append((event, kw)))
+    monkeypatch.setattr(ask_api.search_service, "search_agents", lambda *a, **k: [{"handle": "h0"}])
+    monkeypatch.setattr(ask_api.cards_service, "claimed_by_handles", lambda handles: {h: True for h in handles})
+    app = FastAPI()
+    app.include_router(ask_api.router, prefix="/ask")
+    client = TestClient(app)
+    body = client.get("/ask", params={"q": "find a rust dev"}).json()
+    web = client.post("/ask", params={"via": "web"}, json={"q": "x"}).json()
+    searches = [kw["meta"] for e, kw in seen if e == "search"]
+    assert [m["via"] for m in searches] == ["ask", "web"] and len(body["search_id"]) == 36 and web["search_id"]
+    assert "rust" not in repr(searches)

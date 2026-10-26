@@ -208,6 +208,8 @@ export interface AgentSearchResult {
 }
 
 export interface AgentSearchResponse {
+  /** Names this search, for tying a later profile view to it; absent on older APIs. */
+  search_id?: string;
   query: Record<string, string | number | null>;
   searchable_attributes: { name: string; type: string; description: string }[];
   results: AgentSearchResult[];

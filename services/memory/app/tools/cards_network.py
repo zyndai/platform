@@ -37,21 +37,36 @@ async def _call(pool, uid: str, method: str, path: str, **kwargs) -> dict:
     except (httpx.HTTPError, ValueError) as exc:
         return {"ok": False, "error": f"Cards network unavailable: {exc}"}
     if response.status_code >= 400:
-        return {"ok": False, "error": (data.get("detail") if isinstance(data, dict) else None) or "Cards network request failed"}
+        return {"ok": False, "status": response.status_code,
+                "error": (data.get("detail") if isinstance(data, dict) else None) or "Cards network request failed"}
     return {"ok": True, **(data if isinstance(data, dict) else {"data": data})}
+
+
+async def _call_with_search(pool, uid: str, method: str, path: str, body: dict, from_search: dict | None) -> dict:
+    """A request that may say which search it came from. That is only for the funnel, so an older
+    Cards that rejects the field (422) must never cost the user the action: send it again without."""
+    if not from_search:
+        return await _call(pool, uid, method, path, json=body)
+    result = await _call(pool, uid, method, path, json={**body, "from_search": from_search})
+    if not result.get("ok") and result.get("status") == 422:
+        return await _call(pool, uid, method, path, json=body)
+    return result
 
 
 async def connections(pool, uid: str) -> dict:
     return await _call(pool, uid, "GET", "/connections")
 
 
-async def request_connection(pool, uid: str, target_handle: str, message: str = "") -> dict:
-    return await _call(pool, uid, "POST", "/connections", json={"target_handle": target_handle, "message": message or None})
+async def request_connection(pool, uid: str, target_handle: str, message: str = "",
+                             from_search: dict | None = None) -> dict:
+    return await _call_with_search(
+        pool, uid, "POST", "/connections", {"target_handle": target_handle, "message": message or None}, from_search)
 
 
-async def create_invite(pool, uid: str, linkedin_url: str, name: str, headline: str, message: str = "") -> dict:
-    return await _call(pool, uid, "POST", "/invites", json={
-        "linkedin_url": linkedin_url, "name": name, "headline": headline, "message": message or None})
+async def create_invite(pool, uid: str, linkedin_url: str, name: str, headline: str, message: str = "",
+                        from_search: dict | None = None) -> dict:
+    return await _call_with_search(pool, uid, "POST", "/invites", {
+        "linkedin_url": linkedin_url, "name": name, "headline": headline, "message": message or None}, from_search)
 
 
 async def respond_connection(pool, uid: str, connection_id: str, action: str) -> dict:

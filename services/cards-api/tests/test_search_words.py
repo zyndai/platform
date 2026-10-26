@@ -120,3 +120,18 @@ def test_location_filter_does_not_match_substrings(cards):
     ranked = {r["handle"]: r["match_score"] for r in
               search_service.search_agents(q="founder", location="India", include_unclaimed=True)}
     assert "b" in ranked and "a" not in ranked
+
+
+def test_developer_tools_is_not_a_developer():
+    """People search Phase 2: "Seed investor backing AI developer tools" is no engineer, in search
+    or in two-way matching; "Developer tooling engineer" still is."""
+    from models.card import AgentProfileCard
+    from services.search_text import role_matches, role_tokens
+    from services.two_way import kinds_of
+
+    assert not role_matches(role_tokens("Seed investor backing AI developer tools"), "engineer")
+    assert not role_matches(role_tokens("Founder of a dev-tools company"), "developer")
+    assert role_matches(role_tokens("Developer tooling engineer"), "engineer")
+    assert role_matches(role_tokens("Backend developer"), "engineer")
+    investor = AgentProfileCard(id="x", identity={"name": "X", "headline": "Seed investor backing AI developer tools"})
+    assert kinds_of(investor) == {"Investors"}

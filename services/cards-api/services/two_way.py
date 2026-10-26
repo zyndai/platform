@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from models.card import AgentProfileCard
 from services.card_view import fact_object, fact_predicate, live_facts
-from services.search_text import token_set
+from services.search_text import role_tokens, token_set
 
 TWO_WAY_BOOST = 0.15
 
@@ -59,7 +59,7 @@ def kinds_of(card: AgentProfileCard) -> set[str]:
     """The kinds of person this card's owner is, from public fields only."""
     from services.suggested_people import canonical_keyword
 
-    tokens = token_set(card.identity.headline)
+    tokens = role_tokens(card.identity.headline)
     kinds = {kind for kind, words in _HEADLINE_WORDS.items() if words & tokens}
     for kind, phrases in _HEADLINE_PHRASES.items():
         if any(phrase <= tokens for phrase in phrases):
@@ -71,6 +71,22 @@ def kinds_of(card: AgentProfileCard) -> set[str]:
     if kinds & _COFOUNDER_FITS:
         kinds.add("Potential co-founders")      # someone seeking a co-founder wants people like this
     return kinds
+
+
+def kind_from_text(text: str) -> str | None:
+    """The kind a free-text "who I want to meet" names ("angel investors" -> Investors), or None.
+    Plural words count ("founders"), and a phrase beats a single word."""
+    tokens = token_set(text)
+    tokens |= {t[:-1] for t in tokens if t.endswith("s") and len(t) > 2}
+    for kind, phrases in _HEADLINE_PHRASES.items():
+        if any(phrase <= tokens for phrase in phrases):
+            return kind
+    for kind, words in _HEADLINE_WORDS.items():
+        if kind == "ML Researchers" and "ml" not in tokens:
+            continue            # plain "researchers" are researchers in the owner's field
+        if words & tokens:
+            return kind
+    return None
 
 
 def wanted_kinds(card: AgentProfileCard) -> set[str]:

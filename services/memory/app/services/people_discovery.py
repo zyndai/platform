@@ -154,34 +154,56 @@ def _why(reasons: object) -> list[str]:
     return out[:4]
 
 
+# Filters a caller (the public MCP) may pass through to Cards unchanged. role, location and skills
+# are PINNED: the caller asked for exactly those, so they are strict and nothing is loosened.
+PINNED_PARAMS = ("role", "location", "skills")
+PASSTHROUGH_PARAMS = frozenset({*PINNED_PARAMS, "industry", "availability", "experience_min"})
+
+
 def cards_search_params(
     target: str, limit: int, query: TargetQuery, as_handle: str = "", less_like: list[str] | None = None,
+    *, include_unclaimed: bool = True, extra: dict | None = None, search_id: str = "", via: str = "",
 ) -> dict:
     """/v1/agents/search params: the free text plus the parsed filters Cards can score on, and
-    the searcher's own handle so people who want to meet someone like them rank higher."""
-    params: dict = {"q": (target or "").strip(), "limit": limit, "include_unclaimed": "true"}
+    the searcher's own handle so people who want to meet someone like them rank higher.
+
+    `extra` are filters the caller gave explicitly. When any of role, location or skills is among
+    them they are the only role/location/skills sent and nothing is relaxed (as a UI filter is
+    strict); the parse then only contributes topics."""
+    extra = {k: v for k, v in (extra or {}).items() if k in PASSTHROUGH_PARAMS and v not in (None, "")}
+    pinned = any(k in extra for k in PINNED_PARAMS)
+    params: dict = {"q": (target or "").strip(), "limit": limit,
+                    "include_unclaimed": "true" if include_unclaimed else "false"}
     if as_handle:
         params["as_handle"] = as_handle
     if less_like:
         params["less_like"] = ",".join(h for h in less_like if _HANDLE.fullmatch(h))[:700]
-    if query.role:
-        params["role"] = query.role_noun
-    if query.locality or query.location:
-        params["location"] = query.locality or query.location
+    if not pinned:
+        if query.role:
+            params["role"] = query.role_noun
+        if query.locality or query.location:
+            params["location"] = query.locality or query.location
     # Topics are guesses about what the person works on: they raise a score, never filter.
     # Only a skill the user explicitly asked for ("knows Rust") is a requirement, and when
     # the filters leave too few people Cards loosens them instead of returning nothing.
     if query.topics:
         params["topics"] = ",".join(query.topics)[:200]
-    if query.required_skills:
+    if query.required_skills and not pinned:
         params["skills"] = ",".join(query.required_skills)[:200]
-    params["relax"] = "true"
+    params.update(extra)
+    if not pinned:
+        params["relax"] = "true"
+    if search_id:       # lets Cards' funnel tie a later connection to this search; never the query
+        params["search_id"] = search_id
+    if via:
+        params["via"] = via
     return params
 
 
 async def search_cards(
     target: str, limit: int, *, query: TargetQuery | None = None, as_handle: str = "",
-    less_like: list[str] | None = None,
+    less_like: list[str] | None = None, include_unclaimed: bool = True, extra: dict | None = None,
+    search_id: str = "", via: str = "",
 ) -> tuple[list[dict], str | None]:
     """Claimed and unclaimed published cards. Unclaimed rows carry no contact fields."""
     q = (target or "").strip()
@@ -191,7 +213,9 @@ async def search_cards(
     url = f"{settings.cards_api_base_url.rstrip('/')}/v1/agents/search"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
-            resp = await client.get(url, params=cards_search_params(q, limit, query, as_handle, less_like))
+            resp = await client.get(url, params=cards_search_params(
+                q, limit, query, as_handle, less_like, include_unclaimed=include_unclaimed, extra=extra,
+                search_id=search_id, via=via))
             resp.raise_for_status()
             payload = resp.json()
     except Exception as exc:
@@ -204,7 +228,9 @@ async def search_cards(
     return shape_cards(rows, limit), None
 
 
-async def lookup_cards(name: str, limit: int) -> tuple[list[dict], str | None]:
+async def lookup_cards(
+    name: str, limit: int, include_unclaimed: bool = True, search_id: str = "", via: str = "",
+) -> tuple[list[dict], str | None]:
     """Published Cards whose name or handle matches, exact full name first. For "find Chandan",
     where meaning-based search has nothing to rank by."""
     name = (name or "").strip()
@@ -213,8 +239,13 @@ async def lookup_cards(name: str, limit: int) -> tuple[list[dict], str | None]:
     url = f"{settings.cards_api_base_url.rstrip('/')}/v1/agents/lookup"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
-            resp = await client.get(url, params={"name": name[:100], "limit": max(1, min(limit, 10)),
-                                                 "include_unclaimed": "true"})
+            params = {"name": name[:100], "limit": max(1, min(limit, 10)),
+                      "include_unclaimed": "true" if include_unclaimed else "false"}
+            if search_id:
+                params["search_id"] = search_id
+            if via:
+                params["via"] = via
+            resp = await client.get(url, params=params)
             resp.raise_for_status()
             payload = resp.json()
     except Exception as exc:
@@ -254,6 +285,9 @@ def shape_cards(rows: list, limit: int) -> list[dict]:
             "linkedin_url": _linkedin_url(row.get("linkedin_url")),
             "url": _card_url(handle, row.get("url")),
             "connection_eligible": False,
+            "industries": [_public_text(i, 80) for i in row.get("industries") or [] if isinstance(i, str)][:5],
+            "availability": _public_text(row.get("availability"), 40),
+            "fresh_as_of": row.get("fresh_as_of") if isinstance(row.get("fresh_as_of"), str) else None,
         }
         if isinstance(row.get("relaxed"), list) and row["relaxed"]:
             item["relaxed"] = [str(r)[:20] for r in row["relaxed"] if isinstance(r, str)][:4]
@@ -307,8 +341,8 @@ def _shape_qe(records: list) -> list[dict]:
         row = {
             "source": "quickenrich",
             "name": _public_text(name),
-            "title": _public_text(record.get("title")),
-            "company": _public_text(record.get("company_name")),
+            "title": _public_text(_na(record.get("title"))),
+            "company": _public_text(_na(record.get("company_name"))),
             "linkedin_url": link,
             "has_email": record.get("has_email") is True,
             "has_phone": record.get("has_phone") is True,
@@ -324,6 +358,14 @@ def _shape_qe(records: list) -> list[dict]:
 def _fit_words(text: str, words: list[str]) -> bool:
     low = (text or "").lower()
     return any(w.lower() in low for w in words)
+
+
+def has_excluded_title(row: dict, query: TargetQuery) -> bool:
+    """True when the person's title holds a word that makes it a different job ("Investor
+    Grievance Officer" for an investor search). The request already excludes these, but the
+    provider's matching is unconfirmed (plan Q1), so callers that cannot show a wrong-role
+    person drop them here too."""
+    return _fit_words(row.get("title") or "", title_filters(query)[1])
 
 
 def rank_quickenrich(rows: list[dict], query: TargetQuery) -> list[dict]:

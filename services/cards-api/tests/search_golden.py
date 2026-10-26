@@ -25,6 +25,10 @@ sys.path.insert(0, str(ROOT))
 
 FIXTURE = pathlib.Path(__file__).resolve().parent / "fixtures" / "search_golden.json"
 DIM = 256
+# The hashed embedder's cosines sit in a different range from text-embedding-3-small's (that
+# is what SEM_FLOOR/SEM_SPAN in services/search.py are fitted to), so the harness rescales them:
+# related text lands near 0.5 here and unrelated text near 0.
+HASH_SEM_FLOOR, HASH_SEM_SPAN = 0.0, 0.5
 
 
 def hash_embed(text: str) -> list[float]:
@@ -91,6 +95,8 @@ def evaluate(doc: dict | None = None, search_service=None) -> list[QueryResult]:
     out: list[QueryResult] = []
     with patch.object(search_service.config, "get_supabase", lambda: sb), \
          patch.object(search_service, "embed_text", hash_embed), \
+         patch.object(search_service, "SEM_FLOOR", HASH_SEM_FLOOR), \
+         patch.object(search_service, "SEM_SPAN", HASH_SEM_SPAN), \
          patch.object(search_service.cards_service, "list_published_rows", lambda **kw: rows):
         for query in doc["queries"]:
             extra = {}

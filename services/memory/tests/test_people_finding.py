@@ -24,6 +24,7 @@ from app.services.people_query import Intent, detect_intent, parse_target_heuris
     ("find John at Stripe", "John", "Stripe"),
     ("who is Sam Altman", "Sam Altman", ""),
     ("people named Rao", "Rao", ""),
+    ("Franz Kafka", "Franz Kafka", ""),      # a surname that is also a tool's name is still a name
 ])
 def test_a_name_is_recognised(text, name, company):
     assert detect_intent(text) == Intent("name", name, company)
@@ -33,6 +34,7 @@ def test_a_name_is_recognised(text, name, company):
     "AI", "VC", "fintech", "rust engineer", "seed investor", "investor from India", "someone from Zynd",
     "find me people in Pune", "people building AI agents", "marketing", "founders", "a b c d", "",
     "seed-stage investor who backs AI dev tools in India",
+    "Kubernetes", "Figma", "Terraform engineer", "Next.js", "PyTorch", "kubernetes",   # a tool is a topic, not a person
 ])
 def test_a_description_stays_a_target(text):
     assert detect_intent(text).kind == "target"
@@ -157,7 +159,7 @@ def test_person_from_external_uses_the_rank_score_and_location():
     person = pr.person_from_external({"name": "A", "title": "Investor", "company": "X", "linkedin_url": "u",
                                       "location": "Pune, India", "score": 0.5}, 7)
     assert person["score"] == 0.5 and person["location"] == "Pune, India"
-    assert pr.person_from_external({"name": "A"}, 2)["score"] == 0.28
+    assert pr.person_from_external({"name": "A"}, 2)["score"] == 0.448
 
 
 # ── 0.8 cache ────────────────────────────────────────────────────────────────────

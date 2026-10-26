@@ -1,4 +1,6 @@
 """One re-rank for every source (people search plan, Phase 1.2-1.5)."""
+import pytest
+
 from app.services import people_results as pr
 from app.services.people_query import parse_target_heuristic
 
@@ -89,3 +91,55 @@ def test_the_reason_says_title_when_the_headline_does_not_name_the_role():
     q = parse_target_heuristic("investor in India")
     assert pr.specific_why(external("Priya", "Venture Partner at Seed Fund", "Pune, India"), q)[0] == "Investor (title)"
     assert pr.specific_why(external("Asha", "Investor at Fund", "Pune, India"), q)[0] == "Investor (headline)"
+
+
+# ── what the live investor query showed (the corpus has no investors, so every answer is a closest match) ──
+
+INVESTOR = parse_target_heuristic("seed-stage investor who backs AI dev tools in India")
+
+
+def _live_card(handle, headline, raw_reasons):
+    """A Cards hit as the pipeline shapes it: the raw reasons go through people_discovery._why first."""
+    from app.services.people_discovery import _why
+    return pr.person_from_card({"handle": handle, "name": handle, "headline": headline, "location": "India",
+                                "claimed": True, "match_score": 0.55, "why": _why(raw_reasons)})
+
+
+FACTS = [{"type": "memory", "text": "AI governance", "source": "declared", "age_days": 2},
+         {"type": "memory", "text": "developing AI governance solutions", "source": "declared", "age_days": 2},
+         {"type": "memory", "text": "India", "source": "declared", "age_days": 2}]
+
+
+@pytest.mark.parametrize("loosened", ["Not an investor (closest match)", "Not a investor (closest match)"])   # Cards' new and old wording
+def test_a_person_with_many_facts_still_says_what_was_loosened(loosened):
+    """Cards lists the loosened-role reason last; a cut at four reasons dropped it for anyone with a few
+    approved facts, so a non-investor looked like an answer and the note was the only hint."""
+    person = _live_card("revanth", "Co-Founder at Evolune EdgeTech", [
+        "Matches your search terms", *FACTS, "Role match", "Based in India", loosened])
+    why = pr.specific_why(person, INVESTOR)
+    assert loosened in why and len(why) <= 3
+    assert "Role match" not in why                    # Cards' own word for the role found anywhere on the card
+
+
+@pytest.mark.parametrize("loosened", ["Not an investor (closest match)", "Not a investor (closest match)"])
+def test_the_loosening_reason_does_not_make_a_non_investor_look_like_one(loosened):
+    """The reason names the role it could not find; reading it as evidence of the role gave a
+    developer 'Investor (on their profile)' next to 'Not an investor'."""
+    person = _live_card("atmegabuzz", "AI Systems Engineer | Backend & Protocol Developer", [
+        "Matches your search terms", "Role match", "Based in Pune Division, Maharashtra, India", loosened])
+    assert pr.features(person, INVESTOR)["role_fit"] == 0.0
+    why = pr.specific_why(person, INVESTOR)
+    assert not any(w.startswith("Investor") for w in why) and loosened in why
+
+
+def test_a_real_investor_is_still_one_and_still_says_so():
+    person = _live_card("ivy", "Seed investor in AI", ["Matches your search terms", "Based in India"])
+    assert pr.features(person, INVESTOR)["role_fit"] == 1.0
+    assert pr.specific_why(person, INVESTOR)[0] == "Investor (headline)"
+
+
+def test_results_nothing_ranked_the_reasons_of_show_at_most_four():
+    people = [pr.person_from_card({"handle": "a", "name": "A", "claimed": True,
+                                   "why": [f"reason {i}" for i in range(8)]})]
+    assert len(people[0]["why"]) == 8                  # kept whole while merging
+    assert len(pr.cap_why(people)[0]["why"]) == pr.SHOWN_WHY == 4

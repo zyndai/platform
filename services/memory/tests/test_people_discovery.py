@@ -162,8 +162,11 @@ async def test_search_cards_returns_match_reasons_as_why(monkeypatch):
 
     monkeypatch.setattr(discovery.httpx, "AsyncClient", FakeClient)
     rows, _ = await discovery.search_cards("investor in Pune", 5)
+    # Every valid reason is kept (the non-string one is not): the one that says what was loosened comes
+    # last in Cards' list, and a cut at four reasons used to drop it for anyone with a few approved facts.
     assert rows[0]["why"] == [
-        "Strong overall match for your query", "Approved fact: Backs dev tools", "Based in Pune", "Skills: ai"]
+        "Strong overall match for your query", "Approved fact: Backs dev tools", "Based in Pune", "Skills: ai",
+        "Industry: AI"]
     assert seen["role"] == "investor" and seen["location"] == "Pune"
 
 

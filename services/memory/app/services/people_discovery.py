@@ -138,6 +138,9 @@ def _age_phrase(days: object) -> str:
     return f" ({days // 30} months ago)"
 
 
+RAW_WHY_LIMIT = 8   # Cards lists what was loosened last, after any approved facts: do not cut it off
+
+
 def _why(reasons: object) -> list[str]:
     """Cards' match_reasons are strings or {"type": "memory", "text": ...}; show both as text."""
     out: list[str] = []
@@ -151,7 +154,7 @@ def _why(reasons: object) -> list[str]:
         text = _public_text(text, 120)
         if text and text not in out:
             out.append(text)
-    return out[:4]
+    return out[:RAW_WHY_LIMIT]
 
 
 # Filters a caller (the public MCP) may pass through to Cards unchanged. role, location and skills

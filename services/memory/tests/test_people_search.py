@@ -412,3 +412,31 @@ async def test_the_log_line_for_a_name_lookup_has_no_name(world, caplog):
     with patch("app.services.people_search.people_discovery.lookup_cards", AsyncMock(return_value=([], None))):
         await run("Chandan Kumar")
     assert "Chandan" not in caplog.text and "Kumar" not in caplog.text
+
+
+# ── the company question is only worth asking when LinkedIn could use the answer ──
+
+PARTIAL_NAME = {"source": "zynd_card", "claimed": True, "handle": "chandan-kumar-2en8", "name": "Chandan Kumar",
+                "headline": "Founder", "location": "", "skills": [], "match_score": 0.8, "why": ["Name starts with your search"],
+                "url": "https://cards.zynd.ai/p/chandan-kumar-2en8", "linkedin_url": ""}
+
+
+async def test_the_public_tool_never_asks_for_a_company(world):
+    """A partial name is not an exact match, so an owner is told to ask which company; an anonymous caller
+    cannot search LinkedIn, so the same warning would send the assistant to ask for nothing."""
+    with patch("app.services.people_search.people_discovery.lookup_cards", AsyncMock(return_value=([PARTIAL_NAME], None))):
+        result = await anon("chandan", wanted={"cards"})
+    assert [p["handle"] for p in result["people"]] == ["chandan-kumar-2en8"] and result["people"][0]["match_quality"] == "close"
+    assert "warnings" not in result
+
+
+async def test_an_owner_who_limits_the_search_to_cards_is_not_asked_either(world):
+    with patch("app.services.people_search.people_discovery.lookup_cards", AsyncMock(return_value=([PARTIAL_NAME], None))):
+        result = await run("chandan", sources="cards")
+    assert "warnings" not in result
+
+
+async def test_an_owner_searching_every_source_is_still_asked_for_the_company(world):
+    with patch("app.services.people_search.people_discovery.lookup_cards", AsyncMock(return_value=([PARTIAL_NAME], None))):
+        result = await run("chandan")
+    assert any(w.startswith("name_needs_company") for w in result["warnings"])

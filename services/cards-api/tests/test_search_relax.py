@@ -239,3 +239,37 @@ def test_lookup_endpoint_returns_claimed_people_and_is_rate_limited(monkeypatch)
         last = client.get("/v1/agents/lookup", params={"name": "chandan"})
     assert last.status_code == 429
     lookup_service._hits.clear()
+
+
+# ── what a loosened result says, and where a slow search spent its time ───────────────────────
+
+@pytest.mark.parametrize("role,expected", [
+    ("investor", "Not an investor (closest match)"), ("engineer", "Not an engineer (closest match)"),
+    ("advisor", "Not an advisor (closest match)"), ("lawyer", "Not a lawyer (closest match)"),
+    ("designer", "Not a designer (closest match)"), ("product manager", "Not a product manager (closest match)"),
+])
+def test_the_reason_for_a_dropped_role_uses_the_right_article(role, expected):
+    steps = list(search_service._relaxations(role, "Pune", ""))
+    dropped, stage_role, _, _, reason = steps[-1]            # the last, loosest step drops the role
+    assert (dropped, stage_role, reason) == (["location", "role"], "", expected)
+
+
+def test_a_slow_search_logs_its_passes_and_never_the_query(cards, monkeypatch, caplog):
+    import logging
+    cards.append(_card("dev", headline="Backend developer", location="Pune, India"))
+    clock = iter([0.0, 0.1, 1.9, 2.0, 4.4, 4.5, 5.0, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 6.0, 6.1, 6.2, 6.3, 6.4])
+    monkeypatch.setattr(search_service.time, "monotonic", lambda: next(clock, 7.0))
+    caplog.set_level(logging.WARNING, logger="services.search")
+    search_service.search_agents(q="topsecretword backend developer", role="investor", location="Pune", relax=True,
+                                 limit=5, include_unclaimed=True)
+    (line,) = [r.getMessage() for r in caplog.records if r.getMessage().startswith("slow search")]
+    assert "pass(es)" in line and "rows in" in line and "relax=True" in line
+    assert "topsecretword" not in caplog.text and "investor" not in line.lower().replace("relax", "")
+
+
+def test_a_quick_search_logs_nothing(cards, caplog):
+    import logging
+    cards.append(_card("dev", headline="Backend developer", location="Pune, India"))
+    caplog.set_level(logging.WARNING, logger="services.search")
+    search_service.search_agents(q="developer", include_unclaimed=True)
+    assert not [r for r in caplog.records if r.getMessage().startswith("slow search")]

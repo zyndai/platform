@@ -14,6 +14,7 @@ Behind FEATURE_NETWORK_CONTROLS (needs packages/db 0025).
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
@@ -25,6 +26,9 @@ MAX_REQUESTS_PER_WEEK = 25
 MAX_PENDING_INCOMING = 50
 MAX_REPORTS_PER_DAY = 5
 REPORT_REASONS = ("spam", "impersonation", "harassment", "inaccurate", "other")
+# Every search asks which results are verified; a badge proven a minute ago may show a minute late.
+VERIFIED_TTL_SECONDS = 60.0
+_verified_cache: dict[str, tuple[float, list[str]]] = {}
 
 
 def enabled() -> bool:
@@ -110,17 +114,29 @@ def record_verification(card_id: str, provider: str) -> None:
             {"card_id": card_id, "provider": provider}, on_conflict="card_id,provider", ignore_duplicates=True).execute()
     except Exception:  # noqa: BLE001 — a badge must never break a claim
         return
+    finally:
+        _verified_cache.pop(card_id, None)
 
 
 def verified_by_card_ids(card_ids: list[str]) -> dict[str, list[str]]:
+    """card id -> proven identities, for the cards that have any. Answers from the last
+    VERIFIED_TTL_SECONDS are reused, so a repeated search does not read the table again."""
     ids = [c for c in dict.fromkeys(card_ids) if c]
     if not enabled() or not ids:
         return {}
-    try:
-        rows = network._sb().table("card_verifications").select("card_id,provider").in_("card_id", ids).execute().data or []
-    except Exception:  # noqa: BLE001
-        return {}
-    out: dict[str, list[str]] = {}
-    for r in rows:
-        out.setdefault(r["card_id"], []).append(r["provider"])
-    return {k: sorted(v) for k, v in out.items()}
+    now = time.monotonic()
+    known = {i: hit[1] for i in ids if (hit := _verified_cache.get(i)) and now - hit[0] < VERIFIED_TTL_SECONDS}
+    missing = [i for i in ids if i not in known]
+    if missing:
+        try:
+            rows = network._sb().table("card_verifications").select("card_id,provider").in_("card_id", missing).execute().data or []
+        except Exception:  # noqa: BLE001
+            rows = None
+        if rows is not None:
+            found: dict[str, list[str]] = {i: [] for i in missing}
+            for r in rows:
+                found.setdefault(r["card_id"], []).append(r["provider"])
+            for i, providers in found.items():
+                _verified_cache[i] = (now, sorted(providers))
+                known[i] = sorted(providers)
+    return {k: v for k, v in known.items() if v}

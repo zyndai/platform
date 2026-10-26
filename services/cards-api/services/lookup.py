@@ -11,7 +11,7 @@ import time
 from collections import defaultdict, deque
 
 import config
-from services import network
+from services import card_cache, network
 
 FETCH = 25
 RATE_LIMIT = 30          # lookups per client per minute
@@ -63,6 +63,16 @@ def lookup_by_name(name: str, limit: int = 5, include_unclaimed: bool = False) -
     term = network._search_term(name)
     if len(term) < network.SUGGEST_MIN_CHARS:
         return []
+    needle = term.lower()
+    snap = card_cache.snapshot()
+    if snap is not None:
+        # the database query below, on the in-process copy: a name or handle that contains the text,
+        # newest first, at most FETCH
+        newest = sorted(snap.rows, key=lambda r: r.get("published_at") or "", reverse=True)
+        rows = [r for r in newest if (include_unclaimed or r["claimed"])
+                and (needle in (r.get("handle") or "").lower()
+                     or needle in (((r.get("card") or {}).get("identity") or {}).get("name") or "").lower())][:FETCH]
+        return _shape(rows, needle, limit)
     pattern = f'"*{term}*"'      # quoted so spaces and dots survive; the term holds no quote to escape
     query = (
         network._sb()
@@ -76,7 +86,10 @@ def lookup_by_name(name: str, limit: int = 5, include_unclaimed: bool = False) -
     if not include_unclaimed:
         query = query.not_.is_("owner_email", "null")
     rows = query.execute().data or []
-    needle = term.lower()
+    return _shape(rows, needle, limit)
+
+
+def _shape(rows: list[dict], needle: str, limit: int) -> list[dict]:
     ranked = sorted(enumerate(rows), key=lambda item: (_rank(item[1], needle), item[0]))
     out: list[dict] = []
     for _, row in ranked:

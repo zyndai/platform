@@ -3,6 +3,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException, Query, Request
 
 import config
+from services import card_cache
 from services import cards as cards_service
 from services import events as events_service
 from services import lookup as lookup_service
@@ -49,9 +50,15 @@ async def search_agents(
 ):
     search_id, via = events_service.search_context(search_id, via)
     keep_unclaimed = include_unclaimed or not config.FEATURE_S03_UNCLAIMED_TIERING
-    searcher = await asyncio.to_thread(cards_service.get_card_by_handle, as_handle.strip().lstrip("@")) if as_handle.strip() else None
-    disliked = [c for c in (await asyncio.to_thread(cards_service.get_card_by_handle, h.strip().lstrip("@"))
-                            for h in less_like.split(",")[:10] if h.strip()) if c] if less_like.strip() else []
+    snap = await asyncio.to_thread(card_cache.snapshot)       # the search below reads the same copy
+
+    async def published(handle: str):
+        handle = handle.strip().lstrip("@")
+        return card_cache.published_card(snap, handle) or await asyncio.to_thread(cards_service.get_card_by_handle, handle)
+
+    searcher = await published(as_handle) if as_handle.strip() else None
+    disliked = [c for c in [await published(h) for h in less_like.split(",")[:10] if h.strip()] if c] \
+        if less_like.strip() else []
     results = await asyncio.to_thread(
         search_service.search_agents,
         q,
@@ -68,7 +75,10 @@ async def search_agents(
         **({"topics": topics} if topics else {}),
         **({"relax": True} if relax else {}),
     )
-    claimed = cards_service.claimed_by_handles([r["handle"] for r in results if r.get("handle")])
+    handles = [r["handle"] for r in results if r.get("handle")]
+    claimed = card_cache.claimed_for(snap, handles)
+    if claimed is None:
+        claimed = await asyncio.to_thread(cards_service.claimed_by_handles, handles)
     kept = []
     for r in results:
         if r.get("handle"):
@@ -77,7 +87,7 @@ async def search_agents(
             kept.append(r)
     results = kept
     from services import trust
-    verified = trust.verified_by_card_ids([r["agent_id"] for r in results if r.get("agent_id")])
+    verified = await asyncio.to_thread(trust.verified_by_card_ids, [r["agent_id"] for r in results if r.get("agent_id")])
     for r in results:
         if verified:
             r["verified"] = verified.get(r.get("agent_id"), [])
@@ -120,11 +130,14 @@ async def lookup_agents(
     search_id, via = events_service.search_context(search_id, via)
     keep_unclaimed = include_unclaimed or not config.FEATURE_S03_UNCLAIMED_TIERING
     results = await asyncio.to_thread(lookup_service.lookup_by_name, name.strip().lstrip("@"), limit, keep_unclaimed)
-    claimed = cards_service.claimed_by_handles([r["handle"] for r in results if r.get("handle")])
+    handles = [r["handle"] for r in results if r.get("handle")]
+    claimed = card_cache.claimed_for(await asyncio.to_thread(card_cache.snapshot), handles)
+    if claimed is None:
+        claimed = await asyncio.to_thread(cards_service.claimed_by_handles, handles)
     for r in results:
         r["claimed"] = claimed.get(r.get("handle"), False)
     from services import trust
-    verified = trust.verified_by_card_ids([r["agent_id"] for r in results if r.get("agent_id")])
+    verified = await asyncio.to_thread(trust.verified_by_card_ids, [r["agent_id"] for r in results if r.get("agent_id")])
     for r in results:
         if verified:
             r["verified"] = verified.get(r.get("agent_id"), [])

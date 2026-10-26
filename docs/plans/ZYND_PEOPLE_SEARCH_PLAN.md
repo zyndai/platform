@@ -899,8 +899,8 @@ Run each service's tests before and after, against the AGENTS.md §5 baselines.
 
 | # | Item | Plan |
 |---|---|---|
-| Q1 | QuickEnrich `include` matching (OR/AND; substring/whole word) is unknown | Three manual calls before 0.6; write the answer here |
-| Q2 | Raw `employee_linkedin` format (scheme or not) | Log one raw record in dev before 0.7 |
+| Q1 | QuickEnrich `include` matching (OR/AND; substring/whole word) is unknown | **Answered 2026-10-26** (direct calls, see `ZYND_PEOPLE_SEARCH_QUALITY_PLAN.md` §2): `include` is OR; matching is by whole word or phrase, case-insensitive, not substring ("Invest" finds "Invest India", not "Investor"; `exclude` "Relations" misses "Relation"); `bio_li` matches phrases ("seed stage"); `locality` matches a country word |
+| Q2 | Raw `employee_linkedin` format (scheme or not) | **Answered 2026-10-26**: `https://www.linkedin.com/in/...`, or the string `"N/A"`. Also: `locality` is the person's place with the country, `city` an office address, `country_code` the company's country |
 | Q3 | Name lookup makes it easier to page through people | Public Card data only (same as `/ask`), no contact fields, rate-limit `/v1/agents/lookup` per IP and per user, unclaimed only when `include_unclaimed` |
 | Q4 | Anonymous public MCP triggering QuickEnrich | Not allowed (3.2) |
 | Q5 | Score weights tuned on 41 synthetic cards may not fit prod | Calibrate `sem` on a prod sample; check the 20 real queries before each flip |
@@ -939,7 +939,7 @@ coding session does not have. Run them in this order, and record each result her
 | V6 | The 20 real queries | Run a fixed list of 20 real queries on dev (include the Chandan and investor ones and "people like me" for three test accounts), compare with prod by hand, using the new `note`, `match_quality` and `why` | no result worse than prod; every `why` is specific | open |
 | V7 | `FEATURE_FACT_MATCHING` in prod | Human decision (section 8), after `FEATURE_FACT_FAMILIES` is on | flipped after V5 and V6 | open |
 | V8 | cards-web | Open `/search` and `/directory` on dev: scores display sensibly on the new scale, `relaxed` shows | looks right | open |
-| V9 | QuickEnrich questions Q1 and Q2 | Three manual calls (OR/AND and substring/whole word for `include`) and one raw record (is the LinkedIn URL scheme-less?) | answers written into section 9 | open |
+| V9 | QuickEnrich questions Q1 and Q2 | Three manual calls (OR/AND and substring/whole word for `include`) and one raw record (is the LinkedIn URL scheme-less?) | answers written into section 9 | ✅ done 2026-10-26 (Q1, Q2 above) |
 | V10 | Migration 0031 applied | `db:migrate --project cards --yes` | applied by a maintainer (first run: `applied: 0030; pending: 0031`, then applied; second dry run: `applied: 0031; pending: none`); `cards.card_suggestions` and `cards.card_suggestion_impressions` exist | ✅ done (first refresh: see "Left for the end") |
 | V11 | Phase 2 "done when" | `cd services/cards-api && python scripts/check_suggestions.py` (read-only; embeds each target) | 0 exclusion violations; digest rotation ≥ 60%; every card that could get a two-way suggestion gets one | open |
 | V12 | Owner home and digest on dev | Open `/home` on dev: "People to meet" shows, Hide / Not relevant remove a person and they stay gone after reload; a digest preview (`?dry_run=true&handle=`) shows reasons and the feedback links | looks right | open |

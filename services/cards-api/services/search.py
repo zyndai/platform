@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import config
 from models.card import AgentProfileCard
 from services import cards as cards_service
-from services import geo
+from services import card_cache, geo
 from services.embed import card_search_text, describes_person, embed_text
 from services.search_constraints import SKILL_ALIASES, Constraints, explicit_query_constraints, skill_key, skill_matches
 from services.two_way import TWO_WAY_BOOST, kinds_of, too_much_like, two_way_match
@@ -88,6 +88,25 @@ def _skill_matches(wanted: str, skill_name: str) -> bool:
 
 
 SLOW_SEARCH_SECONDS = 3.0     # a search slower than this logs where its time went
+QUERY_VECTOR_TTL_SECONDS = 600.0    # memory retries a timed-out search, assistants repeat a query: embed once
+QUERY_VECTOR_CACHE = 512
+_query_vectors: dict[str, tuple[float, list[float]]] = {}
+
+
+def _embed_query(q: str) -> list[float]:
+    """q's embedding, reused for QUERY_VECTOR_TTL_SECONDS. Oldest entries go first when full."""
+    now = time.monotonic()
+    hit = _query_vectors.get(q)
+    if hit and now - hit[0] < QUERY_VECTOR_TTL_SECONDS:
+        return hit[1]
+    vec = embed_text(q)
+    if vec:
+        if len(_query_vectors) >= QUERY_VECTOR_CACHE:
+            oldest = sorted(list(_query_vectors.items()), key=lambda kv: kv[1][0])   # a copy: other threads write too
+            for key, _ in oldest[: QUERY_VECTOR_CACHE // 4]:
+                _query_vectors.pop(key, None)
+        _query_vectors[q] = (now, vec)
+    return vec
 
 
 def _candidates(q: str, query_vec: list[float], include_unclaimed: bool) -> list[dict]:
@@ -177,16 +196,25 @@ def search_agents(
     location = location or inferred_location
     skills = skills or ",".join(inferred_skills)
     if query_vec is None:
-        query_vec = embed_text(q) if q else []
+        query_vec = _embed_query(q) if q else []
     started = time.monotonic()
     fetches: list[str] = []
+    copied: list[list[dict]] = []      # the snapshot's rows with this query's similarity, built once
 
     def rows_for(r: str, loc: str, sk: str) -> list[dict]:
         fetched = time.monotonic()
-        rows = _rows_for(q, query_vec, include_unclaimed, candidate_rows,
-                         Constraints(r, loc, tuple(s.strip() for s in sk.split(",") if s.strip()),
-                                     industry, availability, experience_min))
-        fetches.append(f"{len(rows)} rows in {time.monotonic() - fetched:.1f}s")
+        if candidate_rows is None and not copied and (snap := card_cache.snapshot()) is not None:
+            q_unit = card_cache.unit(query_vec)
+            copied.append([{**row, "similarity": card_cache.dot(q_unit, row["unit"])} for row in snap.rows
+                           if include_unclaimed or row["claimed"]])
+        if copied:
+            # every pass scores the same copy: the scorer applies this pass's requirements exactly
+            rows = copied[0]
+        else:
+            rows = _rows_for(q, query_vec, include_unclaimed, candidate_rows,
+                             Constraints(r, loc, tuple(s.strip() for s in sk.split(",") if s.strip()),
+                                         industry, availability, experience_min))
+        fetches.append(f"{len(rows)} rows in {time.monotonic() - fetched:.1f}s{' (snapshot)' if copied else ''}")
         return rows
 
     def finish(found: list[dict]) -> list[dict]:
@@ -403,16 +431,19 @@ def _search_pass(
 
     results = []
     for row in rows:
-        card_data = row.get("card") or {}
-        try:
-            card = AgentProfileCard.model_validate(card_data)
-        except Exception:
-            continue
-        if row.get("handle"):
-            card.handle = row["handle"]
+        card = row.get("model")             # parsed once in the snapshot
+        if card is None:
+            try:
+                card = AgentProfileCard.model_validate(row.get("card") or {})
+            except Exception:
+                continue
+            if row.get("handle"):
+                card.handle = row["handle"]
         if not constraints.matches(card):
             continue
-        search_text = card_search_text(card).lower()
+        if "search_text" not in row:
+            row["search_text"] = card_search_text(card).lower()
+        search_text = row["search_text"]
         beacon = active_beacon(card)
         if beacon:
             search_text += " " + beacon.text.lower()

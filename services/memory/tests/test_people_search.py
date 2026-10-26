@@ -441,3 +441,12 @@ async def test_an_owner_searching_every_source_is_still_asked_for_the_company(wo
     with patch("app.services.people_search.people_discovery.lookup_cards", AsyncMock(return_value=([PARTIAL_NAME], None))):
         result = await run("chandan")
     assert any(w.startswith("name_needs_company") for w in result["warnings"])
+
+
+async def test_the_search_log_line_says_how_long_each_source_took(world, caplog):
+    import logging
+    world["cards"] = ([card("ada", 0.6)], None)
+    with caplog.at_level(logging.INFO, logger="app.services.people_search"):
+        await run()
+    line = next(r.getMessage() for r in caplog.records if "find_people search_id" in r.getMessage())
+    assert "ms_by_source=" in line and "cards:" in line.split("ms_by_source=")[1]

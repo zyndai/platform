@@ -232,12 +232,13 @@ def _log_search(searcher: Searcher, result: dict, stats: dict, seconds: float) -
     people = result.get("people") or []
     logger.info(
         "find_people search_id=%s who=%s intent=%s mode=%s searched=%s found=%s kept=%d strong=%s "
-        "quickenrich=%s warnings=%s ms=%d",
+        "quickenrich=%s warnings=%s ms=%d ms_by_source=%s",
         result.get("search_id"), "owner" if searcher.uid else "anonymous", result.get("intent") or "-",
         result.get("mode"), ",".join(result.get("searched") or []) or "-",
         ",".join(f"{k}:{v}" for k, v in sorted(stats.get("found", {}).items())) or "-", len(people),
         stats.get("strong", "-"), "yes" if "quickenrich" in (result.get("searched") or []) else "no",
-        ",".join(w.split(":")[0] for w in result.get("warnings") or []) or "-", seconds * 1000)
+        ",".join(w.split(":")[0] for w in result.get("warnings") or []) or "-", seconds * 1000,
+        ",".join(f"{k}:{v}" for k, v in sorted(stats.get("ms", {}).items())) or "-")
 
 
 async def _search(
@@ -313,14 +314,16 @@ async def _search(
 
     # Ask for more than `limit` from each source so merging and ranking have something to choose from.
     pool_size = max(min(limit * 2, 30), min(limit, 50))
+    timings = stats.setdefault("ms", {})
     people, searched_now, early_qe = await _retrieve(
-        pool, searcher, text, query, like_me, wanted, explicit, pool_size, limit, warnings, filters, search_id)
+        pool, searcher, text, query, like_me, wanted, explicit, pool_size, limit, warnings, filters, search_id,
+        timings=timings)
     searched |= searched_now
     stats["found"] = dict(Counter(src for p in people for src in p["sources"][:1]))
     people = _rank(people, query, searcher)
     people = await _fallback_quickenrich(
         people, text, query, early_qe, limit=limit, wanted=wanted, explicit=explicit, like_me=like_me,
-        searcher=searcher, searched=searched, warnings=warnings)
+        searcher=searcher, searched=searched, warnings=warnings, timings=timings)
 
     people = people_results.order_by_quality(people)[:limit]
     stats["strong"] = people_results.strong_count(people)
@@ -382,9 +385,20 @@ def _with_invites(people: list[dict], searcher: Searcher) -> list[dict]:
     return people_results.with_invites(people, searcher.uid, bool(searcher.uid) and searcher.invites)
 
 
+async def _timed(name: str, awaitable, timings: dict | None):
+    """Await it and note how long it took in timings[name] (milliseconds), for the search log."""
+    started = time.monotonic()
+    try:
+        return await awaitable
+    finally:
+        if timings is not None:
+            timings[name] = round((time.monotonic() - started) * 1000)
+
+
 async def _retrieve(
     pool: asyncpg.Pool, searcher: Searcher, text: str, query: TargetQuery, like_me: bool, wanted: set[str],
     explicit: set[str], pool_size: int, limit: int, warnings: list[str], filters: dict | None, search_id: str = "",
+    timings: dict | None = None,
 ) -> tuple[list[dict], set[str], "asyncio.Future | None"]:
     """Call every wanted source at once. Returns (people, sources searched, the early LinkedIn
     search when one was started, for _fallback_quickenrich to await or cancel)."""
@@ -402,7 +416,9 @@ async def _retrieve(
     early_qe = None
     if ("quickenrich" in wanted and not like_me and query.role and query.company_hint
             and (searcher.uid is not None or "quickenrich" in explicit)):
-        early_qe = asyncio.ensure_future(people_discovery.search_quickenrich(text, limit, query=query))
+        early_qe = asyncio.ensure_future(
+            _timed("quickenrich", people_discovery.search_quickenrich(text, limit, query=query), timings))
+    coros = {name: _timed(name, coro, timings) for name, coro in coros.items()}
     try:
         results = dict(zip(coros, await asyncio.gather(*coros.values(), return_exceptions=True)))
     except BaseException:
@@ -442,7 +458,7 @@ def _rank(people: list[dict], query: TargetQuery, searcher: Searcher) -> list[di
 async def _fallback_quickenrich(
     people: list[dict], text: str, query: TargetQuery, early_qe: "asyncio.Future | None", *, limit: int,
     wanted: set[str], explicit: set[str], like_me: bool, searcher: Searcher, searched: set[str],
-    warnings: list[str],
+    warnings: list[str], timings: dict | None = None,
 ) -> list[dict]:
     """LinkedIn is the fallback: when explicitly asked for, or (for a signed-in owner) when too few
     strong matches. An anonymous caller only ever gets it by naming it: it is a paid lookup."""
@@ -452,7 +468,8 @@ async def _fallback_quickenrich(
         if early_qe is not None:
             found, warning = await early_qe
         else:
-            found, warning = await people_discovery.search_quickenrich(text, limit, query=query)
+            found, warning = await _timed(
+                "quickenrich", people_discovery.search_quickenrich(text, limit, query=query), timings)
         if warning:
             warnings.append(warning)
         return people_results.merge_people(

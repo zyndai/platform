@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from datetime import datetime, timezone
 
 import config
@@ -80,6 +81,9 @@ def current_company(card: AgentProfileCard) -> str:
 def _skill_matches(wanted: str, skill_name: str) -> bool:
     """Match the requested topic with whole words; Go must never match Django."""
     return skill_matches(wanted, skill_name)
+
+
+SLOW_SEARCH_SECONDS = 3.0     # a search slower than this logs where its time went
 
 
 def _candidates(q: str, query_vec: list[float], include_unclaimed: bool) -> list[dict]:
@@ -170,17 +174,33 @@ def search_agents(
     skills = skills or ",".join(inferred_skills)
     if query_vec is None:
         query_vec = embed_text(q) if q else []
+    started = time.monotonic()
+    fetches: list[str] = []
+
     def rows_for(r: str, loc: str, sk: str) -> list[dict]:
-        return _rows_for(q, query_vec, include_unclaimed, candidate_rows,
+        fetched = time.monotonic()
+        rows = _rows_for(q, query_vec, include_unclaimed, candidate_rows,
                          Constraints(r, loc, tuple(s.strip() for s in sk.split(",") if s.strip()),
                                      industry, availability, experience_min))
+        fetches.append(f"{len(rows)} rows in {time.monotonic() - fetched:.1f}s")
+        return rows
+
+    def finish(found: list[dict]) -> list[dict]:
+        """A slow search says where its time went (one line, never the query), so a relaxed search that
+        outlasts its caller's timeout can be profiled from the server log instead of guessed at."""
+        elapsed = time.monotonic() - started
+        if elapsed > SLOW_SEARCH_SECONDS:
+            logger.warning("slow search: %.1fs over %d pass(es) [%s], relax=%s, filters=%s, embedded=%s",
+                           elapsed, len(fetches), "; ".join(fetches), relax, bool(role or location or skills),
+                           bool(query_vec))
+        return found[:limit]
 
     common = dict(q=q, query_vec=query_vec, industry=industry, availability=availability,
                   experience_min=experience_min, searcher=searcher, less_like=less_like, topics=topics,
                   want_role=role, want_location=location, want_skills=skills)
     results = _search_pass(rows=rows_for(role, location, skills), role=role, location=location, skills=skills, **common)
     if not relax or len(results) >= limit:
-        return results[:limit]
+        return finish(results)
 
     seen = {r["handle"] for r in results if r.get("handle")}
     for dropped, stage_role, stage_location, stage_skills, note in _relaxations(role, location, skills, keep_role):
@@ -194,7 +214,12 @@ def search_agents(
             r["relaxed"] = dropped
             r["match_reasons"] = [*r["match_reasons"], note]
             results.append(r)
-    return results[:limit]
+    return finish(results)
+
+
+def _a(noun: str) -> str:
+    """"a" or "an" for a role noun: "Not an investor", "Not a lawyer"."""
+    return "an" if noun[:1].lower() in "aeiou" else "a"
 
 
 def _relaxations(role: str, location: str, skills: str, keep_role: bool = False):
@@ -217,7 +242,7 @@ def _relaxations(role: str, location: str, skills: str, keep_role: bool = False)
         location = ""
     if role and not keep_role:
         dropped.append("role")
-        yield list(dropped), "", location, skills, f"Not a {role} (closest match)"
+        yield list(dropped), "", location, skills, f"Not {_a(role)} {role} (closest match)"
 
 
 # --- Scoring -------------------------------------------------------------------------------

@@ -27,6 +27,7 @@ from pydantic import AnyHttpUrl
 
 from urllib.parse import urlsplit
 
+from app import log_setup
 from app.auth import verify_access_meta
 from app.config import settings
 from app.models import Turn
@@ -907,6 +908,8 @@ if settings.feature_s09_mcp_clients:
 
     register_owner_tools(mcp, _uid)
     mcp.add_middleware(ScopeGate())
+
+log_setup.configure()
 
 _allowed_hosts = [
     h for h in (urlsplit(settings.mcp_public_base_url).hostname, "localhost", "127.0.0.1") if h

@@ -276,14 +276,15 @@ async def _search(
             pool, searcher, intent, limit=limit, wanted=wanted, warnings=warnings, search_id=search_id)
         stats["found"] = dict(Counter(src for p in people for src in p["sources"][:1]))
         exact = any(p["match_quality"] == "exact" for p in people)
-        if not intent.company and not exact:
-            # Without a company there is nothing to search LinkedIn with: the assistant should ask.
+        if not intent.company and not exact and "quickenrich" in wanted:
+            # Without a company there is nothing to search LinkedIn with: the assistant should ask. Not
+            # when LinkedIn is out of reach (the public tool, sources="cards"): the answer would change nothing.
             warnings.append("name_needs_company: ask which company they work at, then search again with it")
         if people:
             result = {
                 "target": target, "mode": "target", "intent": "name",
                 "parsed": {"name": intent.name, **({"company": intent.company} if intent.company else {})},
-                "people": _with_invites(people, searcher),
+                "people": _with_invites(people_results.cap_why(people), searcher),
                 "sources": sorted(wanted), "searched": sorted(name_searched),
             }
             if len(people) > 1:
@@ -305,7 +306,7 @@ async def _search(
         people = people_results.apply_preferences(
             people_results.merge_people([people_results.person_from_card(r) for r in found]), searcher.prefs)
         result = {"target": target, "mode": "group", "group_id": group_id, "parsed": _parsed(query),
-                  "people": people[:limit], "sources": ["group"], "searched": ["group"]}
+                  "people": people_results.cap_why(people[:limit]), "sources": ["group"], "searched": ["group"]}
         if warning:
             result["warnings"] = [warning]
         return result
@@ -323,7 +324,9 @@ async def _search(
 
     people = people[:limit]
     stats["strong"] = people_results.strong_count(people)
-    if not like_me:
+    if like_me:
+        people_results.cap_why(people)
+    else:
         for person in people:
             person["why"] = people_results.specific_why(person, query)
     note = people_results.label_quality(people)

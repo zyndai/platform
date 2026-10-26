@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
+from app import log_setup
 from app.auth import issue_personal_token, verify_access_meta
 from app.config import settings
 from app.db import close_pool, get_pool, init_pool
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI):
     await close_pool()
 
 
+log_setup.configure()
 app = FastAPI(title="ZYND", version="0.1.0", lifespan=lifespan)
 
 

@@ -92,7 +92,7 @@ def test_the_boost_is_explained_and_only_applies_with_a_searcher(corpus):
     assert plain["a"]["match_score"] == plain["b"]["match_score"]
     boosted = {r["handle"]: r for r in search_service.search_agents(
         q="AI investor", include_unclaimed=True, searcher=card("me", "Founder"))}
-    assert boosted["a"]["match_score"] == pytest.approx(plain["a"]["match_score"] + two_way.TWO_WAY_BOOST, abs=0.001)
+    assert boosted["a"]["match_score"] == pytest.approx(plain["a"]["match_score"] * (1 + two_way.TWO_WAY_BOOST), abs=0.001)
     assert any("Wants to meet people like you: Founders" in r for r in boosted["a"]["match_reasons"])
     assert boosted["b"]["match_score"] == plain["b"]["match_score"]
 

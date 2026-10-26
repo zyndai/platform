@@ -11,10 +11,16 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 
-STRONG_MATCH = 0.5
-ZYND_BONUS = 0.1          # also found by profile similarity: more likely the right person
-EXTERNAL_BASE = 0.3       # external results rank below any real Card match
-EXTERNAL_STEP = 0.01      # but keep the provider's order among themselves
+# Scores are 0..1 and mean the same for every source: Cards' own score (relevance x fit x quality,
+# services/cards-api/services/search.py), and for the other sources the same shape computed here:
+# source relevance x a source prior x fit to the asked role, topics and place.
+MULTI_SOURCE_BONUS = 0.05  # found by more than one source: the better score, a little higher
+ZYND_PRIOR = 0.9           # a Zynd profile match is a weaker signal than a Card match
+LINKEDIN_PRIOR = 0.8       # and LinkedIn a weaker one still, but it keeps the provider's order
+EXTERNAL_BASE = 0.6        # a provider's first result, before the prior and fit
+EXTERNAL_STEP = 0.02
+ZYND_SEM_FLOOR, ZYND_SEM_SPAN = 0.20, 0.40   # as SEM_FLOOR/SEM_SPAN in cards-api search.py
+FIT_ROLE_MISSING, FIT_TOPIC_MISSING, FIT_LOCATION_MISSING = 0.5, 0.8, 0.6
 MAX_WHY = 4
 
 
@@ -94,7 +100,7 @@ def person_from_zynd(row: dict, card: dict, card_url: str) -> dict:
                or ["Matches their Zynd profile"],
         "sources": ["zynd"],
         "claimed": card.get("claimed") is True,
-        "score": _score(row.get("similarity")),
+        "score": _score(max(0.0, min(1.0, ((row.get("similarity") or 0.0) - ZYND_SEM_FLOOR) / ZYND_SEM_SPAN)) * ZYND_PRIOR),
         "next_action": _next_action(handle, card.get("claimed") is True),
         "url": card_url,
         "skills": [],
@@ -117,7 +123,7 @@ def person_from_external(row: dict, index: int) -> dict:
         "claimed": False,
         # a re-ranked row carries its own score; otherwise keep the provider's order
         "score": _score(row["score"]) if isinstance(row.get("score"), (int, float))
-                 else round(max(EXTERNAL_BASE - EXTERNAL_STEP * index, 0.0), 3),
+                 else round(max(EXTERNAL_BASE - EXTERNAL_STEP * index, 0.0) * LINKEDIN_PRIOR, 3),
         "next_action": "view_profile",
         "url": row.get("linkedin_url") or "",
         "skills": [],
@@ -137,6 +143,7 @@ def _identity_keys(person: dict) -> list[str]:
 
 
 def _absorb(base: dict, other: dict) -> None:
+    new_source = any(src not in base["sources"] for src in other["sources"])
     for source in other["sources"]:
         if source not in base["sources"]:
             base["sources"].append(source)
@@ -155,10 +162,8 @@ def _absorb(base: dict, other: dict) -> None:
     if other.get("skills") and not base.get("skills"):
         base["skills"] = other["skills"]
     base["verified"] = sorted(set(base.get("verified") or []) | set(other.get("verified") or []))
-    if "zynd" in other["sources"] or "zynd" in base["sources"]:
-        base["score"] = round(min(max(base["score"], other["score"]) + ZYND_BONUS, 1.0), 3)
-    else:
-        base["score"] = max(base["score"], other["score"])
+    best = max(base["score"], other["score"])
+    base["score"] = round(min(best + (MULTI_SOURCE_BONUS if new_source else 0.0), 1.0), 3)
 
 
 def merge_people(people: list[dict]) -> list[dict]:
@@ -178,8 +183,95 @@ def merge_people(people: list[dict]) -> list[dict]:
     return sorted(merged, key=lambda p: (-p["score"], not p["claimed"], p["name"].lower()))
 
 
+def _words(text: str) -> set[str]:
+    return set(_WORD.findall((text or "").lower()))
+
+
+def _stem(word: str) -> str:
+    return word[:-1] if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")) else word
+
+
+def features(person: dict, query) -> dict:
+    """How well one person fits what was asked, whatever source found them. Each value is 0..1,
+    or None when that part was not asked: role_fit (their headline says it), topic_fit (share of
+    topics in their headline, skills or reasons) and location_fit."""
+    headline = {_stem(w) for w in _words(person.get("headline"))}
+    around = {_stem(w) for w in _words(" ".join([person.get("headline") or "", " ".join(person.get("skills") or []),
+                                                 " ".join(w for w in person.get("why") or [] if isinstance(w, str))]))}
+    role = {_stem(w) for w in _words(query.role_noun or query.role_label)} if query.role else set()
+    topics = [{_stem(w) for w in _words(t)} - {"a", "of", "the"} for t in query.topics]
+    place = {_stem(w) for w in _words(query.locality or query.location)}
+    out: dict = {"role_fit": None, "topic_fit": None, "location_fit": None}
+    if role:
+        out["role_fit"] = 1.0 if role <= headline else (0.9 if role <= around else 0.0)
+    if topics:
+        out["topic_fit"] = sum(1 for t in topics if t and t <= around) / len(topics)
+    if place:
+        out["location_fit"] = 1.0 if place <= {_stem(w) for w in _words(person.get("location"))} else 0.0
+    return out
+
+
+def fit_factor(feats: dict) -> float:
+    """The multiplier a missed requirement costs; 1.0 when everything asked was met."""
+    factor = 1.0
+    if feats["role_fit"] == 0.0:
+        factor *= FIT_ROLE_MISSING
+    if feats["topic_fit"] == 0.0:
+        factor *= FIT_TOPIC_MISSING
+    if feats["location_fit"] == 0.0:
+        factor *= FIT_LOCATION_MISSING
+    return factor
+
+
+def rescore(people: list[dict], query) -> list[dict]:
+    """Judge Zynd and LinkedIn people by the same fit as Cards judges its own (Cards' scores
+    already include it), so a LinkedIn investor can beat a weak Card and a Zynd member who is
+    not the role cannot."""
+    for person in people:
+        person["_features"] = feats = features(person, query)
+        if person["sources"] != ["card"]:
+            person["score"] = round(person["score"] * fit_factor(feats), 3)
+    return people
+
+
+STRONG_CARD = 0.5   # a Card's own score (cards-api search.py scale) for a good match
+
+
+def is_strong(person: dict) -> bool:
+    """A Card that passed every filter with a good score, or anyone who meets the asked role
+    (when one was asked) and a topic or the place."""
+    if "card" in person["sources"]:
+        return not person.get("relaxed") and person["score"] >= STRONG_CARD
+    f = person.get("_features") or {}
+    if f.get("role_fit") is not None and f["role_fit"] < 0.9:
+        return False
+    if f.get("topic_fit") is None and f.get("location_fit") is None:
+        return f.get("role_fit") is not None
+    return bool(f.get("topic_fit")) or bool(f.get("location_fit"))
+
+
 def strong_count(people: list[dict]) -> int:
-    return sum(1 for p in people if p["score"] >= STRONG_MATCH)
+    return sum(1 for p in people if is_strong(p))
+
+
+def label_quality(people: list[dict]) -> str:
+    """Set match_quality on each person (exact / close / loose), drop the working features, and
+    return a note when nobody matched exactly."""
+    for person in people:
+        f = person.pop("_features", None) or {}
+        asked = [v for v in f.values() if v is not None]
+        missed = sum(1 for v in asked if v == 0.0)
+        if person.get("match_quality") == "exact":
+            continue
+        if not missed and not person.get("relaxed"):
+            person["match_quality"] = "exact"
+        elif missed + len(person.get("relaxed") or []) <= 1:
+            person["match_quality"] = "close"
+        else:
+            person["match_quality"] = "loose"
+    if people and not any(p["match_quality"] == "exact" for p in people):
+        return "No exact matches; these are the closest."
+    return ""
 
 
 _WORD = __import__("re").compile(r"[a-z0-9][a-z0-9+#.-]*")

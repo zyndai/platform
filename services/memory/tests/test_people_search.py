@@ -70,7 +70,7 @@ async def test_one_list_of_people_with_one_shape(world):
     assert not {"zynd_users", "cards", "quickenrich"} & set(result)     # the three source lists are gone
     ada, sam = result["people"]
     assert set(ada) == {"handle", "name", "headline", "location", "why", "sources", "claimed", "score",
-                        "next_action", "url", "skills", "linkedin_url", "verified"}
+                        "next_action", "url", "skills", "linkedin_url", "verified", "match_quality"}
     assert (ada["handle"], ada["next_action"], ada["claimed"]) == ("ada", "connect", True)
     assert (sam["next_action"], sam["claimed"]) == ("view_profile", False)   # nobody to connect to yet
     assert result["parsed"]["role"] == "investor" and result["parsed"]["country_code"] == "IN"
@@ -93,7 +93,7 @@ async def test_a_zynd_member_and_their_card_are_one_person(world):
     result = await run()
     (ada,) = result["people"]
     assert sorted(ada["sources"]) == ["card", "zynd"]
-    assert ada["score"] == 0.8                                   # best of the two + the agreement bonus
+    assert ada["score"] == 0.65                                  # best of the two + the agreement bonus
     assert ada["why"] == ["Matches your search terms"]          # a blurry Zynd hit adds no generic reason
 
 
@@ -212,7 +212,7 @@ def test_linkedin_key_normalizes_profile_urls():
 def test_merge_orders_by_score_then_claimed_and_keeps_external_below_cards():
     people = pr.merge_people([
         pr.person_from_external({"name": "Ext", "linkedin_url": "https://linkedin.com/in/e"}, 0),
-        pr.person_from_card(card("low", 0.35)),
+        pr.person_from_card(card("low", 0.5)),
         pr.person_from_card(card("high", 0.9)),
     ])
     assert [p["name"] for p in people] == ["High", "Low", "Ext"]

@@ -20,7 +20,9 @@ from services import match_prefs, network, search as search_service, trust
 logger = logging.getLogger(__name__)
 
 MAX_PER_USER = 10
-STRONG_MATCH = 0.5
+# On search.py's score scale (relevance x fit x quality): a good match is 0.7+, a plausible one
+# 0.4-0.6. Alerts email people, so they wait for a good one.
+STRONG_MATCH = 0.6
 MAX_NOTIFY_PER_SEARCH = 3
 MAX_SEEN = 200
 RUN_BATCH = 500

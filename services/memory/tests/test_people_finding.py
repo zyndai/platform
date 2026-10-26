@@ -157,7 +157,7 @@ def test_person_from_external_uses_the_rank_score_and_location():
     person = pr.person_from_external({"name": "A", "title": "Investor", "company": "X", "linkedin_url": "u",
                                       "location": "Pune, India", "score": 0.5}, 7)
     assert person["score"] == 0.5 and person["location"] == "Pune, India"
-    assert pr.person_from_external({"name": "A"}, 2)["score"] == 0.28
+    assert pr.person_from_external({"name": "A"}, 2)["score"] == 0.448
 
 
 # ── 0.8 cache ────────────────────────────────────────────────────────────────────

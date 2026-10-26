@@ -86,7 +86,7 @@ async def _zynd_people(
                 floor = ZYND_MIN_SCORE_FACT if per_fact else ZYND_MIN_SCORE_AVG
                 # Kept only if Cards also found them (see the filter in find). No generic reason
                 # either: "Matches their Zynd profile" says nothing the person's presence does not.
-                person["_weak"] = person["score"] < floor
+                person["_weak"] = (row.get("similarity") or 0.0) < floor
                 if not per_fact:
                     person["why"] = []
             people.append(person)
@@ -259,6 +259,7 @@ async def find(
         else:
             people.extend(outcome)
 
+    people = people_results.rescore(people, query)
     people = people_results.apply_preferences(people_results.merge_people(people), prefs)
     # A Zynd hit below the floor stays only when Cards found the same person.
     people = [p for p in people if not (p.get("_weak") and p["sources"] == ["zynd"])]
@@ -279,11 +280,16 @@ async def find(
         if warning:
             warnings.append(warning)
         people = people_results.merge_people(
-            people + [people_results.person_from_external(r, i) for i, r in enumerate(found)])
+            people + people_results.rescore(
+                [people_results.person_from_external(r, i) for i, r in enumerate(found)], query))
     elif early_qe is not None:
         early_qe.cancel()
 
-    people = people_results.with_invites(people[:limit], uid, settings.feature_invite_to_claim)
+    people = people[:limit]
+    note = people_results.label_quality(people)
+    if note and "note" not in extra and not like_me:
+        extra["note"] = note
+    people = people_results.with_invites(people, uid, settings.feature_invite_to_claim)
     result = {
         "target": target,
         "mode": "like_me" if like_me else "target",

@@ -11,6 +11,18 @@ def test_golden_queries_meet_the_targets():
     assert summary["recall_at_5"] >= targets["recall_at_5"], (summary, misses)
 
 
+def test_no_non_investor_outranks_an_investor_on_an_investor_query():
+    """Phase 1 gate: on queries that ask for an investor, whoever is not one (the corpus names its
+    investors inv_*) only ever follows every investor in the results."""
+    results = search_golden.evaluate()
+    roles = {q["target"]: q["role"] for q in search_golden.load()["queries"]}
+    for r in results:
+        if roles[r.target] != "investor":
+            continue
+        kinds = [h.startswith("inv_") for h in r.top]
+        assert kinds == sorted(kinds, reverse=True), (r.target, r.top)
+
+
 def test_fixture_labels_point_at_real_cards():
     doc = search_golden.load()
     handles = {c["handle"] for c in doc["cards"]}
@@ -50,6 +62,8 @@ def test_memorys_real_parameters_surface_the_right_people():
     misses = []
     with patch.object(search_service.config, "get_supabase", lambda: sb), \
          patch.object(search_service, "embed_text", search_golden.hash_embed), \
+         patch.object(search_service, "SEM_FLOOR", search_golden.HASH_SEM_FLOOR), \
+         patch.object(search_service, "SEM_SPAN", search_golden.HASH_SEM_SPAN), \
          patch.object(search_service.cards_service, "list_published_rows", lambda **kw: rows):
         for case in json.loads(path.read_text())["cases"]:
             p = case["params"]

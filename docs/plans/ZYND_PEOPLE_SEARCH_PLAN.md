@@ -1,7 +1,7 @@
 # ZYND People Search, Suggestions & Recommendations Plan
 
 > **Status:** proposed 2026-10-26. **Phase 0 is implemented on `dev`** (see "Phase 0 as built" below), enabled
-> with no flag (AGENTS.md §9: no new env vars). Phases 1–3 are not started.
+> with no flag (AGENTS.md §9: no new env vars). **Phase 1 is implemented** (see "Phase 1 as built"). Phases 2–3 are not started.
 >
 > **Builds on** [`ZYND_MEMORY_QUALITY_PLAN.md`](./ZYND_MEMORY_QUALITY_PLAN.md) Part B (F1–F9, A1–A8), which
 > shipped behind flags (see its §17). This plan does not redo that work. It fixes what Part B left broken
@@ -465,6 +465,28 @@ a 60s TTL. Measure p95 before and after on prod-size data; the target is under 8
 
 **Phase 1 is done when** golden precision@5 is ≥ 10 points above the Phase 0 baseline, no
 non-investor scores above any investor on the investor golden queries, and p95 hasn't regressed.
+
+#### Phase 1 as built (2026-10-27)
+
+- **1.1 Cards scorer.** `relevance × fit × quality` in `cards-api/services/search.py` (constants and reasoning
+  in its comment block). Fit is judged against what the caller asked for, so a relaxed result that missed a
+  dropped requirement scores lower. Words answered by a met constraint count as found, and a met constraint gives
+  relevance a floor (`MET_RELEVANCE` 0.4). The 0.25 floor applies to relevance×quality, except a result that is not
+  the asked role must clear it with the role penalty counted. `verified` is applied in memory's re-rank, not Cards.
+  `SEM_FLOOR/SEM_SPAN` are the plan's 0.20/0.40, **not yet fitted** on real cosines (run `scripts/bench_search.py`).
+- **Golden set.** 29 old-shape queries moved from `skills` to `topics` + `relax` (what memory sends). Precision@5 and
+  recall@5: 0.790 (Phase 0) → 0.993; CI floor 0.95. The harness rescales the hash embedder's cosines
+  (`HASH_SEM_*`). New: investor-ordering gate, monotonicity, filter-superset tests.
+- **Saved-search alerts** use `STRONG_MATCH = 0.6` on the new scale (chosen from the golden distribution; check on real data).
+- **1.2–1.5 Memory re-rank.** `people_results`: Zynd scores are the rescaled cosine × 0.9, LinkedIn 0.8 × provider
+  order; both × the fit factor (`features`/`rescore`) for role, topics and place. `ZYND_BONUS` and `STRONG_MATCH` are
+  gone: two sources add 0.05; `is_strong` = a Card that passed every filter with score ≥ 0.5, or anyone meeting the
+  role and a topic or the place. Every person gets `match_quality`; the response gets a `note` when none is exact.
+  The `why` text is still each source's own; the "at most 3 specific reasons" rewrite is **not done**.
+- **1.6 Speed.** Migration `cards/0030_filter_cards.sql` (`cards.filter_cards`, a superset pre-filter; cards-api
+  applies the exact rules and falls back to the full scan if the function is missing). **Not applied to aafo: a human
+  must apply it** (README steps), then compare p95 with `scripts/bench_search.py`.
+- **Deploy order:** apply 0030 (optional, falls back), cards-api, then memory.
 
 ### Phase 2: Suggestions on the same pipeline (~1–2 weeks; schema needs a human)
 

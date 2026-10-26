@@ -105,12 +105,19 @@ def test_relax_stops_as_soon_as_there_are_enough(cards):
     assert handles(q="investor", role="investor", location="Pune", limit=3, relax=True) == ["inv0", "inv1", "inv2"]
 
 
-def test_relax_drops_skills_first_and_the_role_last(cards):
-    cards += [_card("designer", headline="Product designer and rust fan", location="Pune")]
+def test_relax_drops_skills_first(cards):
+    cards += [_card("backend", headline="Backend engineer", location="Pune", summary="Writes rust on weekends")]
     found = run(q="rust", role="engineer", location="Pune", skills="rust", relax=True)
-    assert [r["handle"] for r in found] == ["designer"]
-    assert found[0]["relaxed"] == ["skills", "location", "role"]
-    assert any("Not a engineer" in r for r in found[0]["match_reasons"])
+    assert [r["handle"] for r in found] == ["backend"]
+    assert found[0]["relaxed"] == ["skills"]
+    assert any("Skill filter relaxed" in r for r in found[0]["match_reasons"])
+
+
+def test_a_card_that_is_not_the_role_needs_real_evidence_to_survive_the_last_relaxation(cards):
+    """Dropping the role is the loosest step: a designer who only shares the city and one word is
+    not a result (the score floor counts the missing role), unlike a near-miss on place or skills."""
+    cards += [_card("designer", headline="Product designer and rust fan", location="Pune")]
+    assert run(q="rust", role="engineer", location="Pune", skills="rust", relax=True) == []
 
 
 def test_a_country_filter_matches_a_city_only_card(cards):

@@ -570,10 +570,13 @@ async def find_people(
 
     Cards is the people index. Each result is one person:
       handle, name, headline, location, why (why they matched), sources, claimed,
-      score, url, and next_action:
+      score, match_quality (exact | close | loose), url, and next_action:
         connect          — a claimed Card: call request_card_connection(target_handle=handle)
         invite_to_claim  — no claimed Card yet: call invite_to_claim(invite_ref=...) (only offered when enabled)
         view_profile     — nothing to act on; url is their public page or LinkedIn
+    When the response has a `note` saying nothing matched exactly, call the people "the closest
+    matches" and say what differs (match_quality and `relaxed` show it); never present a loose
+    match as an exact one.
     LinkedIn people are searched only when too few strong matches were found (or when sources
     names "quickenrich"). Contact details are never in results; they are shared once a
     connection is accepted.

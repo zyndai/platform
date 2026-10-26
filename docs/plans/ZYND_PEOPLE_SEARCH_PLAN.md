@@ -847,6 +847,23 @@ Found and **not fixed** (each is a decision for a person):
 
 **Deploy order:** cards-api, then memory, then cards-web. No migration.
 
+#### Deploy test (2026-10-26)
+
+Run read-only against dev and prod after deploy: cards-api, memory (anonymous MCP and a signed-in `find_people`) and
+cards-web are all on the new code on both. What it found:
+
+- **Relaxed searches timed out on prod** (3 of 3: `cards_unavailable`, LinkedIn-only answers; 5 s on dev, 6-12 s on prod,
+  against memory's 8 s). Fixed in `e7c91df`: a timed-out relaxed search is retried once without loosening and flagged
+  `cards_slow`. The relaxed search itself is still slow; Cards now logs where a slow search spent its time.
+- **Contradictory reasons on closest matches**: "Investor (on their profile)" next to "Not a investor", "Role match" next
+  to it, and the loosening reason missing for anyone with several approved facts. Fixed: the loosening reason no longer counts
+  as evidence of the role, reasons are kept whole (8) until the best three are chosen, "Role match" is never shown, "an investor".
+- **The company question for callers that cannot use it**: the public tool and a Cards-only search no longer say
+  `name_needs_company`.
+- Not fixed: LinkedIn results for the investor query are flat-scored and include consulting and healthcare "partners";
+  the provider's places are sometimes doubled ("Bengaluru, India, India") or wrong ("Palo Alto, India"); the corpus has no
+  investors. Not testable from outside: V14 and V15 (database), the browser behaviour of V16, V11/V12/E3 (secrets).
+
 ---
 
 ## 7. Testing
@@ -915,10 +932,10 @@ coding session does not have. Run them in this order, and record each result her
 | # | Check | How | Pass when | Result |
 |---|---|---|---|---|
 | V1 | Migration 0030 applied | `db:migrate --project cards --yes` | applied 2026-10-27, `cards.filter_cards` exists | ✅ done |
-| V2 | Speed before and after | `cd services/cards-api && python scripts/bench_search.py` (read-only; needs SUPABASE_* and an OpenAI key). Run on the old deploy, then the new | p95 of filtered searches under 800 ms, and not worse than before | open |
+| V2 | Speed before and after | `cd services/cards-api && python scripts/bench_search.py` (read-only; needs SUPABASE_* and an OpenAI key). Run on the old deploy, then the new | p95 of filtered searches under 800 ms, and not worse than before | **measured from outside, not met**: a basic search is about 2.6-2.9 s on dev (3-5 s prod), a relaxed one about 5 s (6-12 s prod), against a 0.6 s round trip. Server-side profiling still open; Cards now logs a `slow search` line (over 3 s) with each pass's rows and time |
 | V3 | Fit the semantic constants | The same script prints the top and 50th-ranked scores. Take the real cosine of related and unrelated query/card pairs, and set `SEM_FLOOR`/`SEM_SPAN` in `cards-api/services/search.py` and `ZYND_SEM_*` in `people_results.py` so related text is about 1.0 and unrelated about 0. Re-run the golden set | golden precision@5 and recall@5 still ≥ 0.95 | open |
 | V4 | Saved-search alert threshold | Run `saved_searches._strong` read-only for every active saved search with the old (0.5, old scorer) and new (0.6, new scorer) rules, and compare how many alerts each would send. Adjust `STRONG_MATCH` in `saved_searches.py` until the volume is about the same and each alert is a person you would call a good match | alert count within ±20% of the old one, spot-checked by a person | open |
-| V5 | The "done when" checks of Phase 0 against live dev | "chandan", "Chandan Kumar", "chandan from zynd" return `chandan-kumar-2en8` first; the investor query has no Grievance/Relations/Communications titles, at least 90% of LinkedIn results have a URL and a location | all hold | open |
+| V5 | The "done when" checks of Phase 0 against live dev | "chandan", "Chandan Kumar", "chandan from zynd" return `chandan-kumar-2en8` first; the investor query has no Grievance/Relations/Communications titles, at least 90% of LinkedIn results have a URL and a location | all hold | **partly verified 2026-10-26, dev and prod**: the three names return `chandan-kumar-2en8` first; no Grievance/Relations titles; but 4 of 5 LinkedIn results had a URL (80%, the bar is 90%) and the corpus has no investors, so the query only returns closest matches |
 | V6 | The 20 real queries | Run a fixed list of 20 real queries on dev (include the Chandan and investor ones and "people like me" for three test accounts), compare with prod by hand, using the new `note`, `match_quality` and `why` | no result worse than prod; every `why` is specific | open |
 | V7 | `FEATURE_FACT_MATCHING` in prod | Human decision (section 8), after `FEATURE_FACT_FAMILIES` is on | flipped after V5 and V6 | open |
 | V8 | cards-web | Open `/search` and `/directory` on dev: scores display sensibly on the new scale, `relaxed` shows | looks right | open |
@@ -926,10 +943,10 @@ coding session does not have. Run them in this order, and record each result her
 | V10 | Migration 0031 applied | `db:migrate --project cards --yes` | applied by a maintainer (first run: `applied: 0030; pending: 0031`, then applied; second dry run: `applied: 0031; pending: none`); `cards.card_suggestions` and `cards.card_suggestion_impressions` exist | ✅ done (first refresh: see "Left for the end") |
 | V11 | Phase 2 "done when" | `cd services/cards-api && python scripts/check_suggestions.py` (read-only; embeds each target) | 0 exclusion violations; digest rotation ≥ 60%; every card that could get a two-way suggestion gets one | open |
 | V12 | Owner home and digest on dev | Open `/home` on dev: "People to meet" shows, Hide / Not relevant remove a person and they stay gone after reload; a digest preview (`?dry_run=true&handle=`) shows reasons and the feedback links | looks right | open |
-| V13 | Public MCP on dev | `search_people("chandan")`, a name with a company, an explicit `location`, and a long free-text query on `/cards-public-mcp`; then the memory log | "chandan" first; `intent` is `name`; no LinkedIn call (log line says `who=anonymous` and `quickenrich=no`); the explicit location is strict | open |
+| V13 | Public MCP on dev | `search_people("chandan")`, a name with a company, an explicit `location`, and a long free-text query on `/cards-public-mcp`; then the memory log | "chandan" first; `intent` is `name`; no LinkedIn call (log line says `who=anonymous` and `quickenrich=no`); the explicit location is strict | **verified 2026-10-26 on dev and prod** (anonymous): "chandan" first and read as a name, old keys kept plus `match_quality`, strict explicit filter, claimed-only default, "Kubernetes" a topic. The `who=anonymous quickenrich=no` log line needs a server read (the log now reaches the logs) |
 | V14 | A connection from a search is recorded | On dev, `find_people`, then `request_card_connection` to a result; read `cards.card_events` | one `search_result_action` row with the `search_id`, `rank`, `source` and `connection_id`; `people_search:last:<uid>` exists in Redis with a 24 h TTL | open |
 | V15 | The funnel queries on aafo | Run the five named queries in `docs/cards/s04-funnel.sql` (read-only) after a day of traffic | rows for `memory`, `web` and `mcp`; no error | open |
-| V16 | cards-web labels and links | `/search` and `/directory` on dev: "Strong match" / "Good match" show, the mobile pill does not cover the name, and after opening a profile the address no longer holds `sid` and `r` | looks right | open |
+| V16 | cards-web labels and links | `/search` and `/directory` on dev: "Strong match" / "Good match" show, the mobile pill does not cover the name, and after opening a profile the address no longer holds `sid` and `r` | looks right | **partly verified 2026-10-26, dev and prod**: labels and `sid`/`r` links on `/search` and `/directory` (HTML), no percentage, profile renders with a good or garbage `sid`, the cleanup code is in the deployed JS. The address cleanup and the mobile label still need a browser |
 | V17 | `outside-people` on dev | The digest preview and owner home for an owner who wants Investors: outside people carry a location and none has a "Grievance" or "Relations" title | all hold | open |
 
 Deploy order for everything above: cards-api, then memory.

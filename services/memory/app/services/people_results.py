@@ -23,7 +23,9 @@ EXTERNAL_BASE = 0.6        # a provider's first result, before the prior and fit
 EXTERNAL_STEP = 0.02
 ZYND_SEM_FLOOR, ZYND_SEM_SPAN = 0.20, 0.40   # as SEM_FLOOR/SEM_SPAN in cards-api search.py
 FIT_ROLE_MISSING, FIT_TOPIC_MISSING, FIT_LOCATION_MISSING = 0.5, 0.8, 0.6
-MAX_WHY = 4
+MAX_WHY = 8              # reasons kept per person while merging: the one that says what was loosened comes
+                         # late in Cards' list and must survive until specific_why picks what to show
+SHOWN_WHY = 4            # reasons shown where nothing picks the best (people like me, a group)
 MAX_SPECIFIC_WHY = 3
 
 
@@ -203,8 +205,11 @@ def features(person: dict, query) -> dict:
     or None when that part was not asked: role_fit (their headline says it), topic_fit (share of
     topics in their headline, skills or reasons) and location_fit."""
     headline = {_stem(w) for w in _words(person.get("headline"))}
+    # What the person is about. A reason that says what was LOOSENED ("Not an investor (closest match)")
+    # is about the search, not the person: counting it made a non-investor look like one.
+    reasons = [w for w in person.get("why") or [] if isinstance(w, str) and not w.lower().startswith(_RELAXED_WHY)]
     around = {_stem(w) for w in _words(" ".join([person.get("headline") or "", " ".join(person.get("skills") or []),
-                                                 " ".join(w for w in person.get("why") or [] if isinstance(w, str))]))}
+                                                 " ".join(reasons)]))}
     role = {_stem(w) for w in _words(query.role_noun or query.role_label)} if query.role else set()
     topics = [{_stem(w) for w in _words(t)} - {"a", "of", "the"} for t in query.topics]
     place = {_stem(w) for w in _words(query.locality or query.location)}
@@ -271,8 +276,9 @@ def rescore(people: list[dict], query) -> list[dict]:
     return people
 
 
-_GENERIC_WHY = ("matches your search terms", "strong overall match", "matches their zynd profile", "approved fact", "found on linkedin")
-_RELAXED_WHY = ("not in ", "not a ", "skill filter relaxed", "similar to people you asked")
+_GENERIC_WHY = ("matches your search terms", "strong overall match", "matches their zynd profile", "approved fact",
+                "found on linkedin", "role match")      # "role match" is Cards' word for the role found anywhere on the card
+_RELAXED_WHY = ("not in ", "not a ", "not an ", "skill filter relaxed", "similar to people you asked")
 
 
 def specific_why(person: dict, query) -> list[str]:
@@ -352,6 +358,13 @@ def label_quality(people: list[dict]) -> str:
 
 
 _WORD = __import__("re").compile(r"[a-z0-9][a-z0-9+#.-]*")
+
+
+def cap_why(people: list[dict]) -> list[dict]:
+    """At most SHOWN_WHY reasons each, for results nothing ranked the reasons of (specific_why does)."""
+    for person in people:
+        person["why"] = list(person.get("why") or [])[:SHOWN_WHY]
+    return people
 
 
 def apply_preferences(people: list[dict], prefs: dict) -> list[dict]:

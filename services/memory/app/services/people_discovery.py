@@ -138,6 +138,9 @@ def _age_phrase(days: object) -> str:
     return f" ({days // 30} months ago)"
 
 
+RAW_WHY_LIMIT = 8   # Cards lists what was loosened last, after any approved facts: do not cut it off
+
+
 def _why(reasons: object) -> list[str]:
     """Cards' match_reasons are strings or {"type": "memory", "text": ...}; show both as text."""
     out: list[str] = []
@@ -151,7 +154,7 @@ def _why(reasons: object) -> list[str]:
         text = _public_text(text, 120)
         if text and text not in out:
             out.append(text)
-    return out[:4]
+    return out[:RAW_WHY_LIMIT]
 
 
 # Filters a caller (the public MCP) may pass through to Cards unchanged. role, location and skills
@@ -200,6 +203,18 @@ def cards_search_params(
     return params
 
 
+CARDS_TIMEOUT_SECONDS = 8.0
+CARDS_SLOW_WARNING = ("cards_slow: Cards answered slowly, so only exact matches are shown; "
+                      "looser matches were skipped")
+
+
+async def _cards_get(url: str, params: dict) -> object:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(CARDS_TIMEOUT_SECONDS)) as client:
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def search_cards(
     target: str, limit: int, *, query: TargetQuery | None = None, as_handle: str = "",
     less_like: list[str] | None = None, include_unclaimed: bool = True, extra: dict | None = None,
@@ -211,21 +226,29 @@ async def search_cards(
         return [], None
     query = query or parse_target_heuristic(q)
     url = f"{settings.cards_api_base_url.rstrip('/')}/v1/agents/search"
+    params = cards_search_params(
+        q, limit, query, as_handle, less_like, include_unclaimed=include_unclaimed, extra=extra,
+        search_id=search_id, via=via)
+    slow = False
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
-            resp = await client.get(url, params=cards_search_params(
-                q, limit, query, as_handle, less_like, include_unclaimed=include_unclaimed, extra=extra,
-                search_id=search_id, via=via))
-            resp.raise_for_status()
-            payload = resp.json()
+        try:
+            payload = await _cards_get(url, params)
+        except httpx.TimeoutException as exc:
+            if params.get("relax") != "true":
+                raise
+            # A relaxed search is up to four passes in Cards and can outlast the timeout when Cards
+            # is busy; its first pass (the exact matches) alone is quick, and better than nothing.
+            logger.warning("find_people cards search timed out (%s); retrying without relaxing", type(exc).__name__)
+            payload = await _cards_get(url, {k: v for k, v in params.items() if k != "relax"})
+            slow = True
     except Exception as exc:
-        logger.warning("find_people cards search failed: %s", exc)
+        logger.warning("find_people cards search failed: %s %s", type(exc).__name__, exc)
         return [], "cards_unavailable"
     rows = payload.get("results") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         return [], "cards_unavailable"
 
-    return shape_cards(rows, limit), None
+    return shape_cards(rows, limit), CARDS_SLOW_WARNING if slow else None
 
 
 async def lookup_cards(
@@ -238,7 +261,7 @@ async def lookup_cards(
         return [], None
     url = f"{settings.cards_api_base_url.rstrip('/')}/v1/agents/lookup"
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(CARDS_TIMEOUT_SECONDS)) as client:
             params = {"name": name[:100], "limit": max(1, min(limit, 10)),
                       "include_unclaimed": "true" if include_unclaimed else "false"}
             if search_id:
@@ -249,7 +272,7 @@ async def lookup_cards(
             resp.raise_for_status()
             payload = resp.json()
     except Exception as exc:
-        logger.warning("find_people cards lookup failed: %s", exc)
+        logger.warning("find_people cards lookup failed: %s %s", type(exc).__name__, exc)
         return [], "cards_unavailable"
     rows = payload.get("results") if isinstance(payload, dict) else None
     if not isinstance(rows, list):

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 
-from app.services.people_query import title_filters
+from app.services.people_query import CITIES, title_filters
 
 # Scores are 0..1 and mean the same for every source: Cards' own score (relevance x fit x quality,
 # services/cards-api/services/search.py), and for the other sources the same shape computed here:
@@ -218,11 +218,23 @@ def features(person: dict, query) -> dict:
         out["role_fit"] = 1.0 if role <= headline else (0.9 if role <= around else 0.0)
         if "linkedin" in (person.get("sources") or ()):
             out["role_fit"] = _linkedin_role_fit(person, query)
-    if topics:
+    # A LinkedIn record has a title and a company, nothing that says what the person works on, so
+    # its topic fit is unknown, not missed (the request already asked the company's About text).
+    if topics and "linkedin" not in (person.get("sources") or ()):
         out["topic_fit"] = sum(1 for t in topics if t and t <= around) / len(topics)
     if place:
-        out["location_fit"] = 1.0 if place <= {_stem(w) for w in _words(person.get("location"))} else 0.0
+        out["location_fit"] = 1.0 if (place <= {_stem(w) for w in _words(person.get("location"))}
+                                      or _in_country(person.get("location") or "", query)) else 0.0
     return out
+
+
+def _in_country(location: str, query) -> bool:
+    """A country was asked ("in India") and the person names one of its cities ("Pune", "Gurgaon"):
+    most cards give a city, not a country."""
+    if query.locality or not query.country_code:
+        return False
+    low = f" {' '.join(_words(location))} "
+    return any(code == query.country_code and f" {city} " in low for city, (_, code) in CITIES.items())
 
 
 def _headline_names_role(person: dict, query) -> bool:
@@ -239,18 +251,25 @@ def _linkedin_title(person: dict) -> str:
     return (person.get("headline") or "").split(" at ", 1)[0]
 
 
+PARTIAL_ROLE = 0.5   # a broad title ("Principal") at a company that does not look like the role's kind
+
+
 def _linkedin_role_fit(person: dict, query) -> float:
     """A LinkedIn person was found by title: "Venture Partner" is an investor although the title
-    never says "investor". Judge the title by the same include and exclude words the request used,
-    or by the role noun itself; a title with an excluded word ("Investor Grievance Officer") is
-    another job whatever else it says."""
-    include, exclude = title_filters(query)
-    title = _linkedin_title(person).lower()
-    if any(w.lower() in title for w in exclude):
-        return 0.0
+    never says "investor". Judge the title by the same include and exclude words the request used
+    (people_discovery.title_strength): 1 for a title that is the role, PARTIAL_ROLE for a broad one
+    at a company that does not look like a fund, 0 for another job ("Investor Grievance Officer")."""
+    from app.services.people_discovery import BROAD_TITLE, title_strength
+
+    title = _linkedin_title(person)
+    company = (person.get("headline") or "").split(" at ", 1)[1] if " at " in (person.get("headline") or "") else ""
+    strength = title_strength({"title": title, "company": company}, query)
+    if strength >= 1.0:
+        return 1.0
     role = {_stem(w) for w in _words(query.role_noun or query.role_label)}
-    says_role = role <= {_stem(w) for w in _words(title)}
-    return 1.0 if says_role or any(w.lower() in title for w in include) else 0.0
+    if role and role <= {_stem(w) for w in _words(title)} and strength > 0:
+        return 1.0
+    return PARTIAL_ROLE if strength == BROAD_TITLE else 0.0
 
 
 def fit_factor(feats: dict) -> float:
@@ -295,7 +314,7 @@ def specific_why(person: dict, query) -> list[str]:
         if text and text not in out:
             out.append(text)
 
-    if feats["role_fit"] is not None and feats["role_fit"] > 0 and query.role_label:
+    if feats["role_fit"] is not None and feats["role_fit"] >= 0.9 and query.role_label:
         where = ("headline" if _headline_names_role(person, query) else "title") if feats["role_fit"] >= 1 \
             else "on their profile"
         add(f"{query.role_label.title()} ({where})")
@@ -337,21 +356,50 @@ def strong_count(people: list[dict]) -> int:
     return sum(1 for p in people if is_strong(p))
 
 
-def label_quality(people: list[dict]) -> str:
-    """Set match_quality on each person (exact / close / loose), drop the working features, and
-    return a note when nobody matched exactly."""
+QUALITY_ORDER = {"exact": 0, "close": 1, "loose": 2}
+# A score never says more than its label: an assistant reads 0.84 as strong whatever match_quality says.
+LOOSE_CEILING = 0.45      # below STRONG_CARD, so a loose match never counts as strong
+CLOSE_CEILING = 0.79
+
+
+def _quality(person: dict) -> str:
+    if person.get("match_quality") == "exact":          # set by the name lookup
+        return "exact"
+    feats = person.get("_features") or {}
+    relaxed = person.get("relaxed") or []
+    role_fit = feats.get("role_fit")
+    if role_fit == 0.0 or "role" in relaxed:
+        return "loose"          # not the kind of person asked for is never a close match
+    # what was missed or loosened, each once: a loosened place the person also is not in is one miss
+    missed = {name.removesuffix("_fit").replace("topic", "topics") for name, v in feats.items() if v == 0.0}
+    missed |= set(relaxed)
+    partial = role_fit is not None and role_fit < 0.9
+    if not missed and not partial:
+        return "exact"
+    if len(missed) + partial <= 1:
+        return "close"
+    return "loose"
+
+
+def order_by_quality(people: list[dict]) -> list[dict]:
+    """Set match_quality (exact / close / loose) on each person, cap the score to what the label
+    allows, and order exact before close before loose, then by score. Run before the list is cut to
+    `k`, so a close LinkedIn investor is never dropped for a loose Card that scored higher."""
     for person in people:
-        f = person.pop("_features", None) or {}
-        asked = [v for v in f.values() if v is not None]
-        missed = sum(1 for v in asked if v == 0.0)
-        if person.get("match_quality") == "exact":
-            continue
-        if not missed and not person.get("relaxed"):
-            person["match_quality"] = "exact"
-        elif missed + len(person.get("relaxed") or []) <= 1:
-            person["match_quality"] = "close"
-        else:
-            person["match_quality"] = "loose"
+        person["match_quality"] = quality = _quality(person)
+        ceiling = LOOSE_CEILING if quality == "loose" else CLOSE_CEILING if quality == "close" else 1.0
+        person["score"] = round(min(person["score"], ceiling), 3)
+    # stable: within a tier and score, the order the caller had (merge's claimed-then-name, or a provider's)
+    return sorted(people, key=lambda p: (QUALITY_ORDER[p["match_quality"]], -p["score"]))
+
+
+def label_quality(people: list[dict]) -> str:
+    """Make sure every person has a match_quality, drop the working features, and return a note when
+    nobody matched exactly."""
+    for person in people:
+        if person.get("match_quality") not in QUALITY_ORDER:
+            person["match_quality"] = _quality(person)
+        person.pop("_features", None)
     if people and not any(p["match_quality"] == "exact" for p in people):
         return "No exact matches; these are the closest."
     return ""

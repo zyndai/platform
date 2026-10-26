@@ -93,8 +93,9 @@ async def test_a_zynd_member_and_their_card_are_one_person(world):
     result = await run()
     (ada,) = result["people"]
     assert sorted(ada["sources"]) == ["card", "zynd"]
-    assert ada["score"] == 0.65                                  # best of the two + the agreement bonus
-    assert ada["why"] == ["Investor (headline)"]                # specific: no generic reason from either source
+    # best of the two + the agreement bonus: the Zynd side (0.9) wins now that "Pune" counts as in India
+    assert ada["score"] == 0.95
+    assert ada["why"] == ["Investor (headline)", "Pune"]        # specific: no generic reason from either source
 
 
 async def test_every_zynd_result_is_resolved_to_a_card_handle_or_dropped(world):
@@ -440,3 +441,12 @@ async def test_an_owner_searching_every_source_is_still_asked_for_the_company(wo
     with patch("app.services.people_search.people_discovery.lookup_cards", AsyncMock(return_value=([PARTIAL_NAME], None))):
         result = await run("chandan")
     assert any(w.startswith("name_needs_company") for w in result["warnings"])
+
+
+async def test_the_search_log_line_says_how_long_each_source_took(world, caplog):
+    import logging
+    world["cards"] = ([card("ada", 0.6)], None)
+    with caplog.at_level(logging.INFO, logger="app.services.people_search"):
+        await run()
+    line = next(r.getMessage() for r in caplog.records if "find_people search_id" in r.getMessage())
+    assert "ms_by_source=" in line and "cards:" in line.split("ms_by_source=")[1]

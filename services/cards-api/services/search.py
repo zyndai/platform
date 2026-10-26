@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 import config
 from models.card import AgentProfileCard
 from services import cards as cards_service
-from services import geo
-from services.embed import card_search_text, embed_text
+from services import card_cache, geo
+from services.embed import card_search_text, describes_person, embed_text
 from services.search_constraints import SKILL_ALIASES, Constraints, explicit_query_constraints, skill_key, skill_matches
 from services.two_way import TWO_WAY_BOOST, kinds_of, too_much_like, two_way_match
 from services.search_text import (
@@ -16,10 +16,14 @@ from services.search_text import (
     contains_all,
     location_terms,
     location_tokens,
+    phrase_score,
     query_terms,
     role_matches,
     role_tokens,
+    term_sequence,
     token_set,
+    topic_phrases,
+    topic_terms,
 )
 
 logger = logging.getLogger(__name__)
@@ -84,6 +88,25 @@ def _skill_matches(wanted: str, skill_name: str) -> bool:
 
 
 SLOW_SEARCH_SECONDS = 3.0     # a search slower than this logs where its time went
+QUERY_VECTOR_TTL_SECONDS = 600.0    # memory retries a timed-out search, assistants repeat a query: embed once
+QUERY_VECTOR_CACHE = 512
+_query_vectors: dict[str, tuple[float, list[float]]] = {}
+
+
+def _embed_query(q: str) -> list[float]:
+    """q's embedding, reused for QUERY_VECTOR_TTL_SECONDS. Oldest entries go first when full."""
+    now = time.monotonic()
+    hit = _query_vectors.get(q)
+    if hit and now - hit[0] < QUERY_VECTOR_TTL_SECONDS:
+        return hit[1]
+    vec = embed_text(q)
+    if vec:
+        if len(_query_vectors) >= QUERY_VECTOR_CACHE:
+            oldest = sorted(list(_query_vectors.items()), key=lambda kv: kv[1][0])   # a copy: other threads write too
+            for key, _ in oldest[: QUERY_VECTOR_CACHE // 4]:
+                _query_vectors.pop(key, None)
+        _query_vectors[q] = (now, vec)
+    return vec
 
 
 def _candidates(q: str, query_vec: list[float], include_unclaimed: bool) -> list[dict]:
@@ -173,16 +196,25 @@ def search_agents(
     location = location or inferred_location
     skills = skills or ",".join(inferred_skills)
     if query_vec is None:
-        query_vec = embed_text(q) if q else []
+        query_vec = _embed_query(q) if q else []
     started = time.monotonic()
     fetches: list[str] = []
+    copied: list[list[dict]] = []      # the snapshot's rows with this query's similarity, built once
 
     def rows_for(r: str, loc: str, sk: str) -> list[dict]:
         fetched = time.monotonic()
-        rows = _rows_for(q, query_vec, include_unclaimed, candidate_rows,
-                         Constraints(r, loc, tuple(s.strip() for s in sk.split(",") if s.strip()),
-                                     industry, availability, experience_min))
-        fetches.append(f"{len(rows)} rows in {time.monotonic() - fetched:.1f}s")
+        if candidate_rows is None and not copied and (snap := card_cache.snapshot()) is not None:
+            q_unit = card_cache.unit(query_vec)
+            copied.append([{**row, "similarity": card_cache.dot(q_unit, row["unit"])} for row in snap.rows
+                           if include_unclaimed or row["claimed"]])
+        if copied:
+            # every pass scores the same copy: the scorer applies this pass's requirements exactly
+            rows = copied[0]
+        else:
+            rows = _rows_for(q, query_vec, include_unclaimed, candidate_rows,
+                             Constraints(r, loc, tuple(s.strip() for s in sk.split(",") if s.strip()),
+                                         industry, availability, experience_min))
+        fetches.append(f"{len(rows)} rows in {time.monotonic() - fetched:.1f}s{' (snapshot)' if copied else ''}")
         return rows
 
     def finish(found: list[dict]) -> list[dict]:
@@ -389,7 +421,7 @@ def _search_pass(
     q_terms = query_terms(q)
     # Topic words only ever add to a card's relevance: they are not part of the query's coverage
     # (an unmatched topic would dilute it) and never a requirement.
-    topic_terms = [t for t in query_terms(topics.replace(",", " ")) if t not in q_terms]
+    topics_scored = topic_phrases(topics, {c for t in q_terms for c in topic_terms(t)})
     constraints = Constraints(role, location, tuple(s.strip() for s in skills.split(",") if s.strip()), industry, availability, experience_min)
     skill_list = [s.strip() for s in want_skills.split(",") if s.strip()] if want_skills else []
     industry_norm = _norm(industry)
@@ -399,21 +431,25 @@ def _search_pass(
 
     results = []
     for row in rows:
-        card_data = row.get("card") or {}
-        try:
-            card = AgentProfileCard.model_validate(card_data)
-        except Exception:
-            continue
-        if row.get("handle"):
-            card.handle = row["handle"]
+        card = row.get("model")             # parsed once in the snapshot
+        if card is None:
+            try:
+                card = AgentProfileCard.model_validate(row.get("card") or {})
+            except Exception:
+                continue
+            if row.get("handle"):
+                card.handle = row["handle"]
         if not constraints.matches(card):
             continue
-        search_text = card_search_text(card).lower()
+        if "search_text" not in row:
+            row["search_text"] = card_search_text(card).lower()
+        search_text = row["search_text"]
         beacon = active_beacon(card)
         if beacon:
             search_text += " " + beacon.text.lower()
         text_tokens = token_set(search_text)
         facts = live_facts(card.zynd_memory)
+        about = [f for f in facts if describes_person(f)]      # not what they are looking for
         reasons: list = []
 
         # relevance: meaning and words
@@ -432,7 +468,7 @@ def _search_pass(
             # An approved fact earns lexical credit in proportion to how much of the query it
             # alone covers, so one shared word no longer counts as a full match.
             matched_memory = []
-            for fact in facts:
+            for fact in about:
                 blob = token_set(fact_object(fact))
                 covered = len([t for t in q_terms if t in blob]) / len(q_terms) if blob else 0.0
                 if covered:
@@ -453,13 +489,15 @@ def _search_pass(
                 lex = max(lex, BEACON_LEX)
                 reasons.insert(0, "Current beacon: " + beacon.text)
         topic = 0.0
-        if topic_terms:
-            topic_hits = [t for t in topic_terms if t in text_tokens]
-            if topic_hits:
-                reasons.append("Mentions " + ", ".join(topic_hits))
-            fact_cover = max((len([t for t in topic_terms if t in token_set(fact_object(f))]) / len(topic_terms)
-                              for f in facts), default=0.0)
-            topic = max(len(topic_hits) / len(topic_terms), fact_cover)
+        if topics_scored:
+            text_seq = term_sequence(search_text)
+            fact_seqs = [term_sequence(fact_object(f)) for f in about]
+            per_topic = [max([phrase_score(text_seq, terms), *(phrase_score(fs, terms) for fs in fact_seqs)])
+                         for _, terms in topics_scored]
+            found = [label for (label, _), got in zip(topics_scored, per_topic) if got >= 1.0]
+            if found:
+                reasons.append("Mentions " + ", ".join(found))
+            topic = sum(per_topic) / len(per_topic)
         # fit: how well the card meets each constraint the caller asked for
         fit = 1.0
         role_missing = False
@@ -469,7 +507,7 @@ def _search_pass(
                 reasons.append(card.identity.headline or "Role match")      # the strongest role signal
                 fit *= FIT_ROLE_HEADLINE
                 met.update(query_terms(want_role))
-            elif role_matches(role_tokens(search_text), want_role) or constraints.role:
+            elif role_matches(role_tokens(search_text), want_role, activities=False) or constraints.role:
                 # mentioned elsewhere on the card (work history, an approved fact)
                 reasons.append("Role match")
                 fit *= FIT_ROLE_ELSEWHERE
@@ -506,7 +544,7 @@ def _search_pass(
             # "investors in India" is answered by an investor in Gurgaon: words a met constraint
             # covers count as found even when the card's text does not repeat them.
             lex = max(lex, len(set(q_terms) & (met | {t for t in q_terms if t in text_tokens})) / len(q_terms))
-        relevance = relevance_score(sem, lex, topic, bool(q_terms or query_vec), bool(topic_terms))
+        relevance = relevance_score(sem, lex, topic, bool(q_terms or query_vec), bool(topics_scored))
         if met:
             relevance = max(relevance, MET_RELEVANCE)
 

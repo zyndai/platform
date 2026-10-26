@@ -1,4 +1,5 @@
-"""Recommend published ZYND cards with overlapping profile interests."""
+"""The card vocabulary suggestions read (KEYWORDS, canonical_keyword) and the outside (LinkedIn)
+step of suggestions. Who to suggest is decided in services/suggestions.py."""
 from __future__ import annotations
 
 import logging
@@ -8,8 +9,6 @@ import httpx
 
 import config
 from models.card import AgentProfileCard
-from services import cards as cards_service
-from services.two_way import kinds_of, two_way_match
 
 logger = logging.getLogger(__name__)
 
@@ -92,17 +91,6 @@ def canonical_keyword(field: str, value: str) -> str | None:
     return _CANON.get(field, {}).get(normalized) or _ALIASES.get(field, {}).get(normalized)
 
 
-def _card_interests(card: AgentProfileCard) -> dict[str, set[str]]:
-    return {
-        field: {
-            canonical
-            for value in (getattr(card, field) or [])
-            if (canonical := canonical_keyword(field, value))
-        }
-        for field in FIELDS
-    }
-
-
 _TITLE_FOR = {
     "Founders": "Founder",
     "Investors": "Investor",
@@ -153,23 +141,21 @@ def _linkedin_key(url: str) -> str:
     return f"{host}{path}" if host else ""
 
 
-def outside_search_requests(card: AgentProfileCard) -> list[dict]:
-    """Filters for the external people search: job titles from who the card wants to meet,
-    company keywords from what they work on, both near where the card owner is. No country is
-    assumed; a card with no location searches everywhere."""
-    interests = _card_interests(card)
-    titles = [_TITLE_FOR[k] for k in KEYWORDS["connect_with"] if k in interests["connect_with"]][:2]
-    keywords = list(dict.fromkeys(
-        _KEYWORD_FOR[k]
-        for field in ("working_on", "love_talking_about")
-        for k in KEYWORDS[field]
-        if k in interests[field] and k in _KEYWORD_FOR
-    ))[:2]
+def outside_search_requests(card: AgentProfileCard, targets: list | None = None) -> list[dict]:
+    """Filters for the external people search, one request per kind of person the owner wants to
+    meet (a job title, plus what the owner works on as company keywords), near where the owner
+    is. With no such kind, one request by keywords alone. No country is assumed; a card with no
+    location searches everywhere."""
+    from services.suggest_targets import owner_topics, targets_for
+
+    targets = targets_for(card) if targets is None else targets
     location = (card.identity.location or "").strip()
-    requests = []
-    if titles:
-        requests.append({"titles": titles, "keywords": [], "location": location, "limit": 4})
-    if keywords:
+    keywords = owner_topics(card)[:2]
+    requests = [
+        {"titles": [_TITLE_FOR[t.kind]], "keywords": keywords, "location": location, "limit": 4}
+        for t in targets if t.kind in _TITLE_FOR
+    ]
+    if not requests and keywords:
         requests.append({"titles": [], "keywords": keywords, "location": location, "limit": 4})
     return requests
 
@@ -179,13 +165,19 @@ def _shape_outside(record: dict) -> dict | None:
     name = str(record.get("name") or "").strip()
     if not url and not name:
         return None
-    return {
+    person = {
         "name": name,
         "title": str(record.get("title") or "").strip(),
         "company": str(record.get("company") or "").strip(),
         "linkedin_url": url,
         "source": "quickenrich",
     }
+    # Memory ranks outside people with the same fit as any search: where they are, and why them.
+    if location := str(record.get("location") or "").strip():
+        person["location"] = location[:80]
+    if reasons := [r.strip()[:120] for r in record.get("why") or [] if isinstance(r, str) and r.strip()][:3]:
+        person["why"] = reasons
+    return person
 
 
 def _outside_people(request: dict) -> list[dict]:
@@ -217,36 +209,75 @@ def outside_search_enabled() -> bool:
     return bool(config.MEMORY_LAYER_URL and config.MEMORY_SERVICE_TOKEN)
 
 
-def search_outside(card: AgentProfileCard, _taken: set[str]) -> list[dict]:
+OUTSIDE_PER_REQUEST = 2       # people kept from one external request
+MAX_OUTSIDE = 2               # people not on Zynd yet that one owner is shown
+ZYND_LINKEDIN_TTL = 600       # seconds the set of LinkedIn profiles already on Zynd is reused
+_zynd_linkedin: tuple[float, set[str]] = (float("-inf"), set())     # never read yet: not fresh, whatever the uptime
+
+
+def search_outside(card: AgentProfileCard, taken: set[str], limit: int | None = None) -> list[dict]:
+    """Up to OUTSIDE_PER_REQUEST new people from each request, skipping LinkedIn profiles in
+    `taken`; stops asking once it has `limit` (each request is a paid lookup)."""
     if not outside_search_enabled():
         return []
     out = []
-    seen = set()
+    seen = set(taken)
     for request in outside_search_requests(card):
+        if limit is not None and len(out) >= limit:
+            break
+        added = 0
         for person in _outside_people(request):
-            url = person.get("linkedin_url") or ""
-            key = url or person.get("name")
+            key = _linkedin_key(person.get("linkedin_url") or "") or person.get("name")
             if not key or key in seen:
                 continue
             seen.add(key)
             out.append(person)
-            break
-    return out
+            added += 1
+            if added >= OUTSIDE_PER_REQUEST:
+                break
+    return out if limit is None else out[:limit]
 
 
-def _public_person(card: AgentProfileCard, handle: str, matched: dict[str, list[str]],
-                   two_way: bool = False) -> dict:
-    return {
-        "handle": handle,
-        "name": card.identity.name,
-        "headline": card.identity.headline,
-        "location": card.identity.location,
-        "avatar_url": card.identity.avatar_url,
-        "url": f"{config.SITE_BASE_URL.rstrip('/')}/p/{handle}",
-        "match_score": sum(map(len, matched.values())),
-        "matched_fields": matched,
-        "two_way": two_way,
-    }
+def _zynd_linkedin_keys() -> set[str]:
+    """LinkedIn profiles that already have a published Zynd card, reused for ZYND_LINKEDIN_TTL so
+    a digest run doesn't read every card once per owner."""
+    global _zynd_linkedin
+    import time
+
+    at, keys = _zynd_linkedin
+    if time.monotonic() - at < ZYND_LINKEDIN_TTL:
+        return keys
+    from services import cards as cards_service
+    keys = set()
+    for row in cards_service.list_published_rows(columns="card"):
+        links = ((row.get("card") or {}).get("identity") or {}).get("links") or {}
+        if key := _linkedin_key(links.get("linkedin") or ""):
+            keys.add(key)
+    _zynd_linkedin = (time.monotonic(), keys)
+    return keys
+
+
+def outside_for(card: AgentProfileCard, people: list[dict]) -> list[dict]:
+    """People not on Zynd yet, for an owner with too few Zynd suggestions: at most MAX_OUTSIDE,
+    never someone whose LinkedIn is already on a Zynd card."""
+    if not outside_search_enabled():
+        return []
+    taken = {_card_linkedin_key(card)} - {""}
+    taken |= {k for p in people if (k := _linkedin_key(p.get("linkedin_url") or ""))}
+    try:
+        taken |= _zynd_linkedin_keys()
+    except Exception as exc:  # noqa: BLE001 — dedupe against Zynd is best effort
+        logger.info("outside dedupe failed: %s", exc)
+    from services import invites
+
+    can_invite = invites.enabled()
+    outside = search_outside(card, taken, limit=MAX_OUTSIDE)
+    for person in outside:
+        person.setdefault("source", "quickenrich")
+        person["label"] = "Not on Zynd yet"
+        # A2: the owner can invite them to claim a card (POST /network/invites) from owner home.
+        person["invitable"] = can_invite and bool(person.get("linkedin_url"))
+    return outside
 
 
 def _card_linkedin_key(card: AgentProfileCard) -> str:
@@ -255,53 +286,8 @@ def _card_linkedin_key(card: AgentProfileCard) -> str:
 
 
 def get_suggested_people(handle: str) -> dict | None:
-    requester = cards_service.get_card_by_handle(handle)
-    if not requester:
-        return None
-    interests = _card_interests(requester)
-    requester_kinds = kinds_of(requester)
-    if not any(interests.values()):
-        return {"handle": handle, "people": [], "outside": []}
+    """{handle, people, outside} for the public suggested-people route: the owner's suggestions
+    (services/suggestions.py), without the digest cooldown. None when there is no such card."""
+    from services import suggestions
 
-    results = []
-    taken = set()
-    if key := _card_linkedin_key(requester):
-        taken.add(key)
-    rows = cards_service.list_published_rows(columns="card,handle")
-    for row in rows:
-        candidate_handle = row.get("handle")
-        if not candidate_handle or candidate_handle == handle:
-            continue
-        try:
-            candidate = AgentProfileCard.model_validate(row.get("card") or {})
-        except Exception:
-            continue
-        if key := _card_linkedin_key(candidate):
-            taken.add(key)
-        candidate_interests = _card_interests(candidate)
-        matched = {
-            field: sorted(interests[field] & candidate_interests[field], key=str.casefold)
-            for field in FIELDS
-        }
-        matched = {field: words for field, words in matched.items() if words}
-        if matched:
-            candidate.handle = candidate_handle
-            results.append(_public_person(
-                candidate, candidate_handle, matched, bool(two_way_match(requester_kinds, candidate))))
-
-    # People who also want to meet someone like the requester come first (the digest leads with them).
-    results.sort(key=lambda person: (not person["two_way"], -person["match_score"], person["handle"].casefold()))
-    outside = []
-    if outside_search_enabled():
-        for person in search_outside(requester, taken):
-            url = person.get("linkedin_url") or ""
-            key = _linkedin_key(url)
-            if key and key in taken:
-                continue
-            if key:
-                taken.add(key)
-            person.setdefault("source", "quickenrich")
-            outside.append(person)
-            if len(outside) == 2:
-                break
-    return {"handle": handle, "people": results[:2], "outside": outside}
+    return suggestions.for_owner(handle, "api", k=2)

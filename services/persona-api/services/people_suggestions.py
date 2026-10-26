@@ -428,11 +428,9 @@ def run_for_user(user_id: str, *, manual: bool = False) -> dict:
         matched = entry["recipes"]
         primary = min(matched, key=lambda k: priority.get(k, 99))
         person = entry["person"]
-        score = (
-            len(matched) * 1.0
-            + (0.5 if person.get("has_email") else 0)
-            + (0.25 if person.get("has_phone") else 0)
-        )
+        # Relevance only: how many recipes found this person. Whether they have an email or a
+        # phone says they can be reached, not that they are worth meeting (people search plan R15).
+        score = len(matched) * 1.0
         grouped.setdefault(primary, []).append((key, person, score))
 
     rows_out: list[dict] = []

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,8 @@ import config
 from services import cards, events, zynd_mcp, zynd_memory
 from services.card_view import expires_at, fact_predicate, _parse_ts
 from services.completeness import completeness
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PREFS = {"weekly_digest": True, "email_nudges": False, "morning_digest": True}
 
@@ -225,6 +228,23 @@ def possible_duplicates(email: str, row: dict) -> list[dict]:
     return matches
 
 
+HOME_PEOPLE = 4
+
+
+def suggested_people(row: dict, *, record: bool = True) -> dict:
+    """People to meet on owner home (services/suggestions.py). Best effort: a failure shows none."""
+    from services import suggestions
+
+    try:
+        people = suggestions.for_owner_row(row, "owner_home", HOME_PEOPLE)
+    except Exception as exc:  # noqa: BLE001 — suggestions must never break owner home
+        logger.info("owner home suggestions failed handle=%s err=%s", row.get("handle"), exc)
+        return {"people": [], "outside": []}
+    if record:
+        suggestions.record_impressions(row.get("id") or "", "owner_home", people["people"])
+    return {"people": people["people"], "outside": people["outside"]}
+
+
 async def status(email: str, *, persist: bool = True) -> dict | None:
     row = await asyncio.to_thread(current_row, email)
     if row is None:
@@ -265,7 +285,8 @@ async def status(email: str, *, persist: bool = True) -> dict | None:
     nudges = await asyncio.to_thread(persist_nudges, email, card, pending, matches=matches) if persist else nudge_candidates(card, pending, matches=matches)
     from services.visitor_privacy import named_visitors
     visitors = await asyncio.to_thread(named_visitors, card.handle, email)
-    return {"visitors": visitors, "handle": card.handle, "name": card.identity.name, "card_id": card.id,
+    people = await asyncio.to_thread(suggested_people, row, record=persist)
+    return {"visitors": visitors, "suggestions": people, "handle": card.handle, "name": card.identity.name, "card_id": card.id,
             "completeness": completeness(card), "inbox_count": pending, "intro_inbox_count": intro_pending,
             "connection": {"memory_connected": connected, "assistants_available": False},
             "sources": [{"platform": s.platform, "scraped_at": s.scraped_at,

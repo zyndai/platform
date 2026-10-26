@@ -7,14 +7,17 @@ from models.card import AgentProfileCard
 from services import cards as cards_service
 from services import geo
 from services.embed import card_search_text, embed_text
-from services.search_constraints import Constraints, explicit_query_constraints, skill_matches
-from services.two_way import LESS_LIKE_PENALTY, TWO_WAY_BOOST, kinds_of, too_much_like, two_way_match
+from services.search_constraints import SKILL_ALIASES, Constraints, explicit_query_constraints, skill_key, skill_matches
+from services.two_way import TWO_WAY_BOOST, kinds_of, too_much_like, two_way_match
 from services.search_text import (
+    _LOCATION_ALIASES,
+    ROLE_SYNONYMS,
     contains_all,
     location_terms,
     location_tokens,
     query_terms,
     role_matches,
+    role_tokens,
     token_set,
 )
 
@@ -22,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 # Per source (vector + full text) candidates handed to the Python scorer.
 CANDIDATES_PER_SOURCE = 200
+# Most cards cards.filter_cards may return for a filtered search. Reaching it means the filter
+# was too broad to trust (a truncated list could drop a match), so the search reads every card.
+FILTERED_ROWS_LIMIT = 2000
 
 
 def _parse_embedding(raw) -> list[float]:
@@ -60,6 +66,15 @@ def _age_days(fact: dict) -> int | None:
     if approved is None:
         return None
     return max((datetime.now(timezone.utc) - approved).days, 0)
+
+
+def current_company(card: AgentProfileCard) -> str:
+    """The company of the card's newest LinkedIn role, or "" when unknown."""
+    for job in card.work_experience or []:
+        company = str((job or {}).get("company") or "").strip() if isinstance(job, dict) else ""
+        if company and company.upper() != "N/A":
+            return company
+    return ""
 
 
 def _skill_matches(wanted: str, skill_name: str) -> bool:
@@ -128,6 +143,8 @@ def search_agents(
     candidate_rows: list[dict] | None = None,
     topics: str = "",
     relax: bool = False,
+    keep_role: bool = False,
+    query_vec: list[float] | None = None,
 ) -> list[dict]:
     """Score published cards against a query.
 
@@ -140,28 +157,37 @@ def search_agents(
     relax=True keeps the role, location and skills as requirements first, then, while fewer than
     `limit` cards qualify, drops them one at a time: skills, then a city widened to its country,
     then the location, then the role. Cards found by a looser pass always rank below those found
-    by a stricter one and say what was relaxed (`relaxed`, plus a match reason)."""
+    by a stricter one and say what was relaxed (`relaxed`, plus a match reason). keep_role=True
+    never drops the role (suggestions: "investors" must stay investors).
+
+    query_vec is q's embedding when the caller already has it (suggestions embed each target once
+    per refresh, not once per card)."""
     q_terms = query_terms(q)
     if q and not q_terms and not any((role, location, skills, industry, availability, experience_min is not None)):
         return []   # "who is in the": nothing to look for, and embedding it would match noise
     inferred_location, inferred_skills = explicit_query_constraints(q)
     location = location or inferred_location
     skills = skills or ",".join(inferred_skills)
-    query_vec = embed_text(q) if q else []
-    rows = _rows_for(q, query_vec, include_unclaimed, candidate_rows,
-                     Constraints(role, location, tuple(s.strip() for s in skills.split(",") if s.strip()),
-                                 industry, availability, experience_min).active)
-    common = dict(q=q, query_vec=query_vec, rows=rows, industry=industry, availability=availability,
-                  experience_min=experience_min, searcher=searcher, less_like=less_like, topics=topics)
-    results = _search_pass(role=role, location=location, skills=skills, **common)
+    if query_vec is None:
+        query_vec = embed_text(q) if q else []
+    def rows_for(r: str, loc: str, sk: str) -> list[dict]:
+        return _rows_for(q, query_vec, include_unclaimed, candidate_rows,
+                         Constraints(r, loc, tuple(s.strip() for s in sk.split(",") if s.strip()),
+                                     industry, availability, experience_min))
+
+    common = dict(q=q, query_vec=query_vec, industry=industry, availability=availability,
+                  experience_min=experience_min, searcher=searcher, less_like=less_like, topics=topics,
+                  want_role=role, want_location=location, want_skills=skills)
+    results = _search_pass(rows=rows_for(role, location, skills), role=role, location=location, skills=skills, **common)
     if not relax or len(results) >= limit:
         return results[:limit]
 
     seen = {r["handle"] for r in results if r.get("handle")}
-    for dropped, stage_role, stage_location, stage_skills, note in _relaxations(role, location, skills):
+    for dropped, stage_role, stage_location, stage_skills, note in _relaxations(role, location, skills, keep_role):
         if len(results) >= limit:
             break
-        for r in _search_pass(role=stage_role, location=stage_location, skills=stage_skills, **common):
+        for r in _search_pass(rows=rows_for(stage_role, stage_location, stage_skills),
+                              role=stage_role, location=stage_location, skills=stage_skills, **common):
             if r.get("handle") in seen:
                 continue
             seen.add(r.get("handle"))
@@ -171,7 +197,7 @@ def search_agents(
     return results[:limit]
 
 
-def _relaxations(role: str, location: str, skills: str):
+def _relaxations(role: str, location: str, skills: str, keep_role: bool = False):
     """(dropped, role, location, skills, reason) for each looser pass, each also loosened as the
     ones before it were."""
     dropped: list[str] = []
@@ -189,42 +215,161 @@ def _relaxations(role: str, location: str, skills: str):
             dropped.append("location")
         yield list(dropped), role, "", skills, f"Not in {location} (closest match)"
         location = ""
-    if role:
+    if role and not keep_role:
         dropped.append("role")
         yield list(dropped), "", location, skills, f"Not a {role} (closest match)"
 
 
+# --- Scoring -------------------------------------------------------------------------------
+#
+# score = relevance x fit x quality, each in 0..1, so a score means the same thing for every
+# query and a requested constraint that a card misses costs it a fixed share instead of nothing.
+#
+#   relevance  how well the card's text answers the query: 60% meaning (embedding cosine
+#              rescaled from its useful range), 40% words (query terms on the card, or the best
+#              approved fact), plus a little for topic guesses. A search with no query terms is
+#              all filters, so every card that passes them is equally relevant.
+#   fit        the product, over the constraints the caller asked for, of how well the card meets
+#              each (FIT_*). Only relaxed passes can miss one: a strict pass already dropped them.
+#   quality    0.85..1.0 for a claimed owner and a current approved fact; x TWO_WAY_BOOST when the
+#              card wants to meet the searcher's kind, x LESS_LIKE_FACTOR for "less like this".
+#              Memory adds "verified" in its own re-rank, where trust data is already at hand.
+#
+# The constants start from the plan (docs/plans/ZYND_PEOPLE_SEARCH_PLAN.md 1.1). SEM_FLOOR/SEM_SPAN
+# are the cosine range of text-embedding-3-small for related text; re-fit them on a sample of real
+# query/card cosines (the golden set embeds with a hash, so it cannot calibrate them).
+SEM_FLOOR, SEM_SPAN = 0.20, 0.40
+W_SEM, W_LEX, W_TOPIC = 0.6, 0.4, 0.15
+MET_RELEVANCE = 0.4                # a card that meets a requested role, place or skill is a real candidate
+BEACON_LEX = 0.8                    # a current broadcast that names a query term
+FIT_ROLE_HEADLINE, FIT_ROLE_ELSEWHERE, FIT_ROLE_MISSING = 1.0, 0.9, 0.5
+FIT_LOCATION_MET, FIT_LOCATION_COUNTRY, FIT_LOCATION_MISSING = 1.0, 0.85, 0.6
+FIT_SKILL_MISSING = 0.7
+QUALITY_BASE, QUALITY_CLAIMED, QUALITY_FRESH = 0.85, 0.075, 0.075
+LESS_LIKE_FACTOR = 0.7
+MIN_SCORE = 0.25                    # a text query's results below this are noise
+
+
+def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    return max(lo, min(hi, x))
+
+
+def semantic_score(cosine: float | None) -> float:
+    """Embedding cosine rescaled so related text is 0..1 (unrelated text is near SEM_FLOOR)."""
+    return _clamp(((cosine or 0.0) - SEM_FLOOR) / SEM_SPAN)
+
+
+def relevance_score(sem: float, lex: float, topic: float, has_query: bool, has_topics: bool) -> float:
+    if has_query:
+        base = W_SEM * sem + W_LEX * lex
+    else:
+        base = 0.5 + 0.5 * topic if has_topics else 1.0
+    return _clamp(base + (W_TOPIC * topic if has_query else 0.0))
+
+
+def quality_score(claimed: bool, freshness: float) -> float:
+    """freshness is 0..1: how current the card's best approved fact is."""
+    return QUALITY_BASE + QUALITY_CLAIMED * bool(claimed) + QUALITY_FRESH * _clamp(freshness)
+
+
+def _squash(text: str) -> str:
+    """The form cards.filter_cards compares in: lower case, only letters, digits, + and #."""
+    return "".join(ch for ch in (text or "").lower() if ch.isalnum() and ch.isascii() or ch in "+#")
+
+
+def _fragments(*words: str) -> list[str]:
+    return list(dict.fromkeys(f for f in (_squash(w) for w in words) if f))
+
+
+def filter_groups(role: str, location: str, skills: tuple[str, ...]) -> tuple[list, list, list]:
+    """(role groups, location fragments, skill groups) for cards.filter_cards: every spelling the
+    exact rules in Constraints.matches could accept, so the database only drops cards they would."""
+    role_groups = []
+    for term in query_terms(role):
+        words = [term, *sorted(ROLE_SYNONYMS.get(term, ()))]
+        if term == "founder":
+            words.append("is_founder_of")           # an approved fact makes someone a founder
+        role_groups.append(_fragments(*words))
+    skill_groups = []
+    for wanted in skills:
+        for term in query_terms(skill_key(wanted)):
+            skill_groups.append(_fragments(term, *(k for k, v in SKILL_ALIASES.items() if v == term)))
+    place: list[str] = []
+    for term in location_terms(location):
+        place += [term, *(alias for alias, canonical in _LOCATION_ALIASES.items() if canonical == term)]
+    place += geo.spellings_in_country(location)
+    return role_groups, _fragments(*place), skill_groups
+
+
+def _filtered_rows(
+    query_vec: list[float], include_unclaimed: bool, role: str, location: str, skills: tuple[str, ...],
+) -> list[dict] | None:
+    """Rows that could pass these constraints, from the database (cards.filter_cards), with
+    similarity already computed; None when the function is missing or too much came back."""
+    role_groups, place, skill_groups = filter_groups(role, location, skills)
+    args = {"p_role": role_groups, "p_location": place, "p_skills": skill_groups,
+            "include_unclaimed": include_unclaimed, "match_count": FILTERED_ROWS_LIMIT}
+    if query_vec:
+        args["query_embedding"] = query_vec
+    try:
+        rows = config.get_supabase().rpc("filter_cards", args).execute().data or []
+    except Exception as exc:  # noqa: BLE001 — migration 0030 not applied yet: read every card instead
+        logger.warning("filter_cards unavailable (%s); falling back to a full scan", exc)
+        return None
+    if len(rows) >= FILTERED_ROWS_LIMIT:
+        return None
+    return rows
+
+
 def _rows_for(
-    q: str, query_vec: list[float], include_unclaimed: bool, candidate_rows: list[dict] | None, constrained: bool,
+    q: str, query_vec: list[float], include_unclaimed: bool, candidate_rows: list[dict] | None,
+    constraints: Constraints,
 ) -> list[dict]:
+    """The rows one scoring pass needs: those that could pass `constraints`. The exact test still
+    runs in the scorer; this only keeps it from reading cards that cannot."""
     if candidate_rows is not None:
         return candidate_rows
-    if constrained:
-        # Page the published corpus: pre-limited vector candidates can omit the
-        # only valid city/skill match. Filter before ranking or applying a limit.
-        rows = cards_service.list_published_rows()
-        if not include_unclaimed:
-            rows = [r for r in rows if bool((r.get("owner_email") or "").strip())]
-        return rows
-    return _candidates(q, query_vec, include_unclaimed)
+    if not constraints.active:
+        return _candidates(q, query_vec, include_unclaimed)
+    # Page the published corpus when pre-limited vector candidates could omit the only valid
+    # match. The database does that filtering when it can; industry, availability and experience
+    # are not in it, so a search that uses them reads every card.
+    if not (constraints.industry or constraints.availability or constraints.experience_min is not None):
+        rows = _filtered_rows(query_vec, include_unclaimed, constraints.role, constraints.location, constraints.skills)
+        if rows is not None:
+            return rows
+    rows = cards_service.list_published_rows()
+    if not include_unclaimed:
+        rows = [r for r in rows if bool((r.get("owner_email") or "").strip())]
+    return rows
 
 
 def _search_pass(
     *, q: str, query_vec: list[float], rows: list[dict], role: str, location: str, skills: str,
     industry: str, availability: str, experience_min: int | None,
     searcher: AgentProfileCard | None, less_like: list[AgentProfileCard] | None, topics: str,
+    want_role: str | None = None, want_location: str | None = None, want_skills: str | None = None,
 ) -> list[dict]:
-    """One scoring pass over `rows` with exactly these requirements; best match first, unlimited."""
+    """One scoring pass over `rows` with exactly these requirements; best match first, unlimited.
+
+    role/location/skills are what a card must pass in this pass. want_* are what the caller asked
+    for (they differ in a relaxed pass, which dropped some): fit is judged against those, so a card
+    that missed a dropped requirement scores lower than one that met it."""
+    from services.beacons import active_beacon
+    from services.card_view import fact_object, freshness_boost, live_facts
+
+    want_role = role if want_role is None else want_role
+    want_location = location if want_location is None else want_location
+    want_skills = skills if want_skills is None else want_skills
     q_terms = query_terms(q)
-    # Topic words only ever add to a card's score: they are not part of the query's coverage (an
-    # unmatched topic would dilute it under the floor) and never a requirement.
+    # Topic words only ever add to a card's relevance: they are not part of the query's coverage
+    # (an unmatched topic would dilute it) and never a requirement.
     topic_terms = [t for t in query_terms(topics.replace(",", " ")) if t not in q_terms]
     constraints = Constraints(role, location, tuple(s.strip() for s in skills.split(",") if s.strip()), industry, availability, experience_min)
-    skill_list = [s.strip() for s in skills.split(",") if s.strip()] if skills else []
+    skill_list = [s.strip() for s in want_skills.split(",") if s.strip()] if want_skills else []
     industry_norm = _norm(industry)
-    role_norm = _norm(role)
     availability_norm = _norm(availability)
-    location_want = location_terms(location)
+    location_want = location_terms(want_location)
     searcher_kinds = kinds_of(searcher) if searcher is not None else set()
 
     results = []
@@ -239,48 +384,37 @@ def _search_pass(
         if not constraints.matches(card):
             continue
         search_text = card_search_text(card).lower()
-        from services.beacons import active_beacon
         beacon = active_beacon(card)
         if beacon:
             search_text += " " + beacon.text.lower()
         text_tokens = token_set(search_text)
-
-        score = 0.0
+        facts = live_facts(card.zynd_memory)
         reasons: list = []
-        if beacon and q_terms and any(t in token_set(beacon.text) for t in q_terms):
-            score += 0.2
-            reasons.append("Current beacon: " + beacon.text)
 
+        # relevance: meaning and words
         sim = row.get("similarity")
         if sim is None and query_vec:
             sim = _cosine(query_vec, _parse_embedding(row.get("embedding")))
-        if query_vec and sim:
-            score += sim * 0.5
-            if sim > 0.6:
-                reasons.append("Strong overall match for your query")
-
+        sem = semantic_score(sim) if query_vec else 0.0
+        if query_vec and (sim or 0.0) > 0.6:
+            reasons.append("Strong overall match for your query")
+        lex = 0.0
         if q_terms:
             hits = [t for t in q_terms if t in text_tokens]
             if hits:
-                score += 0.25 * (len(hits) / len(q_terms))
+                lex = len(hits) / len(q_terms)
                 reasons.append("Matches your search terms")
-            from services.card_view import fact_object, freshness_boost, live_facts
-
-            # A card's approved facts earn a bonus in proportion to how much of the query the
-            # best of them covers, so one shared word no longer counts as a full match.
+            # An approved fact earns lexical credit in proportion to how much of the query it
+            # alone covers, so one shared word no longer counts as a full match.
             matched_memory = []
-            best_cover = 0.0
-            for fact in live_facts(card.zynd_memory):
+            for fact in facts:
                 blob = token_set(fact_object(fact))
                 covered = len([t for t in q_terms if t in blob]) / len(q_terms) if blob else 0.0
                 if covered:
                     matched_memory.append(fact)
-                    best_cover = max(best_cover, covered)
+                    lex = max(lex, covered)
             if matched_memory:
-                score += 0.2 * best_cover
                 if config.FEATURE_S06_CARDVIEW:
-                    boost = max(freshness_boost(f) for f in matched_memory)
-                    score += boost
                     for fact in matched_memory[:3]:
                         reasons.append({
                             "type": "memory",
@@ -290,62 +424,89 @@ def _search_pass(
                         })
                 else:
                     reasons.append("Approved fact")
-
+            if beacon and any(t in token_set(beacon.text) for t in q_terms):
+                lex = max(lex, BEACON_LEX)
+                reasons.insert(0, "Current beacon: " + beacon.text)
+        topic = 0.0
         if topic_terms:
             topic_hits = [t for t in topic_terms if t in text_tokens]
             if topic_hits:
-                score += 0.15 * (len(topic_hits) / len(topic_terms))
                 reasons.append("Mentions " + ", ".join(topic_hits))
-            from services.card_view import fact_object, live_facts
             fact_cover = max((len([t for t in topic_terms if t in token_set(fact_object(f))]) / len(topic_terms)
-                              for f in live_facts(card.zynd_memory)), default=0.0)
-            score += 0.1 * fact_cover
-
-        if role_norm:
-            if role_matches(token_set(card.identity.headline), role):
-                score += 0.25            # their headline says it: the strongest role signal
-                reasons.append(card.identity.headline or "Role match")
-            elif role_matches(text_tokens, role):
-                score += 0.1             # mentioned somewhere on the card
+                              for f in facts), default=0.0)
+            topic = max(len(topic_hits) / len(topic_terms), fact_cover)
+        # fit: how well the card meets each constraint the caller asked for
+        fit = 1.0
+        role_missing = False
+        met: set[str] = set()          # query words a satisfied constraint already answers
+        if want_role:
+            if role_matches(role_tokens(card.identity.headline), want_role):
+                reasons.append(card.identity.headline or "Role match")      # the strongest role signal
+                fit *= FIT_ROLE_HEADLINE
+                met.update(query_terms(want_role))
+            elif role_matches(role_tokens(search_text), want_role) or constraints.role:
+                # mentioned elsewhere on the card (work history, an approved fact)
                 reasons.append("Role match")
-
-        if location_want and (
-            all(t in location_tokens(card.identity.location) for t in location_want)
-            or geo.same_country(location, card.identity.location)
-        ):
-            score += 0.3
-            reasons.append(f"Based in {card.identity.location}")
-
-        matched_skills = [
-            sk for sk in skill_list
-            if any(_skill_matches(sk, s.name) for s in card.skills)
-        ]
-        if skill_list and matched_skills:
-            score += 0.25 * (len(matched_skills) / len(skill_list))
-            reasons.append("Skills: " + ", ".join(matched_skills))
-
+                fit *= FIT_ROLE_ELSEWHERE
+                met.update(query_terms(want_role))
+            else:
+                fit *= FIT_ROLE_MISSING
+                role_missing = True
+        if location_want:
+            if all(t in location_tokens(card.identity.location) for t in location_want):
+                reasons.append(f"Based in {card.identity.location}")
+                fit *= FIT_LOCATION_MET
+                met.update(location_want)
+            elif geo.same_country(want_location, card.identity.location):
+                reasons.append(f"Based in {card.identity.location}")
+                fit *= FIT_LOCATION_COUNTRY
+                met.update(location_want)
+            else:
+                fit *= FIT_LOCATION_MISSING
+        if skill_list:
+            matched_skills = [sk for sk in skill_list if any(_skill_matches(sk, s.name) for s in card.skills)]
+            if matched_skills:
+                reasons.append("Skills: " + ", ".join(matched_skills))
+                for sk in matched_skills:
+                    met.update(query_terms(sk))
+            fit *= FIT_SKILL_MISSING + (1 - FIT_SKILL_MISSING) * len(matched_skills) / len(skill_list)
         if industry_norm and any(contains_all(token_set(i), industry) for i in card.industries):
-            score += 0.2
             reasons.append("Industry: " + ", ".join(card.industries))
-
         if availability_norm and contains_all(token_set(card.availability), availability):
-            score += 0.2
             reasons.append(f"Available for {card.availability}")
+        if experience_min is not None and card.experience_years and card.experience_years >= experience_min:
+            reasons.append(f"{card.experience_years} years experience")
 
+        if q_terms and met:
+            # "investors in India" is answered by an investor in Gurgaon: words a met constraint
+            # covers count as found even when the card's text does not repeat them.
+            lex = max(lex, len(set(q_terms) & (met | {t for t in q_terms if t in text_tokens})) / len(q_terms))
+        relevance = relevance_score(sem, lex, topic, bool(q_terms or query_vec), bool(topic_terms))
+        if met:
+            relevance = max(relevance, MET_RELEVANCE)
+
+        # quality: who they are, and what the searcher said about people like them
+        claimed = row.get("claimed")
+        if claimed is None:
+            claimed = bool((row.get("owner_email") or "").strip())
+        freshness = max((freshness_boost(f) for f in facts), default=0.0) / 0.1
+        quality = quality_score(bool(claimed), freshness)
+        fits: list[str] = []
         if searcher_kinds and searcher is not None and card.handle != searcher.handle:
             fits = two_way_match(searcher_kinds, card)
             if fits:
-                score += TWO_WAY_BOOST
+                quality *= 1 + TWO_WAY_BOOST
                 reasons.append("Wants to meet people like you: " + ", ".join(fits[:2]))
-
         if less_like and any(too_much_like(d, card) for d in less_like):
-            score -= LESS_LIKE_PENALTY
+            quality *= LESS_LIKE_FACTOR
             reasons.append("Similar to people you asked to see less of")
 
-        if experience_min is not None and card.experience_years and card.experience_years >= experience_min:
-            score += 0.15
-            reasons.append(f"{card.experience_years} years experience")
-
+        score = _clamp(relevance * fit * quality)
+        # The noise floor is about the text, not the constraints: a relaxed result that missed a
+        # dropped place or skill is already ranked down (and labelled) by its fit. One that is not
+        # the kind of person asked for must clear the floor with that penalty counted.
+        if q and _clamp(relevance * quality) * (FIT_ROLE_MISSING if role_missing else 1.0) < MIN_SCORE:
+            continue
         results.append(
             {
                 "agent_id": card.id,
@@ -358,13 +519,14 @@ def _search_pass(
                 "availability": card.availability,
                 "experience_years": card.experience_years,
                 "linkedin_url": (card.identity.links or {}).get("linkedin") or "",
-                "match_score": round(max(min(score, 1.0), 0.0), 3),
+                "avatar_url": card.identity.avatar_url or "",
+                "company": current_company(card),
+                "two_way": fits,
+                "match_score": round(score, 3),
                 "match_reasons": reasons[:6],
                 "url": f"{config.SITE_BASE_URL}/p/{card.handle}" if card.handle else f"{config.SITE_BASE_URL}/profile/{card.id}",
             }
         )
 
     results.sort(key=lambda r: r["match_score"], reverse=True)
-    if q:
-        results = [r for r in results if r["match_score"] >= 0.2]
     return results

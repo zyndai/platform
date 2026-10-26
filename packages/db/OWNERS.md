@@ -22,6 +22,7 @@ every service listed as a reader.
 | `cards.connections`, `cards.dm_threads`, `cards.dm_messages`, `cards.dm_read_state`, `cards.groups`, `cards.group_members`, `cards.group_read_state`, `cards.group_invitations`, `cards.group_messages` | cards | cards-api only; Cards web/MCP use Cards HTTP. Read cursors are service-role only |
 | `cards.group_memory`, `cards.group_memory_state`, `cards.group_message_memory` | cards | cards-api only; rolling group summary/facts, never raw messages |
 | `cards.group_agent_jobs`, `cards.group_agent_preferences` | cards | cards-api only; durable mention queue and per-user agent opt-out |
+| `cards.card_suggestions`, `cards.card_suggestion_impressions` | cards | cards-api only (`services/suggestions.py`); nightly people-to-meet list, and what the digest/owner home showed and the owner did |
 | `identity.*` (empty today; Zynd Account tables in Stage 2) | shared | persona, cards |
 | `persona_intro_requests`, `persona_intro_rules`, `persona_intro_audit` | persona | cards-api via Persona HTTP; persona-web (requests only, participant RLS) |
 | `cards.intro_requests` | cards | cards-api; minimal Persona status projection and activity events |
@@ -35,6 +36,7 @@ every service listed as a reader.
 | `search_personas_fts(text, int)` | persona | persona 0000 | persona-api, **memory** |
 | `cards.skill_names(jsonb)` | cards | cards 0000 | generated column `agent_profile_cards.search_tsv` |
 | `cards.match_cards(vector, int, bool)`, `cards.search_cards_fts(text, int, bool)` | cards | cards 0022 (live definitions recorded) | cards-api (`services/search.py`) |
+| `cards.filter_cards(jsonb, text[], jsonb, vector, bool, int)` | cards | cards 0030 | cards-api (`services/search.py`); superset pre-filter for role/place/skill searches, cards-api applies the exact rules |
 | `cards.s10_set_visitor_privacy`, `cards.s10_record_named_visit` | cards | cards 0016 | cards-api only |
 | `cards.s10_named_visitors` | cards | cards 0018 | cards-api only; consent-bound public profile links |
 | `cards.network_create_group`, `cards.network_respond_invitation` | cards | cards 0020 | cards-api only; transactional membership checks |

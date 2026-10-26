@@ -211,6 +211,20 @@
       "when": 1792749252415,
       "tag": "0029_owner_timezone",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1792970379266,
+      "tag": "0030_filter_cards",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1793002051188,
+      "tag": "0031_card_suggestions",
+      "breakpoints": true
     }
   ]
 }

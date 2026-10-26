@@ -153,6 +153,18 @@ async def run_saved_searches(authorization: str | None = Header(default=None)):
     return await asyncio.to_thread(saved_searches.run_all)
 
 
+@router.post("/suggestions/refresh")
+async def refresh_suggestions(
+    authorization: str | None = Header(default=None),
+    handle: str | None = Query(default=None),
+):
+    """Nightly: store each claimed card's top people to meet (cards.card_suggestions), so the
+    digest and owner home read them instead of searching. `handle` refreshes one card."""
+    _require_cron(authorization)
+    from services import suggestions
+    return await asyncio.to_thread(suggestions.refresh_all, handle)
+
+
 @router.post("/purge-card-events")
 def purge_card_events(authorization: str | None = Header(default=None)):
     """S04: drop card_events older than 180 days. Flag off → 204."""

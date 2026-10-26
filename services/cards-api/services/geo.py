@@ -92,3 +92,15 @@ def same_country(wanted: str, have: str) -> bool:
         return False
     code = _COUNTRY_CODE.get(_phrase(_norm(wanted), _COUNTRY_CODE), "")
     return bool(code) and country_code(have) == code
+
+
+def spellings_in_country(wanted: str) -> list[str]:
+    """Every spelling of a country and of the cities geo knows in it, when `wanted` names just a
+    country ("India" -> india, pune, gurgaon, ...); [] otherwise. A database pre-filter uses these
+    to keep every card same_country() would accept."""
+    if has_city(wanted):
+        return []
+    code = _COUNTRY_CODE.get(_phrase(_norm(wanted), _COUNTRY_CODE), "")
+    if not code:
+        return []
+    return [*_COUNTRIES[code], *(city for city, c in _CITIES.items() if c == code)]

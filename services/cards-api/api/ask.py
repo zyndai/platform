@@ -54,7 +54,14 @@ async def ask_get(
     q: str = Query("", max_length=200),
     limit: int = Query(10, ge=1, le=50),
     include_unclaimed: bool = Query(False),
+    search_id: str = Query("", max_length=64),
+    via: str = Query("", max_length=16),
 ):
+    return await _ask(request, q, limit, include_unclaimed, search_id, via)
+
+
+async def _ask(request: Request, q: str, limit: int, include_unclaimed: bool, search_id: str, via: str) -> dict:
+    search_id, via = events_service.search_context(search_id, via, default="ask")
     keep_unclaimed = _effective_include(include_unclaimed)
     results = await asyncio.to_thread(
         search_service.search_agents, q, "", "", "", "", "", None, limit,
@@ -62,7 +69,8 @@ async def ask_get(
     )
     events_service.emit("agent_fetch", request=request, meta={"endpoint": "ask"})
     results = _annotate_claimed(results, keep_unclaimed=keep_unclaimed)
-    return {"query": q, "results": results, "numberOfItems": len(results)}
+    events_service.record_search(request, results, has_query=bool(q.strip()), search_id=search_id, via=via)
+    return {"query": q, "search_id": search_id, "results": results, "numberOfItems": len(results)}
 
 
 @router.post("")
@@ -71,12 +79,7 @@ async def ask_post(
     request: Request,
     limit: int = Query(10, ge=1, le=50),
     include_unclaimed: bool = Query(False),
+    search_id: str = Query("", max_length=64),
+    via: str = Query("", max_length=16),
 ):
-    keep_unclaimed = _effective_include(include_unclaimed)
-    results = await asyncio.to_thread(
-        search_service.search_agents, body.q, "", "", "", "", "", None, limit,
-        keep_unclaimed,
-    )
-    events_service.emit("agent_fetch", request=request, meta={"endpoint": "ask"})
-    results = _annotate_claimed(results, keep_unclaimed=keep_unclaimed)
-    return {"query": body.q, "results": results, "numberOfItems": len(results)}
+    return await _ask(request, body.q, limit, include_unclaimed, search_id, via)

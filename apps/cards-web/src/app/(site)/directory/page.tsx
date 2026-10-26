@@ -11,6 +11,7 @@ import { DEFAULT_LIMIT, MAX_QUERY } from "@/components/discover/search-terms";
 import { cardAvatarSrc } from "@/lib/avatar";
 import { CARDS_API, listCards, cardCanonicalUrl, formatMatchReason, type AgentProfileCard } from "@/lib/cards";
 import { verifiedLabels, type MatchReason } from "@/lib/match-reason";
+import { withSearch } from "@/lib/search-link";
 import { pageMetadata } from "@/lib/seo";
 
 export const dynamic = "force-dynamic";
@@ -49,14 +50,15 @@ interface SearchResult {
   claimed?: boolean;
 }
 
-async function searchPeople(q: string, limit: number): Promise<SearchResult[] | null> {
+async function searchPeople(q: string, limit: number): Promise<{ results: SearchResult[]; searchId?: string } | null> {
   try {
     // The website's own directory UI may include unclaimed cards (labelled).
-    const url = `${CARDS_API}/ask?q=${encodeURIComponent(q)}&limit=${limit}&include_unclaimed=true`;
+    const url = `${CARDS_API}/ask?q=${encodeURIComponent(q)}&limit=${limit}&include_unclaimed=true&via=web`;
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) return null;
     const data = await res.json();
-    return Array.isArray(data?.results) ? data.results : null;
+    if (!Array.isArray(data?.results)) return null;
+    return { results: data.results, searchId: typeof data.search_id === "string" ? data.search_id : undefined };
   } catch {
     return null;
   }
@@ -119,7 +121,8 @@ export default async function DirectoryPage({ searchParams }: PageProps) {
   const limit = Math.min(Math.max(parseInt(first(params.limit), 10) || DEFAULT_LIMIT, 1), 50);
   const wantsMatch = first(params.match) === "1" && q.trim() !== "";
 
-  const [cards, results] = await Promise.all([listCards(), wantsMatch ? searchPeople(q.trim(), limit) : null]);
+  const [cards, found] = await Promise.all([listCards(), wantsMatch ? searchPeople(q.trim(), limit) : null]);
+  const results = found?.results ?? null;
 
   let ranked: RankedSearch | null = null;
   if (wantsMatch) {
@@ -133,7 +136,7 @@ export default async function DirectoryPage({ searchParams }: PageProps) {
       ? results.map((r, i) => ({
           key: r.handle || r.agent_id,
           rank: i + 1,
-          href: `/p/${r.handle || r.agent_id}`,
+          href: withSearch(`/p/${r.handle || r.agent_id}`, found?.searchId, i + 1),
           name: r.name,
           headline: r.headline ?? "",
           location: r.location ?? "",

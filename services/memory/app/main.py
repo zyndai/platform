@@ -370,14 +370,16 @@ async def service_outside_people(req: OutsidePeopleRequest, authorization: str =
     """Service-to-service external (LinkedIn) people search: the one QuickEnrich client.
 
     Called by the Cards backend for "people outside Zynd you may want to meet". Auth is the
-    shared MEMORY_SERVICE_TOKEN. Returns {"people": [...], "warning": str | None}; an empty
-    list always comes with a reason unless the search genuinely found nobody."""
+    shared MEMORY_SERVICE_TOKEN. Runs the same LinkedIn step as find_people (people_search.outside),
+    so people come back ordered by fit with a specific `why`, `score`, `match_quality` and
+    `location`. Returns {"people": [...], "warning": str | None}; an empty list always comes
+    with a reason unless the search genuinely found nobody."""
     if not _valid_service_token(authorization.removeprefix("Bearer ").strip()):
         raise HTTPException(status_code=401, detail="invalid service token")
-    from app.services.people_discovery import search_quickenrich
+    from app.services import people_search
     from app.services.people_query import query_from_filters
     query = query_from_filters(titles=req.titles, keywords=req.keywords, location=req.location)
-    people, warning = await search_quickenrich(query.raw, req.limit, query=query)
+    people, warning = await people_search.outside(query, req.limit)
     return {"people": people, "warning": warning}
 
 

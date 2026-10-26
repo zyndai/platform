@@ -16,6 +16,7 @@ import {
 import { ownerRequest, type OwnerStatus } from "@/lib/owner-home";
 import { VisitorPrivacy } from "@/components/VisitorPrivacy";
 import { DiscoveryAnalytics } from "./discovery-analytics";
+import { PeopleToMeet } from "./people-to-meet";
 import { CompletionRing } from "./completion-ring";
 
 export function OwnerHome({
@@ -237,6 +238,14 @@ export function OwnerHome({
             </Link>
           </section>
           <DiscoveryAnalytics activity={data.activity} profile={profile} visitors={data.visitors} />
+          {data.suggestions && (
+            <PeopleToMeet
+              people={data.suggestions.people}
+              outside={data.suggestions.outside}
+              token={token}
+              profile={profile}
+            />
+          )}
           <section className="oh-panel oh-attention">
             <p className="oh-eyebrow">NEEDS YOUR ATTENTION</p>
             <Bell className="oh-icon" />

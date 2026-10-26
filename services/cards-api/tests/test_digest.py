@@ -34,7 +34,7 @@ def test_render_digest_includes_topics_posts_and_people():
     }
     people = {
         "people": [{"handle": "bob", "name": "Bob", "headline": "Founder", "url": "https://zynd.ai/p/bob",
-                    "matched_fields": {"working_on": ["Building with AI"]}}],
+                    "why": ["Founder of an AI tools startup", "Mentions ai", "Based in Pune"]}],
         "outside": [{"name": "Pat", "title": "Recruiter", "company": "Acme", "linkedin_url": "https://linkedin.com/in/pat"}],
     }
     body = digest_service.render_digest("alice", posts, people, name="Alice Chen")
@@ -45,7 +45,9 @@ def test_render_digest_includes_topics_posts_and_people():
     assert "https://x.com/a/1" in body
     assert "Bob" in body
     assert "https://zynd.ai/p/bob" in body
-    assert "Pat, Recruiter at Acme (LinkedIn)" in body
+    assert "  Founder of an AI tools startup · Mentions ai\n" in body          # one reason line, two reasons
+    assert "Pat, Recruiter at Acme (not on Zynd yet, LinkedIn)" in body
+    assert "Hide:" not in body                                         # no feedback links without a token
     assert "https://linkedin.com/in/pat" in body
     assert "working_on" not in body
 
@@ -59,7 +61,7 @@ def test_render_digest_includes_topics_posts_and_people():
     assert "https://x.com/a/1" in html
     assert "People for you" in html
     assert "Bob" in html and "https://zynd.ai/p/bob" in html
-    assert "Recruiter at Acme &middot; on LinkedIn" in html
+    assert "Recruiter at Acme &middot; Not on Zynd yet" in html
     assert "https://linkedin.com/in/pat" in html
     assert "zynd.ai/p/alice" in html
     assert "/assets/zynd-logo.png" in html
@@ -92,11 +94,12 @@ def test_owner_blocks_render_from_extras():
         "network": {"connection_updates": [{"handle": "ada", "name": "Ada", "change": "Looking for investment", "when": "2d"}],
                     "saved_search_hits": ["New match for “fintech”: Sam"]},
         "unsubscribe_url": "https://api.test/cards/notifications/unsubscribe/tok",
+        "feedback_base": "https://api.test/cards/suggestions/feedback/tok",
     }
     people = {"people": [
         {"handle": "lena", "name": "Lena Fischer", "url": "https://zynd.ai/p/lena"},
-        {"handle": "arjun", "name": "Arjun Mehta", "url": "https://zynd.ai/p/arjun", "two_way": ["Founders"], "verified": True,
-         "matched_fields": {"working_on": ["Fintech"], "can_help_with": ["Developer tools", "Payments"]}},
+        {"handle": "arjun", "name": "Arjun Mehta", "url": "https://zynd.ai/p/arjun", "two_way": True, "verified": True,
+         "why": ["Wants to meet founders like you", "Backs developer tools", "Based in Berlin", "Payments"]},
     ], "outside": []}
     html = digest_service.render_digest_html("alice", None, people, name="Alice", extras=extras)
     assert "Mon, 26 Oct" in html
@@ -107,9 +110,12 @@ def test_owner_blocks_render_from_extras():
     assert "fintech founder Bengaluru" in html and "&times;6" in html
     assert "Karan Shah</b> and 2 others viewed your card" in html
     assert "Wants to meet you" in html and "LinkedIn verified" in html
-    # Two-way matches go first, and leave room for two match tags.
+    # Two-way matches go first; the chip says "wants to meet you", so the reason line doesn't repeat it.
     assert html.index("Arjun Mehta") < html.index("Lena Fischer")
-    assert "Developer tools" in html and "Payments" not in html
+    assert "Backs developer tools · Based in Berlin" in html and "Payments" not in html
+    assert "Wants to meet founders like you" not in html
+    assert 'href="https://api.test/cards/suggestions/feedback/tok/arjun/hide"' in html
+    assert 'href="https://api.test/cards/suggestions/feedback/tok/lena/not_relevant"' in html
     assert "From your network" in html and "Looking for investment &middot; 2d" in html
     assert "New match for “fintech”: Sam" in html
     assert 'href="https://api.test/cards/notifications/unsubscribe/tok"' in html
@@ -121,6 +127,7 @@ def test_owner_blocks_render_from_extras():
     assert "48 profile views · 112 AI agent lookups · 3 facts to review" in body
     assert "Arjun Mehta (wants to meet you too)" in body
     assert "Unsubscribe: https://api.test/cards/notifications/unsubscribe/tok" in body
+    assert "Hide: https://api.test/cards/suggestions/feedback/tok/arjun/hide" in body
 
 
 def test_unknown_review_count_is_left_out_not_zero():
@@ -249,7 +256,7 @@ def test_run_digest_skips_no_email_and_already_sent(monkeypatch):
     ]
     monkeypatch.setattr(digest_service.cards_service, "list_published_rows", lambda **_k: rows)
     monkeypatch.setattr(digest_service, "get_suggested_posts", lambda h: {"summary": "s", "posts": []})
-    monkeypatch.setattr(digest_service, "get_suggested_people", lambda h: {"people": [], "outside": []})
+    monkeypatch.setattr(digest_service, "digest_people", lambda row: {"people": [], "outside": []})
     monkeypatch.setattr(digest_service, "send_smtp", lambda **kw: sent.append(kw))
     monkeypatch.setattr(digest_service, "_mark_sent", lambda handle, day, snap: None)
 
@@ -273,7 +280,7 @@ def test_run_digest_greets_with_identity_name(monkeypatch):
     }]
     monkeypatch.setattr(digest_service.cards_service, "list_published_rows", lambda **_k: rows)
     monkeypatch.setattr(digest_service, "get_suggested_posts", lambda h: {"summary": "s", "posts": []})
-    monkeypatch.setattr(digest_service, "get_suggested_people", lambda h: {"people": [], "outside": []})
+    monkeypatch.setattr(digest_service, "digest_people", lambda row: {"people": [], "outside": []})
     monkeypatch.setattr(digest_service, "send_smtp", lambda **kw: None)
     monkeypatch.setattr(digest_service, "_mark_sent", lambda *a: None)
 
@@ -287,7 +294,7 @@ def test_dry_run_does_not_send(monkeypatch):
     rows = [{"handle": "alice", "owner_email": "alice@x.io", "suggested_posts": None}]
     monkeypatch.setattr(digest_service.cards_service, "list_published_rows", lambda **_k: rows)
     monkeypatch.setattr(digest_service, "get_suggested_posts", lambda h: {"summary": "s", "posts": []})
-    monkeypatch.setattr(digest_service, "get_suggested_people", lambda h: {"people": [], "outside": []})
+    monkeypatch.setattr(digest_service, "digest_people", lambda row: {"people": [], "outside": []})
     monkeypatch.setattr(digest_service, "send_smtp", lambda **kw: sent.append(kw))
     monkeypatch.setattr(digest_service, "_mark_sent", lambda *a: (_ for _ in ()).throw(AssertionError("no mark")))
 
@@ -306,7 +313,7 @@ def test_run_digest_handle_only_processes_that_card(monkeypatch):
     ]
     monkeypatch.setattr(digest_service.cards_service, "list_published_rows", lambda **_k: rows)
     monkeypatch.setattr(digest_service, "get_suggested_posts", lambda h: fetched.append(h) or {"summary": "s", "posts": []})
-    monkeypatch.setattr(digest_service, "get_suggested_people", lambda h: {"people": [], "outside": []})
+    monkeypatch.setattr(digest_service, "digest_people", lambda row: {"people": [], "outside": []})
     monkeypatch.setattr(digest_service, "send_smtp", lambda **kw: sent.append(kw))
     monkeypatch.setattr(digest_service, "_mark_sent", lambda handle, day, snap: None)
 
@@ -342,7 +349,7 @@ def mailbox(monkeypatch):
     box = SimpleNamespace(rows=[], sent=[], events=[])
     monkeypatch.setattr(digest_service, "_list_digest_rows", lambda: box.rows)
     monkeypatch.setattr(digest_service, "get_suggested_posts", lambda h: {"summary": "s", "posts": []})
-    monkeypatch.setattr(digest_service, "get_suggested_people", lambda h: {"people": [], "outside": []})
+    monkeypatch.setattr(digest_service, "digest_people", lambda row: {"people": [], "outside": []})
 
     def mark(handle, day, snap):
         box.events.append(("mark", handle, day))
@@ -538,13 +545,33 @@ def test_send_carries_the_unsubscribe_link(mailbox, monkeypatch):
     assert "https://api.test/u/tok" in mailbox.sent[0]["html"]
 
 
+def test_people_shown_are_recorded_only_after_a_real_send(mailbox, monkeypatch):
+    shown = []
+    monkeypatch.setattr(digest_service, "digest_people",
+                        lambda row: {"people": [{"handle": "ann", "card_id": "c-ann", "two_way": True}], "outside": []})
+    monkeypatch.setattr(digest_service, "_record_shown", lambda row, people: shown.append(people["people"]))
+    mailbox.rows = [owner("ist")]
+    digest_service.run_digest(now=IST_7AM, dry_run=True)
+    assert shown == []                                   # a preview is not an impression
+    digest_service.run_digest(now=IST_7AM)
+    assert [p["handle"] for p in shown[0]] == ["ann"]
+    assert mailbox.sent[0]["subject"].endswith("wants to meet you too")     # two-way leads the email
+
+
+def test_a_suggestions_failure_still_sends_the_digest(mailbox, monkeypatch):
+    monkeypatch.setattr(digest_service, "digest_people", lambda row: (_ for _ in ()).throw(RuntimeError("search down")))
+    mailbox.rows = [owner("ist")]
+    assert digest_service.run_digest(now=IST_7AM)["sent"] == 1
+
+
 def test_owner_extras_without_owner_home_only_dates_and_links(monkeypatch):
     from services import owner_home
     monkeypatch.setattr(owner_home, "enabled", lambda: False)
     monkeypatch.setattr(digest_service.config, "API_BASE_URL", "https://api.test")
     local = datetime(2026, 10, 26, 7, 0, tzinfo=timezone.utc)
     extras = _real_owner_extras({"handle": "a", "owner_email": "a@x.io", "unsubscribe_token": "tok"}, [], local, local)
-    assert extras == {"date": "Mon, 26 Oct", "unsubscribe_url": "https://api.test/cards/notifications/unsubscribe/tok"}
+    assert extras == {"date": "Mon, 26 Oct", "unsubscribe_url": "https://api.test/cards/notifications/unsubscribe/tok",
+                      "feedback_base": "https://api.test/cards/suggestions/feedback/tok"}
 
 
 def test_owner_extras_survive_each_failing_source(monkeypatch):
@@ -564,7 +591,7 @@ def test_owner_extras_survive_each_failing_source(monkeypatch):
     assert extras["network"]["connection_updates"][0]["when"] == "2d"
 
 
-def test_mark_people_flags_two_way_and_verified(monkeypatch):
+def test_mark_people_flags_verified(monkeypatch):
     from services import trust
     me = {"handle": "alice", "id": "c-alice",
           "card": {"id": "c-alice", "identity": {"name": "Alice", "headline": "Founder of a fintech startup"}}}
@@ -572,10 +599,10 @@ def test_mark_people_flags_two_way_and_verified(monkeypatch):
            "card": {"id": "c-bob", "identity": {"name": "Bob", "headline": "Seed investor"}, "connect_with": ["Founders"]}}
     cy = {"handle": "cy", "id": "c-cy", "card": {"id": "c-cy", "identity": {"name": "Cy", "headline": "Designer"}}}
     monkeypatch.setattr(trust, "verified_by_card_ids", lambda ids: {"c-bob": ["linkedin"], "c-cy": ["github"]})
-    people = {"people": [{"handle": "bob"}, {"handle": "cy"}, {"handle": "ghost"}]}
+    people = {"people": [{"handle": "bob", "two_way": True}, {"handle": "cy"}, {"handle": "ghost"}]}
     digest_service._mark_people(me, people, [me, bob, cy])
     bob_p, cy_p, ghost = people["people"]
-    assert bob_p["two_way"] == ["Founders"] and bob_p["verified"] is True
+    assert bob_p["two_way"] is True and bob_p["verified"] is True      # two-way comes with the suggestion
     assert not cy_p.get("two_way") and cy_p["verified"] is False
     assert "verified" not in ghost
 
@@ -722,3 +749,12 @@ def test_clear_suggested_posts_route_requires_cron_secret(monkeypatch):
     )
     assert one.status_code == 200
     assert seen["handle"] == "saraffa13"
+
+
+def test_an_outside_person_shows_where_they_are():
+    people = {"people": [], "outside": [{"name": "Pat", "title": "Venture Partner", "company": "Seed Fund",
+                                         "location": "Pune, India", "linkedin_url": "https://linkedin.com/in/pat"}]}
+    assert "Pat, Venture Partner at Seed Fund · Pune, India (not on Zynd yet, LinkedIn)" in \
+        digest_service.render_digest("alice", None, people)
+    assert "Venture Partner at Seed Fund · Pune, India &middot; Not on Zynd yet" in \
+        digest_service.render_digest_html("alice", None, people)

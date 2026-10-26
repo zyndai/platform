@@ -1,0 +1,102 @@
+{
+  "_about": "Golden owners for suggestions (people search plan Phase 2, D7). Each owner card is added to the search_golden.json corpus and run through services/suggestions.compute. top: handles that must be in the first len(top) results, in any order. first: the one that must lead. kinds: every one of the first 5 (or the first kinds_in_first) must start with one of these prefixes (the corpus names cards by kind). never: handles that must not appear at all.",
+  "owners": [
+    {
+      "handle": "own_founder_ai_blr",
+      "headline": "Founder building AI developer tools",
+      "location": "Bengaluru, India",
+      "connect_with": ["Investors"],
+      "working_on": ["Building with AI"],
+      "first": "inv_seed_ai_in",
+      "top": ["inv_seed_ai_in", "inv_seed_ai_uk"],
+      "kinds": ["inv_"],
+      "never": ["fnd_agents_blr", "fnd_aiinfra_nyc", "fnd_devtools_sf"]
+    },
+    {
+      "handle": "own_investor_agents",
+      "headline": "Seed investor",
+      "location": "London, UK",
+      "connect_with": ["Founders"],
+      "love_talking_about": ["Agentic AI"],
+      "top": ["fnd_agents_blr"],
+      "kinds": ["fnd_", "inv_angel_devtools_us"],
+      "never": ["inv_seed_ai_uk", "inv_seed_ai_in"]
+    },
+    {
+      "handle": "own_rust_hiring",
+      "headline": "CTO at a database startup",
+      "location": "Berlin, Germany",
+      "connect_with": ["Engineers"],
+      "skills": ["Rust"],
+      "top": ["eng_rust_berlin", "devrel_rust_berlin"],
+      "kinds": ["eng_", "devrel_"],
+      "never": ["inv_seed_ai_in", "fnd_devtools_sf", "sales_devtools_sf"]
+    },
+    {
+      "handle": "own_student_mentor",
+      "headline": "Student learning product design",
+      "location": "Pune, India",
+      "connect_with": ["Mentors"],
+      "top": ["adv_cto_us"],
+      "kinds": ["adv_"],
+      "never": ["stu_ml_pune"]
+    },
+    {
+      "handle": "own_climate_free_text",
+      "headline": "Building carbon removal hardware",
+      "location": "Berlin, Germany",
+      "connect_with": ["climate investors"],
+      "working_on": ["Climate hardware"],
+      "first": "inv_growth_climate_de",
+      "kinds": ["inv_"],
+      "never": ["fnd_climate_berlin"]
+    },
+    {
+      "handle": "own_lawyer_free_text",
+      "headline": "Founder preparing a seed round",
+      "location": "London, UK",
+      "connect_with": ["startup fundraising lawyer"],
+      "first": "law_startups_london",
+      "kinds": ["law_"],
+      "kinds_in_first": 1,
+      "never": ["trap_plumbing", "trap_stopwords", "stu_ml_pune"]
+    },
+    {
+      "handle": "own_nothing_in_connect_with",
+      "headline": "Founder building AI agents",
+      "location": "Bengaluru, India",
+      "working_on": ["AI agents platform"],
+      "top": ["fnd_agents_blr", "inv_seed_ai_in"],
+      "kinds": ["fnd_", "inv_", "eng_", "res_", "rec_", "stu_"],
+      "never": ["trap_plumbing", "trap_stopwords", "law_startups_london"]
+    },
+    {
+      "handle": "own_designer_wants_researchers",
+      "headline": "Product designer",
+      "location": "Bengaluru, India",
+      "connect_with": ["Researchers in my field"],
+      "top": ["res_cv_blr", "des_ux_sf"],
+      "kinds": ["res_", "des_ux_sf"],
+      "never": ["stu_ml_pune", "eng_ml_blr"]
+    },
+    {
+      "handle": "own_wants_devrel",
+      "headline": "Engineer maintaining an open source Rust library",
+      "location": "Berlin, Germany",
+      "connect_with": ["DevRel"],
+      "first": "devrel_rust_berlin",
+      "kinds": ["devrel_"],
+      "never": ["eng_rust_berlin"]
+    },
+    {
+      "handle": "own_hiring_and_raising",
+      "headline": "Founder hiring ML engineers and raising a seed round",
+      "location": "Bengaluru, India",
+      "connect_with": ["Investors", "Recruiters"],
+      "working_on": ["Building with AI"],
+      "top": ["inv_seed_ai_in", "inv_seed_ai_uk", "rec_ai_blr"],
+      "kinds": ["rec_", "inv_"],
+      "never": ["eng_ml_blr", "fnd_agents_blr"]
+    }
+  ]
+}

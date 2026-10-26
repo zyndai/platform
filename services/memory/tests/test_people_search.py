@@ -326,7 +326,7 @@ async def test_the_unclaimed_choice_reaches_cards(world):
 
 async def test_extra_filters_travel_to_cards_unchanged(world):
     world["cards"] = ([card("ada")], None)
-    await anon(extra_params={"industry": "fintech", "experience_min": 5})
+    await anon(filters={"industry": "fintech", "experience_min": 5})
     assert world["mocks"]["cards_search"].await_args.kwargs["extra"] == {"industry": "fintech", "experience_min": 5}
 
 

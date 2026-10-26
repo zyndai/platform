@@ -154,8 +154,10 @@ def _why(reasons: object) -> list[str]:
     return out[:4]
 
 
-# Cards filters the parser has no field for. A caller (the public MCP) may pass them through.
-PASSTHROUGH_PARAMS = frozenset({"industry", "availability", "experience_min"})
+# Filters a caller (the public MCP) may pass through to Cards unchanged. role, location and skills
+# are PINNED: the caller asked for exactly those, so they are strict and nothing is loosened.
+PINNED_PARAMS = ("role", "location", "skills")
+PASSTHROUGH_PARAMS = frozenset({*PINNED_PARAMS, "industry", "availability", "experience_min"})
 
 
 def cards_search_params(
@@ -163,28 +165,34 @@ def cards_search_params(
     *, include_unclaimed: bool = True, extra: dict | None = None,
 ) -> dict:
     """/v1/agents/search params: the free text plus the parsed filters Cards can score on, and
-    the searcher's own handle so people who want to meet someone like them rank higher."""
+    the searcher's own handle so people who want to meet someone like them rank higher.
+
+    `extra` are filters the caller gave explicitly. When any of role, location or skills is among
+    them they are the only role/location/skills sent and nothing is relaxed (as a UI filter is
+    strict); the parse then only contributes topics."""
+    extra = {k: v for k, v in (extra or {}).items() if k in PASSTHROUGH_PARAMS and v not in (None, "")}
+    pinned = any(k in extra for k in PINNED_PARAMS)
     params: dict = {"q": (target or "").strip(), "limit": limit,
                     "include_unclaimed": "true" if include_unclaimed else "false"}
-    for key, value in (extra or {}).items():
-        if key in PASSTHROUGH_PARAMS and value not in (None, ""):
-            params[key] = value
     if as_handle:
         params["as_handle"] = as_handle
     if less_like:
         params["less_like"] = ",".join(h for h in less_like if _HANDLE.fullmatch(h))[:700]
-    if query.role:
-        params["role"] = query.role_noun
-    if query.locality or query.location:
-        params["location"] = query.locality or query.location
+    if not pinned:
+        if query.role:
+            params["role"] = query.role_noun
+        if query.locality or query.location:
+            params["location"] = query.locality or query.location
     # Topics are guesses about what the person works on: they raise a score, never filter.
     # Only a skill the user explicitly asked for ("knows Rust") is a requirement, and when
     # the filters leave too few people Cards loosens them instead of returning nothing.
     if query.topics:
         params["topics"] = ",".join(query.topics)[:200]
-    if query.required_skills:
+    if query.required_skills and not pinned:
         params["skills"] = ",".join(query.required_skills)[:200]
-    params["relax"] = "true"
+    params.update(extra)
+    if not pinned:
+        params["relax"] = "true"
     return params
 
 
@@ -264,6 +272,9 @@ def shape_cards(rows: list, limit: int) -> list[dict]:
             "linkedin_url": _linkedin_url(row.get("linkedin_url")),
             "url": _card_url(handle, row.get("url")),
             "connection_eligible": False,
+            "industries": [_public_text(i, 80) for i in row.get("industries") or [] if isinstance(i, str)][:5],
+            "availability": _public_text(row.get("availability"), 40),
+            "fresh_as_of": row.get("fresh_as_of") if isinstance(row.get("fresh_as_of"), str) else None,
         }
         if isinstance(row.get("relaxed"), list) and row["relaxed"]:
             item["relaxed"] = [str(r)[:20] for r in row["relaxed"] if isinstance(r, str)][:4]

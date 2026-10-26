@@ -28,6 +28,10 @@ founders, designers, marketers) with verified skills and availability.
 
 Use these tools when the user asks to FIND A PERSON, hire someone, or research
 a professional. Prefer search_people first, then get_card or ask_card for detail.
+To find one specific person, pass their name or @handle as the query. When a result
+has `note` saying nothing matched exactly, call the people "the closest matches" and
+say what differs (match_quality and `relaxed` show it); never present a loose match
+as an exact one.
 
 Defaults return claimed (opted-in) cards only. Pass include_unclaimed=true only
 when the user explicitly wants scraped/unclaimed profiles; those never include
@@ -145,36 +149,29 @@ def _strip_contact(obj: Any) -> Any:
     return obj
 
 
-def _normalize_match_reasons(reasons: list | None) -> list[str]:
-    out: list[str] = []
-    for r in reasons or []:
-        if isinstance(r, dict):
-            text = r.get("text") or r.get("type") or ""
-            if text:
-                out.append(str(text))
-        elif r:
-            out.append(str(r))
-    return out
-
-
-def _map_search_hit(row: dict) -> dict:
-    handle = row.get("handle") or ""
-    claimed = bool(row.get("claimed", True))
+def _map_person(person: dict) -> dict:
+    """One person from the shared pipeline (people_search) as the public tool has always shown
+    them. Contact fields never exist on a person; unclaimed hits are stripped anyway."""
+    handle = person.get("handle") or ""
+    claimed = bool(person.get("claimed", True))
     hit = {
         "handle": handle,
-        "name": row.get("name") or "",
-        "headline": row.get("headline") or "",
-        "location": row.get("location") or "",
-        "skills": row.get("skills") or [],
-        "industries": row.get("industries") or [],
-        "availability": row.get("availability") or "",
-        "match_score": row.get("match_score"),
-        "match_reasons": _normalize_match_reasons(row.get("match_reasons")),
+        "name": person.get("name") or "",
+        "headline": person.get("headline") or "",
+        "location": person.get("location") or "",
+        "skills": person.get("skills") or [],
+        "industries": person.get("industries") or [],
+        "availability": person.get("availability") or "",
+        "match_score": person.get("score"),
+        "match_reasons": [w for w in person.get("why") or [] if isinstance(w, str)],
+        "match_quality": person.get("match_quality") or "",
         "claimed": claimed,
-        "fresh_as_of": row.get("fresh_as_of"),
-        "url": row.get("url") or (_cite(handle) if handle else ""),
-        "cite_as": row.get("cite_as") or (_cite(handle) if handle else ""),
+        "fresh_as_of": person.get("fresh_as_of"),
+        "url": person.get("url") or (_cite(handle) if handle else ""),
+        "cite_as": _cite(handle) if handle else "",
     }
+    if person.get("relaxed"):
+        hit["relaxed"] = list(person["relaxed"])
     if not claimed:
         hit = _strip_contact(hit)
         hit["claimed"] = False
@@ -218,43 +215,41 @@ async def search_people_impl(
     availability: str = "",
     experience_min: int | None = None,
 ) -> dict:
+    """The public tool is the same people search as find_people, for an anonymous caller: Cards only
+    (no Zynd members, no LinkedIn: it is a paid lookup), name lookup, loosening, the one re-rank and
+    specific reasons. Explicit role, location and skills are strict."""
     _require_enabled()
+    from app.services import people_search
+
     q = (query or "").strip()
-    if not q and not any([role, location, skills, industry, availability, experience_min]):
+    filters = {"role": role.strip(), "location": location.strip(), "skills": skills.strip(),
+               "industry": industry.strip(), "availability": availability.strip(), "experience_min": experience_min}
+    given = {key: value for key, value in filters.items() if value not in (None, "")}
+    if not q and not given:
         return {"query": q, "results": [], "numberOfItems": 0, "error": "query required"}
     k = max(1, min(int(k or 10), 50))
-    has_filters = any([role, location, skills, industry, availability, experience_min is not None])
-    if has_filters:
-        params: dict[str, Any] = {
-            "q": q,
-            "limit": k,
-            "include_unclaimed": include_unclaimed,
-        }
-        if role:
-            params["role"] = role
-        if location:
-            params["location"] = location
-        if skills:
-            params["skills"] = skills
-        if industry:
-            params["industry"] = industry
-        if availability:
-            params["availability"] = availability
-        if experience_min is not None:
-            params["experience_min"] = experience_min
-        data = await _http_get("/v1/agents/search", params)
-        rows = data.get("results") or []
-    else:
-        data = await _http_get("/ask", {"q": q, "limit": k, "include_unclaimed": include_unclaimed})
-        rows = data.get("results") or []
-    results = [_map_search_hit(r) for r in rows]
+    # A search by filters alone still needs words to rank by.
+    text = q or " ".join(str(given[key]) for key in ("role", "skills", "industry", "location") if key in given)
+    result = await people_search.search(
+        None, people_search.anonymous(include_unclaimed), text, limit=k, wanted={"cards"}, explicit={"cards"},
+        filters=given)
+    people = result.get("people") or []
+    if not people and "cards_unavailable" in (result.get("warnings") or []):
+        raise RuntimeError("Cards search is unavailable")          # an outage is not "nobody matched"
+    results = [_map_person(p) for p in people]
     await _emit_agent_fetch("search_people", coarse_query_category(q or role or skills))
-    return {
+    out = {
         "query": q,
         "include_unclaimed": include_unclaimed,
+        "intent": result.get("intent") or "target",
         "results": results,
         "numberOfItems": len(results),
     }
+    if result.get("note"):
+        out["note"] = result["note"]
+    if result.get("warnings"):
+        out["warnings"] = result["warnings"]
+    return out
 
 
 def _with_cache_control(data: dict, ttl: int) -> dict:
@@ -396,9 +391,14 @@ async def search_people(
     WHEN TO USE: the user wants to find, hire, or meet a type of person —
     e.g. "AI compliance founders", "Rust engineers in Berlin open to contract".
 
-    Returns claimed cards by default with match_reasons, claimed, fresh_as_of
-    (when available), url, and cite_as. Pass include_unclaimed=true only when
-    explicitly asked; unclaimed results never include contact data.
+    Returns claimed cards by default with match_reasons, match_quality
+    (exact | close | loose), claimed, fresh_as_of (when available), url, and cite_as.
+    To find one specific person pass their name or @handle as the query. Without
+    role, location or skills the search loosens a filter it parsed from the query when
+    too few people match, marks those people `relaxed`, and explains it in `note`:
+    call them "the closest matches". Explicit role, location and skills are strict.
+    Pass include_unclaimed=true only when explicitly asked; unclaimed results never
+    include contact data. Zynd members and LinkedIn are not searched here.
     """
     return await search_people_impl(
         query,

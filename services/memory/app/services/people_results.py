@@ -67,8 +67,9 @@ def _score(value: object) -> float:
     return round(float(value), 3) if isinstance(value, (int, float)) else 0.0
 
 
-def person_from_card(row: dict) -> dict:
-    """A Cards search hit (see people_discovery.search_cards)."""
+def person_from_card(row: dict, keep: tuple[str, ...] = ()) -> dict:
+    """A Cards search hit (see people_discovery.search_cards). `keep` names extra Card fields to
+    carry onto the person (the public MCP shows industries, availability, fresh_as_of)."""
     handle = row.get("handle") or None
     claimed = row.get("claimed") is True
     person = {
@@ -88,6 +89,9 @@ def person_from_card(row: dict) -> dict:
     }
     if row.get("relaxed"):
         person["relaxed"] = list(row["relaxed"])   # which filters Cards had to loosen to include them
+    for field in keep:
+        if row.get(field) not in (None, "", []):
+            person[field] = row[field]
     return person
 
 

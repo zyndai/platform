@@ -41,10 +41,15 @@ class Searcher:
     prefs: dict = field(default_factory=dict)
     include_unclaimed: bool = True      # unclaimed Cards carry no contact fields, and owners see them
     invites: bool = False
+    parse_with_llm: bool = True         # an anonymous caller costs a model call per request: heuristics only
+    card_fields: tuple[str, ...] = ()   # extra Card fields to carry onto each person (public MCP)
+
+
+PUBLIC_CARD_FIELDS = ("industries", "availability", "fresh_as_of")
 
 
 def anonymous(include_unclaimed: bool = False) -> Searcher:
-    return Searcher(include_unclaimed=include_unclaimed)
+    return Searcher(include_unclaimed=include_unclaimed, parse_with_llm=False, card_fields=PUBLIC_CARD_FIELDS)
 
 
 async def searcher_for(pool: asyncpg.Pool, uid: str) -> Searcher:
@@ -174,7 +179,7 @@ async def _find_by_name(
         if warning:
             warnings.append(warning)
         if name == "cards":
-            people.extend(people_results.person_from_card(r) for r in rows)
+            people.extend(people_results.person_from_card(r, searcher.card_fields) for r in rows)
         else:
             people.extend(people_results.person_from_external(r, i) for i, r in enumerate(rows))
     people = people_results.apply_preferences(people_results.merge_people(people), searcher.prefs)
@@ -198,12 +203,16 @@ async def find(
 
 async def search(
     pool: asyncpg.Pool, searcher: Searcher, target: str, *, limit: int, wanted: set[str], explicit: set[str],
-    group_id: str = "", extra_params: dict | None = None,
+    group_id: str = "", filters: dict | None = None,
 ) -> dict:
-    """The one people search, for whoever is asking. `extra_params` are Cards filters the parser
-    has no field for (industry, availability, experience_min), passed through unchanged."""
+    """The one people search, for whoever is asking. `filters` are Cards filters the caller gave
+    explicitly (the public MCP: role, location, skills, industry, availability, experience_min),
+    passed through unchanged. A pinned role, location or skill is strict and nothing is loosened,
+    and such a search is never read as a name: the filters say what is wanted. `pool` is not
+    used for an anonymous searcher and may be None."""
     target = (target or "").strip()
-    intent = detect_intent(target)
+    pinned = bool(filters) and any(filters.get(k) for k in people_discovery.PINNED_PARAMS)
+    intent = Intent("target") if pinned else detect_intent(target)
     like_me = intent.kind == "like_me"
     warnings: list[str] = []
     searched: set[str] = set()
@@ -245,9 +254,9 @@ async def search(
             return result
         searched |= name_searched
         extra["note"] = f"Nobody named \"{intent.name}\" was found; showing the closest matches for the text."
-        query = await parse_target(target)
+        query = await _parse(target, searcher)
     elif not like_me:
-        query = await parse_target(target)
+        query = await _parse(target, searcher)
     extra["intent"] = "like_me" if like_me else "target"
 
     if group_id and searcher.uid:
@@ -262,9 +271,9 @@ async def search(
         return result
 
     # Ask for more than `limit` from each source so merging and ranking have something to choose from.
-    pool_size = min(limit * 2, 30)
+    pool_size = max(min(limit * 2, 30), min(limit, 50))
     people, searched_now, early_qe = await _retrieve(
-        pool, searcher, text, query, like_me, wanted, explicit, pool_size, limit, warnings, extra_params)
+        pool, searcher, text, query, like_me, wanted, explicit, pool_size, limit, warnings, filters)
     searched |= searched_now
     people = _rank(people, query, searcher)
     people = await _fallback_quickenrich(
@@ -312,6 +321,10 @@ async def outside(query: TargetQuery, limit: int) -> tuple[list[dict], str | Non
             for person, row in ranked][:limit], warning
 
 
+async def _parse(target: str, searcher: Searcher) -> TargetQuery:
+    return await parse_target(target) if searcher.parse_with_llm else parse_target_heuristic(target)
+
+
 def _with_invites(people: list[dict], searcher: Searcher) -> list[dict]:
     """Invitations are signed for a user, so an anonymous search has none to offer."""
     return people_results.with_invites(people, searcher.uid, bool(searcher.uid) and searcher.invites)
@@ -319,7 +332,7 @@ def _with_invites(people: list[dict], searcher: Searcher) -> list[dict]:
 
 async def _retrieve(
     pool: asyncpg.Pool, searcher: Searcher, text: str, query: TargetQuery, like_me: bool, wanted: set[str],
-    explicit: set[str], pool_size: int, limit: int, warnings: list[str], extra_params: dict | None,
+    explicit: set[str], pool_size: int, limit: int, warnings: list[str], filters: dict | None,
 ) -> tuple[list[dict], set[str], "asyncio.Future | None"]:
     """Call every wanted source at once. Returns (people, sources searched, the early LinkedIn
     search when one was started, for _fallback_quickenrich to await or cancel)."""
@@ -328,7 +341,7 @@ async def _retrieve(
         coros["cards"] = people_discovery.search_cards(
             text, pool_size, query=query, as_handle=searcher.own_handle or "",
             less_like=searcher.prefs.get("less_like_this"), include_unclaimed=searcher.include_unclaimed,
-            **({"extra": extra_params} if extra_params else {}))
+            **({"extra": filters} if filters else {}))
     if "zynd" in wanted and searcher.uid:
         coros["zynd"] = _zynd_people(pool, searcher.uid, text, like_me, pool_size, warnings, query)
     # A role described through their company is the case Cards most often comes up short on, so
@@ -352,7 +365,7 @@ async def _retrieve(
             warnings.append(f"{name}_unavailable")
         elif name == "cards":
             rows, warning = outcome
-            people.extend(people_results.person_from_card(r) for r in rows)
+            people.extend(people_results.person_from_card(r, searcher.card_fields) for r in rows)
             if warning:
                 warnings.append(warning)
         else:

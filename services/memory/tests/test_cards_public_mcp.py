@@ -83,93 +83,133 @@ class _FakeResp:
             raise httpx.HTTPStatusError("err", request=req, response=self)
 
 
-def test_search_people_claimed_default():
-    ask_payload = {
-        "query": "AI compliance founders",
-        "results": [{
-            "handle": "alice",
-            "name": "Alice",
-            "headline": "Founder",
-            "match_score": 0.9,
-            "match_reasons": ["Strong overall match for your query", {"type": "memory", "text": "AI compliance"}],
-            "claimed": True,
-            "url": "https://cards.zynd.ai/p/alice",
-        }],
-        "numberOfItems": 1,
-    }
-
+def _cards_http(handler, calls=None):
+    """Patch httpx so Cards answers `handler(url, params) -> payload` (a dict) or raises."""
     async def fake_get(url, params=None):
-        assert "/ask" in str(url)
-        assert params["include_unclaimed"] is False
-        return _FakeResp(ask_payload)
+        if calls is not None:
+            calls.append((str(url), dict(params or {})))
+        return _FakeResp(handler(str(url), dict(params or {})))
 
     mock_client = MagicMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.get = AsyncMock(side_effect=fake_get)
     mock_client.post = AsyncMock(return_value=_FakeResp({}, status=204))
+    return patch("app.cards_public_mcp.httpx.AsyncClient", return_value=mock_client)
 
-    with patch("app.cards_public_mcp.httpx.AsyncClient", return_value=mock_client):
+
+ALICE = {
+    "handle": "alice", "name": "Alice", "headline": "Founder", "location": "Pune, India", "skills": ["compliance"],
+    "industries": ["AI"], "availability": "open", "match_score": 0.9, "claimed": True,
+    "match_reasons": ["Strong overall match for your query", {"type": "memory", "text": "AI compliance", "age_days": 2}],
+    "fresh_as_of": "2026-10-20T00:00:00Z", "url": "https://cards.zynd.ai/p/alice",
+}
+
+
+def test_search_people_claimed_default():
+    calls = []
+    with _cards_http(lambda url, params: {"results": [ALICE]}, calls):
         out = asyncio.run(search_people_impl("AI compliance founders", k=5))
 
-    assert out["numberOfItems"] == 1
+    url, params = calls[0]
+    assert "/v1/agents/search" in url and params["include_unclaimed"] == "false"     # claimed cards only
+    assert params["role"] == "founder" and params["topics"] and params["relax"] == "true"
+    assert out["numberOfItems"] == 1 and out["intent"] == "target"
     hit = out["results"][0]
-    assert hit["claimed"] is True
-    assert hit["handle"] == "alice"
-    assert "Strong overall match" in hit["match_reasons"][0]
-    assert "AI compliance" in hit["match_reasons"]
-    assert hit["cite_as"].endswith("/p/alice")
+    # Every key the tool has always returned is still there, filled from the Card.
+    assert {"handle", "name", "headline", "location", "skills", "industries", "availability", "match_score",
+            "match_reasons", "claimed", "fresh_as_of", "url", "cite_as"} <= set(hit)
+    assert (hit["handle"], hit["claimed"], hit["industries"], hit["availability"]) == ("alice", True, ["AI"], "open")
+    assert hit["fresh_as_of"] == "2026-10-20T00:00:00Z" and hit["cite_as"].endswith("/p/alice")
+    assert hit["match_score"] == 0.9 and hit["match_quality"] == "exact"
+    # Reasons are specific: the role, and the approved fact with its age; never the generic line.
+    assert hit["match_reasons"][0] == "Founder (headline)"
+    assert any("AI compliance" in r and "approved fact" in r for r in hit["match_reasons"])
+    assert not any("Strong overall match" in r for r in hit["match_reasons"])
 
 
 def test_search_people_unclaimed_strips_contact():
-    ask_payload = {
-        "results": [{
-            "handle": "bob",
-            "name": "Bob",
-            "email": "bob@example.com",
-            "claimed": False,
-            "match_reasons": ["weak"],
-            "url": "https://cards.zynd.ai/p/bob",
-        }],
-    }
-
-    async def fake_get(url, params=None):
-        assert params["include_unclaimed"] is True
-        return _FakeResp(ask_payload)
-
-    mock_client = MagicMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    mock_client.get = AsyncMock(side_effect=fake_get)
-    mock_client.post = AsyncMock(return_value=_FakeResp({}, status=204))
-
-    with patch("app.cards_public_mcp.httpx.AsyncClient", return_value=mock_client):
+    bob = {"handle": "bob", "name": "Bob", "email": "bob@example.com", "claimed": False,
+           "match_reasons": ["weak"], "url": "https://cards.zynd.ai/p/bob"}
+    calls = []
+    with _cards_http(lambda url, params: {"results": [bob]}, calls):
         out = asyncio.run(search_people_impl("engineer", include_unclaimed=True))
 
+    assert calls[0][1]["include_unclaimed"] == "true"
     hit = out["results"][0]
     assert hit["claimed"] is False
-    assert "email" not in hit
+    assert "email" not in hit and "bob@example.com" not in repr(out)
 
 
 def test_search_people_uses_agents_search_when_filters():
-    seen = {}
-
-    async def fake_get(url, params=None):
-        seen["url"] = str(url)
-        seen["params"] = params
-        return _FakeResp({"results": []})
-
-    mock_client = MagicMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    mock_client.get = AsyncMock(side_effect=fake_get)
-    mock_client.post = AsyncMock(return_value=_FakeResp({}, status=204))
-
-    with patch("app.cards_public_mcp.httpx.AsyncClient", return_value=mock_client):
+    calls = []
+    with _cards_http(lambda url, params: {"results": []}, calls):
         asyncio.run(search_people_impl("rust", location="Berlin", k=3))
 
-    assert "/v1/agents/search" in seen["url"]
-    assert seen["params"]["location"] == "Berlin"
+    url, params = calls[0]
+    assert "/v1/agents/search" in url
+    assert params["location"] == "Berlin"
+
+
+def test_explicit_filters_are_strict_and_alone():
+    """Pinned role, location or skills are the only ones sent and nothing is relaxed; the free text
+    only ranks. The parse must not add a role of its own on top of what the caller pinned."""
+    calls = []
+    with _cards_http(lambda url, params: {"results": []}, calls):
+        asyncio.run(search_people_impl("AI investor", location="Berlin", industry="fintech", experience_min=5))
+    params = calls[0][1]
+    assert params["location"] == "Berlin" and params["industry"] == "fintech" and params["experience_min"] == 5
+    assert "role" not in params and "relax" not in params and "skills" not in params
+
+
+def test_a_search_by_filters_alone_still_has_words_to_rank_by():
+    calls = []
+    with _cards_http(lambda url, params: {"results": []}, calls):
+        out = asyncio.run(search_people_impl("", role="Rust engineer", location="Berlin"))
+    assert calls[0][1]["q"] == "Rust engineer Berlin" and calls[0][1]["role"] == "Rust engineer"
+    assert out["numberOfItems"] == 0 and "error" not in out
+    assert asyncio.run(search_people_impl("", k=3))["error"] == "query required"
+
+
+def test_a_name_is_looked_up_as_a_name():
+    chandan = {"handle": "chandan-kumar-2en8", "name": "Chandan Kumar", "headline": "Founder", "claimed": True,
+               "match_score": 0.389, "url": "https://cards.zynd.ai/p/chandan-kumar-2en8"}
+    calls = []
+    with _cards_http(lambda url, params: {"results": [chandan]} if "/lookup" in url else {"results": []}, calls):
+        out = asyncio.run(search_people_impl("Chandan Kumar"))
+    assert "/v1/agents/lookup" in calls[0][0] and calls[0][1]["name"] == "Chandan Kumar"
+    assert calls[0][1]["include_unclaimed"] == "false" and len(calls) == 1
+    assert out["intent"] == "name" and [r["handle"] for r in out["results"]] == ["chandan-kumar-2en8"]
+    assert out["results"][0]["match_quality"] == "exact"
+
+
+def test_a_loosened_search_says_so():
+    near = {**ALICE, "handle": "near", "location": "Berlin", "relaxed": ["location"],
+            "match_reasons": ["Not in India (closest match)"]}
+    with _cards_http(lambda url, params: {"results": [near]}):
+        out = asyncio.run(search_people_impl("founder in India"))
+    (hit,) = out["results"]
+    assert hit["relaxed"] == ["location"] and hit["match_quality"] != "exact"
+    assert "Not in India (closest match)" in hit["match_reasons"]
+    assert out["note"]                                            # "call them the closest matches"
+
+
+def test_the_public_tool_never_pays_for_linkedin_or_a_model_call_or_reads_zynd_members():
+    from unittest.mock import patch as _patch
+    with _cards_http(lambda url, params: {"results": []}), \
+            _patch("app.services.people_discovery.search_quickenrich", AsyncMock()) as linkedin, \
+            _patch("app.services.people_search.parse_target", AsyncMock()) as model_parse, \
+            _patch("app.services.people_search._zynd_people", AsyncMock()) as zynd:
+        out = asyncio.run(search_people_impl("seed investor who backs AI dev tools in India"))
+    linkedin.assert_not_awaited(); model_parse.assert_not_awaited(); zynd.assert_not_awaited()
+    assert out["numberOfItems"] == 0 and "warnings" not in out
+
+
+def test_a_cards_outage_is_an_error_not_an_empty_answer():
+    def down(url, params):
+        raise httpx.ConnectError("down")
+    with _cards_http(down), pytest.raises(RuntimeError, match="unavailable"):
+        asyncio.run(search_people_impl("founders"))
 
 
 def test_get_card_view():

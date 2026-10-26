@@ -2,9 +2,9 @@
 
 > **Status:** proposed 2026-10-26. **Phase 0 is implemented on `dev`** (see "Phase 0 as built" below), enabled
 > with no flag (AGENTS.md §9: no new env vars). **Phase 1 is implemented** (see "Phase 1 as built"). **Phase 2 is
-> implemented** (see "Phase 2 as built"; `cards/0031` applied to aafo 2026-10-26). **Phase 3 is planned in detail,
-> not started** (persona dropped: it is a discarded project). What is still unapplied or unchecked is collected in
-> §11 "Left for the end".
+> implemented** (see "Phase 2 as built"; `cards/0031` applied to aafo 2026-10-26). **Phase 3 is implemented** (see "Phase 3 as built";
+> persona dropped: it is a discarded project). What is still unapplied or unchecked is collected in §11 "Left for
+> the end".
 >
 > **Builds on** [`ZYND_MEMORY_QUALITY_PLAN.md`](./ZYND_MEMORY_QUALITY_PLAN.md) Part B (F1–F9, A1–A8), which
 > shipped behind flags (see its §17). This plan does not redo that work. It fixes what Part B left broken
@@ -610,8 +610,8 @@ How it works:
 
 ### Phase 3: One pipeline everywhere, and measurement (~1 week, then ongoing)
 
-> **Rewritten 2026-10-26 after reading the code; nothing below is built yet.** Decisions taken with the
-> owner:
+> **Rewritten 2026-10-26 after reading the code; built the same day, see "Phase 3 as built" below for where it
+> differs.** Decisions taken with the owner:
 > - **Persona is out of scope.** It is a discarded project, so 3.3 is dropped and the plan touches only
 >   Cards: cards-api, cards-web, and memory, which hosts `find_people` and the public Cards MCP.
 > - cards-web `/search` shows a **label, not a percentage** (3.4).
@@ -703,7 +703,8 @@ and `outside-people` have no user.
   - nothing below that.
   The thresholds are constants in one helper in `src/lib/cards.ts`, next to `formatMatchReason`.
 - `/search` stays strict (`relax=False`): UI filters are explicit, so `relaxed` never appears there.
-  `/directory` (via `/ask`) doesn't show scores and needs no change.
+  `/directory` (via `/ask`) **does** show a score, a percentage ring: it gets the same label (corrected while
+  building; the plan first said it needed no change).
 - Profile links from `/search` and `/directory` carry `?sid=<search_id>&r=<rank>` for 3.5. `ProfileView`
   (`src/components/ProfileView.tsx:20`) adds them to its `view` event's meta, and the URL is cleaned
   with `history.replaceState` so a shared link carries no search id.
@@ -739,7 +740,8 @@ and `outside-people` have no user.
     returns it in `find_people`'s result.
 - **New server event `search_result_action`**, added to `SERVER_EVENTS` in
   `cards-api/services/events.py:42` so the unauthenticated `POST /events` can't forge it.
-  - Meta: `{search_id, rank, source: cards | zynd | quickenrich, action: connect | invite, connection_id?}`.
+  - Meta: `{search_id, rank, source: card | zynd | linkedin, action: connect | invite, connection_id? | invite_id?}`
+    (the names memory already uses for a person's sources).
   - No query text and no user id. `connection_id` lets acceptance be joined from `cards.connections`.
 - **connect.**
   - After each owner search, memory stores in Redis, for 24 hours under `people_search:last:<uid>`,
@@ -779,10 +781,71 @@ No migration: `card_events.meta` is jsonb. Rollback is a revert per service, in 
 **Phase 3 is done when:**
 - The public MCP returns `chandan-kumar-2en8` first for "chandan" and never calls QuickEnrich.
 - `outside-people` results carry a location and are ordered by fit.
-- The three golden sets are at about 80, 15 and 10 cases, with the baseline − 5 gate.
+- The three golden sets are at 80, 16 and 10 cases, with the baseline − 5 gate (search set).
 - A connection request made from a `find_people` result on dev produces a `search_result_action` row with
   its `connection_id`.
 - The new funnel queries run.
+
+#### Phase 3 as built (2026-10-26)
+
+Commits `437551d`, `d631bb0`, `8232270`, `02f8782`, `9de6f1e`, `21b0d93`, `d0d9a10`, `a853e44` on
+`feature/people-search`, not pushed (§11 E1). Tests: memory 778 → 832 passing, cards-api 758 → 770 (only the 2
+known `test_x_bot.py` failures), cards-web lint 0 errors / `tsc` / `next build` clean, `packages/db` funnel SQL test
+against a throwaway local Postgres. Persona was not touched.
+
+What differs from the text above:
+
+- **3.0** `people_search.search(pool, Searcher, target, ...)` is the one search; `find` is the owner wrapper. A
+  `Searcher` with no user has no Zynd source, no preferences, no invites, **no model call** (heuristic parsing only: an
+  anonymous caller must not cost a model call per request) and gets LinkedIn only when it names it. The *early*
+  LinkedIn start is gated the same way (the first version of this started a paid lookup for an anonymous search and
+  then cancelled it).
+- **3.1** `outside-people` returns each person ordered by fit with `location`, `why`, `score` and `match_quality`, and
+  **drops** wrong-role titles (the provider's exclude matching is unconfirmed, Q1). Cards keeps `location` and `why`;
+  the digest and owner home show the location.
+- **Role fit for LinkedIn people** is read from the *title* with the request's include/exclude words, not the role noun
+  in the whole headline. Before, a LinkedIn "Venture Partner" (retrieved as an investor) scored as not-an-investor
+  and "Sales Manager at Investor Relations Inc" scored as one. The reason says "(title)" when the headline does not
+  name the role.
+- **3.2** The public MCP runs `search` anonymously (`sources=cards`, `include_unclaimed` as asked). Explicit `role`,
+  `location`, `skills` are **pinned**: the only ones sent, nothing relaxed, and the free text only contributes topics.
+  Such a search is never read as a name. `industries`, `availability` and `fresh_as_of` come from the Card, so every key
+  the tool returned is still there; it adds `intent`, `match_quality`, `relaxed`, `note`, `warnings`. A Cards outage is
+  still an error, not an empty answer.
+- **3.4** `/search` and the directory show "Strong match" / "Good match" (`matchLabel`, `STRONG_MATCH_SCORE` 0.6 and
+  `GOOD_MATCH_SCORE` 0.4 in `src/lib/match-reason.ts`) and link profiles with `?sid=&r=`; `ProfileView` counts the view
+  with them and removes them from the address.
+- **3.5 online.**
+  - cards-api: `search_id` and `via` (`web`, `memory`, `mcp`, `ask`) on `/v1/agents/search`, `/lookup` and `/ask`; `/ask`
+    is now counted as a search (`via=ask` unless the caller says otherwise). `search_result_action` is a server event.
+    `from_search` on `/network/connections` and `/network/invites` is honoured **only for the service token**.
+  - memory: `search_trail` keeps the last search of each user for 24 h in Redis (`people_search:last:<uid>`: handles,
+    ranks, sources; no query). `request_card_connection` and `invite_to_claim` send `from_search`; if Cards answers 422
+    (deployed in the wrong order) the request is sent again without it. One log line per search on `zynd.find_people`
+    (`search_id`, who, intent, sources, counts, strong, warnings, ms; no query text and no name).
+  - `docs/cards/s04-funnel.sql` has five named queries (empty share by via, connects per search, acceptance by source,
+    views per search, suggestion connect rate); `packages/db/test/cards-search-funnel-sql.test.ts` runs them against the
+    real cards migrations and seeded events (skipped without `CARDS_TEST_DATABASE_URL`).
+- **3.5 offline.** `search_golden` 61 → 80 queries (+2 cards), `people_golden` 8 → 16, `suggestions_golden` 5 → 10 owners
+  (+ `kinds_in_first`), a raw-QuickEnrich fixture. The fixed 0.95 floor is replaced by `baseline` and `max_drop`: precision@k
+  and recall@5 may not fall more than 5 points below the recorded baseline (0.9888 / 0.995, so the gates are 0.939 and 0.945:
+  about a point looser than the old 0.95), and a rise of more than 0.01 must raise the baseline in the same commit.
+
+Found while building and **fixed** (each has a test): a lone tool name ("Kubernetes", "Figma") was read as a person's name;
+the same LinkedIn person spelled with and without `www.` counted twice in `outside-people`; a company of "N/A" showed as
+"Investor at N/A"; the early LinkedIn start for anonymous callers (above).
+
+Found and **not fixed** (each is a decision for a person):
+
+- **A "who I want to meet" longer than 4 words is dropped** by the suggestions (`MAX_FREE_TEXT_WORDS`), so "a startup
+  lawyer who knows fundraising" gets no suggestions. The golden owner uses a 4-word phrase.
+- **"Former founder" satisfies the role "founder".** On "founders in the USA" an angel investor whose headline is "Angel
+  investor and former founder" outranks a real founder (the one golden miss; its label is kept as written).
+- A free-text suggestion has no role filter, so after the right person it can list a weak match (about 0.34).
+- `GET /me/find-people` (the ChatGPT GPT Action) is still its own Zynd-only path (the one exception to D6, by design).
+- The `SEM_FLOOR`/`SEM_SPAN` constants are still unfitted (V3): the gates above test the hashed stand-in embedder.
+
+**Deploy order:** cards-api, then memory, then cards-web. No migration.
 
 ---
 
@@ -863,6 +926,11 @@ coding session does not have. Run them in this order, and record each result her
 | V10 | Migration 0031 applied | `db:migrate --project cards --yes` | applied 2026-10-26; `cards.card_suggestions` and `cards.card_suggestion_impressions` exist | ✅ done (first refresh: see "Left for the end") |
 | V11 | Phase 2 "done when" | `cd services/cards-api && python scripts/check_suggestions.py` (read-only; embeds each target) | 0 exclusion violations; digest rotation ≥ 60%; every card that could get a two-way suggestion gets one | open |
 | V12 | Owner home and digest on dev | Open `/home` on dev: "People to meet" shows, Hide / Not relevant remove a person and they stay gone after reload; a digest preview (`?dry_run=true&handle=`) shows reasons and the feedback links | looks right | open |
+| V13 | Public MCP on dev | `search_people("chandan")`, a name with a company, an explicit `location`, and a long free-text query on `/cards-public-mcp`; then the memory log | "chandan" first; `intent` is `name`; no LinkedIn call (log line says `who=anonymous` and `quickenrich=no`); the explicit location is strict | open |
+| V14 | A connection from a search is recorded | On dev, `find_people`, then `request_card_connection` to a result; read `cards.card_events` | one `search_result_action` row with the `search_id`, `rank`, `source` and `connection_id`; `people_search:last:<uid>` exists in Redis with a 24 h TTL | open |
+| V15 | The funnel queries on aafo | Run the five named queries in `docs/cards/s04-funnel.sql` (read-only) after a day of traffic | rows for `memory`, `web` and `mcp`; no error | open |
+| V16 | cards-web labels and links | `/search` and `/directory` on dev: "Strong match" / "Good match" show, the mobile pill does not cover the name, and after opening a profile the address no longer holds `sid` and `r` | looks right | open |
+| V17 | `outside-people` on dev | The digest preview and owner home for an owner who wants Investors: outside people carry a location and none has a "Grievance" or "Relations" title | all hold | open |
 
 Deploy order for everything above: cards-api, then memory.
 
@@ -880,5 +948,7 @@ in this order.
 | E5 | V11 and V12 | `scripts/check_suggestions.py` on live data; owner home and a digest dry run on dev | open |
 | E6 | V2–V9 | Phase 0–1 checks above (speed, `SEM_*` fit, saved-search threshold, live Chandan/investor checks, 20 real queries, `FEATURE_FACT_MATCHING`, cards-web scores, QuickEnrich Q1/Q2) | open |
 | E7 | Q7 | Persona is discarded (2026-10-26); nothing to ask | ✅ closed |
+| E8 | Phase 3 checks | V13–V17 above, after deploying cards-api, memory and cards-web in that order | open |
+| E9 | Decisions from Phase 3 | The 4-word cap on free-text wants, "former founder" matching the role founder, and whether to tighten the golden gate back to 0.95 (see "Phase 3 as built") | open |
 
 Already applied: `cards/0030_filter_cards` (2026-10-27), `cards/0031_card_suggestions` (2026-10-26).

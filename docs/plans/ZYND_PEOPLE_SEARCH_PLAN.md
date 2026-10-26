@@ -2,7 +2,7 @@
 
 > **Status:** proposed 2026-10-26. **Phase 0 is implemented on `dev`** (see "Phase 0 as built" below), enabled
 > with no flag (AGENTS.md §9: no new env vars). **Phase 1 is implemented** (see "Phase 1 as built"). **Phase 2 is
-> implemented** (see "Phase 2 as built"; `cards/0031` applied to aafo 2026-10-26). **Phase 3 is implemented** (see "Phase 3 as built";
+> implemented** (see "Phase 2 as built"; `cards/0031` applied to aafo by a maintainer; a `db:migrate` dry run then showed nothing pending). **Phase 3 is implemented** (see "Phase 3 as built";
 > persona dropped: it is a discarded project). What is still unapplied or unchecked is collected in §11 "Left for
 > the end".
 >
@@ -604,7 +604,7 @@ How it works:
   5 golden owners over the search corpus), memory 777 → 778, persona 366 → 367, `packages/db` SQL tests on a local
   Postgres (migration count 32). Only the 2 known `test_x_bot.py` failures remain.
 - Check script: `services/cards-api/scripts/check_suggestions.py` (read-only; V11 below).
-- **Deploy order:** cards-api, memory, cards-web. 0031 is already applied (2026-10-26).
+- **Deploy order:** cards-api, memory, cards-web. 0031 is applied (an earlier note here said so before it was; a maintainer's `db:migrate` run applied it, and the next dry run showed `pending: none`).
 - Known cost: until the first nightly refresh has run, each owner-home refresh (every 60 s while open) computes
   live, up to 3 searches.
 
@@ -923,7 +923,7 @@ coding session does not have. Run them in this order, and record each result her
 | V7 | `FEATURE_FACT_MATCHING` in prod | Human decision (section 8), after `FEATURE_FACT_FAMILIES` is on | flipped after V5 and V6 | open |
 | V8 | cards-web | Open `/search` and `/directory` on dev: scores display sensibly on the new scale, `relaxed` shows | looks right | open |
 | V9 | QuickEnrich questions Q1 and Q2 | Three manual calls (OR/AND and substring/whole word for `include`) and one raw record (is the LinkedIn URL scheme-less?) | answers written into section 9 | open |
-| V10 | Migration 0031 applied | `db:migrate --project cards --yes` | applied 2026-10-26; `cards.card_suggestions` and `cards.card_suggestion_impressions` exist | ✅ done (first refresh: see "Left for the end") |
+| V10 | Migration 0031 applied | `db:migrate --project cards --yes` | applied by a maintainer (first run: `applied: 0030; pending: 0031`, then applied; second dry run: `applied: 0031; pending: none`); `cards.card_suggestions` and `cards.card_suggestion_impressions` exist | ✅ done (first refresh: see "Left for the end") |
 | V11 | Phase 2 "done when" | `cd services/cards-api && python scripts/check_suggestions.py` (read-only; embeds each target) | 0 exclusion violations; digest rotation ≥ 60%; every card that could get a two-way suggestion gets one | open |
 | V12 | Owner home and digest on dev | Open `/home` on dev: "People to meet" shows, Hide / Not relevant remove a person and they stay gone after reload; a digest preview (`?dry_run=true&handle=`) shows reasons and the feedback links | looks right | open |
 | V13 | Public MCP on dev | `search_people("chandan")`, a name with a company, an explicit `location`, and a long free-text query on `/cards-public-mcp`; then the memory log | "chandan" first; `intent` is `name`; no LinkedIn call (log line says `who=anonymous` and `quickenrich=no`); the explicit location is strict | open |
@@ -951,4 +951,4 @@ in this order.
 | E8 | Phase 3 checks | V13–V17 above, after deploying cards-api, memory and cards-web in that order | open |
 | E9 | Decisions from Phase 3 | The 4-word cap on free-text wants, "former founder" matching the role founder, and whether to tighten the golden gate back to 0.95 (see "Phase 3 as built") | open |
 
-Already applied: `cards/0030_filter_cards` (2026-10-27), `cards/0031_card_suggestions` (2026-10-26).
+Applied to aafo (confirmed by a `db:migrate` dry run: `[cards] applied: 0031_card_suggestions; pending: none`): `cards/0030_filter_cards`, `cards/0031_card_suggestions`. Phase 3 adds no migration.

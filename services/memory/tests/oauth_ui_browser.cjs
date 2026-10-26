@@ -2,6 +2,9 @@
 const assert = require('node:assert/strict');
 const { chromium } = require('../../../apps/cards-web/node_modules/playwright');
 
+// The page loads the product's typefaces from Google Fonts; the test needs neither the network nor the files.
+const FONT_HOSTS = new Set(['fonts.googleapis.com', 'fonts.gstatic.com']);
+
 async function main() {
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
@@ -15,7 +18,9 @@ async function main() {
         const posts = [];
         await page.route('**/*', async (route) => {
           const url = new URL(route.request().url());
-          if (url.hostname === 'cdn.jsdelivr.net') {
+          if (FONT_HOSTS.has(url.hostname)) {
+            await route.fulfill({ contentType: 'text/css', body: '' });
+          } else if (url.hostname === 'cdn.jsdelivr.net') {
             await route.fulfill({ contentType: 'application/javascript', body: `window.supabase = {
               createClient: () => ({auth: {getSession: async () => ({data: {session: {access_token: 'mock-session'}}})}})
             };` });
@@ -46,6 +51,12 @@ async function main() {
         assert.equal(posts[0].body.req, 'sealed-request');
         assert.equal(posts[0].body.supabase_token, 'mock-session');
         assert.equal(await page.locator('#signin').isVisible(), false);
+        assert.equal(await page.locator('h1').textContent(), 'Approve connection');
+        if (viewport.height === 800) {
+          // Both choices stay on screen without scrolling at laptop height.
+          const bottom = await page.locator('#cancel').evaluate((el) => el.getBoundingClientRect().bottom);
+          assert.ok(bottom <= viewport.height, `Cancel falls below the fold: ${bottom}`);
+        }
         assert.equal(await page.locator('#identity').textContent(), 'verified@example.test');
         assert.equal(await page.locator('#client img').count(), 0);
         assert.match(await page.locator('#client').textContent(), /<img/);
@@ -85,7 +96,9 @@ async function main() {
     });
     await page.route('**/*', async (route) => {
       const url = new URL(route.request().url());
-      if (url.hostname === 'cdn.jsdelivr.net') {
+      if (FONT_HOSTS.has(url.hostname)) {
+        await route.fulfill({ contentType: 'text/css', body: '' });
+      } else if (url.hostname === 'cdn.jsdelivr.net') {
         await route.fulfill({ contentType: 'application/javascript', body: '' });
       } else if (url.pathname === '/oauth/login/callback') {
         await route.fulfill({ contentType: 'text/html', body: callback });

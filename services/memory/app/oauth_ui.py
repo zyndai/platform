@@ -68,8 +68,8 @@ _CSS = """<style>
     border:1px solid var(--edge);background:rgba(255,255,255,.7);color:var(--accent-hi);
     font:700 10.5px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase}
   .eyebrow i{width:6px;height:6px;border-radius:50%;background:var(--accent)}
-  h1{margin:14px 0 0;font:800 clamp(28px,6vw,36px)/1.1 var(--ui);letter-spacing:-.03em;word-spacing:.08em}
-  .sub{margin:10px 0 22px;font:500 14.5px/1.55 var(--ui);color:var(--soft)}
+  h1{margin:14px 0 18px;font:800 clamp(28px,6vw,36px)/1.1 var(--ui);letter-spacing:-.03em;word-spacing:.08em}
+  .sub{margin:-8px 0 22px;font:500 14.5px/1.55 var(--ui);color:var(--soft)}
   .card{position:relative;isolation:isolate;overflow:hidden;padding:22px;border-radius:24px;
     background:#fff;border:1px solid var(--line);box-shadow:0 18px 40px -34px rgba(30,27,75,.45)}
   .card::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
@@ -78,7 +78,7 @@ _CSS = """<style>
       radial-gradient(260px 140px at 52% -24%,rgba(147,197,253,.24),transparent 70%)}
   .card.center{text-align:center}
   .stack,.actions{display:grid;gap:10px}
-  .actions{margin-top:18px}
+  .actions{margin-top:16px}
   .btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:48px;
     padding:0 20px;border-radius:13px;border:1px solid #E2E8F0;background:#fff;color:var(--ink);
     font:700 14px/1 var(--ui);cursor:pointer;
@@ -91,21 +91,23 @@ _CSS = """<style>
     box-shadow:0 12px 24px -14px rgba(108,92,231,.9)}
   .btn.primary:hover:not(:disabled){background:var(--accent-hi)}
   .details{color:var(--soft);font:500 14px/1.6 var(--ui)}
-  .details p{margin:0 0 12px}
+  .details p{margin:0 0 10px}
   .details strong{color:var(--ink);font-weight:700}
   .details .note{margin:-4px 0 14px;font-size:12.5px;line-height:1.5;color:var(--faint)}
-  .fields{display:grid;gap:8px;margin:0 0 14px}
-  .field{margin:0;padding:10px 14px;border-radius:14px;background:var(--tint);border:1px solid var(--line)}
-  .field dt{font:700 10.5px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
-  .field dd{margin:7px 0 0;font:700 15px/1.35 var(--ui);color:var(--ink);overflow-wrap:anywhere}
-  .field dd.mono{font:400 13px/1.45 var(--mono)}
-  .perms{list-style:none;padding:0;margin:0 0 14px;display:grid;gap:8px}
+  .fields{margin:0 0 14px;border-radius:14px;background:var(--tint);border:1px solid var(--line)}
+  .field{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0;padding:11px 14px}
+  .field+.field{border-top:1px solid var(--line)}
+  .field dt{flex:none;font:700 10.5px/1.4 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+  .field dd{margin:0;min-width:0;text-align:right;font:700 14px/1.35 var(--ui);color:var(--ink);overflow-wrap:anywhere}
+  .field dd.mono{font:400 12.5px/1.45 var(--mono)}
+  .perms{list-style:none;padding:0;margin:0 0 12px;display:grid;gap:6px}
   .perms li{position:relative;padding-left:26px}
   .perms li::before{content:"\\2713";position:absolute;left:0;top:2px;width:17px;height:17px;
-    border-radius:50%;background:var(--tint);color:var(--accent-hi);font:700 10px/17px var(--mono);
+    border-radius:50%;background:var(--tint);color:var(--accent-hi);font:700 11px/17px var(--mono);
     text-align:center}
   .err{margin:0 0 14px;padding:12px 14px;border-radius:14px;font:600 13px/1.5 var(--ui);
     background:#FFF1F2;border:1px solid #FECDD3;color:#BE123C;text-align:left}
+  .err:last-child{margin-bottom:0}
   .spinner{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--accent);
     border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 12px}
   @keyframes spin{to{transform:rotate(360deg)}}
@@ -190,32 +192,38 @@ def _js_string(value: str) -> str:
 
 
 _LOGIN_BODY = """<div class="wrap">
-  <div class="kicker"><span class="z">Z</span> ZYND &middot; connect your memory</div>
-  <h1>Sign in to ZYND</h1>
-  <p class="sub">Verify your account so your AI can use ZYND tools. Connector
-   connections need an existing ZYND account &mdash; new accounts are created
-   on cards.zynd.ai.</p>
+  <div class="eyebrow" id="kicker"><i></i>Connect your memory</div>
+  <h1 id="title">Sign in to Zynd</h1>
+  <p class="sub" id="lede">Verify your account so your AI can use Zynd tools. Connector
+   connections need an existing Zynd account &mdash; new accounts are created
+   on <a href="%%SITE%%">%%SITE_HOST%%</a>.</p>
   <div id="error" class="err" role="alert" aria-live="assertive" %%ERROR_HIDDEN%%>%%ERROR%%</div>
   <div class="card" id="signin">
-    <button data-provider="google">Continue with Google</button>
-    <button data-provider="linkedin_oidc">Continue with LinkedIn</button>
+    <div class="stack">
+      <button type="button" class="btn" data-provider="google">%%GOOGLE_ICON%%Continue with Google</button>
+      <button type="button" class="btn" data-provider="linkedin_oidc">%%LINKEDIN_ICON%%Continue with LinkedIn</button>
+    </div>
     %%REVIEWER%%
   </div>
   <div class="card" id="consent" hidden>
     <div class="details">
-      <p>Signed in as <strong id="identity"></strong></p>
-      <p><strong id="client"></strong> is requesting access to the ZYND MCP resource
-        <strong id="resource"></strong>. This client name is supplied by the requesting app,
-        not verified by ZYND.</p>
-      <p id="permission-summary">Allowing this connection grants full access to your ZYND account. The app can:</p>
-      <ul id="permissions"><li>Read, search, and add to your memory and conversations.</li>
+      <dl class="fields">
+        <div class="field"><dt>Signed in as</dt><dd id="identity"></dd></div>
+        <div class="field"><dt>Requesting app</dt><dd id="client"></dd></div>
+        <div class="field"><dt>Resource</dt><dd id="resource" class="mono"></dd></div>
+      </dl>
+      <p class="note">This client name is supplied by the requesting app, not verified by Zynd.</p>
+      <p id="permission-summary">Allowing this connection grants full access to your Zynd account. The app can:</p>
+      <ul id="permissions" class="perms"><li>Read, search, and add to your memory and conversations.</li>
         <li>Access your profile card and connected account information.</li>
         <li>Use your connected integrations and their available tools on your behalf.</li></ul>
       <p>Only continue if you trust this app. You can disconnect this connection
-        individually in your ZYND connection settings later.</p>
+        individually in your Zynd connection settings later.</p>
     </div>
-    <button id="allow" type="button">Allow full access</button>
-    <button id="cancel" type="button" class="secondary">Cancel</button>
+    <div class="actions">
+      <button id="allow" type="button" class="btn primary">Allow full access</button>
+      <button id="cancel" type="button" class="btn">Cancel</button>
+    </div>
   </div>
   <p class="foot">Sign-in alone does not grant access to your data.</p>
 </div>
@@ -273,6 +281,9 @@ _LOGIN_BODY = """<div class="wrap">
         });
         document.getElementById('allow').textContent = 'Allow memory and card access';
       }
+      document.getElementById('title').textContent = 'Approve connection';
+      document.getElementById('lede').hidden = true;
+      document.getElementById('kicker').hidden = true;
       document.getElementById('signin').hidden = true;
       document.getElementById('consent').hidden = false;
     }).catch(function(){ showError('Unable to verify this connection request.'); });
@@ -325,10 +336,9 @@ _LOGIN_BODY = """<div class="wrap">
 </script>"""
 
 _CALLBACK_BODY = """<div class="wrap">
-  <div class="kicker"><span class="z">Z</span> ZYND &middot; connect your memory</div>
-  <div class="card">
+  <div class="card center">
     <div class="spinner"></div>
-    <p class="sub" id="msg">Completing sign-in&hellip;</p>
+    <p class="sub" id="msg" style="margin:0">Completing sign-in&hellip;</p>
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -374,10 +384,13 @@ def _reviewer_form_enabled(req: str) -> bool:
 def _render_login(req: str, error: str = "") -> HTMLResponse:
     project = _supabase_project()
     if not project:
-        return _page("ZYND", """<div class="wrap"><div class="card"><div class="err">"""
+        return _page("Zynd", """<div class="wrap"><div class="card"><div class="err">"""
                      "OAuth sign-in is not configured on this server.</div></div></div>")
     url, key = project
     body = _LOGIN_BODY
+    body = body.replace("%%SITE%%", html.escape(_site_url(), quote=True))
+    body = body.replace("%%SITE_HOST%%", html.escape(urlsplit(_site_url()).netloc))
+    body = body.replace("%%GOOGLE_ICON%%", _GOOGLE_ICON).replace("%%LINKEDIN_ICON%%", _LINKEDIN_ICON)
     body = body.replace("%%REVIEWER%%", _REVIEWER_BLOCK if _reviewer_form_enabled(req) else "")
     body = body.replace("%%ERROR_HIDDEN%%", "" if error else "hidden")
     body = body.replace("%%ERROR%%", html.escape(error))
@@ -385,13 +398,13 @@ def _render_login(req: str, error: str = "") -> HTMLResponse:
     body = body.replace("%%SUPABASE_URL%%", _js_string(url))
     body = body.replace("%%SUPABASE_ANON_KEY%%", _js_string(key))
     body = body.replace("%%CALLBACK%%", _js_string(settings.public_base_url.rstrip("/") + "/oauth/login/callback"))
-    return _page("Sign in to ZYND", body)
+    return _page("Sign in to Zynd", body)
 
 
 def _render_callback(req_param: str) -> HTMLResponse:
     project = _supabase_project()
     if not project:
-        return _page("ZYND", """<div class="wrap"><div class="card"><div class="err">"""
+        return _page("Zynd", """<div class="wrap"><div class="card"><div class="err">"""
                      "OAuth sign-in is not configured on this server.</div></div></div>")
     url, key = project
     body = _CALLBACK_BODY

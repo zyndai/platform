@@ -3,12 +3,30 @@
 /**
  * Cards login — LinkedIn only (D12: persona's login, no Google/GitHub/magic
  * link). Magic link comes back once an email provider (SMTP) is chosen.
+ *
+ * Drawn in the product's look (the directory's `.dc` canvas) because that is
+ * where the "Sign in" buttons that lead here live.
  */
 
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { EDITION_FONT_VARS } from "@/components/editions/fonts";
 import { startLinkedInOAuth } from "@/lib/auth/session";
+import "@/components/discover/discover.css";
+import "./auth.css";
+
+function LinkedInIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+      <rect width="24" height="24" rx="4" fill="#0A66C2" />
+      <path
+        fill="#fff"
+        d="M7.1 9.6h2.4V18H7.1V9.6zm1.2-3.9a1.4 1.4 0 110 2.8 1.4 1.4 0 010-2.8zM11.2 9.6h2.3v1.15h.03c.32-.6 1.1-1.25 2.27-1.25 2.43 0 2.88 1.6 2.88 3.68V18h-2.4v-4.3c0-1.03-.02-2.35-1.43-2.35-1.44 0-1.65 1.12-1.65 2.28V18h-2.4V9.6z"
+      />
+    </svg>
+  );
+}
 
 function AuthPageContent() {
   const searchParams = useSearchParams();
@@ -22,54 +40,50 @@ function AuthPageContent() {
   };
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: "#000",
-      fontFamily: "sans-serif",
-      color: "#fff",
-    }}>
-      <div style={{ textAlign: "center", maxWidth: "400px", padding: "40px" }}>
-        <h1 style={{ fontSize: "32px", marginBottom: "20px", fontWeight: 700 }}>
-          Sign in to <span style={{ color: "#8B5CF6" }}>Zynd Cards</span>
-        </h1>
+    <main className={`dc ${EDITION_FONT_VARS}`}>
+      <div className="dc-wrap">
+        <header className="dc-header">
+          <div className="dc-crumbs">
+            <Link href="/">Zynd</Link>
+            {" / "}
+            <strong>Sign in</strong>
+          </div>
+        </header>
 
-        {oauthError && (
-          <p style={{ color: "#f87171", fontSize: "14px", marginBottom: "16px" }}>
-            {oauthError === "auth_callback_failed" ? "Sign-in failed — please try again." : oauthError}
-          </p>
-        )}
+        <section className="da-stage">
+          <div className="da-panel">
+            <div role="heading" aria-level={1} className="da-title">
+              Sign in to <span>Zynd Cards</span>
+            </div>
 
-        <button
-          onClick={loginWithLinkedin}
-          style={{
-            width: "100%", padding: "12px 20px", marginBottom: "20px",
-            backgroundColor: "#0A66C2", color: "#fff", border: "none", borderRadius: "8px",
-            fontSize: "16px", fontWeight: 600, cursor: "pointer",
-          }}
-        >
-          Sign in with LinkedIn
-        </button>
+            {oauthError && (
+              <p role="alert" className="da-error">
+                {oauthError === "auth_callback_failed" ? "Sign-in failed — please try again." : oauthError}
+              </p>
+            )}
 
-        {next.startsWith("/review/") && (
-          <p style={{ marginBottom: "20px", fontSize: "14px" }}>
-            <Link href={`/auth/reviewer?next=${encodeURIComponent(next)}`} style={{ color: "#8B5CF6" }}>
-              Reviewer sign-in
-            </Link>
-          </p>
-        )}
+            <button type="button" onClick={loginWithLinkedin} className="dc-btn da-provider">
+              <LinkedInIcon />
+              Sign in with LinkedIn
+            </button>
 
-        <p style={{ marginTop: "20px", fontSize: "14px", color: "#999" }}>
-          Secure authentication powered by Supabase
-        </p>
-        <p style={{ marginTop: "8px", fontSize: "12px", color: "#666", lineHeight: 1.5 }}>
-          You&apos;ll be redirected to LinkedIn to sign in. Zynd never sees or stores
-          your LinkedIn password.
-        </p>
+            {next.startsWith("/review/") && (
+              <p className="da-reviewer">
+                <Link href={`/auth/reviewer?next=${encodeURIComponent(next)}`} className="dc-linkbtn">
+                  Reviewer sign-in
+                </Link>
+              </p>
+            )}
+
+            <p className="da-note">Secure authentication powered by Supabase</p>
+            <p className="da-fine">
+              You&apos;ll be redirected to LinkedIn to sign in. Zynd never sees or stores
+              your LinkedIn password.
+            </p>
+          </div>
+        </section>
       </div>
-    </div>
+    </main>
   );
 }
 

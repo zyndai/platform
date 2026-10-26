@@ -425,7 +425,7 @@ def label_quality(people: list[dict]) -> str:
         person.pop("_features", None)
         person.pop("_topic_unchecked", None)
     if people and not any(p["match_quality"] == "exact" for p in people):
-        return "No exact matches; these are the closest."
+        return "These are the closest matches."
     return ""
 
 

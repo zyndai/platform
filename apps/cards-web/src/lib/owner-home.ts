@@ -58,6 +58,8 @@ export interface OutsidePerson {
   title: string;
   company: string;
   linkedin_url: string;
+  /** Where they are, from the LinkedIn record; absent on older APIs. */
+  location?: string;
   /** The owner's assistant can invite them to claim a card (A2). */
   invitable?: boolean;
 }

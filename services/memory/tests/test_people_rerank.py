@@ -66,3 +66,26 @@ def test_why_is_specific_ordered_and_at_most_three():
                                    "match_score": 0.5, "why": ["Not in Pune (closest match)"]})
     assert "Not in Pune (closest match)" in pr.specific_why(relaxed, QUERY)
     assert pr.specific_why(external("Z", "Designer at X", "Paris"), QUERY) == ["Found on LinkedIn"]
+
+
+def test_a_linkedin_title_is_judged_by_the_titles_the_request_used():
+    """People search 3.1: a Venture Partner was retrieved as an investor and is one, though the
+    headline never says "investor"; a grievance officer is not, whatever the headline says."""
+    q = parse_target_heuristic("investor in India")
+    venture = external("Priya", "Venture Partner at Seed Fund", "Pune, India")
+    officer = external("Ivan", "Investor Grievance Officer at Dayco", "Mumbai, India")
+    sales = external("Sam", "Sales Manager at Investor Relations Inc", "Pune, India")   # an excluded word in the title only
+    assert pr.features(venture, q)["role_fit"] == 1.0
+    assert pr.features(officer, q)["role_fit"] == 0.0
+    assert pr.features(sales, q)["role_fit"] == 0.0
+    # A company that merely contains an excluded word does not count against a real title.
+    assert pr.features(external("Eve", "Investor at Support Capital", "Pune, India"), q)["role_fit"] == 1.0
+    # A Card's role is still read from its headline: the title lists are for people found by title.
+    card = pr.person_from_card({"handle": "c", "name": "C", "headline": "Venture Partner", "claimed": True})
+    assert pr.features(card, q)["role_fit"] == 0.0
+
+
+def test_the_reason_says_title_when_the_headline_does_not_name_the_role():
+    q = parse_target_heuristic("investor in India")
+    assert pr.specific_why(external("Priya", "Venture Partner at Seed Fund", "Pune, India"), q)[0] == "Investor (title)"
+    assert pr.specific_why(external("Asha", "Investor at Fund", "Pune, India"), q)[0] == "Investor (headline)"

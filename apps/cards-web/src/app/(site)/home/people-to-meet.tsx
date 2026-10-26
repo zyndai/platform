@@ -115,7 +115,7 @@ export function PeopleToMeet({
               <div className="oh-person-body">
                 <span className="oh-person-name">{p.name}</span>
                 <span className="oh-person-sub">
-                  {[p.title, p.company].filter(Boolean).join(" at ")}
+                  {[[p.title, p.company].filter(Boolean).join(" at "), p.location].filter(Boolean).join(" · ")}
                 </span>
                 <span className="oh-person-why">
                   Not on Zynd yet{p.invitable ? " · ask your assistant to invite them" : ""}

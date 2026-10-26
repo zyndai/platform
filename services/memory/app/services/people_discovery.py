@@ -336,6 +336,14 @@ def _fit_words(text: str, words: list[str]) -> bool:
     return any(w.lower() in low for w in words)
 
 
+def has_excluded_title(row: dict, query: TargetQuery) -> bool:
+    """True when the person's title holds a word that makes it a different job ("Investor
+    Grievance Officer" for an investor search). The request already excludes these, but the
+    provider's matching is unconfirmed (plan Q1), so callers that cannot show a wrong-role
+    person drop them here too."""
+    return _fit_words(row.get("title") or "", title_filters(query)[1])
+
+
 def rank_quickenrich(rows: list[dict], query: TargetQuery) -> list[dict]:
     """Order LinkedIn people by how well they fit the target and give each a score.
 

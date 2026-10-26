@@ -32,12 +32,50 @@ async def test_builds_the_search_from_structured_filters(api):
                "linkedin_url": "https://linkedin.com/in/pat"}]
     with patch("app.services.people_discovery.search_quickenrich", AsyncMock(return_value=(people, None))) as search:
         resp = await api({"titles": ["Founder", "Investor"], "keywords": ["AI"], "location": "Pune, India", "limit": 3})
-    assert resp.status_code == 200 and resp.json() == {"people": people, "warning": None}
-    (_, limit), kwargs = search.await_args.args, search.await_args.kwargs
-    assert limit == 3
+    assert resp.status_code == 200 and resp.json()["warning"] is None
+    (pat,) = resp.json()["people"]
+    assert {k: pat[k] for k in people[0]} == people[0]            # the provider's fields are all still there
+    (_, fetched), kwargs = search.await_args.args, search.await_args.kwargs
+    assert fetched == 6                                            # twice the limit, room to drop wrong-role titles
     query = kwargs["query"]
     assert query.titles == ("Founder", "Investor") and query.topics == ("AI",)
     assert (query.country_code, query.locality) == ("IN", "Pune") and query.company_hint
+
+
+QE_ROWS = [
+    {"source": "quickenrich", "name": "Ivan Grievance", "title": "Investor Grievance Officer", "company": "Dayco Securities",
+     "linkedin_url": "https://linkedin.com/in/ivan", "location": "Mumbai, India", "city": "Mumbai", "country_code": "IN"},
+    {"source": "quickenrich", "name": "Anna Angel", "title": "Angel Investor", "company": "Self",
+     "linkedin_url": "https://linkedin.com/in/anna", "location": "Berlin, Germany", "city": "Berlin", "country_code": "DE"},
+    {"source": "quickenrich", "name": "Priya Partner", "title": "Venture Partner", "company": "Seed Fund",
+     "linkedin_url": "https://linkedin.com/in/priya", "location": "Pune, India", "city": "Pune", "country_code": "IN"},
+]
+
+
+async def test_outside_people_are_ordered_by_fit_and_explain_themselves(api):
+    with patch("app.services.people_discovery.search_quickenrich", AsyncMock(return_value=(QE_ROWS, None))):
+        resp = await api({"titles": ["Investor"], "keywords": ["AI"], "location": "India", "limit": 5})
+    people = resp.json()["people"]
+    assert [p["name"] for p in people] == ["Priya Partner", "Anna Angel"]    # the grievance officer is not an investor
+    priya, anna = people
+    assert priya["score"] > anna["score"] > 0                                # in India beats not in India
+    assert priya["location"] == "Pune, India" and priya["match_quality"] in ("exact", "close")
+    assert priya["why"] and all(isinstance(w, str) for w in priya["why"]) and len(priya["why"]) <= 3
+    assert priya["why"] == ["Investor (title)", "Pune, India"]       # a Venture Partner is an investor by title
+    assert anna["why"] == ["Investor (headline)"]
+
+
+async def test_titles_that_name_no_role_are_not_filtered_by_exclusions(api):
+    rows = [{**QE_ROWS[0], "title": "Healthcare Grievance Lead"}]
+    with patch("app.services.people_discovery.search_quickenrich", AsyncMock(return_value=(rows, None))):
+        people = (await api({"titles": ["Healthcare"]})).json()["people"]
+    assert [p["name"] for p in people] == ["Ivan Grievance"]
+
+
+async def test_the_limit_applies_after_ranking(api):
+    with patch("app.services.people_discovery.search_quickenrich", AsyncMock(return_value=(QE_ROWS, None))):
+        people = (await api({"titles": ["Investor"], "location": "India", "limit": 1})).json()["people"]
+    assert [p["name"] for p in people] == ["Priya Partner"]
 
 
 async def test_an_empty_result_always_explains_itself(api, monkeypatch):

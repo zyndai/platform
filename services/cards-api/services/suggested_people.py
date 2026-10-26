@@ -165,13 +165,19 @@ def _shape_outside(record: dict) -> dict | None:
     name = str(record.get("name") or "").strip()
     if not url and not name:
         return None
-    return {
+    person = {
         "name": name,
         "title": str(record.get("title") or "").strip(),
         "company": str(record.get("company") or "").strip(),
         "linkedin_url": url,
         "source": "quickenrich",
     }
+    # Memory ranks outside people with the same fit as any search: where they are, and why them.
+    if location := str(record.get("location") or "").strip():
+        person["location"] = location[:80]
+    if reasons := [r.strip()[:120] for r in record.get("why") or [] if isinstance(r, str) and r.strip()][:3]:
+        person["why"] = reasons
+    return person
 
 
 def _outside_people(request: dict) -> list[dict]:

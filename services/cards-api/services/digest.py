@@ -313,7 +313,9 @@ def _visitors_line(names: list[str]) -> str:
 
 def _outside_role(p: dict) -> str:
     title, company = (p.get("title") or "").strip(), (p.get("company") or "").strip()
-    return f"{title} at {company}" if title and company else (title or company)
+    role = f"{title} at {company}" if title and company else (title or company)
+    location = (p.get("location") or "").strip()
+    return f"{role} · {location}" if role and location else (role or location)
 
 
 # ── html ──

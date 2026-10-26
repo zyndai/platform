@@ -121,6 +121,17 @@ def test_outside_search_keeps_two_new_people_per_request(monkeypatch):
     assert body["titles"] == ["Founder"]
 
 
+def test_outside_search_keeps_where_memory_says_they_are_and_why(monkeypatch):
+    ranked = [{"name": "Pat", "title": "Venture Partner", "company": "Seed Fund", "location": "Pune, India",
+               "linkedin_url": "https://linkedin.com/in/pat", "score": 0.4, "match_quality": "close",
+               "why": ["Investor (title)", " ", 7, "Pune, India", "a", "b"]}]
+    _memory_reply(monkeypatch, {"people": ranked, "warning": None})
+    (pat,) = people_service.search_outside(_card("jane", connect_with=["Investors"]), set())
+    assert pat["location"] == "Pune, India"
+    assert pat["why"] == ["Investor (title)", "Pune, India", "a"]       # strings only, at most three
+    assert "score" not in pat and "match_quality" not in pat            # nothing else of memory's leaks through
+
+
 def test_outside_search_stops_asking_once_it_has_enough(monkeypatch):
     card = _card("jane", connect_with=["Founders", "Investors"])
     sent = _memory_reply(monkeypatch, {"people": PEOPLE, "warning": None})

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 
+from app.services.people_query import title_filters
+
 # Scores are 0..1 and mean the same for every source: Cards' own score (relevance x fit x quality,
 # services/cards-api/services/search.py), and for the other sources the same shape computed here:
 # source relevance x a source prior x fit to the asked role, topics and place.
@@ -205,11 +207,41 @@ def features(person: dict, query) -> dict:
     out: dict = {"role_fit": None, "topic_fit": None, "location_fit": None}
     if role:
         out["role_fit"] = 1.0 if role <= headline else (0.9 if role <= around else 0.0)
+        if "linkedin" in (person.get("sources") or ()):
+            out["role_fit"] = _linkedin_role_fit(person, query)
     if topics:
         out["topic_fit"] = sum(1 for t in topics if t and t <= around) / len(topics)
     if place:
         out["location_fit"] = 1.0 if place <= {_stem(w) for w in _words(person.get("location"))} else 0.0
     return out
+
+
+def _headline_names_role(person: dict, query) -> bool:
+    """The headline itself says the role ("Investor at Acme"), as opposed to a title that is the
+    role under another name ("Venture Partner")."""
+    role = {_stem(w) for w in _words(query.role_noun or query.role_label)}
+    text = _linkedin_title(person) if "linkedin" in (person.get("sources") or ()) else person.get("headline")
+    return role <= {_stem(w) for w in _words(text)}
+
+
+def _linkedin_title(person: dict) -> str:
+    """The job title of a LinkedIn person: their headline is "title at company", and a company
+    name ("Investor Relations Inc") says nothing about the person's role."""
+    return (person.get("headline") or "").split(" at ", 1)[0]
+
+
+def _linkedin_role_fit(person: dict, query) -> float:
+    """A LinkedIn person was found by title: "Venture Partner" is an investor although the title
+    never says "investor". Judge the title by the same include and exclude words the request used,
+    or by the role noun itself; a title with an excluded word ("Investor Grievance Officer") is
+    another job whatever else it says."""
+    include, exclude = title_filters(query)
+    title = _linkedin_title(person).lower()
+    if any(w.lower() in title for w in exclude):
+        return 0.0
+    role = {_stem(w) for w in _words(query.role_noun or query.role_label)}
+    says_role = role <= {_stem(w) for w in _words(title)}
+    return 1.0 if says_role or any(w.lower() in title for w in include) else 0.0
 
 
 def fit_factor(feats: dict) -> float:
@@ -254,7 +286,9 @@ def specific_why(person: dict, query) -> list[str]:
             out.append(text)
 
     if feats["role_fit"] is not None and feats["role_fit"] > 0 and query.role_label:
-        add(f"{query.role_label.title()} ({'headline' if feats['role_fit'] >= 1 else 'on their profile'})")
+        where = ("headline" if _headline_names_role(person, query) else "title") if feats["role_fit"] >= 1 \
+            else "on their profile"
+        add(f"{query.role_label.title()} ({where})")
     fact = next((w for w, low in lowered if low.startswith("approved fact: ")), "")
     if fact:
         add(fact.replace("Approved fact: ", "", 1) + " (approved fact)")

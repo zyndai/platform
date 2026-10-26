@@ -295,6 +295,23 @@ async def search(
     return result
 
 
+async def outside(query: TargetQuery, limit: int) -> tuple[list[dict], str | None]:
+    """People outside Zynd for a service caller (Cards' suggestions): the pipeline's LinkedIn step,
+    with no user. Wrong-role titles are dropped, the rest are ordered by the same fit as any
+    search and carry a specific `why`, a `score` and a `match_quality` next to the provider's
+    own fields. An empty list with no warning means "searched, found none"."""
+    rows, warning = await people_discovery.search_quickenrich(
+        query.raw, min(limit * 2, 10), query=query)        # room to drop wrong-role titles
+    rows = [r for r in rows if not people_discovery.has_excluded_title(r, query)]
+    people = people_results.rescore([people_results.person_from_external(r, i) for i, r in enumerate(rows)], query)
+    ranked = sorted(zip(people, rows), key=lambda pair: -pair[0]["score"])   # stable: the provider's order breaks ties
+    for person, _ in ranked:
+        person["why"] = people_results.specific_why(person, query)
+    people_results.label_quality([person for person, _ in ranked])
+    return [{**row, "score": person["score"], "why": person["why"], "match_quality": person["match_quality"]}
+            for person, row in ranked][:limit], warning
+
+
 def _with_invites(people: list[dict], searcher: Searcher) -> list[dict]:
     """Invitations are signed for a user, so an anonymous search has none to offer."""
     return people_results.with_invites(people, searcher.uid, bool(searcher.uid) and searcher.invites)

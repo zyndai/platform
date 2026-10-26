@@ -749,3 +749,12 @@ def test_clear_suggested_posts_route_requires_cron_secret(monkeypatch):
     )
     assert one.status_code == 200
     assert seen["handle"] == "saraffa13"
+
+
+def test_an_outside_person_shows_where_they_are():
+    people = {"people": [], "outside": [{"name": "Pat", "title": "Venture Partner", "company": "Seed Fund",
+                                         "location": "Pune, India", "linkedin_url": "https://linkedin.com/in/pat"}]}
+    assert "Pat, Venture Partner at Seed Fund · Pune, India (not on Zynd yet, LinkedIn)" in \
+        digest_service.render_digest("alice", None, people)
+    assert "Venture Partner at Seed Fund · Pune, India &middot; Not on Zynd yet" in \
+        digest_service.render_digest_html("alice", None, people)

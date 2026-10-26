@@ -2,8 +2,9 @@
 
 > **Status:** proposed 2026-10-26. **Phase 0 is implemented on `dev`** (see "Phase 0 as built" below), enabled
 > with no flag (AGENTS.md §9: no new env vars). **Phase 1 is implemented** (see "Phase 1 as built"). **Phase 2 is
-> implemented** (see "Phase 2 as built"; `cards/0031` applied to aafo 2026-10-26). Phase 3 is not started. What is
-> still unapplied or unchecked is collected in §11 "Left for the end".
+> implemented** (see "Phase 2 as built"; `cards/0031` applied to aafo 2026-10-26). **Phase 3 is planned in detail,
+> not started** (persona dropped: it is a discarded project). What is still unapplied or unchecked is collected in
+> §11 "Left for the end".
 >
 > **Builds on** [`ZYND_MEMORY_QUALITY_PLAN.md`](./ZYND_MEMORY_QUALITY_PLAN.md) Part B (F1–F9, A1–A8), which
 > shipped behind flags (see its §17). This plan does not redo that work. It fixes what Part B left broken
@@ -609,38 +610,179 @@ How it works:
 
 ### Phase 3: One pipeline everywhere, and measurement (~1 week, then ongoing)
 
-**3.1 One service endpoint (R16, D6).** Memory gets `POST /v1/service/people-search` (auth
-`MEMORY_SERVICE_TOKEN`) with body `{target, k, sources, as_handle?, user_id?, filters?}`, wrapping
-`people_search.find`. `/v1/service/outside-people` becomes a thin wrapper around it. Cards'
-suggestions use it for the outside step.
+> **Rewritten 2026-10-26 after reading the code; nothing below is built yet.** Decisions taken with the
+> owner:
+> - **Persona is out of scope.** It is a discarded project, so 3.3 is dropped and the plan touches only
+>   Cards: cards-api, cards-web, and memory, which hosts `find_people` and the public Cards MCP.
+> - cards-web `/search` shows a **label, not a percentage** (3.4).
+> - Connects are linked to the search they came from because **memory remembers each user's last search**
+>   for 24 hours (3.5).
+>
+> What reading the code changed in the original text:
+> - **No `/v1/service/people-search`.** Its only caller outside memory would have been persona.
+> - `outside-people` keeps its structured body and shares the pipeline's steps, rather than wrapping a
+>   text endpoint (turning filters into text and parsing them back would lose detail).
+> - A fifth entry point exists: the GPT Action route `GET /me/find-people`. It stays as it is (3.1).
+> - cards-web never shows `relaxed`: `/search` is strict and `/directory` calls `/ask` without loosening.
+>
+> Line numbers are as of `8c7e051`.
 
-**3.2 Public Cards MCP.** `cards_public_mcp.search_people` calls the pipeline with `sources=cards`,
-no `as_handle` and no Zynd source (the caller is anonymous). The open question is whether anonymous
-callers may trigger QuickEnrich (cost, scraping). The recommendation is no: Cards only, with the same
-scorer, intent and loosening.
+**3.0 `find` works without a user (memory; no behaviour change for owners).**
+`people_search.find` (`people_search.py:166`) assumes a signed-in user: it reads their match controls
+(`_preferences`), their own handle (`_own_handle`) and signs invite refs (`with_invites`). The public MCP
+and `outside-people` have no user.
+- Add a `Searcher` dataclass in `people_search.py`: `uid: str | None`, `own_handle`, `prefs`,
+  `include_unclaimed: bool`, `invites: bool`. Build it once with `searcher_for(pool, uid)` (one
+  `cards_for_users` call, which also removes the second `_own_handle` call `find` makes today), or
+  `ANONYMOUS`.
+- With no user:
+  - the Zynd source is never searched (it needs a uid and the caller is anonymous);
+  - there are no preferences and no invites (`next_action` stays `view_profile`/`connect`);
+  - QuickEnrich runs only when the caller names it (`outside-people`), never as the fallback.
+- `search_cards` and `lookup_cards` (`people_discovery.py:182, 207`) take `include_unclaimed` instead of
+  always sending `"true"`. Owners keep `true`; the public MCP passes the caller's choice.
+- Split the body of `find` into `_retrieve` (the source calls), `_rank` (rescore, merge, preferences,
+  floor, own-card filter), `_fallback_quickenrich` and `_finish` (why, `match_quality`, note, invites), so
+  3.1 and 3.2 call the same steps instead of copying them.
+- Tests: `test_people_search.py`, `test_people_finding.py` and `test_people_rerank.py` pass unchanged. New:
+  an anonymous search never calls Zynd, preferences or QuickEnrich; `include_unclaimed=False` reaches
+  Cards' params.
 
-**3.3 Persona.** `discover_people` calls 3.1, and persona's `search_zynd_cards` and its contact-finder
-search path for discovery are deleted. Persona keeps its paid, persona-only tools
-(`list_people_at_company`, email/phone reveal, company search) on its own client.
+**3.1 `outside-people` uses the pipeline (R16, D6).**
+- `POST /v1/service/outside-people` (`memory/app/main.py:368`) keeps its request body
+  (`titles`, `keywords`, `location`, `limit`), so Cards does not change.
+- Inside: `query_from_filters` → `search_quickenrich` → `people_results.person_from_external` →
+  `rescore` → `specific_why` → `label_quality`, with no user. These are the same calls `find` makes for
+  LinkedIn results.
+- Each person gains `location`, `why`, `score` and `match_quality`, and the list is ordered by fit instead
+  of by the provider's order. Cards' `_shape_outside` (`suggested_people.py:162`) ignores extra keys
+  today; it starts keeping `location` and `why`, so the digest and owner home can show
+  "Investor · Bengaluru".
+- `GET /me/find-people` (the ChatGPT GPT Action, `main.py:623`, schema in `action_schema.py:118`) **stays
+  as it is**:
+  - it returns Zynd members by `user_id` for `/me/connect`, a different way to connect from Cards;
+  - routing it through the pipeline would break the GPT's connect step;
+  - it is recorded here as the one known exception to D6.
+- Tests: `test_outside_people.py` covers the new order (an investor title above a "Grievance" one, a
+  matching location first) and the new fields, and checks that the 401 path is unchanged. cards-api:
+  `_shape_outside` keeps `location` and `why`.
 
-**3.4 cards-web.** `/search` (UI filters, strict) stays on `/v1/agents/search`. `/directory` and
-`/ask` get the Phase 0–1 scorer automatically. No UI change beyond showing `relaxed`, `match_quality`
-and the new reasons.
+**3.2 Public Cards MCP on the pipeline (R16, Q4).**
+- `cards_public_mcp.search_people_impl` (`cards_public_mcp.py:210`) stops calling `/ask` and
+  `/v1/agents/search` directly. It calls the 3.0 steps in-process with `Searcher=ANONYMOUS`,
+  `wanted={"cards"}` and the caller's `include_unclaimed`.
+- Name lookup, grounding, loosening, the re-rank and `why` all apply. A name query with no match falls
+  back to a target search with a `note`, as for owners.
+- The tool's explicit arguments:
+  - `role`, `location` and `skills` are strict. They override what parsing found and go into the
+    `TargetQuery` as the role, the location and `required_skills`.
+  - `industry`, `availability` and `experience_min` have no `TargetQuery` field. `cards_search_params`
+    gets an `extra: dict` passed to Cards unchanged.
+- **No QuickEnrich, ever** (Q4: cost and scraping). No Zynd source.
+- The response keeps every current key: `query`, `include_unclaimed`, `results`, `numberOfItems`, and
+  each hit's `match_score`, `match_reasons`, `claimed`, `fresh_as_of`, `url`, `cite_as`. It adds
+  `intent`, `note`, and per hit `why`, `match_quality` and `relaxed`. `match_reasons` is filled from `why`
+  so older clients still get text. `_strip_contact` still runs on unclaimed hits.
+- The rate limit (`RateLimitMiddleware`) and `_emit_agent_fetch` stay. `/v1/agents/lookup` keeps its own
+  per-IP limit.
+- `_INSTRUCTIONS` and the tool docstring: "To find one specific person, pass their name or @handle";
+  "when `note` says nothing matched exactly, call them the closest matches".
+- Tests: update `test_cards_public_mcp.py`. Its current `/ask` and `/v1/agents/search` mocks become mocks
+  of `people_discovery`. Cases: a name ("chandan" → lookup first); an explicit `location` is strict;
+  `include_unclaimed` defaults to false; unclaimed hits have no contact keys; no QuickEnrich call even when
+  results are few; the old keys are still present.
+
+**3.3 Persona: dropped.** Persona is a discarded project (decision 2026-10-26). `discover_people`,
+`search_zynd_cards` and persona's QuickEnrich client are left untouched. Q7 is closed with it.
+
+**3.4 cards-web: scores as labels.**
+- `/search` (`apps/cards-web/src/app/(site)/search/page.tsx:187-191`) shows `match_score` as a
+  percentage, but the Phase 1 score is calibrated, not a probability. Replace it with a label:
+  - **Strong match** at ≥ 0.6, the same `STRONG_MATCH` as saved-search alerts;
+  - **Good match** at ≥ 0.4;
+  - nothing below that.
+  The thresholds are constants in one helper in `src/lib/cards.ts`, next to `formatMatchReason`.
+- `/search` stays strict (`relax=False`): UI filters are explicit, so `relaxed` never appears there.
+  `/directory` (via `/ask`) doesn't show scores and needs no change.
+- Profile links from `/search` and `/directory` carry `?sid=<search_id>&r=<rank>` for 3.5. `ProfileView`
+  (`src/components/ProfileView.tsx:20`) adds them to its `view` event's meta, and the URL is cleaned
+  with `history.replaceState` so a shared link carries no search id.
+- Check: `npm run lint && npx tsc --noEmit && npm run build`; V8 on dev.
 
 **3.5 Measurement (R17, D7).**
-- **Offline:**
-  - grow the golden set to about 80 queries: names, loosening, LinkedIn-shaped records, and a
-    suggestions section (owner card → expected suggested handles);
-  - CI runs `cards-api/tests/test_search_golden.py` and the new `memory/tests/test_people_golden.py`;
-  - a drop of more than 5 points in precision@5 fails CI.
-- **Online:**
-  - a new `search_result_action` event `{search_id, handle, rank, source, action: view | connect | invite}`
-    (no query text, the same privacy rules as `search`);
-  - impressions from 2.4;
-  - queries added to `docs/cards/s04-funnel.sql`: zero-result rate, connect rate per search, acceptance
-    rate by source, suggestion connect rate.
-- **Memory:** log per search the intent, sources, result counts and warnings (no query text), so a
-  spike in empty results shows up.
+
+*Offline:*
+- Grow `search_golden.json` from 61 to about 80 queries:
+  - more names, including two people with the same first name and a handle;
+  - city vs country in both directions;
+  - a role that exists only after loosening;
+  - "developer tools" vs developer;
+  - each new query labelled over the whole corpus, as the `_about` says.
+- Grow `people_golden.json` from 8 cases to about 15. Add a memory-side fixture of raw QuickEnrich records
+  (Grievance, N/A fields, a URL with no scheme, a city-only location) with the expected order after
+  `rescore`, for the new `test_people_rerank` case.
+- Grow `suggestions_golden.json` from 5 owners to about 10: a free-text-only card, a card with nothing in
+  `connect_with`, and a card whose two-way match is the only good one.
+- **CI gate.** Each golden file records `baseline` (the metric when it was last changed) next to its
+  floor. The test fails below `baseline − 0.05`, the plan's "drop of more than 5 points". A change that
+  raises the metric updates `baseline` in the same commit. CI already runs both golden tests (`ci.yml`
+  python matrix), so no workflow change is needed.
+
+*Online:*
+- **Search ids.**
+  - `GET /v1/agents/search` and `/v1/agents/lookup` accept an optional `search_id` (a UUID; anything
+    else is ignored) and make one when absent.
+  - They return it in the response and record it in the `search` event's meta with
+    `via: web | memory | mcp`. The `via` value comes from a small allow-list parameter memory sends;
+    unknown or absent means web.
+  - Memory makes one `search_id` per `find` call, sends it to every Cards call in that search, and
+    returns it in `find_people`'s result.
+- **New server event `search_result_action`**, added to `SERVER_EVENTS` in
+  `cards-api/services/events.py:42` so the unauthenticated `POST /events` can't forge it.
+  - Meta: `{search_id, rank, source: cards | zynd | quickenrich, action: connect | invite, connection_id?}`.
+  - No query text and no user id. `connection_id` lets acceptance be joined from `cards.connections`.
+- **connect.**
+  - After each owner search, memory stores in Redis, for 24 hours under `people_search:last:<uid>`,
+    `{search_id, handles: {handle: [rank, source]}}`. It holds handles only, never the query, and is
+    overwritten by the next search.
+  - `cards_network.request_connection` looks the target handle up and, when found, adds
+    `from_search: {search_id, rank, source}` to the `/connections` body.
+  - cards-api's `ConnectionCreate` (`api/network.py`, `extra="forbid"`) gains the optional field. After
+    the connection row is created, it emits the event with the new `connection_id`, next to
+    `suggestions.mark_connected` (`services/network.py:195`).
+- **invite.** `invite_to_claim` does the same lookup by `linkedin_url`. cards-api's `/invites` body
+  gains the same optional field and emits `action: invite`.
+- **view.** The existing client `view` event carries `meta.search_id` and `meta.rank` from 3.4's link
+  parameters. Views were already client-sent, so this adds no new trust.
+- **Funnel.** `docs/cards/s04-funnel.sql` gets:
+  - the share of searches with no results, by `via`;
+  - connects per search;
+  - acceptance by source (`search_result_action` joined to `cards.connections` on `connection_id`);
+  - views per search;
+  - the suggestion connect rate from `card_suggestion_impressions` (shown → connect, by surface).
+  Each query is checked against a local Postgres before it goes in.
+
+*Memory log:*
+- `find` logs one line per search on `zynd.find_people`:
+  `intent, sources searched, results per source, kept, strong, quickenrich_called, warnings, ms, search_id`.
+- No query text and no name. The public MCP logs the same line with `anonymous=true`.
+
+**Deploy order:**
+1. cards-api: `search_id`, `via`, the new event, and `from_search` on `/connections` and `/invites`. It
+   must go first, because memory sending `from_search` to an old cards-api gets a 422 from
+   `extra="forbid"`.
+2. memory.
+3. cards-web.
+
+No migration: `card_events.meta` is jsonb. Rollback is a revert per service, in the reverse order.
+
+**Phase 3 is done when:**
+- The public MCP returns `chandan-kumar-2en8` first for "chandan" and never calls QuickEnrich.
+- `outside-people` results carry a location and are ordered by fit.
+- The three golden sets are at about 80, 15 and 10 cases, with the baseline − 5 gate.
+- A connection request made from a `find_people` result on dev produces a `search_result_action` row with
+  its `connection_id`.
+- The new funnel queries run.
 
 ---
 
@@ -653,7 +795,7 @@ Run each service's tests before and after, against the AGENTS.md §5 baselines.
 | 0 | `test_people_discovery`, `test_people_query` (intent, grounding, QE body), `test_people_search` (floor, fallback), new `test_people_golden` | `test_search*.py` (topics soft, loosening, `/lookup`), golden set + new cases | — |
 | 1 | `test_people_results` (features, re-rank, strong_count) | golden set; score monotonicity tests (meeting a constraint never lowers the score) | p95 timing script |
 | 2 | — | `suggest_targets`, exclusions, impressions, digest | `packages/db` tests (migration count, as in `cf0e6a2`) |
-| 3 | service endpoint auth + shape | — | persona `test_people_discovery` against a stubbed endpoint |
+| 3 | anonymous `find`, `test_outside_people` (order, fields), `test_cards_public_mcp` (pipeline, no QE), last-search Redis + `from_search` | `search_id`/`via`, `search_result_action` emit on `/connections` and `/invites`, `_shape_outside`, golden sets at ~80/~10 with the baseline − 5 gate | cards-web lint/tsc/build; funnel SQL on a local Postgres |
 
 ## 8. Rollout and flags
 
@@ -683,7 +825,7 @@ Run each service's tests before and after, against the AGENTS.md §5 baselines.
 | Q4 | Anonymous public MCP triggering QuickEnrich | Not allowed (3.2) |
 | Q5 | Score weights tuned on 41 synthetic cards may not fit prod | Calibrate `sem` on a prod sample; check the 20 real queries before each flip |
 | Q6 | `FEATURE_FACT_MATCHING` depends on fact families (memory quality plan §16) | Check Part A rollout state before turning it on |
-| Q7 | Is persona's `/dashboard/people` still used? | Ask the persona owner (2.8) |
+| Q7 | Is persona's `/dashboard/people` still used? | Closed 2026-10-26: persona is a discarded project; nothing more is done there |
 | Q8 | A geo table copied into Cards can drift from memory's | Move both to `packages/contracts` when it exists |
 | Q9 | Two-way and suggestions depend on cards filling in `connect_with` | Phase 2.1's embedding mapping covers free text; nudging owners to fill it in is a separate cards-web task |
 
@@ -697,7 +839,7 @@ Run each service's tests before and after, against the AGENTS.md §5 baselines.
 | 4 | 0.9 digest stop-gap | ½ day | — |
 | 5 | Phase 1 scorer + re-rank + reasons | 1–2 weeks | prod flags |
 | 6 | Phase 2 suggestions | 1–2 weeks | migration, prod flag |
-| 7 | Phase 3 one endpoint, public MCP, persona, measurement | ~1 week | — |
+| 7 | Phase 3: anonymous `find`, `outside-people` and public MCP on the pipeline, score labels, measurement | ~1 week | — |
 | — | `FEATURE_FACT_MATCHING` in prod | flip only | yes |
 
 ---
@@ -737,6 +879,6 @@ in this order.
 | E4 | Nightly schedule | `.github/workflows/suggestions-refresh.yml` only runs on a schedule once it is on `main` (GitHub runs schedules from the default branch). Until then, E3 by hand or the workflow's manual run | open |
 | E5 | V11 and V12 | `scripts/check_suggestions.py` on live data; owner home and a digest dry run on dev | open |
 | E6 | V2–V9 | Phase 0–1 checks above (speed, `SEM_*` fit, saved-search threshold, live Chandan/investor checks, 20 real queries, `FEATURE_FACT_MATCHING`, cards-web scores, QuickEnrich Q1/Q2) | open |
-| E7 | Q7 | Ask the persona owner whether `/dashboard/people` is still used (2.8) | open |
+| E7 | Q7 | Persona is discarded (2026-10-26); nothing to ask | ✅ closed |
 
 Already applied: `cards/0030_filter_cards` (2026-10-27), `cards/0031_card_suggestions` (2026-10-26).

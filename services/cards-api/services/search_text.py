@@ -115,10 +115,96 @@ def role_tokens(text: str) -> set[str]:
     return token_set(_NOT_A_ROLE.sub(" ", (text or "").lower()))
 
 
-def role_matches(haystack_tokens: set[str], role: str) -> bool:
-    """Every meaningful word of `role` is present, or a close synonym of it is."""
+# Synonyms that name an activity anyone may list ("working on Investing", "loves talking about
+# Design"), not a job. They count in a headline or a job title, never in the rest of a card.
+ACTIVITY_SYNONYMS = frozenset({
+    "investing", "invest", "fund", "design", "designing", "research", "hiring", "law", "legal", "growth",
+    "mentoring", "advising", "recruiting", "talent", "engineering", "founding", "seo",
+})
+
+
+def role_matches(haystack_tokens: set[str], role: str, activities: bool = True) -> bool:
+    """Every meaningful word of `role` is present, or a close synonym of it is. activities=False
+    leaves out ACTIVITY_SYNONYMS, for text that is not a headline or a job title."""
     terms = query_terms(role)
     return bool(terms) and all(
-        t in haystack_tokens or ROLE_SYNONYMS.get(t, frozenset()) & haystack_tokens
+        t in haystack_tokens
+        or (ROLE_SYNONYMS.get(t, frozenset()) - (frozenset() if activities else ACTIVITY_SYNONYMS)) & haystack_tokens
         for t in terms
     )
+
+
+# --- Topics --------------------------------------------------------------------------------------
+#
+# A topic is a caller's guess at what the person works on ("developer tools"). Scored word by word,
+# "developer tools" credited every developer and "AI development" every card that said "development".
+# A topic of several words now has to appear as a phrase (its words close together); a single word
+# that says nothing on its own ("tools", "software") is never a topic.
+
+_TOPIC_CANON = {"developer": "dev", "development": "dev", "tooling": "tool", "devtool": "dev tool"}
+GENERIC_TOPIC_TERMS = frozenset({
+    "tool", "platform", "software", "company", "product", "service", "app", "system", "technology",
+    "tech", "dev", "solution", "startup", "business", "thing", "stuff", "work", "project",
+})
+PHRASE_SLACK = 1          # one word may sit between a phrase's words: "tools for developers"
+TOPIC_APART = 0.5         # every word of the phrase is on the card, but not together
+
+
+def _canon(term: str) -> list[str]:
+    return _TOPIC_CANON.get(term, term).split()
+
+
+def topic_terms(topic: str) -> list[str]:
+    """Canonical terms of one topic, order kept: "Developer Tools" -> ["dev", "tool"]."""
+    out: list[str] = []
+    for term in query_terms(topic):
+        for t in _canon(term):
+            if t not in out:
+                out.append(t)
+    return out
+
+
+def term_sequence(text: str) -> list[str]:
+    """The canonical terms of `text` in order (hyphenated words split), for phrase tests."""
+    seq: list[str] = []
+    for raw in _RAW.findall((text or "").lower()):
+        for part in re.split(r"[.\-']", raw) if re.search(r"[\-']", raw) else [raw]:
+            term = _stem(_SQUASH.sub("", part))
+            if term:
+                seq.extend(_canon(term))
+    return seq
+
+
+def topic_phrases(topics: str, already: set[str] | frozenset[str] = frozenset()) -> list[tuple[str, list[str]]]:
+    """(label, terms) for each comma-separated topic worth scoring: not a lone generic word ("tools";
+    "developer tools" is a real phrase), and not already answered by the query's own words
+    (`already`, canonical terms), which count there."""
+    out: list[tuple[str, list[str]]] = []
+    for label in (t.strip() for t in (topics or "").split(",")):
+        terms = topic_terms(label)
+        if not terms or (len(terms) == 1 and terms[0] in GENERIC_TOPIC_TERMS) or all(t in already for t in terms):
+            continue
+        if all(terms != seen for _, seen in out):
+            out.append((label, terms))
+    return out
+
+
+def phrase_score(seq: list[str], terms: list[str]) -> float:
+    """1 when the phrase is on the text (its words within a short window). Otherwise up to
+    TOPIC_APART for its specific words found apart ("climate" of "climate hardware"); generic words
+    found on their own ("developer" of "developer tools") earn nothing. A one-word phrase is simply
+    present or not."""
+    if not terms:
+        return 0.0
+    if len(terms) == 1:
+        return 1.0 if terms[0] in seq else 0.0
+    wanted, have = set(terms), set(seq)
+    if wanted <= have:
+        window = len(terms) + PHRASE_SLACK
+        for start in range(len(seq)):
+            if seq[start] in wanted and wanted <= set(seq[start:start + window]):
+                return 1.0
+    specific = [t for t in terms if t not in GENERIC_TOPIC_TERMS]
+    if not specific:
+        return TOPIC_APART if wanted <= have else 0.0
+    return TOPIC_APART * sum(1 for t in specific if t in have) / len(specific)

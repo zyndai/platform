@@ -90,10 +90,11 @@ def test_the_investor_request_excludes_the_grievance_officers():
         "page": 1, "per_page": 10,
         "title": {"include": list(pq.ROLE_TITLE_FILTERS["investor"][0]),
                   "exclude": list(pq.ROLE_TITLE_FILTERS["investor"][1])},
-        "bio_li": {"include": ["seed", "AI dev tools"], "exclude": []},
+        "bio_li": {"include": ["seed stage", "seed fund", "AI dev tools"], "exclude": []},
         "country_code": {"include": ["IN"], "exclude": []},
+        "locality": {"include": ["India"], "exclude": []},      # where the person is, not the company
     }
-    for word in ("Grievance", "Relations", "Communications"):
+    for word in ("Grievance", "Relations", "Relation", "Communications"):
         assert word in body["title"]["exclude"]
 
 
@@ -109,7 +110,7 @@ def test_company_topics_stay_whole_phrases():
     query = pq.TargetQuery(raw="r", role="founder", topics=("developer tools", "AI agents"), company_hint=True)
     assert discovery.company_phrases(query) == ["developer tools", "AI agents"]
     assert discovery.company_phrases(pq.TargetQuery(raw="r", role="investor", company_hint=True, stage="seed")) == [
-        "seed", "venture", "capital"]
+        "seed stage", "seed fund", "venture", "capital"]       # a bare "seed" matched "SEED Healthcare"
     assert discovery.company_phrases(pq.TargetQuery(raw="r", topics=("a of data",), company_hint=True)) == ["data"]
     assert discovery.company_phrases(pq.TargetQuery(raw="r", topics=("tools",), company_hint=True)) == []
 
@@ -138,7 +139,8 @@ def test_shaping_keeps_location_fixes_the_url_and_never_the_contact_values():
     assert [r["name"] for r in rows] == ["Investor Grievance", "Asha Rao", "Tom Lee"]    # the nameless, URL-less row is gone
     asha = rows[1]
     assert asha["linkedin_url"] == "https://www.linkedin.com/in/asha"
-    assert asha["location"] == "Bengaluru, India" and rows[2]["location"] == "Austin, United States"
+    # no locality: the city and the country; a locality is the person's place, used as written
+    assert asha["location"] == "Bengaluru, India" and rows[2]["location"] == "Austin"
     assert "a@b.c" not in repr(rows) and "555" not in repr(rows) and asha["has_email"] is True
 
 
@@ -147,10 +149,10 @@ def test_shaping_keeps_location_fixes_the_url_and_never_the_contact_values():
 def test_linkedin_people_are_ranked_by_fit():
     query = parse_target_heuristic("investor in Bengaluru")
     ranked = discovery.rank_quickenrich(discovery._shape_qe(RAW), query)
-    assert [r["name"] for r in ranked][0] == "Asha Rao"            # right title and city
-    assert all(0.30 <= r["score"] <= 0.55 for r in ranked)
-    assert ranked[0]["score"] > ranked[-1]["score"]
-    # with no place asked for, only the title decides: the excluded word ranks last
+    assert [r["name"] for r in ranked][0] == "Asha Rao"
+    assert ranked[0]["score"] == discovery.LINKEDIN_PRIOR        # the same scale as Cards; place is judged in rescore
+    assert ranked[0]["score"] > ranked[-1]["score"] == 0.0
+    # only the title decides here: the excluded word ranks last
     by_title = discovery.rank_quickenrich(discovery._shape_qe(RAW), parse_target_heuristic("investor"))
     assert [r["name"] for r in by_title] == ["Asha Rao", "Tom Lee", "Investor Grievance"]
 
@@ -390,7 +392,8 @@ async def test_linkedin_starts_early_and_is_used_when_cards_come_up_short(world)
     world["cards"] = ([card("ada", 0.9)], None)
     world["external"] = (LINKEDIN, None)
     result = await run("seed investor who backs AI dev tools in India", k=5)
-    assert "quickenrich" in result["searched"] and result["people"][-1]["name"] == "Asha Rao"
+    # both are close: the Card (in Pune, so in India) misses the topic, the LinkedIn person gives no place
+    assert "quickenrich" in result["searched"] and [p["name"] for p in result["people"]] == ["Ada", "Asha Rao"]
     world["mocks"]["external"].assert_awaited_once()
 
 

@@ -94,7 +94,7 @@
    "industries": ["AI"],
    "summary": "Building autonomous AI agents for customer support.",
    "memory": ["Building AI agents platform"],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "fnd_fintech_mum",
@@ -104,7 +104,7 @@
    "industries": ["Fintech"],
    "summary": "Building cross-border payments infrastructure.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "fnd_climate_berlin",
@@ -114,7 +114,7 @@
    "industries": ["Climate"],
    "summary": "Carbon accounting for mid-size manufacturers.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "fnd_devtools_sf",
@@ -124,7 +124,7 @@
    "industries": ["Developer tools"],
    "summary": "Building observability tooling for engineering teams.",
    "memory": ["Building developer observability"],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "fnd_health_london",
@@ -134,7 +134,7 @@
    "industries": ["Healthcare"],
    "summary": "Remote patient monitoring for clinics.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "fnd_marketplace_pune",
@@ -144,7 +144,7 @@
    "industries": ["Marketplace"],
    "summary": "Procurement marketplace for small manufacturers.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "fnd_aiinfra_nyc",
@@ -154,7 +154,7 @@
    "industries": ["AI", "Infrastructure"],
    "summary": "GPU scheduling and inference infrastructure.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "fnd_edtech_hyd",
@@ -164,7 +164,7 @@
    "industries": ["Education"],
    "summary": "Adaptive learning for school students.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "eng_rust_berlin",
@@ -184,7 +184,7 @@
    "industries": ["SaaS"],
    "summary": "Django developer building APIs for SaaS products.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "eng_go_blr",
@@ -194,7 +194,7 @@
    "industries": ["Infrastructure"],
    "summary": "Platform engineer writing Go services on Kubernetes.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "eng_react_london",
@@ -214,7 +214,7 @@
    "industries": ["AI"],
    "summary": "Builds computer vision models for manufacturing.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "eng_data_sf",
@@ -234,7 +234,7 @@
    "industries": ["Web"],
    "summary": "Full-stack developer shipping Next.js products.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "eng_mobile_mum",
@@ -244,7 +244,7 @@
    "industries": ["Consumer"],
    "summary": "Flutter apps for consumer fintech.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "eng_security_nyc",
@@ -264,7 +264,7 @@
    "industries": ["Cloud"],
    "summary": "Infrastructure as code and CI/CD pipelines.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "des_product_blr",
@@ -274,7 +274,7 @@
    "industries": ["SaaS"],
    "summary": "Designs B2B product experiences.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "des_brand_london",
@@ -314,7 +314,7 @@
    "industries": ["Fintech"],
    "summary": "Product manager for lending products.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "rec_ai_blr",
@@ -374,7 +374,7 @@
    "industries": ["AI"],
    "summary": "Research on vision transformers.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "devrel_rust_berlin",
@@ -394,7 +394,7 @@
    "industries": ["AI"],
    "summary": "Final-year student exploring machine learning.",
    "memory": [],
-   "connect_with": []
+   "connect_with": ["Investors"]
   },
   {
    "handle": "trap_plumbing",

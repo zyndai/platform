@@ -29,13 +29,17 @@ async def test_the_raw_records_come_out_in_the_order_of_how_well_they_fit(ranked
     people, warning = await ranked()
     assert warning is None
     names = [p["name"] for p in people]
-    # In India with a title the request asked for, in the provider's order; then the one abroad; then the
-    # person whose title is not an investor's. The grievance officer, the duplicate and the nameless
-    # record are gone.
-    assert names == ["Priya Partner", "Sam", "Gita General", "Anna Angel", "Sal Sales"]
-    scores = [p["score"] for p in people]
-    assert scores == sorted(scores, reverse=True) and len(set(scores[:3])) <= 3
-    assert people[0]["score"] > people[3]["score"] > people[4]["score"] > 0
+    # In India with an investor's title (a Principal at a fund counts), in the provider's order; then, as
+    # close matches, the ones abroad and the Principal at a consultancy; last, as a loose match, the person
+    # whose title is not an investor's. The grievance officer, the duplicate and the nameless record are gone.
+    assert names == ["Priya Partner", "Sam", "Gita General", "Pat Principal",
+                     "Anna Angel", "Leo Abroad", "Theo Consultant", "Sal Sales"]
+    assert [p["match_quality"] for p in people] == ["exact"] * 4 + ["close"] * 3 + ["loose"]
+    assert people[-1]["score"] <= 0.45
+    by = {p["name"]: p for p in people}
+    assert by["Priya Partner"]["score"] == by["Pat Principal"]["score"] == 0.8         # LINKEDIN_PRIOR x a sure title
+    assert by["Pat Principal"]["score"] > by["Theo Consultant"]["score"]
+    assert by["Anna Angel"]["score"] < by["Priya Partner"]["score"]                     # not in India
 
 
 async def test_shaping_cleans_what_the_provider_sends_untidily(ranked):
@@ -43,8 +47,10 @@ async def test_shaping_cleans_what_the_provider_sends_untidily(ranked):
     by = {p["name"]: p for p in people}
     assert by["Priya Partner"]["linkedin_url"] == "https://linkedin.com/in/priya-partner"    # the scheme was missing
     sam = by["Sam"]
-    assert (sam["company"], sam["location"]) == ("", "Gurgaon, India")                      # N/A is nothing; a locality is a place
-    assert by["Gita General"]["location"] == "Bengaluru, India"                              # a city, and a country by name
+    assert (sam["company"], sam["location"]) == ("", "Gurgaon, Haryana, India")             # N/A is nothing; the locality is theirs
+    assert by["Gita General"]["location"] == "Bengaluru, India"                              # no locality: the city and the country
+    assert by["Leo Abroad"]["location"] == "Los Altos, California, United States"           # not the office, not the company's country
+    assert not any(p["location"].endswith("India, India") for p in people)
     assert all(p["linkedin_url"].startswith("https://") for p in people)
     assert all(p["has_email"] in (True, False) and "email" not in p for p in people)         # flags, never values
 
@@ -52,7 +58,7 @@ async def test_shaping_cleans_what_the_provider_sends_untidily(ranked):
 async def test_every_person_has_a_reason_and_a_quality(ranked):
     people, _ = await ranked()
     by = {p["name"]: p for p in people}
-    assert by["Priya Partner"]["why"] == ["Investor (title)", "Pune, India"]
+    assert by["Priya Partner"]["why"] == ["Investor (title)", "Pune, Maharashtra, India"]
     assert by["Sam"]["why"][0] == "Investor (headline)"
     assert by["Anna Angel"]["match_quality"] != "exact" and by["Sal Sales"]["match_quality"] == "loose"
     assert all(1 <= len(p["why"]) <= 3 for p in people)
@@ -61,3 +67,16 @@ async def test_every_person_has_a_reason_and_a_quality(ranked):
 async def test_the_limit_is_applied_after_the_wrong_ones_are_dropped(ranked):
     people, _ = await ranked(limit=2)
     assert [p["name"] for p in people] == ["Priya Partner", "Sam"]
+
+
+def test_an_investor_request_with_nothing_about_the_company_drops_the_broad_titles():
+    from app.services.people_query import ROLE_STRONG_TITLES, ROLE_TITLE_FILTERS, TargetQuery
+    body = people_discovery.quickenrich_body(TargetQuery(raw="investor", role="investor"), 10)
+    strong = [t for t in ROLE_TITLE_FILTERS["investor"][0] if t in ROLE_STRONG_TITLES["investor"]]
+    assert body["title"]["include"] == strong and "Principal" not in strong and "Managing Partner" not in strong
+
+
+def test_a_us_target_is_not_filtered_by_a_country_word_in_the_locality():
+    from app.services.people_query import parse_target_heuristic
+    body = people_discovery.quickenrich_body(parse_target_heuristic("seed investor in the USA"), 10)
+    assert body["country_code"]["include"] == ["US"] and "locality" not in body   # "Richmond, Virginia" has no country

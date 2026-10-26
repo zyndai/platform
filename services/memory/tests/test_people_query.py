@@ -69,8 +69,9 @@ def test_quickenrich_body_uses_title_country_and_company_keywords():
     assert "Grievance" in body["title"]["exclude"]
     assert body["country_code"] == {"include": ["IN"], "exclude": []}
     # the stage and the whole topic phrase, "AI" included (the old 3-letter rule dropped it)
-    assert body["bio_li"]["include"] == ["seed", "AI dev tools"]
-    assert "locality" not in body and body["per_page"] == 10
+    assert body["bio_li"]["include"] == ["seed stage", "seed fund", "AI dev tools"]
+    # a country is also asked of the person's locality: country_code is the company's country
+    assert body["locality"] == {"include": ["India"], "exclude": []} and body["per_page"] == 10
 
 
 def test_quickenrich_body_adds_locality_for_a_city():

@@ -258,10 +258,8 @@ function applyAnswers(
     c.skills = [...c.skills, ...newSkills];
   }
 
-  const connectWith = joinAnswers("connect_with");
-  if (connectWith.length > 0) {
-    c.searchable_facts = [...c.searchable_facts, `${name} — looking to connect with ${connectWith.join(", ")} — Zynd`];
-  }
+  // connect_with answers are saved on the card as-is; they say who the owner wants to meet, so they
+  // are not added to searchable_facts (search read them as who the owner is).
 
   const loveTalking = joinAnswers("love_talking");
   if (loveTalking.length > 0) {

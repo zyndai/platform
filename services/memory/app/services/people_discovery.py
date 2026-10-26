@@ -154,12 +154,21 @@ def _why(reasons: object) -> list[str]:
     return out[:4]
 
 
+# Cards filters the parser has no field for. A caller (the public MCP) may pass them through.
+PASSTHROUGH_PARAMS = frozenset({"industry", "availability", "experience_min"})
+
+
 def cards_search_params(
     target: str, limit: int, query: TargetQuery, as_handle: str = "", less_like: list[str] | None = None,
+    *, include_unclaimed: bool = True, extra: dict | None = None,
 ) -> dict:
     """/v1/agents/search params: the free text plus the parsed filters Cards can score on, and
     the searcher's own handle so people who want to meet someone like them rank higher."""
-    params: dict = {"q": (target or "").strip(), "limit": limit, "include_unclaimed": "true"}
+    params: dict = {"q": (target or "").strip(), "limit": limit,
+                    "include_unclaimed": "true" if include_unclaimed else "false"}
+    for key, value in (extra or {}).items():
+        if key in PASSTHROUGH_PARAMS and value not in (None, ""):
+            params[key] = value
     if as_handle:
         params["as_handle"] = as_handle
     if less_like:
@@ -181,7 +190,7 @@ def cards_search_params(
 
 async def search_cards(
     target: str, limit: int, *, query: TargetQuery | None = None, as_handle: str = "",
-    less_like: list[str] | None = None,
+    less_like: list[str] | None = None, include_unclaimed: bool = True, extra: dict | None = None,
 ) -> tuple[list[dict], str | None]:
     """Claimed and unclaimed published cards. Unclaimed rows carry no contact fields."""
     q = (target or "").strip()
@@ -191,7 +200,8 @@ async def search_cards(
     url = f"{settings.cards_api_base_url.rstrip('/')}/v1/agents/search"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
-            resp = await client.get(url, params=cards_search_params(q, limit, query, as_handle, less_like))
+            resp = await client.get(url, params=cards_search_params(
+                q, limit, query, as_handle, less_like, include_unclaimed=include_unclaimed, extra=extra))
             resp.raise_for_status()
             payload = resp.json()
     except Exception as exc:
@@ -204,7 +214,7 @@ async def search_cards(
     return shape_cards(rows, limit), None
 
 
-async def lookup_cards(name: str, limit: int) -> tuple[list[dict], str | None]:
+async def lookup_cards(name: str, limit: int, include_unclaimed: bool = True) -> tuple[list[dict], str | None]:
     """Published Cards whose name or handle matches, exact full name first. For "find Chandan",
     where meaning-based search has nothing to rank by."""
     name = (name or "").strip()
@@ -214,7 +224,7 @@ async def lookup_cards(name: str, limit: int) -> tuple[list[dict], str | None]:
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
             resp = await client.get(url, params={"name": name[:100], "limit": max(1, min(limit, 10)),
-                                                 "include_unclaimed": "true"})
+                                                 "include_unclaimed": "true" if include_unclaimed else "false"})
             resp.raise_for_status()
             payload = resp.json()
     except Exception as exc:

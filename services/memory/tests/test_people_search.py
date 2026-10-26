@@ -285,3 +285,78 @@ async def test_group_scope_reports_a_group_the_caller_cannot_search(world):
 async def test_verified_badges_travel_with_a_card_and_merge(world):
     world["cards"] = ([card("ada", 0.8, verified=["linkedin"])], None)
     assert (await run())["people"][0]["verified"] == ["linkedin"]
+
+
+# ── Phase 3.0: a search without a signed-in user ──────────────────────────────────
+
+async def anon(target="seed investor in India", *, include_unclaimed=False, wanted=None, explicit=None, **kw):
+    return await people_search.search(
+        MagicMock(), people_search.anonymous(include_unclaimed), target, limit=kw.pop("limit", 10),
+        wanted=set(wanted or {"cards", "zynd", "quickenrich"}), explicit=set(explicit or ()), **kw)
+
+
+async def test_an_anonymous_search_never_reads_a_users_data(world):
+    world["cards"] = ([card("ada", 0.9)], None)
+    result = await anon()
+    assert [p["handle"] for p in result["people"]] == ["ada"]
+    for name in ("zynd_search", "match", "prefs", "ctx", "external_search"):
+        world["mocks"][name].assert_not_awaited()
+    assert result["searched"] == ["cards"] and "zynd" not in result["sources"]
+    assert world["mocks"]["cards_search"].await_args.kwargs["as_handle"] == ""
+
+
+async def test_an_anonymous_search_runs_linkedin_only_when_it_is_named(world):
+    world["cards"] = ([card("weak", 0.2)], None)        # too few strong matches: an owner would get LinkedIn
+    await anon()
+    world["mocks"]["external_search"].assert_not_awaited()
+    world["external"] = ([{"source": "quickenrich", "name": "Grace", "title": "Partner", "company": "Acme",
+                           "linkedin_url": "https://www.linkedin.com/in/grace"}], None)
+    result = await anon(explicit={"quickenrich"})
+    world["mocks"]["external_search"].assert_awaited_once()
+    assert "quickenrich" in result["searched"]
+
+
+async def test_the_unclaimed_choice_reaches_cards(world):
+    world["cards"] = ([card("ada")], None)
+    await anon(include_unclaimed=False)
+    assert world["mocks"]["cards_search"].await_args.kwargs["include_unclaimed"] is False
+    await run()                                          # owners keep seeing unclaimed Cards
+    assert world["mocks"]["cards_search"].await_args.kwargs["include_unclaimed"] is True
+
+
+async def test_extra_filters_travel_to_cards_unchanged(world):
+    world["cards"] = ([card("ada")], None)
+    await anon(extra_params={"industry": "fintech", "experience_min": 5})
+    assert world["mocks"]["cards_search"].await_args.kwargs["extra"] == {"industry": "fintech", "experience_min": 5}
+
+
+async def test_an_anonymous_name_lookup_uses_the_unclaimed_choice_and_offers_no_invites(world, monkeypatch):
+    monkeypatch.setattr(people_search.settings, "feature_invite_to_claim", True)
+    found = {"source": "zynd_card", "claimed": False, "handle": "chandan-kumar-2en8", "name": "Chandan Kumar",
+             "headline": "Founder", "location": "", "skills": [], "match_score": 0.4, "why": [],
+             "url": "https://cards.zynd.ai/p/chandan-kumar-2en8", "linkedin_url": "https://www.linkedin.com/in/ck"}
+    with patch("app.services.people_search.people_discovery.lookup_cards", AsyncMock(return_value=([found], None))) as lookup:
+        result = await anon("Chandan Kumar")
+    assert lookup.await_args.kwargs["include_unclaimed"] is False
+    (ck,) = result["people"]
+    assert ck["match_quality"] == "exact" and ck["next_action"] == "view_profile" and "invite_ref" not in ck
+
+
+async def test_anonymous_like_me_needs_an_account(world):
+    result = await anon("like_me")
+    assert result["people"] == [] and "signed-in" in result["warnings"][0]
+    world["mocks"]["cards_search"].assert_not_awaited()
+
+
+async def test_anonymous_group_scope_is_ignored(world):
+    world["cards"] = ([card("ada")], None)
+    result = await anon(group_id="g1")
+    world["mocks"]["group"].assert_not_awaited()
+    assert result["mode"] == "target" and [p["handle"] for p in result["people"]] == ["ada"]
+
+
+def test_the_re_rank_applies_one_searchers_controls_and_never_returns_their_own_card():
+    searcher = people_search.Searcher(uid="u", own_handle="me", prefs={"hide_person": ["spammy"]})
+    people = [pr.person_from_card(card(h, 0.7)) for h in ("me", "spammy", "fine")]
+    query = people_search.parse_target_heuristic("investor")
+    assert [p["handle"] for p in people_search._rank(people, query, searcher)] == ["fine"]

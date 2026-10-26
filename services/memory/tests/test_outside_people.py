@@ -58,3 +58,22 @@ def test_query_from_filters_resolves_places_and_trims():
     assert q.titles == ("Founder",) and q.topics == ("AI",)
     assert (q.location, q.country_code, q.locality) == ("Bengaluru", "IN", "Bengaluru")
     assert query_from_filters().country_code == "" and query_from_filters(location="nowhere-ville").country_code == ""
+
+
+def test_a_title_that_names_a_role_gets_that_roles_title_filters():
+    """People search Phase 2.5: Cards sends {"titles": ["Investor"]}; the request must use the
+    investor row (include and exclude), or "Investor Grievance" officers come back."""
+    from app.services.people_discovery import quickenrich_body
+    from app.services.people_query import ROLE_TITLE_FILTERS
+
+    q = query_from_filters(titles=["Investor"], keywords=["AI"])
+    assert q.role == "investor"
+    body = quickenrich_body(q, 4)
+    assert body["title"] == {"include": list(ROLE_TITLE_FILTERS["investor"][0]),
+                             "exclude": list(ROLE_TITLE_FILTERS["investor"][1])}
+    assert "Grievance" in body["title"]["exclude"]
+    assert query_from_filters(titles=["Machine Learning Engineer"]).role == "ml"
+    assert query_from_filters(titles=["Developer Advocate"]).role == "devrel"
+    # A title that names no known role keeps the titles as given, with nothing excluded.
+    plain = query_from_filters(titles=["Healthcare"])
+    assert plain.role == "" and quickenrich_body(plain, 4)["title"] == {"include": ["Healthcare"], "exclude": []}

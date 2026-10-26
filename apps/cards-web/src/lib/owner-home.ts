@@ -34,7 +34,35 @@ export interface OwnerStatus {
   unclaimed_duplicates?: { handle: string; name: string }[];
   possible_duplicates?: { handle: string; name: string; matched_socials: string[]; mergeable: false }[];
   nudges: { id: string; kind: string; title: string; href: string }[];
+  /** People to meet (cards-api services/suggestions.py); absent on older APIs. */
+  suggestions?: { people: SuggestedPerson[]; outside: OutsidePerson[] };
 }
+
+/** A claimed Card suggested to the owner: someone who fits who they want to meet. */
+export interface SuggestedPerson {
+  handle: string;
+  name: string;
+  headline: string;
+  location: string;
+  avatar_url: string;
+  url: string;
+  /** They also want to meet someone like the owner. */
+  two_way: boolean;
+  /** At most three specific reasons, most telling first. */
+  why: string[];
+}
+
+/** Someone not on Zynd yet (LinkedIn), shown when there are too few Zynd suggestions. */
+export interface OutsidePerson {
+  name: string;
+  title: string;
+  company: string;
+  linkedin_url: string;
+  /** The owner's assistant can invite them to claim a card (A2). */
+  invitable?: boolean;
+}
+
+export type SuggestionFeedback = "hide" | "not_relevant";
 
 export async function ownerRequest<T>(
   path: string,

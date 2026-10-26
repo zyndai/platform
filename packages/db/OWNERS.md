@@ -22,6 +22,7 @@ every service listed as a reader.
 | `cards.connections`, `cards.dm_threads`, `cards.dm_messages`, `cards.dm_read_state`, `cards.groups`, `cards.group_members`, `cards.group_read_state`, `cards.group_invitations`, `cards.group_messages` | cards | cards-api only; Cards web/MCP use Cards HTTP. Read cursors are service-role only |
 | `cards.group_memory`, `cards.group_memory_state`, `cards.group_message_memory` | cards | cards-api only; rolling group summary/facts, never raw messages |
 | `cards.group_agent_jobs`, `cards.group_agent_preferences` | cards | cards-api only; durable mention queue and per-user agent opt-out |
+| `cards.card_suggestions`, `cards.card_suggestion_impressions` | cards | cards-api only (`services/suggestions.py`); nightly people-to-meet list, and what the digest/owner home showed and the owner did |
 | `identity.*` (empty today; Zynd Account tables in Stage 2) | shared | persona, cards |
 | `persona_intro_requests`, `persona_intro_rules`, `persona_intro_audit` | persona | cards-api via Persona HTTP; persona-web (requests only, participant RLS) |
 | `cards.intro_requests` | cards | cards-api; minimal Persona status projection and activity events |

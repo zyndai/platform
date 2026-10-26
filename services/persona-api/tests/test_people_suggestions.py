@@ -390,3 +390,31 @@ def test_is_due_false_when_recently_run():
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     assert people_suggestions.is_due({"last_run_at": now}, interval_seconds=3600) is False
+
+
+def test_run_for_user_does_not_rank_people_up_for_having_an_email_or_phone():
+    """People search plan R15: reachability is not relevance. Two people found by the same one
+    recipe score the same and keep the provider's order, contact flags or not."""
+    signals = {
+        "title": "CTO", "organization": "", "location": "", "city": "",
+        "interests": [], "skills": [], "own_linkedin_url": "",
+    }
+
+    def fake_search(user_id, **filters):
+        if filters.get("titles") == ["CTO"] and "cities" not in filters:
+            return {"status": "success", "results": [
+                _person("Bob", "Lee", "https://linkedin.com/in/boblee"),
+                _person("Jane", "Doe", "https://linkedin.com/in/janedoe", has_email=True, has_phone=True),
+            ]}
+        return {"status": "success", "results": []}
+
+    with patch.object(people_suggestions, "collect_signals", return_value=signals), \
+         patch.object(people_suggestions.qe, "is_configured", return_value=True), \
+         patch.object(people_suggestions, "_replace_suggestions") as mock_replace, \
+         patch.object(people_suggestions, "_stamp_run"), \
+         patch("mcp.tools.quickenrich.search_people_database", side_effect=fake_search):
+        people_suggestions.run_for_user("u1")
+
+    rows = mock_replace.call_args[0][1]
+    assert [r["cache_key"] for r in rows] == ["li:in/boblee", "li:in/janedoe"]
+    assert rows[0]["score"] == rows[1]["score"] == 1.0

@@ -1,0 +1,55 @@
+{
+  "_about": "Golden owners for suggestions (people search plan Phase 2, D7). Each owner card is added to the search_golden.json corpus and run through services/suggestions.compute. top: handles that must be in the first len(top) results, in any order. first: the one that must lead. kinds: every one of the first 5 must start with one of these prefixes (the corpus names cards by kind). never: handles that must not appear at all.",
+  "owners": [
+    {
+      "handle": "own_founder_ai_blr",
+      "headline": "Founder building AI developer tools",
+      "location": "Bengaluru, India",
+      "connect_with": ["Investors"],
+      "working_on": ["Building with AI"],
+      "first": "inv_seed_ai_in",
+      "top": ["inv_seed_ai_in", "inv_seed_ai_uk"],
+      "kinds": ["inv_"],
+      "never": ["fnd_agents_blr", "fnd_aiinfra_nyc", "fnd_devtools_sf"]
+    },
+    {
+      "handle": "own_investor_agents",
+      "headline": "Seed investor",
+      "location": "London, UK",
+      "connect_with": ["Founders"],
+      "love_talking_about": ["Agentic AI"],
+      "top": ["fnd_agents_blr"],
+      "kinds": ["fnd_", "inv_angel_devtools_us"],
+      "never": ["inv_seed_ai_uk", "inv_seed_ai_in"]
+    },
+    {
+      "handle": "own_rust_hiring",
+      "headline": "CTO at a database startup",
+      "location": "Berlin, Germany",
+      "connect_with": ["Engineers"],
+      "skills": ["Rust"],
+      "top": ["eng_rust_berlin", "devrel_rust_berlin"],
+      "kinds": ["eng_", "devrel_"],
+      "never": ["inv_seed_ai_in", "fnd_devtools_sf", "sales_devtools_sf"]
+    },
+    {
+      "handle": "own_student_mentor",
+      "headline": "Student learning product design",
+      "location": "Pune, India",
+      "connect_with": ["Mentors"],
+      "top": ["adv_cto_us"],
+      "kinds": ["adv_"],
+      "never": ["stu_ml_pune"]
+    },
+    {
+      "handle": "own_climate_free_text",
+      "headline": "Building carbon removal hardware",
+      "location": "Berlin, Germany",
+      "connect_with": ["climate investors"],
+      "working_on": ["Climate hardware"],
+      "first": "inv_growth_climate_de",
+      "kinds": ["inv_"],
+      "never": ["fnd_climate_berlin"]
+    }
+  ]
+}

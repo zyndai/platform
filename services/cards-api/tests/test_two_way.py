@@ -125,24 +125,3 @@ def test_the_search_endpoint_resolves_as_handle_to_a_card(monkeypatch):
     client.get("/v1/agents/search", params={"q": "investor"})
     assert seen["searcher"] is None
 
-
-def test_suggested_people_mark_and_lead_with_two_way_matches(monkeypatch):
-    from services import suggested_people
-
-    def build(handle, headline, **extra):
-        c = card(handle, headline)
-        for k, v in extra.items():
-            setattr(c, k, v)
-        return c
-
-    me = build("me", "Founder", working_on=["Building a startup", "Building with AI"])
-    plain = build("aaa-plain", "Designer", working_on=["Building with AI"])
-    wants_me = build("zzz-wants-me", "Investor", working_on=["Building with AI"], connect_with=["Founders"])
-    rows = [{"handle": c.handle, "card": c.model_dump(mode="json")} for c in (plain, wants_me)]
-    monkeypatch.setattr(suggested_people.cards_service, "get_card_by_handle", lambda h: me)
-    monkeypatch.setattr(suggested_people.cards_service, "list_published_rows", lambda **kw: rows)
-    monkeypatch.setattr(suggested_people, "outside_search_enabled", lambda: False)
-
-    people = suggested_people.get_suggested_people("me")["people"]
-    assert [p["handle"] for p in people] == ["zzz-wants-me", "aaa-plain"]
-    assert [p["two_way"] for p in people] == [True, False]

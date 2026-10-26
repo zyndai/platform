@@ -1,7 +1,8 @@
 # ZYND People Search, Suggestions & Recommendations Plan
 
 > **Status:** proposed 2026-10-26. **Phase 0 is implemented on `dev`** (see "Phase 0 as built" below), enabled
-> with no flag (AGENTS.md §9: no new env vars). **Phase 1 is implemented** (see "Phase 1 as built"). Phases 2–3 are not started.
+> with no flag (AGENTS.md §9: no new env vars). **Phase 1 is implemented** (see "Phase 1 as built"). **Phase 2 is
+> implemented** (see "Phase 2 as built"; its two tables need a human to apply `cards/0031`). Phase 3 is not started.
 >
 > **Builds on** [`ZYND_MEMORY_QUALITY_PLAN.md`](./ZYND_MEMORY_QUALITY_PLAN.md) Part B (F1–F9, A1–A8), which
 > shipped behind flags (see its §17). This plan does not redo that work. It fixes what Part B left broken
@@ -553,6 +554,57 @@ if not, leave it.
 suggestions change week to week for an unchanged card; and at least 1 two-way suggestion appears when
 the corpus has one. Check with a script over a prod snapshot, read-only.
 
+#### Phase 2 as built (2026-10-26)
+
+What reading the code changed in the text above:
+
+- **The digest is daily**, not weekly (`digest.run_digest`, 07:00 local). "Not shown in the last 3 digests"
+  became a **14-day cooldown on digest impressions** (`COOLDOWN_DAYS`), unless the person's score rose by more
+  than `RESHOW_GAIN` 0.15. Owner home is not cooled down (it would change on every page load).
+- **Owner home had no suggestions.** It now has a "People to meet" section (`apps/cards-web/.../home/people-to-meet.tsx`)
+  with View, Not relevant and Hide; `GET /cards/mine/status` returns `suggestions: {people, outside}`.
+- **No embedding label mapping (2.1).** A free-text `connect_with` value is matched to a kind by its words
+  (`two_way.kind_from_text`: "angel investors" → Investors); one that names no kind is searched as written (≤ 4
+  words), and Cards scores it semantically anyway. Same effect, no label-embedding table, no extra OpenAI calls.
+- **`set_looking_for` free text is private** (memory `intends_to`), so Cards can't read it. Targets use the public
+  `is_seeking` fact and the card's **active beacon**, which is its own first target.
+- **0.9 was already in place**; the digest's `_mark_people` now only adds `verified` (two-way comes with the suggestion).
+- **Outside people lost the per-role excludes**: memory's `query_from_filters` set titles but no role. It now
+  infers the role from the title, so `{"titles": ["Investor"]}` gets the investor include/exclude row.
+- **Invites (2.5)**: a browser can't create an A2 invite (only Memory's service token can), so outside people carry
+  `invitable` and owner home says "ask your assistant to invite them".
+- **"developer tools" is not a developer.** The suggestions golden set showed "Seed investor backing AI developer
+  tools" passing as an engineer (and as the Engineers kind in two-way). `search_text.role_tokens` drops
+  "developer/dev tool(s)/tooling" before role checks in search and in `two_way.kinds_of`. The search golden set
+  is unchanged (0.993).
+
+How it works:
+
+- `services/suggest_targets.py`: up to 3 targets per card (beacon, `is_seeking` kinds, `connect_with` kinds, free
+  text; or "works on X" when nobody is named), topics from `working_on` / `love_talking_about` / top skills.
+  `KIND_SEARCH` maps each kind to a search role (Customers has none and is skipped).
+- `services/suggestions.py`: each target runs through `search_agents(relax=True, keep_role=True, searcher=owner)`
+  (`keep_role` is new: never drop the role). Best result per person, `NEAR_CITY` ×1.05 / `NEAR_COUNTRY` ×1.03,
+  two-way first, `why` ≤ 3 specific reasons. Exclusions: self, unclaimed, any `connections` row in any status,
+  open reports, `hide_person`, and impressions marked hide / not relevant; `less_like_this` ranks down.
+  Diversity: ≤ 2 per target, ≤ 1 per company (`work_experience[0].company`, now on each search result with
+  `avatar_url` and the `two_way` kinds).
+- Stored: `cards.card_suggestions` (top 20 per claimed card, `POST /internal/suggestions/refresh`, workflow
+  `suggestions-refresh.yml` at 23:30 UTC) and `cards.card_suggestion_impressions` (digest, owner home, api;
+  actions viewed / connect / hide / not_relevant). A list older than 36 h, or a missing table, means a live
+  compute and nothing recorded, so **cards-api can deploy before `cards/0031` is applied**.
+- Feedback: owner home `POST /cards/mine/suggestions/{handle}/feedback`; digest links
+  `/cards/suggestions/feedback/{unsubscribe_token}/{handle}/{action}` (GET asks, POST acts, like unsubscribe; the
+  owner's existing token, no new secret). Mirrored into match preferences when `FEATURE_NETWORK_CONTROLS` is on.
+  A connection request to a suggested person marks the impression `connect`.
+- Persona (2.8): `has_email` / `has_phone` no longer add to the score. Q7 is still open.
+- Tests: cards-api 711 → 758 passing (new `test_suggest_targets`, `test_suggestions`, `test_suggestions_golden` with
+  5 golden owners over the search corpus), memory 777 → 778, persona 366 → 367, `packages/db` SQL tests on a local
+  Postgres (migration count 32). Only the 2 known `test_x_bot.py` failures remain.
+- Check script: `services/cards-api/scripts/check_suggestions.py` (read-only; V11 below).
+- **Deploy order:** cards-api (works with or without 0031), memory, cards-web; apply 0031 any time after review.
+- Known cost: until 0031 is applied, each owner-home refresh (every 60 s while open) computes live, up to 3 searches.
+
 ### Phase 3: One pipeline everywhere, and measurement (~1 week, then ongoing)
 
 **3.1 One service endpoint (R16, D6).** Memory gets `POST /v1/service/people-search` (auth
@@ -650,7 +702,7 @@ Run each service's tests before and after, against the AGENTS.md §5 baselines.
 
 ## 11. Verification still to do (needs prod data or a human)
 
-Code for Phase 0 and Phase 1 is finished and unit-tested. These checks need live data or credentials a
+Code for Phases 0–2 is finished and unit-tested. These checks need live data or credentials a
 coding session does not have. Run them in this order, and record each result here.
 
 | # | Check | How | Pass when | Result |
@@ -664,5 +716,8 @@ coding session does not have. Run them in this order, and record each result her
 | V7 | `FEATURE_FACT_MATCHING` in prod | Human decision (section 8), after `FEATURE_FACT_FAMILIES` is on | flipped after V5 and V6 | open |
 | V8 | cards-web | Open `/search` and `/directory` on dev: scores display sensibly on the new scale, `relaxed` shows | looks right | open |
 | V9 | QuickEnrich questions Q1 and Q2 | Three manual calls (OR/AND and substring/whole word for `include`) and one raw record (is the LinkedIn URL scheme-less?) | answers written into section 9 | open |
+| V10 | Migration 0031 applied | `db:migrate --project cards --yes` after review (`packages/db/README.md` step 6) | `cards.card_suggestions` and `cards.card_suggestion_impressions` exist; the next `suggestions-refresh` run returns `written > 0` | open |
+| V11 | Phase 2 "done when" | `cd services/cards-api && python scripts/check_suggestions.py` (read-only; embeds each target) | 0 exclusion violations; digest rotation ≥ 60%; every card that could get a two-way suggestion gets one | open |
+| V12 | Owner home and digest on dev | Open `/home` on dev: "People to meet" shows, Hide / Not relevant remove a person and they stay gone after reload; a digest preview (`?dry_run=true&handle=`) shows reasons and the feedback links | looks right | open |
 
 Deploy order for everything above: cards-api, then memory.

@@ -17,6 +17,7 @@ from services.search_text import (
     location_tokens,
     query_terms,
     role_matches,
+    role_tokens,
     token_set,
 )
 
@@ -65,6 +66,15 @@ def _age_days(fact: dict) -> int | None:
     if approved is None:
         return None
     return max((datetime.now(timezone.utc) - approved).days, 0)
+
+
+def current_company(card: AgentProfileCard) -> str:
+    """The company of the card's newest LinkedIn role, or "" when unknown."""
+    for job in card.work_experience or []:
+        company = str((job or {}).get("company") or "").strip() if isinstance(job, dict) else ""
+        if company and company.upper() != "N/A":
+            return company
+    return ""
 
 
 def _skill_matches(wanted: str, skill_name: str) -> bool:
@@ -133,6 +143,8 @@ def search_agents(
     candidate_rows: list[dict] | None = None,
     topics: str = "",
     relax: bool = False,
+    keep_role: bool = False,
+    query_vec: list[float] | None = None,
 ) -> list[dict]:
     """Score published cards against a query.
 
@@ -145,14 +157,19 @@ def search_agents(
     relax=True keeps the role, location and skills as requirements first, then, while fewer than
     `limit` cards qualify, drops them one at a time: skills, then a city widened to its country,
     then the location, then the role. Cards found by a looser pass always rank below those found
-    by a stricter one and say what was relaxed (`relaxed`, plus a match reason)."""
+    by a stricter one and say what was relaxed (`relaxed`, plus a match reason). keep_role=True
+    never drops the role (suggestions: "investors" must stay investors).
+
+    query_vec is q's embedding when the caller already has it (suggestions embed each target once
+    per refresh, not once per card)."""
     q_terms = query_terms(q)
     if q and not q_terms and not any((role, location, skills, industry, availability, experience_min is not None)):
         return []   # "who is in the": nothing to look for, and embedding it would match noise
     inferred_location, inferred_skills = explicit_query_constraints(q)
     location = location or inferred_location
     skills = skills or ",".join(inferred_skills)
-    query_vec = embed_text(q) if q else []
+    if query_vec is None:
+        query_vec = embed_text(q) if q else []
     def rows_for(r: str, loc: str, sk: str) -> list[dict]:
         return _rows_for(q, query_vec, include_unclaimed, candidate_rows,
                          Constraints(r, loc, tuple(s.strip() for s in sk.split(",") if s.strip()),
@@ -166,7 +183,7 @@ def search_agents(
         return results[:limit]
 
     seen = {r["handle"] for r in results if r.get("handle")}
-    for dropped, stage_role, stage_location, stage_skills, note in _relaxations(role, location, skills):
+    for dropped, stage_role, stage_location, stage_skills, note in _relaxations(role, location, skills, keep_role):
         if len(results) >= limit:
             break
         for r in _search_pass(rows=rows_for(stage_role, stage_location, stage_skills),
@@ -180,7 +197,7 @@ def search_agents(
     return results[:limit]
 
 
-def _relaxations(role: str, location: str, skills: str):
+def _relaxations(role: str, location: str, skills: str, keep_role: bool = False):
     """(dropped, role, location, skills, reason) for each looser pass, each also loosened as the
     ones before it were."""
     dropped: list[str] = []
@@ -198,7 +215,7 @@ def _relaxations(role: str, location: str, skills: str):
             dropped.append("location")
         yield list(dropped), role, "", skills, f"Not in {location} (closest match)"
         location = ""
-    if role:
+    if role and not keep_role:
         dropped.append("role")
         yield list(dropped), "", location, skills, f"Not a {role} (closest match)"
 
@@ -423,11 +440,11 @@ def _search_pass(
         role_missing = False
         met: set[str] = set()          # query words a satisfied constraint already answers
         if want_role:
-            if role_matches(token_set(card.identity.headline), want_role):
+            if role_matches(role_tokens(card.identity.headline), want_role):
                 reasons.append(card.identity.headline or "Role match")      # the strongest role signal
                 fit *= FIT_ROLE_HEADLINE
                 met.update(query_terms(want_role))
-            elif role_matches(text_tokens, want_role) or constraints.role:
+            elif role_matches(role_tokens(search_text), want_role) or constraints.role:
                 # mentioned elsewhere on the card (work history, an approved fact)
                 reasons.append("Role match")
                 fit *= FIT_ROLE_ELSEWHERE
@@ -474,6 +491,7 @@ def _search_pass(
             claimed = bool((row.get("owner_email") or "").strip())
         freshness = max((freshness_boost(f) for f in facts), default=0.0) / 0.1
         quality = quality_score(bool(claimed), freshness)
+        fits: list[str] = []
         if searcher_kinds and searcher is not None and card.handle != searcher.handle:
             fits = two_way_match(searcher_kinds, card)
             if fits:
@@ -501,6 +519,9 @@ def _search_pass(
                 "availability": card.availability,
                 "experience_years": card.experience_years,
                 "linkedin_url": (card.identity.links or {}).get("linkedin") or "",
+                "avatar_url": card.identity.avatar_url or "",
+                "company": current_company(card),
+                "two_way": fits,
                 "match_score": round(score, 3),
                 "match_reasons": reasons[:6],
                 "url": f"{config.SITE_BASE_URL}/p/{card.handle}" if card.handle else f"{config.SITE_BASE_URL}/profile/{card.id}",

@@ -289,6 +289,61 @@ def unsubscribe(token: UUID):
     return HTMLResponse('<!doctype html><title>Unsubscribed</title><h1>You are unsubscribed</h1><p>Your card stays available. You can change email preferences in your owner home.</p><a href="' + html.escape(config.SITE_BASE_URL.rstrip('/') + '/home', quote=True) + '">Owner home</a>', headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
+class SuggestionFeedback(BaseModel):
+    action: str = Field(pattern="^(hide|not_relevant)$")
+
+
+@router.post("/mine/suggestions/{handle}/feedback")
+async def suggestion_feedback(handle: str, body: SuggestionFeedback, authorization: str | None = Header(default=None)):
+    """Hide or "not relevant" on a person owner home suggested: they are not suggested again."""
+    from services import suggestions
+
+    email = email_for(authorization)
+    row = await asyncio.to_thread(owner_home.current_row, email)
+    if row is None:
+        raise HTTPException(404, "Create your card first")
+    return await asyncio.to_thread(suggestions.feedback, row, handle, body.action, "owner_home")
+
+
+_FEEDBACK_WORDS = {"hide": ("Hide this person?", "Hidden", "They won't be suggested to you again."),
+                   "not_relevant": ("Not relevant?", "Thanks", "We'll suggest fewer people like them.")}
+
+
+def _feedback_target(token: UUID, handle: str, action: str) -> tuple[dict, str]:
+    if config.SUPABASE_DB_SCHEMA != "cards":
+        raise HTTPException(404, "Suggestions unavailable")
+    if action not in _FEEDBACK_WORDS:
+        raise HTTPException(404, "Link not found")
+    rows = (config.get_supabase().table("agent_profile_cards").select("id,handle,owner_user_id,owner_email,card")
+            .eq("unsubscribe_token", str(token)).eq("status", "published").limit(1).execute().data or [])
+    if not rows or not rows[0].get("owner_email"):
+        raise HTTPException(404, "Link not found")
+    return rows[0], handle.strip().lstrip("@").lower()
+
+
+@router.get("/suggestions/feedback/{token}/{handle}/{action}", response_class=HTMLResponse)
+def suggestion_feedback_confirmation(token: UUID, handle: str, action: str):
+    """From a digest email. GET only asks (mail scanners open links); the form POSTs."""
+    _feedback_target(token, handle, action)
+    question = _FEEDBACK_WORDS[action][0]
+    return HTMLResponse(f'<!doctype html><title>Zynd suggestions</title><h1>{html.escape(question)}</h1>'
+                        f'<p>@{html.escape(handle)}</p><form method="post"><button>Yes</button></form>',
+                        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+
+@router.post("/suggestions/feedback/{token}/{handle}/{action}", response_class=HTMLResponse)
+def suggestion_feedback_from_email(token: UUID, handle: str, action: str):
+    from services import suggestions
+
+    row, handle = _feedback_target(token, handle, action)
+    suggestions.feedback(row, handle, action, "digest")
+    _, title, line = _FEEDBACK_WORDS[action]
+    home = html.escape(config.SITE_BASE_URL.rstrip('/') + '/home', quote=True)
+    return HTMLResponse(f'<!doctype html><title>{title}</title><h1>{title}</h1><p>{html.escape(line)}</p>'
+                        f'<a href="{home}">Owner home</a>',
+                        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+
 @router.get("/mine/digest-preview")
 async def digest_preview(authorization: str | None = Header(default=None)):
     from services.owner_notifications import render_weekly

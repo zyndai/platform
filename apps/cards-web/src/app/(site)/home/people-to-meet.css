@@ -1,0 +1,108 @@
+.oh-people-list {
+  display: grid;
+  gap: 0;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.oh-person {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px 0;
+  border-top: 1px solid var(--oh-border);
+}
+.oh-person:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.oh-person-avatar {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--oh-lavender);
+  color: var(--oh-accent);
+  font: 600 13px/1 var(--oh-sans);
+}
+.oh-person.is-outside .oh-person-avatar {
+  background: #eef1f5;
+  color: var(--oh-muted);
+}
+.oh-person-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.oh-person-name {
+  color: var(--oh-ink);
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+}
+a.oh-person-name:hover {
+  text-decoration: underline;
+}
+.oh-person-sub {
+  color: var(--oh-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.oh-person-why {
+  color: var(--oh-ink);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.oh-person-chip {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: var(--oh-green);
+  color: #14532d;
+  font: 600 11px/20px var(--oh-sans);
+}
+.oh-person-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.oh-person-actions .oh-button {
+  padding-block: 6px;
+}
+.oh-person-actions button {
+  border: 0;
+  background: none;
+  color: var(--oh-muted);
+  font-size: 12px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.oh-person-actions button:hover:not(:disabled) {
+  color: var(--oh-ink);
+  text-decoration: underline;
+}
+.oh-person-actions button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.oh-people-error:empty {
+  display: none;
+}
+@media (max-width: 760px) {
+  .oh-person {
+    flex-wrap: wrap;
+  }
+  .oh-person-actions {
+    width: 100%;
+    padding-left: 54px;
+  }
+}

@@ -13,7 +13,6 @@ from postgrest.exceptions import APIError
 
 import config
 from services import cards as cards_service
-from services.suggested_people import get_suggested_people
 from services.suggested_posts import get_suggested_posts
 
 logger = logging.getLogger(__name__)
@@ -25,6 +24,7 @@ DIGEST_LOCAL_HOUR = 7
 DIGEST_GRACE_HOURS = 3
 
 MAX_TOPICS = 4
+DIGEST_PEOPLE = 2
 BRIEF_WORDS = 45
 EXCERPT_WORDS = 30
 
@@ -171,7 +171,24 @@ def build_digest(handle: str, posts: dict | None, people: dict | None, name: str
         "updates": list(network.get("connection_updates") or []),
         "search_hits": list(network.get("saved_search_hits") or []),
         "unsubscribe_url": extras.get("unsubscribe_url") or "",
+        "feedback_base": extras.get("feedback_base") or "",
     }
+
+
+def _reason_line(p: dict) -> str:
+    """Why this person, in one line: the two most specific reasons (suggestions.build_why)."""
+    why = [w for w in (p.get("why") or []) if isinstance(w, str) and w.strip()]
+    if p.get("two_way"):
+        why = [w for w in why if not w.startswith("Wants to meet")]     # the chip/line already says it
+    return " · ".join(why[:2])
+
+
+def _feedback_links(d: dict, p: dict) -> dict | None:
+    """Signed-by-token Hide / Not relevant links (GET confirms, POST acts, like unsubscribe)."""
+    base, handle = d.get("feedback_base") or "", p.get("handle") or ""
+    if not base or not handle:
+        return None
+    return {action: f"{base}/{handle}/{action}" for action in ("hide", "not_relevant")}
 
 
 def _two_way_person(d: dict) -> dict | None:
@@ -267,11 +284,16 @@ def render_digest(handle: str, posts: dict | None, people: dict | None, name: st
             label = p.get("name") or p.get("handle") or ""
             headline = (p.get("headline") or "").strip()
             lines.append(f"- {label}" + (f", {headline}" if headline else "") + (" (wants to meet you too)" if p.get("two_way") else ""))
+            if reason := _reason_line(p):
+                lines.append(f"  {reason}")
             if p.get("url"):
                 lines.append(f"  {p['url']}")
+            links = _feedback_links(d, p)
+            if links:
+                lines.append(f"  Not for you? Hide: {links['hide']}  Not relevant: {links['not_relevant']}")
         for p in d["outside"]:
             role = _outside_role(p)
-            lines.append(f"- {p.get('name') or ''}" + (f", {role}" if role else "") + " (LinkedIn)")
+            lines.append(f"- {p.get('name') or ''}" + (f", {role}" if role else "") + " (not on Zynd yet, LinkedIn)")
             if p.get("linkedin_url"):
                 lines.append(f"  {p['linkedin_url']}")
     if d["updates"] or d["search_hits"]:
@@ -434,17 +456,23 @@ def _people_html(d: dict) -> str:
         sub = _esc(p.get("headline") or "")
         if p.get("location"):
             sub += (" &middot; " if sub else "") + _esc(p["location"])
-        tags = [w for words in (p.get("matched_fields") or {}).values() for w in words]
-        tags = list(dict.fromkeys(tags))[: 2 if p.get("two_way") else 3]
-        chips = (_chip("&#8646; Wants to meet you", _GREEN, _GREEN_INK) if p.get("two_way") else "") \
-            + "".join(_chip(_esc(t), _GRAY, _BODY) for t in tags)
+        chips = _chip("&#8646; Wants to meet you", _GREEN, _GREEN_INK) if p.get("two_way") else ""
+        reason = _reason_line(p)
+        extra = (f"<div>{chips}</div>" if chips else "") + (
+            f'<div style="font:400 12px/18px {_FONT};color:{_BODY};padding-top:4px">{_esc(reason)}</div>' if reason else "")
+        links = _feedback_links(d, p)
+        if links:
+            link = f"font:400 11px/18px {_FONT};color:{_MUTED};text-decoration:underline"
+            extra += (f'<div style="padding-top:4px"><a href="{_esc(links["hide"])}" style="{link}">Hide</a>'
+                      f'<span style="color:{_MUTED}"> &middot; </span>'
+                      f'<a href="{_esc(links["not_relevant"])}" style="{link}">Not relevant</a></div>')
         rows.append(_row(len(rows), _avatar(pname, photo=p.get("avatar_url") or ""),
                          _esc(pname) + (_VERIFIED if p.get("verified") else ""), sub,
-                         p.get("url") or "", "View", f"<div>{chips}</div>" if chips else ""))
+                         p.get("url") or "", "View", extra))
     for p in d["outside"]:
         pname = p.get("name") or ""
         role = _outside_role(p)
-        sub = (_esc(role) + " &middot; " if role else "") + "on LinkedIn"
+        sub = (_esc(role) + " &middot; " if role else "") + "Not on Zynd yet"
         rows.append(_row(len(rows), _avatar(pname, zynd=False), _esc(pname), sub, p.get("linkedin_url") or "", "LinkedIn"))
     return _label("People for you") + _box("".join(rows)) if rows else ""
 
@@ -580,6 +608,8 @@ def _owner_extras(row: dict, rows: list[dict], now: datetime, local: datetime) -
     if row.get("unsubscribe_token"):
         extras["unsubscribe_url"] = (f"{config.API_BASE_URL.rstrip('/')}/cards/notifications/unsubscribe/"
                                      f"{row['unsubscribe_token']}")
+        extras["feedback_base"] = (f"{config.API_BASE_URL.rstrip('/')}/cards/suggestions/feedback/"
+                                   f"{row['unsubscribe_token']}")
     from services import owner_home
     if not owner_home.enabled():
         return extras
@@ -611,19 +641,26 @@ def _owner_extras(row: dict, rows: list[dict], now: datetime, local: datetime) -
     return extras
 
 
+def digest_people(row: dict) -> dict:
+    """Today's people for this owner (services/suggestions.py): the suggestions the digest has not
+    emailed in the last two weeks, two-way people first."""
+    from services import suggestions
+
+    return suggestions.for_owner_row(row, "digest", DIGEST_PEOPLE)
+
+
+def _record_shown(row: dict, people: dict) -> None:
+    from services import suggestions
+
+    suggestions.record_impressions(row.get("id") or "", "digest", people.get("people") or [])
+
+
 def _mark_people(row: dict, people: dict, rows: list[dict]) -> None:
-    """Flag suggested people who want to meet someone like the owner, and verified ones."""
-    from services import trust, two_way
-    from services.digest_network import _card
+    """Flag verified suggested people (two-way comes with the suggestion)."""
+    from services import trust
 
     by_handle = {r.get("handle"): r for r in rows if r.get("handle")}
-    me = _card(row) if row.get("card") else None
-    mine = two_way.kinds_of(me) if me else set()
     found = [p for p in people.get("people") or [] if p.get("handle") in by_handle]
-    for p in found:
-        other = _card(by_handle[p["handle"]]) if mine else None
-        if other:
-            p["two_way"] = two_way.two_way_match(mine, other)
     verified = trust.verified_by_card_ids([by_handle[p["handle"]].get("id") for p in found])
     for p in found:
         p["verified"] = "linkedin" in verified.get(by_handle[p["handle"]].get("id"), [])
@@ -701,7 +738,11 @@ def run_digest(
             continue
         try:
             posts = get_suggested_posts(handle)
-            people = get_suggested_people(handle) or {"people": [], "outside": []}
+            try:
+                people = digest_people(row)
+            except Exception as exc:  # noqa: BLE001 — people are one block; send without them
+                logger.info("digest people failed handle=%s err=%s", handle, exc)
+                people = {"people": [], "outside": []}
             try:
                 _mark_people(row, people, all_rows)
             except Exception as exc:  # noqa: BLE001 — badges are extras; send without them
@@ -728,6 +769,7 @@ def run_digest(
                     html=html,
                     unsubscribe_url=extras.get("unsubscribe_url"),
                 )
+                _record_shown(row, people)
             stats["sent"] += 1
         except Exception as exc:
             logger.warning("digest failed handle=%s err=%s", handle, exc)

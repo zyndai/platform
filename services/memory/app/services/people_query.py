@@ -249,12 +249,14 @@ def query_from_filters(
 ) -> TargetQuery:
     """A TargetQuery from already-structured filters (what Cards' suggestions send), so one
     QuickEnrich request builder serves every caller. Keywords describe the person's
-    company, as everywhere else."""
+    company, as everywhere else. A title that names a known role ("Investor") sets the role,
+    so the per-role title include/exclude row applies (no "Investor Grievance" officers)."""
     place, code, locality = resolve_location(location)
     clean_titles = tuple(t.strip()[:60] for t in titles if isinstance(t, str) and t.strip())[:5]
     clean_keywords = tuple(k.strip()[:60] for k in keywords if isinstance(k, str) and k.strip())[:5]
+    role = next((key for t in clean_titles if (key := _detect_role(t)[0])), "")
     return TargetQuery(
-        raw=" ".join([*clean_titles, *clean_keywords, place]).strip(), titles=clean_titles,
+        raw=" ".join([*clean_titles, *clean_keywords, place]).strip(), role=role, titles=clean_titles,
         topics=clean_keywords, location=place, country_code=code, locality=locality,
         company_hint=True,
     )

@@ -113,6 +113,35 @@ def test_relax_drops_skills_first(cards):
     assert any("Skill filter relaxed" in r for r in found[0]["match_reasons"])
 
 
+def test_keep_role_relaxes_everything_but_the_role(cards):
+    """Suggestions ask for "investors": a looser pass may leave the city, never the role."""
+    cards += [_card("paris_investor", headline="Seed investor", location="Paris"),
+              _card("ai_founder", headline="Founder building with AI", location="Pune")]
+    without = handles(role="investor", location="Pune", topics="AI", relax=True)
+    assert "ai_founder" in without                       # the last pass dropped the role
+    kept = run(role="investor", location="Pune", topics="AI", relax=True, keep_role=True)
+    assert [r["handle"] for r in kept] == ["paris_investor"] and kept[0]["relaxed"] == ["location"]
+
+
+def test_results_carry_what_suggestions_need(cards, monkeypatch):
+    founder = _card("me", headline="Founder")
+    cards += [_card("ann", headline="Seed investor")]
+    cards[-1]["card"]["connect_with"] = ["Founders"]
+    cards[-1]["card"]["identity"]["avatar_url"] = "https://img/ann"
+    cards[-1]["card"]["work_experience"] = [{"title": "Partner", "company": "Acme Ventures"}, {"company": "Old Co"}]
+    (ann,) = run(role="investor", searcher=AgentProfileCard.model_validate(founder["card"]))
+    assert ann["two_way"] == ["Founders"]
+    assert ann["avatar_url"] == "https://img/ann" and ann["company"] == "Acme Ventures"
+    (plain,) = run(role="investor")
+    assert plain["two_way"] == []
+
+
+def test_a_precomputed_query_vector_is_not_embedded_again(cards, monkeypatch):
+    monkeypatch.setattr(search_service, "embed_text", lambda q: pytest.fail("already embedded"))
+    cards += [_card("ann", headline="Seed investor")]
+    assert handles(q="investor", query_vec=[]) == ["ann"]
+
+
 def test_a_card_that_is_not_the_role_needs_real_evidence_to_survive_the_last_relaxation(cards):
     """Dropping the role is the loosest step: a designer who only shares the city and one word is
     not a result (the score floor counts the missing role), unlike a near-miss on place or skills."""

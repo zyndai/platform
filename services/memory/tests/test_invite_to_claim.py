@@ -102,7 +102,7 @@ async def test_the_tool_only_accepts_a_ref_it_issued_to_this_user(on):
 async def test_the_tool_publishes_exactly_the_signed_data_and_nothing_the_caller_adds(on):
     sent = {}
 
-    async def fake_create(pool, uid, linkedin_url, name, headline, message=""):
+    async def fake_create(pool, uid, linkedin_url, name, headline, message="", from_search=None):
         sent.update(uid=uid, linkedin_url=linkedin_url, name=name, headline=headline, message=message)
         return {"ok": True, "claim_url": "https://cards.zynd.ai/p/grace-hopper", "share_text": "…"}
 

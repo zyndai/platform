@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections import Counter
 from dataclasses import dataclass, field
+from uuid import uuid4
 
 import asyncpg
 
 from app.config import settings
-from app.services import card_directory, people_discovery, people_results
+from app.services import card_directory, people_discovery, people_results, search_trail
 from app.services.export import active_context
 from app.services.matching import match_users, search_by_query
 from app.services.people_query import (
@@ -43,13 +46,15 @@ class Searcher:
     invites: bool = False
     parse_with_llm: bool = True         # an anonymous caller costs a model call per request: heuristics only
     card_fields: tuple[str, ...] = ()   # extra Card fields to carry onto each person (public MCP)
+    via: str = "memory"                 # who searched, for Cards' funnel: memory (an owner) or mcp (public)
 
 
 PUBLIC_CARD_FIELDS = ("industries", "availability", "fresh_as_of")
 
 
 def anonymous(include_unclaimed: bool = False) -> Searcher:
-    return Searcher(include_unclaimed=include_unclaimed, parse_with_llm=False, card_fields=PUBLIC_CARD_FIELDS)
+    return Searcher(include_unclaimed=include_unclaimed, parse_with_llm=False, card_fields=PUBLIC_CARD_FIELDS,
+                    via="mcp")
 
 
 async def searcher_for(pool: asyncpg.Pool, uid: str) -> Searcher:
@@ -158,6 +163,7 @@ def _parsed(query: TargetQuery) -> dict:
 
 async def _find_by_name(
     pool: asyncpg.Pool, searcher: Searcher, intent: Intent, *, limit: int, wanted: set[str], warnings: list[str],
+    search_id: str = "",
 ) -> tuple[list[dict], set[str]]:
     """Look one person up by name: Cards' own name search, and when a company was given the
     company's LinkedIn people filtered by name (the contact-finder cannot search by name).
@@ -165,7 +171,7 @@ async def _find_by_name(
     coros: dict[str, object] = {}
     if "cards" in wanted:
         coros["cards"] = people_discovery.lookup_cards(
-            intent.name, limit, include_unclaimed=searcher.include_unclaimed)
+            intent.name, limit, include_unclaimed=searcher.include_unclaimed, search_id=search_id, via=searcher.via)
     if intent.company and "quickenrich" in wanted:
         coros["quickenrich"] = people_discovery.search_quickenrich_by_name(intent.name, intent.company, limit)
     results = dict(zip(coros, await asyncio.gather(*coros.values(), return_exceptions=True)))
@@ -205,6 +211,39 @@ async def search(
     pool: asyncpg.Pool, searcher: Searcher, target: str, *, limit: int, wanted: set[str], explicit: set[str],
     group_id: str = "", filters: dict | None = None,
 ) -> dict:
+    """The one people search, for whoever is asking (see _search). Adds the search's id to the
+    result, logs one line about it, and, for a signed-in owner, remembers who it returned so a
+    connection request to one of them can say which search it came from."""
+    started = time.monotonic()
+    search_id = str(uuid4())
+    stats: dict = {}
+    result = await _search(pool, searcher, target, limit=limit, wanted=wanted, explicit=explicit,
+                           group_id=group_id, filters=filters, search_id=search_id, stats=stats)
+    result["search_id"] = search_id
+    _log_search(searcher, result, stats, time.monotonic() - started)
+    if searcher.uid and result.get("people"):
+        await search_trail.remember(searcher.uid, search_id, result["people"])
+    return result
+
+
+def _log_search(searcher: Searcher, result: dict, stats: dict, seconds: float) -> None:
+    """One line per search, so a spike in empty results or a source that stopped answering shows
+    up. Never the query, a name or a user: only what kind of search it was and what came back."""
+    people = result.get("people") or []
+    logger.info(
+        "find_people search_id=%s who=%s intent=%s mode=%s searched=%s found=%s kept=%d strong=%s "
+        "quickenrich=%s warnings=%s ms=%d",
+        result.get("search_id"), "owner" if searcher.uid else "anonymous", result.get("intent") or "-",
+        result.get("mode"), ",".join(result.get("searched") or []) or "-",
+        ",".join(f"{k}:{v}" for k, v in sorted(stats.get("found", {}).items())) or "-", len(people),
+        stats.get("strong", "-"), "yes" if "quickenrich" in (result.get("searched") or []) else "no",
+        ",".join(w.split(":")[0] for w in result.get("warnings") or []) or "-", seconds * 1000)
+
+
+async def _search(
+    pool: asyncpg.Pool, searcher: Searcher, target: str, *, limit: int, wanted: set[str], explicit: set[str],
+    group_id: str, filters: dict | None, search_id: str, stats: dict,
+) -> dict:
     """The one people search, for whoever is asking. `filters` are Cards filters the caller gave
     explicitly (the public MCP: role, location, skills, industry, availability, experience_min),
     passed through unchanged. A pinned role, location or skill is strict and nothing is loosened,
@@ -234,7 +273,8 @@ async def search(
 
     if intent.kind == "name" and not group_id:
         people, name_searched = await _find_by_name(
-            pool, searcher, intent, limit=limit, wanted=wanted, warnings=warnings)
+            pool, searcher, intent, limit=limit, wanted=wanted, warnings=warnings, search_id=search_id)
+        stats["found"] = dict(Counter(src for p in people for src in p["sources"][:1]))
         exact = any(p["match_quality"] == "exact" for p in people)
         if not intent.company and not exact:
             # Without a company there is nothing to search LinkedIn with: the assistant should ask.
@@ -273,14 +313,16 @@ async def search(
     # Ask for more than `limit` from each source so merging and ranking have something to choose from.
     pool_size = max(min(limit * 2, 30), min(limit, 50))
     people, searched_now, early_qe = await _retrieve(
-        pool, searcher, text, query, like_me, wanted, explicit, pool_size, limit, warnings, filters)
+        pool, searcher, text, query, like_me, wanted, explicit, pool_size, limit, warnings, filters, search_id)
     searched |= searched_now
+    stats["found"] = dict(Counter(src for p in people for src in p["sources"][:1]))
     people = _rank(people, query, searcher)
     people = await _fallback_quickenrich(
         people, text, query, early_qe, limit=limit, wanted=wanted, explicit=explicit, like_me=like_me,
         searcher=searcher, searched=searched, warnings=warnings)
 
     people = people[:limit]
+    stats["strong"] = people_results.strong_count(people)
     if not like_me:
         for person in people:
             person["why"] = people_results.specific_why(person, query)
@@ -332,7 +374,7 @@ def _with_invites(people: list[dict], searcher: Searcher) -> list[dict]:
 
 async def _retrieve(
     pool: asyncpg.Pool, searcher: Searcher, text: str, query: TargetQuery, like_me: bool, wanted: set[str],
-    explicit: set[str], pool_size: int, limit: int, warnings: list[str], filters: dict | None,
+    explicit: set[str], pool_size: int, limit: int, warnings: list[str], filters: dict | None, search_id: str = "",
 ) -> tuple[list[dict], set[str], "asyncio.Future | None"]:
     """Call every wanted source at once. Returns (people, sources searched, the early LinkedIn
     search when one was started, for _fallback_quickenrich to await or cancel)."""
@@ -341,7 +383,7 @@ async def _retrieve(
         coros["cards"] = people_discovery.search_cards(
             text, pool_size, query=query, as_handle=searcher.own_handle or "",
             less_like=searcher.prefs.get("less_like_this"), include_unclaimed=searcher.include_unclaimed,
-            **({"extra": filters} if filters else {}))
+            search_id=search_id, via=searcher.via, **({"extra": filters} if filters else {}))
     if "zynd" in wanted and searcher.uid:
         coros["zynd"] = _zynd_people(pool, searcher.uid, text, like_me, pool_size, warnings, query)
     # A role described through their company is the case Cards most often comes up short on, so

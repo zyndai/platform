@@ -360,3 +360,55 @@ def test_the_re_rank_applies_one_searchers_controls_and_never_returns_their_own_
     people = [pr.person_from_card(card(h, 0.7)) for h in ("me", "spammy", "fine")]
     query = people_search.parse_target_heuristic("investor")
     assert [p["handle"] for p in people_search._rank(people, query, searcher)] == ["fine"]
+
+
+# ── Phase 3.5: the search's id, the last-search record, the log line ──────────────
+
+async def test_every_search_gets_an_id_cards_and_the_last_search_record_share(world):
+    from app.services import search_trail
+    world["cards"] = ([card("ada", 0.9), card("sam", 0.4)], None)
+    result = await run()
+    sid = result["search_id"]
+    kwargs = world["mocks"]["cards_search"].await_args.kwargs
+    assert len(sid) == 36 and kwargs["search_id"] == sid and kwargs["via"] == "memory"
+    assert await search_trail.came_from("caller", handle="sam") == {"search_id": sid, "rank": 2, "source": "card"}
+    again = await run()
+    assert again["search_id"] != sid                                  # one id per search
+
+
+async def test_a_name_lookup_gets_the_same_treatment(world):
+    from app.services import search_trail
+    found = {"source": "zynd_card", "claimed": True, "handle": "chandan-kumar-2en8", "name": "Chandan Kumar",
+             "headline": "Founder", "location": "", "skills": [], "match_score": 0.4, "why": [],
+             "url": "https://cards.zynd.ai/p/chandan-kumar-2en8", "linkedin_url": ""}
+    with patch("app.services.people_search.people_discovery.lookup_cards", AsyncMock(return_value=([found], None))) as lookup:
+        result = await run("Chandan Kumar")
+    assert lookup.await_args.kwargs["search_id"] == result["search_id"] and lookup.await_args.kwargs["via"] == "memory"
+    assert (await search_trail.came_from("caller", handle="chandan-kumar-2en8"))["rank"] == 1
+
+
+async def test_an_anonymous_search_says_mcp_and_remembers_nobody(world, fake_search_trail_redis):
+    world["cards"] = ([card("ada")], None)
+    result = await anon()
+    assert world["mocks"]["cards_search"].await_args.kwargs["via"] == "mcp"
+    assert world["mocks"]["cards_search"].await_args.kwargs["search_id"] == result["search_id"]
+    assert fake_search_trail_redis.data == {}
+
+
+async def test_a_search_logs_one_line_about_what_happened_and_never_the_query(world, caplog):
+    import logging
+    caplog.set_level(logging.INFO, logger="zynd.find_people")
+    world["cards"] = ([card("ada", 0.9)], "cards_unavailable")
+    result = await run("seed investor in India (topsecretword)")
+    (line,) = [r.getMessage() for r in caplog.records if r.name == "zynd.find_people"]
+    assert f"search_id={result['search_id']}" in line and "who=owner" in line and "intent=target" in line
+    assert "found=card:1" in line and "kept=1" in line and "warnings=cards_unavailable" in line and "ms=" in line
+    assert "topsecretword" not in caplog.text and "India" not in caplog.text
+
+
+async def test_the_log_line_for_a_name_lookup_has_no_name(world, caplog):
+    import logging
+    caplog.set_level(logging.INFO, logger="zynd.find_people")
+    with patch("app.services.people_search.people_discovery.lookup_cards", AsyncMock(return_value=([], None))):
+        await run("Chandan Kumar")
+    assert "Chandan" not in caplog.text and "Kumar" not in caplog.text

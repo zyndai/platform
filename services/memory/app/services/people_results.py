@@ -139,7 +139,7 @@ def person_from_external(row: dict, index: int) -> dict:
     }
 
 
-def _identity_keys(person: dict) -> list[str]:
+def identity_keys(person: dict) -> list[str]:
     keys = []
     if person.get("handle"):
         keys.append(f"handle:{person['handle'].lower()}")
@@ -178,14 +178,14 @@ def merge_people(people: list[dict]) -> list[dict]:
     merged: list[dict] = []
     by_key: dict[str, dict] = {}
     for person in people:
-        keys = _identity_keys(person)
+        keys = identity_keys(person)
         existing = next((by_key[k] for k in keys if k in by_key), None)
         if existing is None:
             existing = person
             merged.append(person)
         else:
             _absorb(existing, person)
-        for key in set(keys) | set(_identity_keys(existing)):
+        for key in set(keys) | set(identity_keys(existing)):
             by_key[key] = existing
     return sorted(merged, key=lambda p: (-p["score"], not p["claimed"], p["name"].lower()))
 

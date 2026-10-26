@@ -103,6 +103,44 @@ Schema:
 }
 """
 
+# The one-tap chips on the create page (apps/cards-web/src/app/(site)/create/
+# chips.ts). A suggestion that reuses a label lands pre-selected on that chip;
+# anything else shows up as a custom chip.
+CHIP_VOCAB = {
+    "working_on": [
+        "Building a startup", "Building with AI", "Open source", "Side project", "Indie hacking",
+        "B2B SaaS", "Consumer apps", "Deep tech / research", "Freelancing", "At a company",
+        "Doing research", "Grad school", "Writing", "Teaching / mentoring", "Community building",
+        "Design / creative work", "Investing", "Job hunting",
+    ],
+    "can_help_with": [
+        "Code review", "System design", "ML / AI", "Cloud / infra", "Data / analytics", "Security",
+        "Technical interviews", "Hiring", "Career advice", "Fundraising", "Pitching / storytelling",
+        "Sales", "Marketing", "Go-to-market", "Design", "Legal / compliance", "Immigration / visas",
+        "Public speaking",
+    ],
+    "connect_with": [
+        "Founders", "Investors", "Engineers", "ML Researchers", "Product Managers", "Designers",
+        "Operators", "Scientists", "Recruiters", "Mentors", "Potential co-founders", "Customers",
+        "Students", "Writers", "DevRel", "Researchers in my field", "Healthcare builders",
+        "Robotics people",
+    ],
+    "love_talking_about": [
+        "AI / ML", "Agentic AI", "Startups", "Developer tools", "Open source", "Web3 / Crypto",
+        "Climate tech", "Robotics", "Hardware", "Design", "Research", "SaaS",
+        "Engineering culture", "Books", "Philosophy", "Personal finance", "Gaming",
+        "History / science",
+    ],
+}
+
+_SYSTEM += """
+Preferred labels for `working_on`, `can_help_with`, `connect_with` and
+`love_talking_about`: the person picks from these on screen. When one fits what
+the evidence shows, use that label EXACTLY as written; only write your own short
+phrase when none fits. The evidence rules above still apply: never pad a list
+with a label the data does not support.
+""" + "".join(f"\n{key}: {' | '.join(labels)}" for key, labels in CHIP_VOCAB.items()) + "\n"
+
 
 def _build_user_prompt(
     github: dict | None,

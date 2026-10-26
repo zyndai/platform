@@ -53,13 +53,12 @@ test("owner can publish, renew and dismiss a seven-day beacon", async ({ page, c
 test("expired onboarding job gives an actionable error and keeps inputs", async ({ page }) => {
   await page.route("http://127.0.0.1:3030/onboard/start", route => route.fulfill({ json: { job_id: "expired-build" } }));
   await page.route("http://127.0.0.1:3030/onboard/expired-build", route => route.fulfill({ status: 404, json: { detail: "job not found" } }));
+  await page.route("http://127.0.0.1:3030/onboard/expired-build/cancel", route => route.fulfill({ json: { cancelled: false } }));
   await page.goto("/create");
-  const input = page.getByPlaceholder("github.com/you  or  linkedin.com/in/you");
+  const input = page.getByPlaceholder("Paste your LinkedIn, GitHub or X link");
   await input.fill("github.com/example-user");
   await input.press("Enter");
-  await page.getByRole("button", { name: "Build my card" }).click();
-  await page.getByRole("button", { name: "Continue without signing in" }).click();
   await expect(page.getByText("This build expired or the server restarted. Your inputs are kept; please retry.")).toBeVisible();
-  await page.getByRole("button", { name: "Start over" }).click();
-  await expect(page.getByText("github.com/example-user", { exact: true })).toBeVisible();
+  await expect(page.locator(".cr-source", { hasText: "github.com/example-user" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
 });

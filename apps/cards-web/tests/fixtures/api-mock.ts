@@ -92,6 +92,8 @@ export function startFixtureServer(): Promise<void> {
     duplicates: hasDuplicate ? [{ id: "id-old-owner", handle: "old-owner", name: "Alice Chen", status: "published" }] : [],
     nudges: [{ id: "n1", kind: "expiring", title: "What you are looking for expires within 3 days", href: "/p/owner/edit#memory" }],
   });
+  let onboardUrls: string[] = [];
+  let onboardPolls = 0;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
     const path = url.pathname;
@@ -233,15 +235,33 @@ export function startFixtureServer(): Promise<void> {
       }
     }
 
+    // The create page starts a build as soon as a link is pasted. The job reports each
+    // source as "reading", then "done", then the written draft, one poll at a time.
     if (req.method === "POST" && path === "/onboard/start") {
-      return json(200, { job_id: "job1" });
+      let raw = "";
+      req.on("data", chunk => { raw += chunk; });
+      req.on("end", () => {
+        onboardUrls = [...raw.matchAll(/name="url"\r\n\r\n([^\r\n]+)/g)].map(m => m[1]);
+        onboardPolls = 0;
+        json(200, { job_id: "job1" });
+      });
+      return;
     }
+    if (req.method === "POST" && path === "/onboard/job1/cancel") return json(200, { cancelled: false });
     if (path === "/onboard/job1") {
+      onboardPolls += 1;
+      const done = onboardPolls >= 2;
+      const ready = onboardPolls >= 3;
       return json(200, {
-        status: "ready",
-        card: { ...cardFixture("draft-card"), status: "draft", handle: "", claimed: undefined, id: "id-draft" },
+        status: ready ? "ready" : "running",
+        stage: ready ? "ready" : done ? "synthesizing" : "reading",
+        card: ready ? { ...cardFixture("draft-card"), status: "draft", handle: "", claimed: undefined, id: "id-draft" } : null,
         error: null,
         url_warnings: [],
+        sources: onboardUrls.map(url => ({
+          url, kind: "github", state: done ? "done" : "reading",
+          preview: done ? { name: "Bob Okafor", headline: "Engineer", facts: ["9 public repos"] } : {},
+        })),
       });
     }
     if (path === "/onboard/claim-candidates") {

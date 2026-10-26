@@ -220,11 +220,37 @@ export interface ScrapeWarning {
   message: string;
 }
 
+/** reading → done | failed; skipped is a second profile of a kind that only reads one. */
+export type SourceState = "reading" | "done" | "failed" | "skipped";
+
+/** What one source has revealed, shown live while the card is still being written. */
+export interface SourcePreview {
+  name?: string;
+  headline?: string;
+  location?: string;
+  bio?: string;
+  avatar?: string;
+  facts?: string[];
+  posts?: string[];
+}
+
+export interface SourceStatus {
+  url: string;
+  kind: string;
+  state: SourceState;
+  preview: SourcePreview;
+}
+
+export type BuildStage = "reading" | "synthesizing" | "ready" | "error";
+
 export interface OnboardStatus {
   status: "running" | "ready" | "error";
   card: AgentProfileCard | null;
   error: string | null;
   url_warnings: ScrapeWarning[];
+  /** Absent from an API older than the live preview. */
+  stage?: BuildStage;
+  sources?: SourceStatus[];
 }
 
 const API_BASE =

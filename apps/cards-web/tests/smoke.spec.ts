@@ -1,15 +1,5 @@
 import { expect, test } from "@playwright/test";
 
-/** Force S08 v1 (quiz) or v2 (live preview) via sticky cookie. */
-async function setS08(page: import("@playwright/test").Page, on: boolean) {
-  await page.context().addCookies([{
-    name: "zynd_s08",
-    value: on ? "1" : "0",
-    domain: "127.0.0.1",
-    path: "/",
-  }]);
-}
-
 /** S03: unclaimed cards are public to people but trimmed + quiet to agents. */
 test("unclaimed profile shows claim banner and no chat", async ({ page }) => {
   await page.goto("/p/unclaimed");
@@ -135,57 +125,64 @@ test("directory Match ranks a typed query", async ({ page }) => {
   await expect(page.locator("li.dc-person")).toHaveCount(3);
 });
 
-/** S08 v1 escape: quiz path still works when cookie forces off. */
-test("create flow v1 quiz reaches review", async ({ page }) => {
-  test.setTimeout(120_000);
-  await setS08(page, false);
+/** Create is one page: paste a link, watch the card fill in, publish. No Build button, no quiz. */
+test("create builds the card on one page, suggests the answers, and publishes them", async ({ page }) => {
+  test.setTimeout(60_000);
   await page.goto("/create");
 
-  const input = page.getByPlaceholder("github.com/you  or  linkedin.com/in/you");
-  await input.fill("github.com/alice");
-  await input.press("Enter");
-
-  await expect(page.getByText("github.com/alice", { exact: false }).first()).toBeVisible();
-
-  const build = page.getByRole("button", { name: "Build my card" });
-  await expect(build).toBeEnabled();
-  await build.click();
-
-  await expect(page.getByText("Sign in before you build")).toBeVisible();
-  await page.getByRole("button", { name: "Continue without signing in" }).click();
-
-  for (let i = 0; i < 6; i++) {
-    await page.getByRole("button", { name: /Next|Done/ }).first().click();
-  }
-  await expect(page.getByRole("heading", { name: "Review your card" })).toBeVisible({ timeout: 45_000 });
-});
-
-/** S08 v2: no quiz — live preview then review. */
-test("create flow v2 shows live preview without quiz", async ({ page }) => {
-  test.setTimeout(120_000);
-  await setS08(page, true);
-  await page.goto("/create");
-
-  const input = page.getByPlaceholder("github.com/you  or  linkedin.com/in/you");
+  // #given pasting a link is the whole first step
+  await expect(page.getByRole("button", { name: "Build my card" })).toHaveCount(0);
+  const input = page.getByPlaceholder("Paste your LinkedIn, GitHub or X link");
   await input.fill("github.com/bob");
   await input.press("Enter");
 
-  await page.getByRole("button", { name: "Build my card" }).click();
-  await expect(page.getByText("Sign in before you build")).toBeVisible();
-  await page.getByRole("button", { name: "Continue without signing in" }).click();
+  // #then the source reports what was read, and the live card fills in beside the form
+  const row = page.locator(".cr-source", { hasText: "github.com/bob" });
+  await expect(row).toBeVisible();
+  await expect(row.getByText("Bob Okafor")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("live-card").getByText("Bob Okafor")).toBeVisible();
 
-  await expect(page.getByTestId("s08-live-preview")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText("1 of 6")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Review your card" })).toBeVisible({ timeout: 45_000 });
+  // #and the AI's suggestions are already picked: a chip from the list and one of its own
+  const codeReview = page.getByRole("button", { name: "Code review", exact: true });
+  await expect(codeReview).toHaveAttribute("aria-pressed", "true", { timeout: 20_000 });
+  await expect(page.getByRole("button", { name: "Agent tooling", exact: true })).toHaveAttribute("aria-pressed", "true");
+
+  // #when they untick one and publish
+  await codeReview.click();
+  await expect(codeReview).toHaveAttribute("aria-pressed", "false");
+  const publish = page.getByRole("button", { name: /Publish my card/ });
+  await expect(publish).toBeEnabled();
+  const publishRequest = page.waitForRequest((r) => r.url().endsWith("/onboard/job1/publish"));
+  await publish.click();
+
+  // #then the unticked suggestion is not published, and the ticked one is
+  const body = (await publishRequest).postDataJSON();
+  expect(body.card.can_help_with).toEqual([]);
+  expect(body.card.working_on).toEqual(["Agent tooling"]);
+  await expect(page.getByText("You're live")).toBeVisible();
+});
+
+/** Pasting is the whole first step: a link pasted into the empty box is added without Enter. */
+test("create adds a pasted link straight away and starts reading it", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto("/create");
+  const input = page.getByPlaceholder("Paste your LinkedIn, GitHub or X link");
+  await input.evaluate((el) => {
+    const data = new DataTransfer();
+    data.setData("text", "https://github.com/bob");
+    el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  const row = page.locator(".cr-source", { hasText: "github.com/bob" });
+  await expect(row).toBeVisible();
+  await expect(row.getByText("Bob Okafor")).toBeVisible({ timeout: 15_000 });
 });
 
 /** S08 claim-first: LinkedIn lookalike surfaces before build. */
 test("create flow offers claim candidate for matching LinkedIn", async ({ page }) => {
   test.setTimeout(60_000);
-  await setS08(page, true);
   await page.goto("/create");
 
-  const input = page.getByPlaceholder("github.com/you  or  linkedin.com/in/you");
+  const input = page.getByPlaceholder("Paste your LinkedIn, GitHub or X link");
   await input.fill("linkedin.com/in/alice-chen");
   await input.press("Enter");
 
@@ -209,18 +206,30 @@ test("welcome first-win shows demo answer and ask CTA", async ({ page }) => {
   await expect(page.locator(".pf-chat-panel")).toBeVisible();
 });
 
-/** S08 mobile: create at 390px has no horizontal overflow. */
+/** S08 mobile: create at 390px has no horizontal overflow, empty or with a source read. */
 test("create at 390px has no horizontal scroll", async ({ page }) => {
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 390, height: 844 });
-  await setS08(page, true);
   await page.goto("/create");
 
-  const overflow = await page.evaluate(() => {
+  const overflow = () => page.evaluate(() => {
     const doc = document.documentElement;
     return doc.scrollWidth > doc.clientWidth + 1;
   });
-  expect(overflow).toBe(false);
+  expect(await overflow()).toBe(false);
+
+  // #when a source has been read, its row and the search bar must still sit inside their card
+  const input = page.getByPlaceholder("Paste your LinkedIn, GitHub or X link");
+  await input.fill("github.com/bob");
+  await input.press("Enter");
+  const row = page.locator(".cr-source", { hasText: "github.com/bob" });
+  await expect(row.getByText("Bob Okafor")).toBeVisible({ timeout: 15_000 });
+  expect(await overflow()).toBe(false);
+  const inside = await page.evaluate(() => {
+    const card = document.querySelector(".cr-card")!.getBoundingClientRect();
+    return [".cr-source", ".dc-search"].every((s) => document.querySelector(s)!.getBoundingClientRect().right <= card.right);
+  });
+  expect(inside).toBe(true);
 });
 
 test("welcome at 390px has no horizontal scroll", async ({ page }) => {

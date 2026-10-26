@@ -356,6 +356,12 @@ async def outside(query: TargetQuery, limit: int) -> tuple[list[dict], str | Non
     rows = [r for r in rows if not people_discovery.has_excluded_title(r, query)]
     people = people_results.rescore([people_results.person_from_external(r, i) for i, r in enumerate(rows)], query)
     ranked = sorted(zip(people, rows), key=lambda pair: -pair[0]["score"])   # stable: the provider's order breaks ties
+    seen: set[str] = set()
+    for person, row in list(ranked):        # one person once, however their profile URL is spelled (www, no scheme)
+        key = people_results.linkedin_key(person.get("linkedin_url"))
+        if key and key in seen:
+            ranked.remove((person, row))
+        seen.add(key)
     for person, _ in ranked:
         person["why"] = people_results.specific_why(person, query)
     people_results.label_quality([person for person, _ in ranked])

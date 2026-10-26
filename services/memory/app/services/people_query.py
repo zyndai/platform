@@ -464,8 +464,18 @@ _TOPIC_WORDS = frozenset({
 })
 
 
+# Tools and frameworks a person types as a one-word search ("Kubernetes", "Figma"): never a name.
+# Only the unambiguous ones: a word that is also a surname (Kafka, Spring) stays possible as a name.
+_TOOL_WORDS = frozenset({
+    "kubernetes", "k8s", "docker", "terraform", "ansible", "figma", "sketch", "react", "svelte", "angular",
+    "django", "flask", "fastapi", "postgres", "postgresql", "mysql", "mongodb", "redis", "airflow",
+    "snowflake", "pytorch", "tensorflow", "linux", "android", "flutter", "tailwind", "graphql", "webpack",
+    "next.js", "node.js", "vue.js",
+})
+
+
 def _guard_words() -> frozenset[str]:
-    words: set[str] = set(_STOP) | set(_FILLER) | set(_TOPIC_WORDS) | set(LANGUAGES)
+    words: set[str] = set(_STOP) | set(_FILLER) | set(_TOPIC_WORDS) | set(LANGUAGES) | set(_TOOL_WORDS)
     for spellings, _titles in ROLES.values():
         for spelling in spellings:
             words.update(_norm(spelling).split())

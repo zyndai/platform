@@ -341,8 +341,8 @@ def _shape_qe(records: list) -> list[dict]:
         row = {
             "source": "quickenrich",
             "name": _public_text(name),
-            "title": _public_text(record.get("title")),
-            "company": _public_text(record.get("company_name")),
+            "title": _public_text(_na(record.get("title"))),
+            "company": _public_text(_na(record.get("company_name"))),
             "linkedin_url": link,
             "has_email": record.get("has_email") is True,
             "has_phone": record.get("has_phone") is True,

@@ -76,7 +76,7 @@ def test_golden_owners_get_the_people_they_asked_for():
         top = o.get("top") or []
         if top and not set(top) <= set(got[: len(top)]):
             problems.append(f"{o['handle']}: top {got[: len(top)]}, want {top}")
-        wrong = [h for h in got[:5] if not any(h.startswith(k) for k in o["kinds"])]
+        wrong = [h for h in got[: o.get("kinds_in_first", 5)] if not any(h.startswith(k) for k in o["kinds"])]
         if wrong:
             problems.append(f"{o['handle']}: wrong kind {wrong}")
         never = set(o.get("never") or []) & set(got)

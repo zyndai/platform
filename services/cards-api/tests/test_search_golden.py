@@ -2,13 +2,20 @@
 from tests import search_golden
 
 
-def test_golden_queries_meet_the_targets():
+def test_golden_queries_do_not_drop_more_than_five_points_below_the_baseline():
+    """The gate is a ratchet, not a fixed floor: precision@k and recall@5 may not fall more than
+    max_drop (5 points) below the baseline recorded in the fixture, and a change that raises
+    either by more than 0.01 must raise the baseline in the same commit."""
     results = search_golden.evaluate()
     summary = search_golden.summarize(results)
-    targets = search_golden.load()["targets"]
+    doc = search_golden.load()
+    baseline, max_drop = doc["baseline"], doc["max_drop"]
     misses = [f"{r.target!r}: want {r.relevant} got {r.top}" for r in results if r.precision < 1 or r.recall < 1]
-    assert summary["precision_at_k"] >= targets["precision_at_k"], (summary, misses)
-    assert summary["recall_at_5"] >= targets["recall_at_5"], (summary, misses)
+    for metric in ("precision_at_k", "recall_at_5"):
+        assert summary[metric] >= baseline[metric] - max_drop, (metric, summary, misses)
+        assert summary[metric] <= baseline[metric] + 0.01, (
+            f"{metric} is {summary[metric]:.4f}, above the baseline {baseline[metric]}: raise baseline in "
+            "tests/fixtures/search_golden.json in the same commit as the improvement")
 
 
 def test_no_non_investor_outranks_an_investor_on_an_investor_query():
@@ -26,7 +33,7 @@ def test_no_non_investor_outranks_an_investor_on_an_investor_query():
 def test_fixture_labels_point_at_real_cards():
     doc = search_golden.load()
     handles = {c["handle"] for c in doc["cards"]}
-    assert len(doc["queries"]) >= 50 - 1 and len(handles) == len(doc["cards"])
+    assert len(doc["queries"]) >= 80 and len(handles) == len(doc["cards"])
     for query in doc["queries"]:
         assert set(query["relevant"]) <= handles, query["target"]
 

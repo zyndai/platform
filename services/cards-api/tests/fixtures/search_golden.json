@@ -1,9 +1,10 @@
 {
- "_about": "Synthetic corpus and golden queries for card search. relevant = every card that truly matches (labelled over the whole corpus). Metric: precision@min(5,|relevant|) and recall@5. q/role/location/skills (and topics/relax, when set) are what Memory's find_people sends after parsing the target. Embeddings are a hashed bag-of-words stand-in, so this guards lexical scoring regressions; it is not a substitute for judging real embeddings.",
- "targets": {
-  "precision_at_k": 0.95,
-  "recall_at_5": 0.95
+ "_about": "Synthetic corpus and golden queries for card search. relevant = every card that truly matches (labelled over the whole corpus). Metric: precision@min(5,|relevant|) and recall@5, each over every query. baseline is the metric when this file was last changed: the test fails below baseline - max_drop (a drop of more than 5 points) and also when the metric rises more than 0.01 above it, so an improvement raises the baseline in the same commit. q/role/location/skills (and topics/relax, when set) are what Memory's find_people sends after parsing the target. Embeddings are a hashed bag-of-words stand-in, so this guards lexical scoring regressions; it is not a substitute for judging real embeddings.",
+ "baseline": {
+  "precision_at_k": 0.9888,
+  "recall_at_5": 0.995
  },
+ "max_drop": 0.05,
  "cards": [
   {
    "handle": "inv_seed_ai_in",
@@ -432,6 +433,26 @@
    "skills": ["Investing"],
    "industries": ["Healthcare", "Venture capital"],
    "summary": "Writes first cheques into healthtech teams.",
+   "memory": []
+  },
+  {
+   "handle": "priya_sharma",
+   "name": "Priya Sharma",
+   "headline": "Pastry chef and cafe owner",
+   "location": "Jaipur, India",
+   "skills": ["Baking", "Hospitality"],
+   "industries": ["Food"],
+   "summary": "Runs a small bakery and teaches weekend baking classes.",
+   "memory": []
+  },
+  {
+   "handle": "priya_nair",
+   "name": "Priya Nair",
+   "headline": "Chartered accountant for small businesses",
+   "location": "Kochi, India",
+   "skills": ["Accounting", "Tax"],
+   "industries": ["Finance"],
+   "summary": "Keeps the books and files the taxes for family-run shops.",
    "memory": []
   }
  ],
@@ -1052,6 +1073,207 @@
    "relevant": ["law_startups_london"],
    "as_handle": "",
    "relax": true
+  },
+  {
+   "target": "name: first name shared by two people",
+   "q": "priya",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "topics": "priya",
+   "relax": true,
+   "relevant": ["priya_sharma", "priya_nair"],
+   "as_handle": ""
+  },
+  {
+   "target": "name: first and last name picks one of two",
+   "q": "Priya Nair",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "topics": "Priya Nair",
+   "relax": true,
+   "relevant": ["priya_nair"],
+   "as_handle": ""
+  },
+  {
+   "target": "name: surname only",
+   "q": "Sharma",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "topics": "Sharma",
+   "relax": true,
+   "relevant": ["priya_sharma"],
+   "as_handle": ""
+  },
+  {
+   "target": "name: with a company that is only a hint",
+   "q": "chandan kumar at zynd",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "topics": "chandan kumar,zynd",
+   "relax": true,
+   "relevant": ["chandan_kumar"],
+   "as_handle": ""
+  },
+  {
+   "target": "country search finds a city-only card (designers)",
+   "q": "designers in India",
+   "role": "designer",
+   "location": "India",
+   "skills": "",
+   "relax": true,
+   "relevant": ["des_product_blr"],
+   "as_handle": ""
+  },
+  {
+   "target": "city search: the one investor in the city",
+   "q": "investors in Bengaluru",
+   "role": "investor",
+   "location": "Bengaluru",
+   "skills": "",
+   "relax": true,
+   "relevant": ["inv_seed_ai_in"],
+   "as_handle": ""
+  },
+  {
+   "target": "country search, engineers in Germany",
+   "q": "engineers in Germany",
+   "role": "engineer",
+   "location": "Germany",
+   "skills": "",
+   "relax": true,
+   "relevant": ["eng_rust_berlin"],
+   "as_handle": ""
+  },
+  {
+   "target": "UK is spelled as the card spells it",
+   "q": "investors in the UK",
+   "role": "investor",
+   "location": "UK",
+   "skills": "",
+   "relax": true,
+   "relevant": ["inv_seed_ai_uk"],
+   "as_handle": ""
+  },
+  {
+   "target": "USA is spelled as the card spells it",
+   "q": "founders in the USA",
+   "role": "founder",
+   "location": "USA",
+   "skills": "",
+   "relax": true,
+   "relevant": ["fnd_devtools_sf", "fnd_aiinfra_nyc"],
+   "as_handle": ""
+  },
+  {
+   "target": "US is not USA: the role still finds the mentor",
+   "q": "mentor in the US",
+   "role": "advisor",
+   "location": "US",
+   "skills": "",
+   "relax": true,
+   "relevant": ["adv_cto_us"],
+   "as_handle": ""
+  },
+  {
+   "target": "loosening: the German investor works on climate, topic AI is soft",
+   "q": "AI investor in Germany",
+   "role": "investor",
+   "location": "Germany",
+   "skills": "",
+   "topics": "AI",
+   "relax": true,
+   "relevant": ["inv_growth_climate_de"],
+   "as_handle": ""
+  },
+  {
+   "target": "loosening: nobody in Chicago is a designer, so the designers elsewhere, not the Chicago plumber",
+   "q": "designer in Chicago",
+   "role": "designer",
+   "location": "Chicago",
+   "skills": "",
+   "relax": true,
+   "relevant": ["des_product_blr", "des_brand_london", "des_ux_sf", "des_lead_berlin"],
+   "as_handle": ""
+  },
+  {
+   "target": "loosening: a Rust engineer in Tokyo is the Rust engineer elsewhere",
+   "q": "Rust engineer in Tokyo",
+   "role": "engineer",
+   "location": "Tokyo",
+   "skills": "rust",
+   "topics": "Rust",
+   "relax": true,
+   "relevant": ["eng_rust_berlin"],
+   "as_handle": ""
+  },
+  {
+   "target": "role with a space in it",
+   "q": "developer advocate in Germany",
+   "role": "developer advocate",
+   "location": "Germany",
+   "skills": "",
+   "relax": true,
+   "relevant": ["devrel_rust_berlin"],
+   "as_handle": ""
+  },
+  {
+   "target": "developer tools are a topic here, not a developer",
+   "q": "investor who backs developer tools",
+   "role": "investor",
+   "location": "",
+   "skills": "",
+   "topics": "developer tools",
+   "relax": true,
+   "relevant": ["inv_angel_devtools_us", "inv_seed_ai_in"],
+   "as_handle": ""
+  },
+  {
+   "target": "a field on its own: biotech",
+   "q": "biotech",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "topics": "biotech",
+   "relax": true,
+   "relevant": ["inv_bio_us"],
+   "as_handle": ""
+  },
+  {
+   "target": "a field on its own: climate",
+   "q": "climate",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "topics": "climate",
+   "relax": true,
+   "relevant": ["inv_growth_climate_de", "fnd_climate_berlin"],
+   "as_handle": ""
+  },
+  {
+   "target": "a tool on its own is a topic, not a name: Kubernetes",
+   "q": "Kubernetes",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "topics": "Kubernetes",
+   "relax": true,
+   "relevant": ["eng_go_blr", "eng_devops_blr", "fnd_aiinfra_nyc"],
+   "as_handle": ""
+  },
+  {
+   "target": "a tool on its own is a topic, not a name: Figma",
+   "q": "Figma",
+   "role": "",
+   "location": "",
+   "skills": "",
+   "topics": "Figma",
+   "relax": true,
+   "relevant": ["des_product_blr", "des_lead_berlin"],
+   "as_handle": ""
   }
  ]
 }

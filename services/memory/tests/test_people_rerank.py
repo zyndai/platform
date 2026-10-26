@@ -53,3 +53,16 @@ def test_quality_labels_and_the_note_when_nothing_is_exact():
     c = external("Cy", "Designer at Studio", "Paris")
     pr.rescore([c], QUERY)
     assert "closest" in pr.label_quality([c]) and c["match_quality"] == "loose" and "_features" not in c
+
+
+def test_why_is_specific_ordered_and_at_most_three():
+    card = pr.person_from_card({
+        "handle": "a", "name": "A", "headline": "Seed investor", "location": "Pune, India", "claimed": True, "match_score": 0.8,
+        "why": ["Matches your search terms", "Strong overall match for your query",
+                "Approved fact: backs developer tools", "Based in Pune, India", "Wants to meet people like you: Founders"]})
+    why = pr.specific_why(card, QUERY)
+    assert why == ["Investor (headline)", "backs developer tools (approved fact)", "Pune, India"]
+    relaxed = pr.person_from_card({"handle": "b", "name": "B", "headline": "Investor", "location": "Paris", "claimed": True,
+                                   "match_score": 0.5, "why": ["Not in Pune (closest match)"]})
+    assert "Not in Pune (closest match)" in pr.specific_why(relaxed, QUERY)
+    assert pr.specific_why(external("Z", "Designer at X", "Paris"), QUERY) == ["Found on LinkedIn"]

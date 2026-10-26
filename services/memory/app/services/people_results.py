@@ -22,6 +22,7 @@ EXTERNAL_STEP = 0.02
 ZYND_SEM_FLOOR, ZYND_SEM_SPAN = 0.20, 0.40   # as SEM_FLOOR/SEM_SPAN in cards-api search.py
 FIT_ROLE_MISSING, FIT_TOPIC_MISSING, FIT_LOCATION_MISSING = 0.5, 0.8, 0.6
 MAX_WHY = 4
+MAX_SPECIFIC_WHY = 3
 
 
 def linkedin_key(url: object) -> str:
@@ -232,6 +233,44 @@ def rescore(people: list[dict], query) -> list[dict]:
         if person["sources"] != ["card"]:
             person["score"] = round(person["score"] * fit_factor(feats), 3)
     return people
+
+
+_GENERIC_WHY = ("matches your search terms", "strong overall match", "matches their zynd profile", "approved fact", "found on linkedin")
+_RELAXED_WHY = ("not in ", "not a ", "skill filter relaxed", "similar to people you asked")
+
+
+def specific_why(person: dict, query) -> list[str]:
+    """At most MAX_SPECIFIC_WHY reasons, most specific first, built from what the person fits and
+    what their source said: the role, what they work on (an approved fact first), what was
+    loosened, the place. Reasons that would be true of anyone returned (a generic "matches your
+    search terms") are dropped."""
+    feats = features(person, query)
+    given = [w for w in person.get("why") or [] if isinstance(w, str) and w.strip()]
+    lowered = [(w, w.lower()) for w in given]
+    out: list[str] = []
+
+    def add(text: str) -> None:
+        if text and text not in out:
+            out.append(text)
+
+    if feats["role_fit"] is not None and feats["role_fit"] > 0 and query.role_label:
+        add(f"{query.role_label.title()} ({'headline' if feats['role_fit'] >= 1 else 'on their profile'})")
+    fact = next((w for w, low in lowered if low.startswith("approved fact: ")), "")
+    if fact:
+        add(fact.replace("Approved fact: ", "", 1) + " (approved fact)")
+    elif feats["topic_fit"]:
+        add("Works on " + ", ".join(query.topics))
+    for w, low in lowered:
+        if low.startswith(_RELAXED_WHY):
+            add(w)
+    if feats["location_fit"] and person.get("location"):
+        add(person["location"])
+    for w, low in lowered:
+        if not low.startswith(_GENERIC_WHY) and not low.startswith("approved fact: ") and w != person.get("headline"):
+            add(w)
+    if not out and "linkedin" in person["sources"]:
+        out.append("Found on LinkedIn")
+    return out[:MAX_SPECIFIC_WHY]
 
 
 STRONG_CARD = 0.5   # a Card's own score (cards-api search.py scale) for a good match

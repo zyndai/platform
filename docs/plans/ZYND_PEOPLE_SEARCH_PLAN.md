@@ -482,7 +482,7 @@ non-investor scores above any investor on the investor golden queries, and p95 h
   order; both × the fit factor (`features`/`rescore`) for role, topics and place. `ZYND_BONUS` and `STRONG_MATCH` are
   gone: two sources add 0.05; `is_strong` = a Card that passed every filter with score ≥ 0.5, or anyone meeting the
   role and a topic or the place. Every person gets `match_quality`; the response gets a `note` when none is exact.
-  The `why` text is still each source's own; the "at most 3 specific reasons" rewrite is **not done**.
+  `why` (1.4) is rebuilt by `specific_why`: at most 3 reasons, role, then the approved fact or topic, then what was loosened, then the place; generic reasons are dropped.
 - **1.6 Speed.** Migration `cards/0030_filter_cards.sql` (`cards.filter_cards`, a superset pre-filter; cards-api
   applies the exact rules and falls back to the full scan if the function is missing). **Not applied to aafo: a human
   must apply it** (README steps), then compare p95 with `scripts/bench_search.py`.
@@ -645,3 +645,24 @@ Run each service's tests before and after, against the AGENTS.md §5 baselines.
 | 6 | Phase 2 suggestions | 1–2 weeks | migration, prod flag |
 | 7 | Phase 3 one endpoint, public MCP, persona, measurement | ~1 week | — |
 | — | `FEATURE_FACT_MATCHING` in prod | flip only | yes |
+
+---
+
+## 11. Verification still to do (needs prod data or a human)
+
+Code for Phase 0 and Phase 1 is finished and unit-tested. These checks need live data or credentials a
+coding session does not have. Run them in this order, and record each result here.
+
+| # | Check | How | Pass when | Result |
+|---|---|---|---|---|
+| V1 | Migration 0030 applied | `db:migrate --project cards --yes` | applied 2026-10-27, `cards.filter_cards` exists | ✅ done |
+| V2 | Speed before and after | `cd services/cards-api && python scripts/bench_search.py` (read-only; needs SUPABASE_* and an OpenAI key). Run on the old deploy, then the new | p95 of filtered searches under 800 ms, and not worse than before | open |
+| V3 | Fit the semantic constants | The same script prints the top and 50th-ranked scores. Take the real cosine of related and unrelated query/card pairs, and set `SEM_FLOOR`/`SEM_SPAN` in `cards-api/services/search.py` and `ZYND_SEM_*` in `people_results.py` so related text is about 1.0 and unrelated about 0. Re-run the golden set | golden precision@5 and recall@5 still ≥ 0.95 | open |
+| V4 | Saved-search alert threshold | Run `saved_searches._strong` read-only for every active saved search with the old (0.5, old scorer) and new (0.6, new scorer) rules, and compare how many alerts each would send. Adjust `STRONG_MATCH` in `saved_searches.py` until the volume is about the same and each alert is a person you would call a good match | alert count within ±20% of the old one, spot-checked by a person | open |
+| V5 | The "done when" checks of Phase 0 against live dev | "chandan", "Chandan Kumar", "chandan from zynd" return `chandan-kumar-2en8` first; the investor query has no Grievance/Relations/Communications titles, at least 90% of LinkedIn results have a URL and a location | all hold | open |
+| V6 | The 20 real queries | Run a fixed list of 20 real queries on dev (include the Chandan and investor ones and "people like me" for three test accounts), compare with prod by hand, using the new `note`, `match_quality` and `why` | no result worse than prod; every `why` is specific | open |
+| V7 | `FEATURE_FACT_MATCHING` in prod | Human decision (section 8), after `FEATURE_FACT_FAMILIES` is on | flipped after V5 and V6 | open |
+| V8 | cards-web | Open `/search` and `/directory` on dev: scores display sensibly on the new scale, `relaxed` shows | looks right | open |
+| V9 | QuickEnrich questions Q1 and Q2 | Three manual calls (OR/AND and substring/whole word for `include`) and one raw record (is the LinkedIn URL scheme-less?) | answers written into section 9 | open |
+
+Deploy order for everything above: cards-api, then memory.

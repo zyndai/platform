@@ -286,6 +286,9 @@ async def find(
         early_qe.cancel()
 
     people = people[:limit]
+    if not like_me:
+        for person in people:
+            person["why"] = people_results.specific_why(person, query)
     note = people_results.label_quality(people)
     if note and "note" not in extra and not like_me:
         extra["note"] = note

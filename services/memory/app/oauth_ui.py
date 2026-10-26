@@ -10,8 +10,11 @@ project (first entry of TRUSTED_SUPABASE_PROJECTS); the callback URL
 {public_base_url}/oauth/login/callback must be registered as an allowed
 redirect in that Supabase project.
 """
+import base64
 import html
 import json
+from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -20,42 +23,106 @@ from app.config import settings
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
 
+_LOGO_SRC = "data:image/png;base64," + base64.b64encode(
+    (Path(__file__).resolve().parent / "assets" / "zynd-logo.png").read_bytes()
+).decode("ascii")
+
+# Same faces and tokens as the public card, the editor and the directory on
+# cards.zynd.ai (apps/cards-web: components/editions, components/discover), so
+# the sign-in a connector opens reads as part of the product.
+_FONTS_URL = ("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800"
+              "&amp;family=Space+Mono:wght@400;700&amp;display=swap")
+_FONTS = (
+    '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    # Non-blocking: the page is drawn in the fallback faces if Google Fonts is slow or blocked.
+    f'<link rel="stylesheet" href="{_FONTS_URL}" media="print" onload="this.media=\'all\'">'
+    f'<noscript><link rel="stylesheet" href="{_FONTS_URL}"></noscript>'
+)
+
 _CSS = """<style>
-  :root{--bg:#000;--fg:#f6f6f6;--muted:#8b90a6;--accent:#8B5CF6;--accent2:#3B82F6;--line:rgba(255,255,255,.08)}
+  :root{--ink:#1E1B4B;--soft:#5B5B7E;--faint:#8B8AA8;--accent:#6C5CE7;--accent-hi:#5B4BD6;
+    --line:#E6E3F6;--tint:#F3F1FF;--edge:#D7D1FF;
+    --ui:"Plus Jakarta Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:"Space Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   *{box-sizing:border-box}
-  body{margin:0;min-height:100vh;background:#000;color:var(--fg);
-    font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;letter-spacing:-.03em;
-    display:flex;align-items:center;justify-content:center;padding:40px 20px;
-    background-image:radial-gradient(900px 520px at 50% -8%,rgba(139,92,246,.18),transparent 60%)}
-  .wrap{width:100%;max-width:440px;text-align:center}
-  .kicker{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);
-    border:1px solid var(--line);padding:6px 12px 6px 6px;border-radius:999px}
-  .kicker .z{width:20px;height:20px;border-radius:6px;background:linear-gradient(135deg,#8B5CF6,#3B82F6);
-    display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:#fff}
-  h1{font-size:32px;line-height:1.05;font-weight:500;letter-spacing:-.04em;margin:20px 0 10px}
-  .sub{color:var(--muted);font-size:14.5px;line-height:1.55;margin:0 auto 24px;max-width:380px}
-  .card{background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:18px;padding:22px}
-  button{margin-top:14px;width:100%;padding:13px;border:0;border-radius:11px;cursor:pointer;font-size:15px;
-    font-weight:500;color:#fff;font-family:inherit;letter-spacing:-.02em;background:linear-gradient(135deg,#8B5CF6,#3B82F6)}
-  button:first-of-type{margin-top:0}
-  button:hover{filter:brightness(1.08)}
-  button:disabled{opacity:.5;cursor:wait}
-  button.secondary{background:transparent;border:1px solid var(--line)}
-  .details{text-align:left;color:var(--muted);font-size:14px;line-height:1.5}
-  .details strong{color:var(--fg);font-weight:500}
+  [hidden]{display:none!important}
+  body{margin:0;min-height:100vh;color:var(--ink);font-family:var(--ui);line-height:1.45;
+    -webkit-font-smoothing:antialiased;background-color:#F3F1FB;
+    background-image:linear-gradient(180deg,#ECE9FB 0%,#F5F3FE 38%,#F3F1FB 100%)}
+  a{color:var(--accent-hi);font-weight:700;text-decoration:none}
+  a:hover{text-decoration:underline}
+  :focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+  .shell{min-height:100vh;display:flex;flex-direction:column}
+  .top{display:flex;align-items:center;gap:10px;width:100%;max-width:1240px;margin:0 auto;
+    padding:16px clamp(16px,4vw,40px)}
+  .brand{display:inline-flex;align-items:center;gap:8px;color:var(--ink);font:800 18px/1 var(--ui);
+    letter-spacing:-.02em}
+  .brand:hover{text-decoration:none}
+  .brand img{display:block;width:26px;height:26px}
+  .crumb{font:400 12px/1.2 var(--mono);color:#64748b}
+  .crumb strong{color:#1e293b;font-weight:700}
+  .stage{flex:1;display:flex;align-items:center;justify-content:center;padding:24px 16px 48px}
+  .wrap{width:100%;max-width:460px}
+  .eyebrow{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:999px;
+    border:1px solid var(--edge);background:rgba(255,255,255,.7);color:var(--accent-hi);
+    font:700 10.5px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase}
+  .eyebrow i{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+  h1{margin:14px 0 0;font:800 clamp(28px,6vw,36px)/1.1 var(--ui);letter-spacing:-.03em;word-spacing:.08em}
+  .sub{margin:10px 0 22px;font:500 14.5px/1.55 var(--ui);color:var(--soft)}
+  .card{position:relative;isolation:isolate;overflow:hidden;padding:22px;border-radius:24px;
+    background:#fff;border:1px solid var(--line);box-shadow:0 18px 40px -34px rgba(30,27,75,.45)}
+  .card::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+    background:radial-gradient(360px 160px at 96% -22%,rgba(167,139,250,.30),transparent 70%),
+      radial-gradient(300px 150px at 100% 112%,rgba(253,186,140,.26),transparent 70%),
+      radial-gradient(260px 140px at 52% -24%,rgba(147,197,253,.24),transparent 70%)}
+  .card.center{text-align:center}
+  .stack,.actions{display:grid;gap:10px}
+  .actions{margin-top:18px}
+  .btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:48px;
+    padding:0 20px;border-radius:13px;border:1px solid #E2E8F0;background:#fff;color:var(--ink);
+    font:700 14px/1 var(--ui);cursor:pointer;
+    transition:background .15s,border-color .15s,transform .1s}
+  .btn:hover:not(:disabled){border-color:var(--edge);background:var(--tint)}
+  .btn:active:not(:disabled){transform:translateY(1px)}
+  .btn:disabled{opacity:.55;cursor:wait}
+  .btn svg{flex:none}
+  .btn.primary{border-color:transparent;background:var(--accent);color:#fff;
+    box-shadow:0 12px 24px -14px rgba(108,92,231,.9)}
+  .btn.primary:hover:not(:disabled){background:var(--accent-hi)}
+  .details{color:var(--soft);font:500 14px/1.6 var(--ui)}
   .details p{margin:0 0 12px}
-  .details ul{padding-left:20px;margin:0 0 12px}
-  .err{margin-bottom:10px;padding:12px 14px;border-radius:9px;font-size:13px;line-height:1.5;
-    background:rgba(255,80,80,.12);border:1px solid rgba(255,80,80,.3);color:#ffb4b4;text-align:left}
-  .spinner{width:28px;height:28px;border:3px solid #333;border-top-color:var(--accent);border-radius:50%;
-    animation:spin .7s linear infinite;margin:0 auto 12px}
+  .details strong{color:var(--ink);font-weight:700}
+  .details .note{margin:-4px 0 14px;font-size:12.5px;line-height:1.5;color:var(--faint)}
+  .fields{display:grid;gap:8px;margin:0 0 14px}
+  .field{margin:0;padding:10px 14px;border-radius:14px;background:var(--tint);border:1px solid var(--line)}
+  .field dt{font:700 10.5px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+  .field dd{margin:7px 0 0;font:700 15px/1.35 var(--ui);color:var(--ink);overflow-wrap:anywhere}
+  .field dd.mono{font:400 13px/1.45 var(--mono)}
+  .perms{list-style:none;padding:0;margin:0 0 14px;display:grid;gap:8px}
+  .perms li{position:relative;padding-left:26px}
+  .perms li::before{content:"\\2713";position:absolute;left:0;top:2px;width:17px;height:17px;
+    border-radius:50%;background:var(--tint);color:var(--accent-hi);font:700 10px/17px var(--mono);
+    text-align:center}
+  .err{margin:0 0 14px;padding:12px 14px;border-radius:14px;font:600 13px/1.5 var(--ui);
+    background:#FFF1F2;border:1px solid #FECDD3;color:#BE123C;text-align:left}
+  .spinner{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--accent);
+    border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 12px}
   @keyframes spin{to{transform:rotate(360deg)}}
-  .foot{margin-top:16px;font-size:12px;color:#6b7088;line-height:1.5}
-  a{color:#8B5CF6}
-  .reviewer{margin-top:18px;text-align:left;border-top:1px solid var(--line);padding-top:14px}
-  .reviewer summary{cursor:pointer;color:var(--muted);font-size:13px}
-  .reviewer input{display:block;width:100%;margin-top:10px;padding:11px 12px;border-radius:9px;
-    border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--fg);font:inherit;font-size:14px}
+  @media (prefers-reduced-motion:reduce){.spinner{animation-duration:2.4s}}
+  .foot{margin:18px 0 0;text-align:center;font:400 12px/1.5 var(--mono);letter-spacing:.04em;color:var(--faint)}
+  .reviewer{margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+  .reviewer summary{cursor:pointer;color:var(--faint);font:700 11px/1 var(--mono);
+    letter-spacing:.12em;text-transform:uppercase}
+  .reviewer input{display:block;width:100%;height:46px;margin-top:10px;padding:0 14px;border-radius:13px;
+    border:1px solid var(--edge);background:#fff;color:var(--ink);font:600 14px/1 var(--ui)}
+  .reviewer input:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 4px rgba(108,92,231,.14)}
+  .reviewer .btn{margin-top:10px}
+  .legal{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 16px;padding:0 16px 28px;
+    font:400 12px/1.4 var(--mono);letter-spacing:.04em;color:var(--faint)}
+  .legal a{color:var(--faint);font-weight:400}
+  .legal a:hover{color:var(--ink)}
+  @media (max-width:480px){.card{padding:18px;border-radius:22px}.stage{align-items:flex-start;padding-top:8px}}
 </style>"""
 
 # Shown only on a plugin-client request while PLUGIN_REVIEW_EMAILS is set: the
@@ -66,16 +133,42 @@ _REVIEWER_BLOCK = """<details class="reviewer">
       <form id="reviewer-form" autocomplete="off">
         <input id="reviewer-email" type="email" placeholder="Reviewer email" required autocomplete="username">
         <input id="reviewer-password" type="password" placeholder="Password" required autocomplete="current-password">
-        <button type="submit">Sign in</button>
+        <button type="submit" class="btn primary">Sign in</button>
       </form>
     </details>"""
 
+_GOOGLE_ICON = (
+    '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">'
+    '<path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58v3h3.86c2.26-2.09 3.56-5.17 3.56-8.82z"/>'
+    '<path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.31 24 12 24z"/>'
+    '<path fill="#FBBC05" d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.14-1.57.38-2.29V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.98-3.09z"/>'
+    '<path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.98 3.09C6.22 6.86 8.87 4.75 12 4.75z"/></svg>'
+)
+_LINKEDIN_ICON = (
+    '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">'
+    '<rect width="24" height="24" rx="4" fill="#0A66C2"/>'
+    '<path fill="#fff" d="M7.1 9.6h2.4V18H7.1V9.6zm1.2-3.9a1.4 1.4 0 110 2.8 1.4 1.4 0 010-2.8zM11.2 9.6h2.3v1.15h.03c.32-.6 1.1-1.25 2.27-1.25 2.43 0 2.88 1.6 2.88 3.68V18h-2.4v-4.3c0-1.03-.02-2.35-1.43-2.35-1.44 0-1.65 1.12-1.65 2.28V18h-2.4V9.6z"/></svg>'
+)
+
+
+def _site_url() -> str:
+    return settings.cards_site_base_url.rstrip("/")
+
 
 def _page(title: str, body: str) -> HTMLResponse:
+    site = html.escape(_site_url(), quote=True)
     return HTMLResponse(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f"<title>{html.escape(title)}</title>" + _CSS + "</head><body>" + body + "</body></html>",
+        '<meta name="color-scheme" content="light">'
+        f"<title>{html.escape(title)}</title>" + _FONTS + _CSS + "</head><body>"
+        '<div class="shell">'
+        f'<header class="top"><a class="brand" href="{site}"><img src="{_LOGO_SRC}" alt="" '
+        'width="26" height="26"><span>Zynd</span></a><span class="crumb">/ <strong>Connect</strong></span></header>'
+        f'<main class="stage">{body}</main>'
+        f'<footer class="legal"><span>&copy; Zynd AI Inc</span><a href="{site}/privacy">Privacy</a>'
+        f'<a href="{site}/terms">Terms</a><a href="{site}/support">Support</a></footer>'
+        "</div></body></html>",
         headers={"Cache-Control": "no-store"},
     )
 

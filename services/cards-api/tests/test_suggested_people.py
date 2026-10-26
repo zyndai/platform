@@ -166,6 +166,7 @@ def test_outside_for_skips_people_already_on_zynd_and_caps_at_two(monkeypatch):
 
 
 def test_zynd_linkedin_profiles_are_read_once_per_ttl(monkeypatch):
+    monkeypatch.setattr(people_service, "_zynd_linkedin", (float("-inf"), set()))     # whatever an earlier test cached
     calls = []
 
     def rows(**kw):
@@ -176,3 +177,17 @@ def test_zynd_linkedin_profiles_are_read_once_per_ttl(monkeypatch):
     assert people_service._zynd_linkedin_keys() == {"linkedin.com/in/alex"}
     assert people_service._zynd_linkedin_keys() == {"linkedin.com/in/alex"}
     assert len(calls) == 1
+
+
+def test_the_first_read_happens_even_when_the_machine_has_only_just_booted(monkeypatch):
+    """time.monotonic() counts from boot, so on a server up for a few minutes an unread cache that started
+    at 0.0 looked fresh and the LinkedIn profiles already on Zynd were never read. Starts from the module's
+    own initial state (a reload), not from one the test sets up."""
+    import importlib
+    import time
+
+    fresh = importlib.reload(people_service)
+    monkeypatch.setattr(time, "monotonic", lambda: 5.0)
+    monkeypatch.setattr("services.cards.list_published_rows", lambda **kw: [
+        {"card": {"identity": {"links": {"linkedin": "https://www.linkedin.com/in/alex/"}}}}])
+    assert fresh._zynd_linkedin_keys() == {"linkedin.com/in/alex"}

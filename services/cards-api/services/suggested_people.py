@@ -212,7 +212,7 @@ def outside_search_enabled() -> bool:
 OUTSIDE_PER_REQUEST = 2       # people kept from one external request
 MAX_OUTSIDE = 2               # people not on Zynd yet that one owner is shown
 ZYND_LINKEDIN_TTL = 600       # seconds the set of LinkedIn profiles already on Zynd is reused
-_zynd_linkedin: tuple[float, set[str]] = (0.0, set())
+_zynd_linkedin: tuple[float, set[str]] = (float("-inf"), set())     # never read yet: not fresh, whatever the uptime
 
 
 def search_outside(card: AgentProfileCard, taken: set[str], limit: int | None = None) -> list[dict]:

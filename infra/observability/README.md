@@ -66,6 +66,24 @@ Some LogQL to start from:
 sum by (host) (count_over_time({source="caddy", status=~"5.."}[5m]))
 ```
 
+## Dashboards
+
+Four, provisioned into the Grafana folder "Zynd" from `grafana/dashboards/*.json`:
+
+| Dashboard | Use it to |
+|---|---|
+| **Box overview** | see RAM, CPU, disk and OOM kills, who is using the memory (containers and pm2 processes stacked), and every pm2 process and container with uptime and restarts |
+| **Project** | pick `env` and `project`: health, memory, CPU, restarts, request rate, 5xx share, p95 latency per route, and that project's error and full logs |
+| **Logs** | search every line by env, project, level and text; volume by level; crashes (tracebacks, fatal errors) |
+| **Edge (Caddy)** | public traffic per hostname, 5xx, latency, top 404 paths, clients and user agents, uptime and certificate expiry |
+
+They are generated: edit `grafana/build_dashboards.py`, run
+`python3 infra/observability/grafana/build_dashboards.py`, commit the script and
+the JSON. Grafana's UI edits can't be saved (provisioned), so a change made there
+is lost on the next update. Every query was run against the live Prometheus/Loki
+when written; the Traffic row of Project is empty for services that don't expose
+`/metrics` (everything but cards-api and memory-api).
+
 ## Deploy / update
 
 On the box, as `ubuntu`, from any checkout that has this directory:
@@ -109,4 +127,4 @@ The one env var is `GRAFANA_ADMIN_PASSWORD`, a secret kept only in
 
 ## Not done yet
 
-Dashboards and alert rules. See the phases in the monitoring plan.
+Alert rules (`prometheus/alerts.yml` is an empty stub) and `docs/MONITORING.md`.

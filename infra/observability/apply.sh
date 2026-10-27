@@ -17,7 +17,7 @@ log() { printf '[obs %s] %s\n' "$(date -u +%T)" "$*"; }
 
 mkdir -p "$DEST"
 changes="$(rsync -rlti --delete --exclude='.env' --exclude='apply.sh' --exclude='.gitkeep' \
-  --exclude='README.md' --exclude='.env.example' "$SRC"/ "$DEST"/ | grep -E '^>f' || true)"
+  --exclude='README.md' --exclude='.env.example' --exclude='build_dashboards.py' "$SRC"/ "$DEST"/ | grep -E '^>f' || true)"
 
 if [[ ! -f "$DEST/.env" ]]; then
   (umask 077; printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 16)" > "$DEST/.env")

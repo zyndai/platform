@@ -29,6 +29,23 @@ Two public URLs, both on this box behind host Caddy with a Let's Encrypt certifi
 | **https://monitor.zynd.ai** | Grafana: dashboards, **Explore** (Prometheus and Loki queries), alerts | Grafana's own accounts |
 | **https://metrics.zynd.ai** | Prometheus UI and query API (Status -> Targets, `/alerts`, raw PromQL) | HTTP basic auth, user `prometheus` |
 
+**By IP**, before DNS exists and as a fallback after: the same two tools on their own HTTPS
+ports, with self-signed certificates (Caddy's internal CA), so the browser warns once.
+
+| URL | What | Login |
+|---|---|---|
+| **https://169.58.17.193:3443** | Grafana | Grafana's own accounts |
+| **https://169.58.17.193:9443** | Prometheus | basic auth, as above |
+
+The ports must be allowed in ufw by hand: `sudo ufw allow 3443/tcp && sudo ufw allow 9443/tcp`
+(better: `sudo ufw allow from <your IP> to any port 3443,9443 proto tcp`). To check that the
+warning is for this box's own CA, compare the **root** certificate's SHA-256 in the browser's
+certificate viewer with `DF:6B:3C:DF:43:33:9A:54:65:AF:B6:41:6F:25:86:68:06:56:B6:ED:AD:22:E3:15:63:F3:A5:75:49:23:06:C3`
+(CN "Caddy Local Authority - 2026 ECC Root", valid to 2036, from
+`/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt`). The server certificate
+itself is renewed about every 12 hours, so its fingerprint is not stable; to remove the warning,
+trust that root on your machine.
+
 Loki stays on loopback; search logs through Grafana's Explore. The tunnel is the fallback
 if a public name is down:
 

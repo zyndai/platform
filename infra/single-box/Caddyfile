@@ -154,6 +154,24 @@ metrics.zynd.ai {
 	reverse_proxy 127.0.0.1:9090
 }
 
+# Direct access by the box's IP, for before DNS exists and as a fallback after: the same
+# two tools on their own HTTPS ports with self-signed certificates (tls internal), so
+# the browser warns once. The ports must be allowed in ufw by hand (3443, 9443).
+https://169.58.17.193:3443 {
+	tls internal
+	import observability
+	reverse_proxy 127.0.0.1:3030
+}
+
+https://169.58.17.193:9443 {
+	tls internal
+	import observability
+	import /etc/caddy/metrics-basicauth.conf
+	@lifecycle path /-/quit /-/reload
+	respond @lifecycle 403
+	reverse_proxy 127.0.0.1:9090
+}
+
 # ── DEV instance (branch `dev`; see docker-compose.dev.yml, ecosystem.dev.config.js) ──
 # Same shape as prod above, on the dev.* names and the dev ports. Everything is
 # localhost-only behind these HTTPS names; no extra public ports.

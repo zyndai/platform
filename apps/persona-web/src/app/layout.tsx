@@ -4,12 +4,14 @@ import { Chakra_Petch, Fraunces, Geist, Geist_Mono, Instrument_Sans, Playfair_Di
 import Script from "next/script";
 import "./globals.css";
 
-// Persona's own GA4 property, plus the Zynd-wide one shared with www.zynd.ai
-// and cards, plus the "Zynd Persona" stream (G-WKSDPT0VJ6). GoogleAnalytics
-// configures only the first, so the rest are added with plain gtag('config')
-// calls on the same dataLayer.
-const GA_ID = process.env.NEXT_PUBLIC_GA_ID || "G-Z0P2VTWZ35";
-const EXTRA_GA_IDS = ["G-MZ5HW7D8H9", "G-WKSDPT0VJ6"].filter((id) => id !== GA_ID);
+// The Zynd-wide GA4 property shared with www.zynd.ai and cards, plus the "Zynd
+// Persona" stream (G-WKSDPT0VJ6). GoogleAnalytics loads gtag.js and configures
+// only the first, so the rest are added with plain gtag('config') calls on the
+// same dataLayer. That first ID must exist: Google 404s a deleted property (the
+// old persona default, G-Z0P2VTWZ35, did) and a 404 stops every property from
+// getting hits.
+const GA_ID = "G-MZ5HW7D8H9";
+const EXTRA_GA_IDS = ["G-WKSDPT0VJ6"];
 
 const fraunces = Fraunces({
   subsets: ["latin"],

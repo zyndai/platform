@@ -84,6 +84,39 @@ is lost on the next update. Every query was run against the live Prometheus/Loki
 when written; the Traffic row of Project is empty for services that don't expose
 `/metrics` (everything but cards-api and memory-api).
 
+## Alerts
+
+23 rules in `prometheus/alerts.yml`, evaluated by Prometheus. See them, and what is
+firing, in Grafana (Alerting -> Alert rules, data source Prometheus) or at
+`127.0.0.1:9090/alerts` over the tunnel. **Nothing is sent anywhere yet**: there is
+no Alertmanager, so no Slack/Telegram/email. When a channel is chosen, add an
+alertmanager container, an `alerting:` block in `prometheus.yml` and a receiver.
+
+| Alert | Fires when | Severity |
+|---|---|---|
+| BoxMemoryLow / BoxMemoryCritical | available RAM < 15% for 5m / < 7% for 2m (no swap) | warning / critical |
+| BoxOOMKill | the kernel killed a process | critical |
+| BoxDiskFilling / BoxDiskCritical / BoxDiskFullIn24h | `/` < 20% free for 15m / < 10% for 5m / full within 24h at the 6h trend | warning / critical / warning |
+| BoxCPUHigh | CPU > 90% for 15m | warning |
+| PublicURLDown(Dev) | a probed public URL fails for 2m (prod) / 5m (dev) | critical / warning |
+| Pm2Down | the pm2 daemon doesn't answer for 1m | critical |
+| Pm2ProcessDown(Dev) | a pm2 process isn't online for 2m (prod) / 5m (dev) | critical / warning |
+| Pm2RestartLoop, ContainerRestartLoop | 3+ restarts in 15m (a deploy is one) | warning |
+| ContainerGoneProd / ContainerGoneDev | a container seen in the last 30m has disappeared (a redeploy's gap is ridden out) | critical / warning |
+| High5xxRateProd / High5xxRateDev | over 5% of requests are 5xx for 5m (with real traffic) | critical / warning |
+| HighLatencyP95 | p95 above 2s for 10m | warning |
+| CertificateExpiresSoon / VerySoon | under 14 / 7 days left | warning / critical |
+| ScrapeTargetDown | Prometheus can't scrape an exporter for 5m | warning |
+| LogsBeingDropped | Alloy dropped over 50 entries in 15m | warning |
+
+Tests: `prometheus/alerts_test.yml` (promtool, command at the top of the file) covers the
+prod/dev severity split, a deploy gap not counting as "container gone", one restart not
+being a loop, and the exclusion below. Run it after changing a rule.
+
+**Temporary:** `ScrapeTargetDown` ignores prod `cards-api` and `memory-api`, because prod
+doesn't serve `/metrics` until it runs the phase 3 build. After that deploy, delete the
+second clause of that rule (and its test) so those targets are watched too.
+
 ## Deploy / update
 
 On the box, as `ubuntu`, from any checkout that has this directory:
@@ -122,9 +155,11 @@ The one env var is `GRAFANA_ADMIN_PASSWORD`, a secret kept only in
 - **The pm2 exporter only calls `pm2 jlist` when the daemon's pid is alive**,
   because the CLI would otherwise start a new daemon. When pm2 is down it
   reports `pm2_up 0`.
+- **Loki 3.5 logs `negative structured metadata bytes received` at error level on every
+  push** (harmless). Alloy drops those lines so they don't drown the error counts.
 - **The first start reads the existing pm2 logs from the beginning**, so
   counts over the first day include history.
 
 ## Not done yet
 
-Alert rules (`prometheus/alerts.yml` is an empty stub) and `docs/MONITORING.md`.
+A notification channel for the alerts, and `docs/MONITORING.md`.

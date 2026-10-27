@@ -15,6 +15,22 @@ scrape_configs:
       - targets: ["127.0.0.1:9090"]
         labels: { project: monitoring, env: shared }
 
+  # The monitoring stack watching itself (alerts: ScrapeTargetDown, LogsBeingDropped).
+  - job_name: loki
+    static_configs:
+      - targets: ["127.0.0.1:3100"]
+        labels: { project: monitoring, env: shared }
+
+  - job_name: alloy
+    static_configs:
+      - targets: ["127.0.0.1:12345"]
+        labels: { project: monitoring, env: shared }
+
+  - job_name: grafana
+    static_configs:
+      - targets: ["127.0.0.1:3030"]
+        labels: { project: monitoring, env: shared }
+
   - job_name: node
     static_configs:
       - targets: ["127.0.0.1:9100"]

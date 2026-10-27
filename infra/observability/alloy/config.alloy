@@ -152,6 +152,11 @@ loki.process "docker_python" {
 loki.process "docker_other" {
   forward_to = [loki.process.levels.receiver]
 
+  // Loki 3.5 logs this at error level for every push (thousands an hour) even though
+  // nothing is wrong; kept out so it doesn't swamp the error counts.
+  stage.drop {
+    expression = "negative structured metadata bytes received"
+  }
   stage.static_labels {
     values = { source = "docker" }
   }

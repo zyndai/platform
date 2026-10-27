@@ -35,6 +35,7 @@ import { FallbackAvatar } from "@/components/FallbackAvatar";
 import { WorkExperienceCard } from "./work-experience-card";
 import { HeroAskPanel } from "./hero-agent-bar";
 import { ProjectsCard } from "./projects-card";
+import { WorkGallery } from "./work-gallery";
 import { MemoryCard } from "./memory-card";
 import { ClaimBanner } from "./claim-banner";
 import { ConnectionButton } from "@/components/network/ConnectionButton";
@@ -122,6 +123,9 @@ const POST_STYLES = [
   { card: "bg-[#e0e7ff] border-indigo-200", badge: "bg-[#3b82f6] text-white", text: "text-[#1e293b]", meta: "text-indigo-600", link: "pf-post-link-1" },
   { card: "bg-[#111827] text-white border-slate-700", badge: "bg-white/10 text-white", text: "text-slate-200", meta: "text-slate-400", link: "pf-post-link-2" },
 ];
+
+/** Badge text for posts from a newsletter or blog; X and LinkedIn have their own glyph. */
+const POST_PLATFORM_LABEL: Record<string, string> = { substack: "Substack", medium: "Medium", blog: "Blog" };
 
 const OBSESSION_CARDS: {
   key: "connect_with" | "love_talking_about" | "working_on";
@@ -734,6 +738,12 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
         .pf-obs-row { display: grid; grid-template-columns: var(--obs-cols, 1fr); gap: 16px; }
         .pf-gh-row { display: grid; grid-template-columns: var(--gh-cols, 1fr 1fr); gap: 16px; }
         .pf-proj-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+        .pf-gallery-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
+        .pf-gallery-tile { position: relative; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 14px; border: 1px solid #e2e8f0; background: #e2e8f0; }
+        .pf-gallery-tile a { display: block; width: 100%; height: 100%; }
+        .pf-gallery-tile img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .25s ease; }
+        .pf-gallery-tile a:hover img { transform: scale(1.04); }
+        .pf-gallery-title { position: absolute; inset: auto 0 0 0; padding: 24px 12px 9px; background: linear-gradient(transparent, rgba(15, 23, 42, .72)); color: #fff; font-size: .72rem; font-weight: 700; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         @media (max-width: 820px) {
           .pf-page { overflow-x: hidden; }
           .pf-inner { padding: 12px 12px 72px !important; }
@@ -765,6 +775,8 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
           .pf-social-row:has(> *:nth-child(3)) > .pf-book-card { grid-column: 1 / -1; }
           /* Projects + Skills: too cramped at 2-col on mobile — stack full-width */
           .pf-proj-row { grid-template-columns: 1fr; gap: 12px; }
+          .pf-gallery { padding: 16px !important; }
+          .pf-gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
           /* Skill grid gets full card width — use 3-col */
           .pf-skill-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
           .pf-hero,
@@ -1368,7 +1380,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             {v.writing.length > 0 && (
               <div className="pf-span-12 pf-posts" style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 20, padding: "20px 24px" }}>
                 <div className="pf-mono flex justify-between items-center mb-4" style={{ fontSize: "0.65rem" }}>
-                  <span style={{ color: "#6b63ff", fontWeight: 700 }}>┌ POSTS &amp; WRITING</span>
+                  <span style={{ color: "#6b63ff", fontWeight: 700 }}>┌ {v.writing.every((w) => ["x", "twitter", "linkedin"].includes(w.platform.toLowerCase())) ? "POSTS & WRITING" : "RECENT WRITING"}</span>
                   <span style={{ background: "#e0e7ff", color: "#4f46e5", padding: "3px 10px", borderRadius: 99, fontWeight: 700 }}>
                     {v.writing.length} ARCHIVED ┐
                   </span>
@@ -1376,7 +1388,9 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                 <AutoScroll rowHeight={POST_ROW_H + POST_GAP} gap={0} visible={VSCROLL_VISIBLE} secondsPerRow={VSCROLL_SECS_PER_ROW}>
                   {v.writing.slice(0, 10).map((post, idx) => {
                     const style = POST_STYLES[idx % POST_STYLES.length];
-                    const isX = ["x", "twitter"].includes(post.platform.toLowerCase());
+                    const platform = post.platform.toLowerCase();
+                    const isX = ["x", "twitter"].includes(platform);
+                    const isLinkedin = platform === "linkedin";
                     const url = safeUrl(post.url);
                     return (
                       <div
@@ -1387,8 +1401,8 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                         <div className="flex items-center justify-between mb-1.5">
                           <div className="flex items-center gap-2">
                             <span className={`px-2 py-0.5 rounded font-mono text-[9px] font-semibold flex items-center gap-1 ${style.badge}`}>
-                              {isX ? <XGlyph size={10} /> : <LinkedinGlyph size={10} />}
-                              {isX ? "X" : "LinkedIn"}
+                              {isX ? <XGlyph size={10} /> : isLinkedin ? <LinkedinGlyph size={10} /> : null}
+                              {isX ? "X" : isLinkedin ? "LinkedIn" : POST_PLATFORM_LABEL[platform] ?? post.platform}
                             </span>
                             <span className={`font-mono text-[10px] font-medium ${style.meta}`}>{post.posted_at}</span>
                           </div>
@@ -1403,6 +1417,9 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                 </AutoScroll>
               </div>
             )}
+
+            {/* ── WORK: a design portfolio's project covers ── */}
+            <WorkGallery items={card.work_gallery ?? []} safeUrl={safeUrl} />
 
             {/* ── PROJECTS + SKILLS ── */}
             {(v.projects.length > 0 || skills.length > 0) && (

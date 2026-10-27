@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { LINK_PLACEHOLDER } from "./fixtures/create";
 import { signIn } from "./fixtures/sign-in";
 
 test("profile metadata, evidence and live booking use supported public data", async ({ page, request }) => {
@@ -55,7 +56,7 @@ test("expired onboarding job gives an actionable error and keeps inputs", async 
   await page.route("http://127.0.0.1:3030/onboard/expired-build", route => route.fulfill({ status: 404, json: { detail: "job not found" } }));
   await page.route("http://127.0.0.1:3030/onboard/expired-build/cancel", route => route.fulfill({ json: { cancelled: false } }));
   await page.goto("/create");
-  const input = page.getByPlaceholder("Paste your LinkedIn, GitHub or X link");
+  const input = page.getByPlaceholder(LINK_PLACEHOLDER);
   await input.fill("github.com/example-user");
   await input.press("Enter");
   await expect(page.getByText("This build expired or the server restarted. Your inputs are kept; please retry.")).toBeVisible();

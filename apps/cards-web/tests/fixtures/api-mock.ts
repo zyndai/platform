@@ -49,6 +49,18 @@ export function cardFixture(handle: string, opts: { claimed?: boolean; name?: st
   };
 }
 
+/** What a designer's draft adds to the base card: other answers, visual work, writing from a newsletter. */
+const DESIGNER_DRAFT = {
+  summary: "Designs brand systems.",
+  working_on: ["Brand identity"],
+  can_help_with: ["Design systems"],
+  writing_samples: [{ platform: "substack", excerpt: "How I hire designers who ship", url: "https://ada.substack.com/p/how-i-hire", posted_at: "" }],
+  work_gallery: [
+    { title: "Brand system for Orbit", url: "https://www.behance.net/gallery/1/Orbit", image_url: "https://mir-s3-cdn-cf.behance.net/projects/202/a.jpg", source: "behance" },
+    { title: "Poster series", url: "https://www.behance.net/gallery/2/Posters", image_url: "https://mir-s3-cdn-cf.behance.net/projects/202/b.jpg", source: "behance" },
+  ],
+};
+
 /** Public facts on the owner card: more than the editor shows collapsed, so the count and
  *  the list can be checked against each other. */
 const OWNER_FACTS: Array<{ predicate: string; object: string; provenance: string; evidence: string | null }> = [
@@ -252,16 +264,20 @@ export function startFixtureServer(): Promise<void> {
       onboardPolls += 1;
       const done = onboardPolls >= 2;
       const ready = onboardPolls >= 3;
+      // A design-portfolio link makes the draft a designer's: another persona, visual work and a newsletter's posts.
+      const designer = onboardUrls.some(u => /behance\.net|dribbble\.com/.test(u));
       return json(200, {
         status: ready ? "ready" : "running",
         stage: ready ? "ready" : done ? "synthesizing" : "reading",
-        card: ready ? { ...cardFixture("draft-card"), status: "draft", handle: "", claimed: undefined, id: "id-draft" } : null,
+        card: ready ? { ...cardFixture("draft-card"), status: "draft", handle: "", claimed: undefined, id: "id-draft", ...(designer ? DESIGNER_DRAFT : {}) } : null,
+        persona: ready ? (designer ? "product_design" : "engineering") : "",
         error: null,
         url_warnings: [],
-        sources: onboardUrls.map(url => ({
-          url, kind: "github", state: done ? "done" : "reading",
-          preview: done ? { name: "Bob Okafor", headline: "Engineer", facts: ["9 public repos"] } : {},
-        })),
+        sources: onboardUrls.map(url => /behance\.net|dribbble\.com/.test(url)
+          ? { url, kind: "portfolio", state: done ? "done" : "reading",
+              preview: done ? { headline: "Ada on Behance", facts: ["2 projects"], images: DESIGNER_DRAFT.work_gallery.map(w => w.image_url) } : {} }
+          : { url, kind: "github", state: done ? "done" : "reading",
+              preview: done ? { name: "Bob Okafor", headline: "Engineer", facts: ["9 public repos"] } : {} }),
       });
     }
     if (path === "/onboard/claim-candidates") {
@@ -288,6 +304,10 @@ export function startFixtureServer(): Promise<void> {
     if (path === "/cards/mine") {
       if (req.headers.authorization) return json(200, { card: ownerCard, handle: "owner" });
       return json(200, null);
+    }
+    if (path === "/cards/by-handle/designer") {
+      // A designer's published card: no GitHub, a newsletter's posts and a portfolio's project covers.
+      return json(200, { ...cardFixture("designer", { name: "Ada Okoye" }), ...DESIGNER_DRAFT, identity: { name: "Ada Okoye", headline: "Brand designer", location: "Lagos", avatar_url: "", links: { linkedin: "https://www.linkedin.com/in/ada-okoye/" } } });
     }
     if (path === "/cards/by-handle/unclaimed" || path === "/cards/by-handle/claimed") {
       const handle = path.split("/").pop()!;

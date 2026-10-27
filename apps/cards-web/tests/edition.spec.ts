@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
+import { LINK_PLACEHOLDER } from "./fixtures/create";
 import { signIn } from "./fixtures/sign-in";
 
 /**
@@ -158,14 +159,14 @@ test.describe("limited-edition card style", () => {
   test("create flow offers the style last and publishes the choice", async ({ page }) => {
     // #given a new card, built from one pasted link
     await page.goto("/create");
-    const input = page.getByPlaceholder("Paste your LinkedIn, GitHub or X link");
+    const input = page.getByPlaceholder(LINK_PLACEHOLDER);
     await input.fill("github.com/bob");
     await input.press("Enter");
-    const style = page.locator(".cr-section", { has: page.getByText("Card style", { exact: true }) });
+    const style = page.locator(".cr-block", { has: page.getByText("Card style", { exact: true }) });
     await expect(style).toBeVisible({ timeout: 45_000 });
 
-    // #then Card style is the last section of the draft
-    await expect(page.locator(".cr-section").last()).toContainText("Card style");
+    // #then Card style is the last block of the draft, before the optional extras
+    await expect(page.locator(".cr-profile-body > .cr-block").last()).toContainText("Card style");
 
     // #when they pick the edition and publish
     await style.getByRole("button", { name: /Mumbai Builder Week/ }).click();

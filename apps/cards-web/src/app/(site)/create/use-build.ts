@@ -20,10 +20,12 @@ export interface BuildState {
   warnings: ScrapeWarning[];
   /** The newest finished draft. Kept while a newer build runs, so the preview never blanks. */
   card: AgentProfileCard | null;
+  /** Which kind of professional the synthesis decided this is: picks the chip vocabulary. "" until a draft exists. */
+  persona: string;
   error: string | null;
 }
 
-const IDLE: BuildState = { status: "idle", jobId: null, stage: "reading", sources: [], warnings: [], card: null, error: null };
+const IDLE: BuildState = { status: "idle", jobId: null, stage: "reading", sources: [], warnings: [], card: null, persona: "", error: null };
 
 function stopJob(id: string): void {
   void fetch(`${CARDS_API}/onboard/${id}/cancel`, { method: "POST", keepalive: true }).catch(() => { /* already finished or gone */ });
@@ -114,6 +116,7 @@ export function useBuild({ urls, resume, enabled }: { urls: string[]; resume: Fi
           sources: status.sources ?? [],
           warnings: status.url_warnings ?? [],
           card: ready ? status.card : s.card,
+          persona: ready ? status.persona ?? "" : s.persona,
         }));
       } catch { /* transient: the deadline still bounds the retries */ }
       finally { busy = false; }

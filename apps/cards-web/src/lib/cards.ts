@@ -41,6 +41,14 @@ export interface WritingSample {
   metrics?: string[] | null;
 }
 
+/** One piece of visual work from a design portfolio (Behance, Dribbble), shown as a tile. */
+export interface WorkItem {
+  title: string;
+  url: string;
+  image_url: string;
+  source: string;
+}
+
 export interface Source {
   platform: string;
   url: string | null;
@@ -96,6 +104,8 @@ export interface AgentProfileCard {
   skills: Skill[];
   projects: Project[];
   writing_samples: WritingSample[];
+  /** Visual proof from a design portfolio; absent on cards that have none. */
+  work_gallery?: WorkItem[];
   searchable_facts: string[];
   sources: Source[];
   review: Review;
@@ -232,6 +242,8 @@ export interface SourcePreview {
   avatar?: string;
   facts?: string[];
   posts?: string[];
+  /** Project covers from a design portfolio. */
+  images?: string[];
 }
 
 export interface SourceStatus {
@@ -251,6 +263,8 @@ export interface OnboardStatus {
   /** Absent from an API older than the live preview. */
   stage?: BuildStage;
   sources?: SourceStatus[];
+  /** Which kind of professional the synthesis decided this is (see create/chips.ts); "" until ready. */
+  persona?: string;
 }
 
 const API_BASE =

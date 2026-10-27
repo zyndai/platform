@@ -1,9 +1,11 @@
-import type { ChipGroupId } from "./chips";
+import type { ChipGroupId, PersonaId } from "./chips";
 
 /** What survives a sign-in round trip. A résumé file and hand edits to the draft do not: the card rebuilds from the links. */
 export interface Draft {
   urls: string[];
   picks: Partial<Record<ChipGroupId, string[]>>;
+  /** The persona the person switched to, if they did. */
+  persona?: PersonaId | null;
   location: string | null;
   calendly: string;
   googleCalendar: string;

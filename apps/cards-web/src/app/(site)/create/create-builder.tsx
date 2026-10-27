@@ -9,11 +9,12 @@ import { useMyCard } from "@/hooks/useMyCard";
 import { CARDS_API } from "@/lib/cards";
 import { setClaimHandle } from "@/lib/auth/next-cookie";
 import { startLinkedInOAuth } from "@/lib/auth/session";
-import { AboutCard } from "./about-card";
-import { CHIP_GROUPS, addCustomValues, emptySelections, hasLabel, sameLabel, type ChipGroupId, type Selections } from "./chips";
-import { DetailsCard } from "./details-card";
+import { CardEditor } from "./card-editor";
+import {
+  CHIP_GROUPS, DEFAULT_PERSONA, addCustomValues, emptySelections, hasLabel, isPersona, optionsFor, sameLabel,
+  type ChipGroupId, type PersonaId, type Selections,
+} from "./chips";
 import { saveDraft, takeDraft, type Draft } from "./draft";
-import { LiveCard } from "./live-card";
 import {
   applyEdits, buildUserAnswers, cleanHandle, detectKind, finalizeCard, liveIdentity, normalizeUrl, statusLine,
   type DraftEdits, type TopicAnswers,
@@ -46,6 +47,8 @@ export function CreateBuilder() {
 
   // What the person chose. A group they never touched follows the AI's suggestion.
   const [picks, setPicks] = useState<Draft["picks"]>({});
+  // The persona the person switched to; until they do, the one the AI detected.
+  const [personaPick, setPersonaPick] = useState<PersonaId | null>(null);
   const [locationEdit, setLocationEdit] = useState<string | null>(null);
   const [calendly, setCalendly] = useState("");
   const [googleCalendar, setGoogleCalendar] = useState("");
@@ -78,6 +81,7 @@ export function CreateBuilder() {
     if (all.length) setUrls(all);
     if (!saved) return;
     setPicks(saved.picks);
+    if (isPersona(saved.persona)) setPersonaPick(saved.persona);
     setLocationEdit(saved.location);
     setCalendly(saved.calendly);
     setGoogleCalendar(saved.googleCalendar);
@@ -125,6 +129,8 @@ export function CreateBuilder() {
     connect_with: selections.connect_with,
     love_talking_about: selections.love_talking,
   };
+  const detectedPersona = isPersona(build.persona) && build.persona !== DEFAULT_PERSONA ? build.persona : null;
+  const persona: PersonaId = personaPick ?? detectedPersona ?? DEFAULT_PERSONA;
   const draft = build.card ? applyEdits(build.card, edits) : null;
   const guessedLocation = build.card?.identity.location ?? "";
   const location = locationEdit ?? guessedLocation;
@@ -153,7 +159,7 @@ export function CreateBuilder() {
   });
   const addChip = (id: ChipGroupId, raw: string) => setPicks((prev) => {
     const group = CHIP_GROUPS.find((g) => g.id === id)!;
-    return { ...prev, [id]: addCustomValues(prev[id] ?? suggested[id], group.options, raw) };
+    return { ...prev, [id]: addCustomValues(prev[id] ?? suggested[id], optionsFor(persona, group), raw) };
   });
   const toggleExcluded = (key: string) => setExcluded((prev) => {
     const next = new Set(prev);
@@ -162,7 +168,7 @@ export function CreateBuilder() {
   });
 
   const signIn = () => {
-    saveDraft({ urls, picks, location: locationEdit, calendly, googleCalendar, handle: customHandle });
+    saveDraft({ urls, picks, persona: personaPick, location: locationEdit, calendly, googleCalendar, handle: customHandle });
     void startLinkedInOAuth("/create", "card");
   };
   const claim = () => {
@@ -261,35 +267,35 @@ export function CreateBuilder() {
       )}
 
       <div className="cr-layout">
-        <div className="cr-main">
+        <div className="cr-sources-slot">
           <SourcesCard
             urls={urls} resume={resume} build={build}
             onAdd={addUrl} onReplace={replaceUrl} onRetry={retry} onResume={setResume}
             onRemove={(url) => setUrls((prev) => prev.filter((u) => u !== url))}
           />
-          <AboutCard
-            selections={selections} suggested={suggested} building={build.status === "running"}
-            location={location} locationHint={guessedLocation}
-            calendly={calendly} googleCalendar={googleCalendar}
-            onToggle={toggleChip} onAdd={addChip}
-            onLocation={setLocationEdit} onCalendly={setCalendly} onGoogleCalendar={setGoogleCalendar}
-          />
-          <DetailsCard
-            card={draft} building={build.status === "running"} hasSource={hasSource}
+        </div>
+
+        <div className="cr-editor-slot">
+          <CardEditor
+            card={draft} live={liveIdentity(build.sources)}
+            building={build.status === "running"} hasSource={hasSource}
+            persona={persona} detectedPersona={detectedPersona} onPersona={setPersonaPick}
+            selections={selections} suggested={suggested} onToggleChip={toggleChip} onAddChip={addChip}
+            location={location} locationHint={guessedLocation} onLocation={setLocationEdit}
             onEdit={(patch) => setEdits((prev) => ({ ...prev, ...patch }))}
             excluded={excluded} onToggleExcluded={toggleExcluded}
+            calendly={calendly} googleCalendar={googleCalendar} onCalendly={setCalendly} onGoogleCalendar={setGoogleCalendar}
           />
         </div>
 
-        <aside className="cr-aside">
-          <LiveCard live={liveIdentity(build.sources)} card={finalCard} building={build.status === "running"} handle={customHandle} />
+        <div className="cr-publish-slot">
           <PublishCard
             ready={canPublish} building={build.status === "running"} hasSource={hasSource} statusText={statusText}
             handle={customHandle} onHandle={setCustomHandle}
             authenticated={authenticated} onSignIn={signIn}
             onPublish={() => void publish()} publishing={publishing} error={publishError}
           />
-        </aside>
+        </div>
       </div>
     </>
   );

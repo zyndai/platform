@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyEdits, buildUserAnswers, cleanHandle, detectKind, finalizeCard, liveIdentity, normalizeUrl, statusLine } from "./model.ts";
+import { applyEdits, buildUserAnswers, cleanHandle, detectKind, finalizeCard, liveIdentity, normalizeUrl, statusLine, workKey } from "./model.ts";
 
 const source = (url: string, preview: object, state = "done") => ({ url, kind: detectKind(url), state, preview }) as never;
 
@@ -85,4 +85,35 @@ test("answers sent with publish use the keys the API reads", () => {
     buildUserAnswers({ ...none, working_on: ["A", "B"], can_help_with: ["C"] }, "Pune", "", "https://cal"),
     { working_on: "A, B", can_help: "C", location: "Pune", google_calendar_url: "https://cal" },
   );
+});
+
+test("newsletters and design portfolios are told apart from plain websites", () => {
+  assert.equal(detectKind("https://ada.substack.com/archive"), "writing");
+  assert.equal(detectKind("https://medium.com/@ada"), "writing");
+  assert.equal(detectKind("https://www.behance.net/ada"), "portfolio");
+  assert.equal(detectKind("https://dribbble.com/ada"), "portfolio");
+  assert.equal(detectKind("https://ada.dev"), "website");
+  assert.ok("error" in normalizeUrl("https://www.behance.net/")!);
+  assert.deepEqual(normalizeUrl("behance.net/ada"), { url: "https://behance.net/ada" });
+});
+
+test("a newsletter's posts and a portfolio's covers show before the card is written", () => {
+  const live = liveIdentity([
+    source("https://ada.substack.com", { posts: ["How I hire designers who ship"], headline: "Ada's notes" }),
+    source("https://www.behance.net/ada", { images: ["https://cdn/a.jpg", "https://cdn/b.jpg"], facts: ["2 projects"] }),
+  ]);
+  assert.deepEqual(live.posts, ["How I hire designers who ship"]);
+  assert.deepEqual(live.images, ["https://cdn/a.jpg", "https://cdn/b.jpg"]);
+  assert.equal(live.headline, "Ada's notes");
+  assert.deepEqual(live.facts, ["2 projects"]);
+});
+
+test("a project cover the person removed is not published", () => {
+  const withWork = card({ work_gallery: [
+    { title: "Orbit", url: "https://b/1", image_url: "https://cdn/a.jpg", source: "behance" },
+    { title: "Posters", url: "https://b/2", image_url: "https://cdn/b.jpg", source: "behance" },
+  ] });
+  const out = finalizeCard(withWork, none, "", new Set([workKey(1)]));
+  assert.deepEqual(out.work_gallery?.map((w) => w.title), ["Orbit"]);
+  assert.deepEqual(finalizeCard(card(), none, "", new Set()).work_gallery, []);
 });

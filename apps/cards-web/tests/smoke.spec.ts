@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { LINK_PLACEHOLDER } from "./fixtures/create";
 
 /** S03: unclaimed cards are public to people but trimmed + quiet to agents. */
 test("unclaimed profile shows claim banner and no chat", async ({ page }) => {
@@ -125,48 +126,123 @@ test("directory Match ranks a typed query", async ({ page }) => {
   await expect(page.locator("li.dc-person")).toHaveCount(3);
 });
 
-/** Create is one page: paste a link, watch the card fill in, publish. No Build button, no quiz. */
+/** Create is two steps on one page: paste a link, then review the card as it fills in. No Build button, no quiz. */
 test("create builds the card on one page, suggests the answers, and publishes them", async ({ page }) => {
   test.setTimeout(60_000);
   await page.goto("/create");
 
   // #given pasting a link is the whole first step
   await expect(page.getByRole("button", { name: "Build my card" })).toHaveCount(0);
-  const input = page.getByPlaceholder("Paste your LinkedIn, GitHub or X link");
+  const input = page.getByPlaceholder(LINK_PLACEHOLDER);
   await input.fill("github.com/bob");
   await input.press("Enter");
 
-  // #then the source reports what was read, and the live card fills in beside the form
+  // #then the source reports what was read, and the card fills in beside it
   const row = page.locator(".cr-source", { hasText: "github.com/bob" });
   await expect(row).toBeVisible();
   await expect(row.getByText("Bob Okafor")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId("live-card").getByText("Bob Okafor")).toBeVisible();
+  const editor = page.getByTestId("card-editor");
+  await expect(editor.getByText("Bob Okafor")).toBeVisible();
 
-  // #and the AI's suggestions are already picked: a chip from the list and one of its own
-  const codeReview = page.getByRole("button", { name: "Code review", exact: true });
-  await expect(codeReview).toHaveAttribute("aria-pressed", "true", { timeout: 20_000 });
-  await expect(page.getByRole("button", { name: "Agent tooling", exact: true })).toHaveAttribute("aria-pressed", "true");
+  // #and the draft arrives editable in place, with the AI's answers already chosen: one from the list, one of its own
+  const name = editor.getByLabel("Name", { exact: true });
+  await expect(name).toHaveValue("Alice Chen", { timeout: 20_000 });
+  await expect(editor.getByRole("button", { name: "Remove Code review" })).toBeVisible();
+  await expect(editor.getByRole("button", { name: "Remove Agent tooling" })).toBeVisible();
 
-  // #when they untick one and publish
-  await codeReview.click();
-  await expect(codeReview).toHaveAttribute("aria-pressed", "false");
+  // #when they rename themselves on the card, drop a suggestion, and publish
+  await name.fill("Alice C. Chen");
+  await editor.getByRole("button", { name: "Remove Code review" }).click();
+  await expect(editor.getByRole("button", { name: "Add Code review" })).toBeVisible();
   const publish = page.getByRole("button", { name: /Publish my card/ });
   await expect(publish).toBeEnabled();
   const publishRequest = page.waitForRequest((r) => r.url().endsWith("/onboard/job1/publish"));
   await publish.click();
 
-  // #then the unticked suggestion is not published, and the ticked one is
+  // #then what they changed is what is published
   const body = (await publishRequest).postDataJSON();
+  expect(body.card.identity.name).toBe("Alice C. Chen");
   expect(body.card.can_help_with).toEqual([]);
   expect(body.card.working_on).toEqual(["Agent tooling"]);
   await expect(page.getByText("You're live")).toBeVisible();
+});
+
+/** The public card shows the proof a person has: a designer's project grid and newsletter, and no GitHub block. */
+test("a designer's profile shows their work grid and newsletter instead of a code graph", async ({ page }) => {
+  await page.goto("/p/designer");
+
+  const work = page.locator(".pf-gallery");
+  await expect(work).toBeVisible();
+  await expect(work).toContainText("BEHANCE · 2 PROJECTS");
+  await expect(work.getByRole("link", { name: /Brand system for Orbit/ })).toHaveAttribute("href", "https://www.behance.net/gallery/1/Orbit");
+  await expect(work.locator("img")).toHaveCount(2);
+
+  const writing = page.locator(".pf-posts");
+  await expect(writing).toContainText("RECENT WRITING");
+  await expect(writing).toContainText("Substack");
+  await expect(writing).toContainText("How I hire designers who ship");
+
+  await expect(page.getByText("CONTRIBUTION ACTIVITY")).toHaveCount(0);
+});
+
+/** A designer is not offered engineering jargon: the options follow the persona, and the proof follows the links. */
+test("create tailors the options and the proof to who the person is", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto("/create");
+
+  // #given a design portfolio, a link a developer-first form would ignore
+  const input = page.getByPlaceholder(LINK_PLACEHOLDER);
+  await input.fill("behance.net/ada");
+  await input.press("Enter");
+  const row = page.locator(".cr-source", { hasText: "behance.net/ada" });
+  await expect(row.getByText("2 projects")).toBeVisible({ timeout: 15_000 });
+
+  // #then the draft is a designer's: their persona, their vocabulary, their work
+  const editor = page.getByTestId("card-editor");
+  await expect(editor.getByLabel("Name", { exact: true })).toHaveValue("Alice Chen", { timeout: 20_000 });
+  const persona = editor.getByLabel("Options tailored for");
+  await expect(persona).toHaveValue("product_design");
+  await expect(editor.getByRole("button", { name: "Remove Brand identity" })).toBeVisible();
+  await expect(editor.getByRole("group", { name: "Can help with" }).getByRole("button", { name: "Remove Design systems" })).toBeVisible();
+  await expect(editor.getByRole("button", { name: "Add Code review" })).toHaveCount(0);
+  await expect(editor.getByRole("region", { name: "Work" }).getByRole("listitem")).toHaveCount(2);
+  await expect(editor.getByRole("region", { name: "Recent writing" })).toContainText("Substack");
+
+  // #when they say they are in marketing instead, the options change and their answers stay
+  await persona.selectOption("marketing_sales");
+  await expect(editor.getByRole("button", { name: "Add Content marketing" })).toBeVisible();
+  await expect(editor.getByRole("button", { name: "Remove Brand identity" })).toBeVisible();
+
+  // #and dropping one project cover leaves it out of what is published
+  await editor.getByRole("button", { name: "Remove Poster series" }).click();
+  const publishRequest = page.waitForRequest((r) => r.url().endsWith("/onboard/job1/publish"));
+  await page.getByRole("button", { name: /Publish my card/ }).click();
+  const body = (await publishRequest).postDataJSON();
+  expect(body.card.work_gallery.map((w: { title: string }) => w.title)).toEqual(["Brand system for Orbit"]);
+  expect(body.card.writing_samples[0].platform).toBe("substack");
+});
+
+/** While the person edits the working-on line, the writing rule is on screen. */
+test("create coaches the working-on line while it is being edited", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto("/create");
+  const input = page.getByPlaceholder(LINK_PLACEHOLDER);
+  await input.fill("github.com/bob");
+  await input.press("Enter");
+  const editor = page.getByTestId("card-editor");
+  await expect(editor.getByLabel("Name", { exact: true })).toHaveValue("Alice Chen", { timeout: 20_000 });
+
+  const tip = editor.getByText("Write for the person who will meet you next, not your whole career history.");
+  await expect(tip).toBeHidden();
+  await editor.getByLabel("Add your own: Working on").focus();
+  await expect(tip).toBeVisible();
 });
 
 /** Pasting is the whole first step: a link pasted into the empty box is added without Enter. */
 test("create adds a pasted link straight away and starts reading it", async ({ page }) => {
   test.setTimeout(60_000);
   await page.goto("/create");
-  const input = page.getByPlaceholder("Paste your LinkedIn, GitHub or X link");
+  const input = page.getByPlaceholder(LINK_PLACEHOLDER);
   await input.evaluate((el) => {
     const data = new DataTransfer();
     data.setData("text", "https://github.com/bob");
@@ -182,7 +258,7 @@ test("create flow offers claim candidate for matching LinkedIn", async ({ page }
   test.setTimeout(60_000);
   await page.goto("/create");
 
-  const input = page.getByPlaceholder("Paste your LinkedIn, GitHub or X link");
+  const input = page.getByPlaceholder(LINK_PLACEHOLDER);
   await input.fill("linkedin.com/in/alice-chen");
   await input.press("Enter");
 
@@ -219,7 +295,7 @@ test("create at 390px has no horizontal scroll", async ({ page }) => {
   expect(await overflow()).toBe(false);
 
   // #when a source has been read, its row and the search bar must still sit inside their card
-  const input = page.getByPlaceholder("Paste your LinkedIn, GitHub or X link");
+  const input = page.getByPlaceholder(LINK_PLACEHOLDER);
   await input.fill("github.com/bob");
   await input.press("Enter");
   const row = page.locator(".cr-source", { hasText: "github.com/bob" });
@@ -230,6 +306,16 @@ test("create at 390px has no horizontal scroll", async ({ page }) => {
     return [".cr-source", ".dc-search"].every((s) => document.querySelector(s)!.getBoundingClientRect().right <= card.right);
   });
   expect(inside).toBe(true);
+
+  // #and so must the editable card once the draft is written: its chips, rows and fields wrap rather than push the page
+  await expect(page.getByTestId("card-editor").getByLabel("Name", { exact: true })).toHaveValue("Alice Chen", { timeout: 20_000 });
+  await page.getByTestId("card-editor").getByRole("button", { name: /Show all \d+ options/ }).first().click();
+  expect(await overflow()).toBe(false);
+  const fits = await page.evaluate(() => {
+    const frame = document.querySelector(".cr-profile")!.getBoundingClientRect();
+    return [...document.querySelectorAll(".cr-profile *")].every((el) => el.getBoundingClientRect().right <= frame.right + 1);
+  });
+  expect(fits).toBe(true);
 });
 
 test("welcome at 390px has no horizontal scroll", async ({ page }) => {

@@ -6,10 +6,11 @@ import { Check, FileUp, Link2, Pencil, Plus, RotateCw, TriangleAlert, X } from "
 import { PersonAvatar } from "@/components/discover/person-avatar";
 import { imgProxyUrl } from "@/lib/avatar";
 import type { SourceStatus } from "@/lib/cards";
-import { KIND_LABEL, KindIcon } from "./kind-icon";
+import { KIND_LABEL, KIND_READING, KindIcon } from "./kind-icon";
 import { detectKind, shortenUrl, statusLine, type UrlKind } from "./model";
 import type { BuildState } from "./use-build";
 
+/** One tap to start a link; newsletters and portfolios are pasted whole, since each lives on its own address. */
 const QUICK_ADD: { kind: UrlKind; prefix: string }[] = [
   { kind: "linkedin", prefix: "linkedin.com/in/" },
   { kind: "github", prefix: "github.com/" },
@@ -51,7 +52,7 @@ function SourceRow({ url, row, warning, onRemove, onFix }: {
           <span title={url}>{shortenUrl(url)}</span>
         </div>
 
-        {row.state === "reading" && <div className="cr-source-line"><span className="cr-spinner" aria-hidden="true" /> Reading {KIND_LABEL[kind]}…</div>}
+        {row.state === "reading" && <div className="cr-source-line"><span className="cr-spinner" aria-hidden="true" /> {KIND_READING[kind]}</div>}
         {row.state === "queued" && <div className="cr-source-line">Waiting to start…</div>}
         {row.state === "skipped" && <div className="cr-source-line">Only one {KIND_LABEL[kind]} profile is read, so this one is skipped.</div>}
         {row.state === "failed" && (
@@ -70,6 +71,12 @@ function SourceRow({ url, row, warning, onRemove, onFix }: {
             {(preview.facts?.length ?? 0) > 0 && (
               <div className="cr-source-facts">
                 {preview.facts!.map((f) => <span key={f} className="dc-chip dc-chip-plain">{f}</span>)}
+              </div>
+            )}
+            {(preview.images?.length ?? 0) > 0 && (
+              <div className="cr-thumbs" aria-hidden="true">
+                {/* eslint-disable-next-line @next/next/no-img-element -- remote project covers, proxied */}
+                {preview.images!.map((src) => <img key={src} src={imgProxyUrl(src)} alt="" loading="lazy" />)}
               </div>
             )}
           </>
@@ -143,19 +150,20 @@ export function SourcesCard({ urls, resume, build, onAdd, onRemove, onReplace, o
 
   return (
     <section className="cr-card" aria-labelledby="cr-sources-h">
-      <div className="cr-head">
+      <div className="cr-step-head">
+        <span className="cr-step-n" aria-hidden="true">1</span>
         <div className="cr-head-title">
-          <div id="cr-sources-h" className="cr-h">Your profiles</div>
-          <div className="cr-sub">Paste a link. We read what&apos;s public and build the card below, live.</div>
+          <div id="cr-sources-h" className="cr-h">Add your links</div>
+          <div className="cr-sub">Any public profile, newsletter or portfolio. We read it and write your card.</div>
         </div>
-        {headline && (
-          <span className="cr-state" data-tone={build.status === "error" ? "bad" : build.status === "ready" ? "ok" : undefined} role="status">
-            {busy && <span className="cr-spinner" aria-hidden="true" />}
-            {build.status === "ready" && <Check size={14} aria-hidden="true" />}
-            {headline}
-          </span>
-        )}
       </div>
+      {headline && (
+        <span className="cr-state" data-tone={build.status === "error" ? "bad" : build.status === "ready" ? "ok" : undefined} role="status">
+          {busy && <span className="cr-spinner" aria-hidden="true" />}
+          {build.status === "ready" && <Check size={14} aria-hidden="true" />}
+          {headline}
+        </span>
+      )}
 
       <form
         className="dc-search"
@@ -166,7 +174,7 @@ export function SourcesCard({ urls, resume, build, onAdd, onRemove, onReplace, o
         <input
           id="cr-link" ref={inputRef} className="dc-search-input" type="text" inputMode="url" autoFocus
           value={value} autoComplete="off" autoCapitalize="off" spellCheck={false}
-          placeholder={urls.length ? "Add another link" : "Paste your LinkedIn, GitHub or X link"}
+          placeholder={urls.length ? "Add another link" : "Paste a profile link"}
           onChange={(e) => { setValue(e.target.value); setError(null); }}
           onKeyDown={(e) => { if (e.key === " " && value.trim()) { e.preventDefault(); add(value); } }}
           onPaste={(e) => {

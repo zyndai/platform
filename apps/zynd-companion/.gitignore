@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.zip
+# The key that fixes the extension id for the store. Never commit it.
+*.pem
+test-results/
+dist-e2e/

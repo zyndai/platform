@@ -1,0 +1,23 @@
+{
+  "name": "zynd-companion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Zynd Companion: a browser extension that updates your Zynd card from the page you are on.",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:dev": "node scripts/build.mjs --dev",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "node scripts/build.mjs --api http://127.0.0.1:4777 --site http://127.0.0.1:4777 --out dist-e2e --test-host \"https://*/*,http://localhost:4777/*\" && playwright test",
+    "package": "npm run build && cd dist && zip -qr ../zynd-companion.zip ."
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@types/chrome": "^0.0.326",
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.25.5",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

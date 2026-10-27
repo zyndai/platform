@@ -39,6 +39,7 @@ current *how*.
 | [`ZYND_PEOPLE_SEARCH_PLAN.md`](./ZYND_PEOPLE_SEARCH_PLAN.md) | People search, suggestions and recommendations: why results are poor today (topics sent as required skills, no name lookup, scores on different scales, loose QuickEnrich titles, suggestions that repeat) and the fix in four phases. Builds on Part B of the memory quality plan. Proposed, not started |
 | [`ZYND_PEOPLE_SEARCH_QUALITY_PLAN.md`](./ZYND_PEOPLE_SEARCH_QUALITY_PLAN.md) | Follow-up after the live checks of #108: why loose matches scored like strong ones (wanting to meet investors read as being one), why QuickEnrich's real investors were hidden (LinkedIn on an old score scale), the QuickEnrich field mapping, and why search took 2–9 s over 58 cards (a database read per step). Implemented; re-embed and clean-up need the owner |
 | [`ZYND_CLAUDE_PLUGIN_PLAN.md`](./ZYND_CLAUDE_PLUGIN_PLAN.md) | Claude counterpart of the ChatGPT plugin: a `/claude/mcp` server with the same six consent-gated tools, audience-bound plugin OAuth, and a plugin bundle for Anthropic's directory. Built on `dev`; live test, prod rollout and submission open |
+| [`ZYND_COMPANION_PLAN.md`](./ZYND_COMPANION_PLAN.md) | Zynd Companion browser extension: set Working on and add Currently exploring from any page. Pairing with a signed-in account by a device token, privacy rules, the `/cards/companion` API, migration `cards` 0032. Phase 1 built on `feat/zynd-companion`; memory facts need a `services/memory` endpoint |
 
 **4. Paused**
 

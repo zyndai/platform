@@ -13,6 +13,7 @@ Metrics, logs and dashboards for everything on the single box: the pm2 apps
 | node_exporter | the box: RAM, CPU, disk, network | 9100 |
 | cAdvisor | per-container RAM and CPU | 9180 |
 | blackbox | uptime and TLS of the public URLs | 9115 |
+| pm2 exporter | per-process RAM, CPU, restarts (a systemd service, not a container) | 9209 |
 
 Nothing is published past loopback. Open Grafana through an SSH tunnel:
 
@@ -33,15 +34,25 @@ both:
   `persona-web`, `caddy`, `box`, `monitoring`
 - `env`: `prod`, `dev`, `shared` (box, Caddy, this stack), `test`
 
-Log lines also have `source` (`docker`, `pm2`, `caddy`), and pm2 lines have
-`stream` (`out` or `error`: stdout or stderr, **not** severity; uvicorn writes
-its INFO lines to stderr). Caddy lines have `host` and `status`.
+Log lines also have `source` (`docker`, `pm2`, `caddy`) and `level` (`debug`,
+`info`, `warning`, `error`). pm2 lines have `stream` (`out` or `error`: stdout
+or stderr; uvicorn writes its INFO lines to stderr, so use `level`, not
+`stream`). Caddy lines have `host` and `status`.
+
+Multi-line output is joined into one entry: a Python traceback, a faulthandler
+dump, a Next.js error with its stack are each a single log line in Loki, and
+the pm2 `YYYY-MM-DDTHH:MM:SS:` prefix is stripped (Loki has its own timestamp).
+
+pm2 metrics (`pm2_process_memory_bytes`, `pm2_process_cpu_percent`,
+`pm2_process_restarts_total`, `pm2_process_uptime_seconds`,
+`pm2_process_online`, `pm2_up`) carry the same `project`/`env` labels.
 
 Some LogQL to start from:
 
 ```
 {project="cards-api", env="prod"}
-{source="pm2", project="persona-api"} |~ "Traceback|Error"
+{level="error", env="prod"}
+{project="persona-api"} |= "Traceback"
 sum by (host) (count_over_time({source="caddy", status=~"5.."}[5m]))
 ```
 
@@ -70,11 +81,23 @@ The one env var is `GRAFANA_ADMIN_PASSWORD`, a secret kept only in
   `network_mode: host` and bind it to `127.0.0.1` on a free port.
 - **Caddy metrics are per server, not per host** (Caddy 2.6). Per-host
   traffic and 5xx rates come from the access log in Loki.
-- **First start reads the existing pm2 logs from the beginning**, so
-  counts over the first hour include history.
+- **Renaming a `loki.source.*` component in `alloy/config.alloy` resets its
+  read position**, so Alloy re-reads every pm2 log file from the start and
+  re-ingests the whole history stamped "now". Keep component names stable; if
+  it happens, delete the duplicates with
+  `POST :3100/loki/api/v1/delete?query={source="pm2"}&start=..&end=..` (end can't
+  be in the future; Loki applies deletes after 24h).
+- **Alloy `stage.match` selectors need LogQL double-quoted strings.** Backtick
+  strings are rejected at runtime (and `alloy validate` doesn't catch it), so
+  regexes need four backslashes, and non-ASCII symbols are written as `\\x{26A0}`.
+  Test a pipeline change with a throwaway Alloy before applying it.
+- **The pm2 exporter only calls `pm2 jlist` when the daemon's pid is alive**,
+  because the CLI would otherwise start a new daemon. When pm2 is down it
+  reports `pm2_up 0`.
+- **The first start reads the existing pm2 logs from the beginning**, so
+  counts over the first day include history.
 
 ## Not done yet
 
-pm2 process metrics (RAM and restarts per process), Python traceback joining
-and `level` extraction, FastAPI `/metrics`, dashboards and alert rules. See the
-phases in the monitoring plan.
+FastAPI `/metrics`, dashboards and alert rules. See the phases in the monitoring
+plan.

@@ -1,0 +1,15 @@
+[Unit]
+Description=pm2 process metrics for Prometheus (infra/observability)
+After=pm2-ubuntu.service
+
+[Service]
+User=ubuntu
+Environment=PM2_HOME=/home/ubuntu/.pm2
+ExecStart=/usr/bin/node /home/ubuntu/.zynd-obs/pm2-exporter/exporter.js
+Restart=always
+RestartSec=5
+MemoryMax=128M
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

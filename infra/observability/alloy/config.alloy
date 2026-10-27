@@ -3,6 +3,10 @@
 //   1. Docker container logs  (compose project zynd = prod, zynd-dev = dev)
 //   2. pm2 process logs       (api, web, cards-web and their -dev twins)
 //   3. Caddy's JSON access log
+//
+// Sources 1 and 2 go through a per-runtime step that joins multi-line records
+// (tracebacks, Next.js stacks, faulthandler dumps) into one entry, then through
+// the shared "levels" step that sets the `level` label.
 
 loki.write "default" {
   endpoint {
@@ -91,15 +95,62 @@ discovery.relabel "containers" {
   }
 }
 
-loki.source.docker "containers" {
+// The Python services (uvicorn/logging: "LEVEL:logger:message" lines, with
+// tracebacks on the lines after) are split from the rest (Postgres, Redis, the
+// monitoring stack), which are one line per record.
+discovery.relabel "containers_python" {
+  targets = discovery.relabel.containers.output
+
+  rule {
+    source_labels = ["project"]
+    regex         = "memory-api|cards-api|mcp|worker|chatgpt-plugin|claude-plugin"
+    action        = "keep"
+  }
+}
+
+discovery.relabel "containers_other" {
+  targets = discovery.relabel.containers.output
+
+  rule {
+    source_labels = ["project"]
+    regex         = "memory-api|cards-api|mcp|worker|chatgpt-plugin|claude-plugin"
+    action        = "drop"
+  }
+}
+
+loki.source.docker "python" {
   host             = "unix:///var/run/docker.sock"
-  targets          = discovery.relabel.containers.output
-  forward_to       = [loki.process.docker.receiver]
+  targets          = discovery.relabel.containers_python.output
+  forward_to       = [loki.process.docker_python.receiver]
   refresh_interval = "30s"
 }
 
-loki.process "docker" {
-  forward_to = [loki.write.default.receiver]
+loki.source.docker "other" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.containers_other.output
+  forward_to       = [loki.process.docker_other.receiver]
+  refresh_interval = "30s"
+}
+
+// A record starts at a LEVEL: line, a [tag] line or the worker's HH:MM:SS line.
+// Anything else (Traceback, indented frames, the final "ValueError: ...") is a
+// continuation of the record before it, which for logging.exception() and
+// uvicorn is the ERROR line that announced it.
+loki.process "docker_python" {
+  forward_to = [loki.process.levels.receiver]
+
+  stage.multiline {
+    firstline     = "^(?:(?:DEBUG|INFO|WARNING|ERROR|CRITICAL)[: ]|\\[|\\d{2}:\\d{2}:\\d{2}[: ])"
+    max_wait_time = "3s"
+    max_lines     = 200
+  }
+  stage.static_labels {
+    values = { source = "docker" }
+  }
+}
+
+loki.process "docker_other" {
+  forward_to = [loki.process.levels.receiver]
 
   stage.static_labels {
     values = { source = "docker" }
@@ -164,16 +215,133 @@ discovery.relabel "pm2" {
   }
 }
 
-loki.source.file "pm2" {
-  targets    = discovery.relabel.pm2.output
-  forward_to = [loki.process.pm2.receiver]
+discovery.relabel "pm2_python" {
+  targets = discovery.relabel.pm2.output
+
+  rule {
+    source_labels = ["project"]
+    regex         = "persona-api"
+    action        = "keep"
+  }
 }
 
-loki.process "pm2" {
+discovery.relabel "pm2_node" {
+  targets = discovery.relabel.pm2.output
+
+  rule {
+    source_labels = ["project"]
+    regex         = "persona-api"
+    action        = "drop"
+  }
+}
+
+loki.source.file "pm2_python" {
+  targets    = discovery.relabel.pm2_python.output
+  forward_to = [loki.process.pm2_python.receiver]
+}
+
+loki.source.file "pm2_node" {
+  targets    = discovery.relabel.pm2_node.output
+  forward_to = [loki.process.pm2_node.receiver]
+}
+
+// pm2 (time: true) prefixes every line with "YYYY-MM-DDTHH:MM:SS: ", in the
+// box's local time. Loki stamps the entry itself, so the prefix is dropped
+// after the records are joined (the join needs it to tell lines apart).
+
+// persona-api: a record starts at a [tag] line, a LEVEL: line, a Traceback or a
+// faulthandler dump; indented frames, blank lines, "Thread 0x...", "Extension
+// modules: ..." and the final exception line continue it.
+loki.process "pm2_python" {
+  forward_to = [loki.process.levels.receiver]
+
+  stage.multiline {
+    firstline     = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}: (?:\\[|(?:DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\\b|Traceback|Fatal Python error)"
+    max_wait_time = "3s"
+    max_lines     = 200
+  }
+  stage.replace {
+    expression = "(?m)^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}: ?)"
+    replace    = ""
+  }
+  stage.static_labels {
+    values = { source = "pm2" }
+  }
+}
+
+// persona-web, cards-web (Next.js): a record starts at "Error", "<X>Error:", a
+// Next marker (⨯ ⚠ ✓ ▲ ○), "- Local:"-style lines or a [tag]; "    at ..."
+// frames, "[cause]: ...", "}" and "Read more: ..." continue it.
+loki.process "pm2_node" {
+  forward_to = [loki.process.levels.receiver]
+
+  stage.multiline {
+    firstline     = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}: (?: ?[⨯⚠✓▲○]|Error\\b|[A-Za-z]+Error\\b|-\\s|\\[|[Uu]nhandled|[Uu]ncaught)"
+    max_wait_time = "3s"
+    max_lines     = 200
+  }
+  stage.replace {
+    expression = "(?m)^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}: ?)"
+    replace    = ""
+  }
+  stage.static_labels {
+    values = { source = "pm2" }
+  }
+}
+
+// ── Levels (docker + pm2) ──────────────────────────────────────────────
+// Default info; later matches win, so severity only goes up. (Selectors use
+// LogQL double-quoted strings: this Loki parser rejects backtick strings, hence
+// the four backslashes (Alloy string -> LogQL string -> regex), and the symbols
+// ⚠ ✗ ⨯ are written \\x{26A0} \\x{2717} \\x{2A2F}.) The uvicorn INFO
+// lines pm2 files under stderr are info, not errors, which is why `stream` is
+// not used for Python.
+
+loki.process "levels" {
   forward_to = [loki.write.default.receiver]
 
   stage.static_labels {
-    values = { source = "pm2" }
+    values = { level = "info" }
+  }
+
+  stage.match {
+    selector = "{source=~\".+\"} |~ \"^DEBUG\\\\b\""
+    stage.static_labels {
+      values = { level = "debug" }
+    }
+  }
+
+  // Warnings: LEVEL lines, Next's ⚠, logfmt/glog from the monitoring stack, and
+  // the [tag] lines persona-api prints for a failed step ("✗" / "failed").
+  stage.match {
+    selector = "{source=~\".+\"} |~ \"^(?:WARNING|WARN)\\\\b|^\\\\s*\\\\x{26A0}|(?:^|\\\\s)level=warn|^W\\\\d{4} |^\\\\[[^\\\\]]+\\\\].*(?:\\\\x{2717}|failed)\""
+    stage.static_labels {
+      values = { level = "warning" }
+    }
+  }
+
+  // Next.js writes only problems to stderr, so every record there is an error
+  // (and a ⚠ on stderr is still a warning, which the next block restores).
+  stage.match {
+    selector = "{source=\"pm2\", stream=\"error\", project=~\"cards-web|persona-web\"}"
+    stage.static_labels {
+      values = { level = "error" }
+    }
+  }
+  stage.match {
+    selector = "{source=\"pm2\", stream=\"error\", project=~\"cards-web|persona-web\"} |~ \"^\\\\s*\\\\x{26A0}\""
+    stage.static_labels {
+      values = { level = "warning" }
+    }
+  }
+
+  // Errors: LEVEL lines, any traceback or hard crash, Next's ⨯, logfmt/glog,
+  // and Postgres' "UTC [pid] ERROR".
+  stage.match {
+    selector = "{source=~\".+\"} |~ \"^(?:ERROR|CRITICAL|FATAL)\\\\b|Traceback \\\\(most recent call last\\\\)|Fatal Python error|^\\\\s*\\\\x{2A2F}|(?:^|\\\\s)level=error|^[EF]\\\\d{4} |UTC \\\\[\\\\d+\\\\] (?:ERROR|FATAL|PANIC)\""
+    stage.static_labels {
+      values = { level = "error" }
+    }
   }
 }
 

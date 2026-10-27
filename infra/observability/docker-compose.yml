@@ -114,6 +114,12 @@ services:
       - --store_container_labels=false
       - --whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service
       - --disable_metrics=percpu,sched,tcp,udp,advtcp,hugetlb,referenced_memory,cpu_topology,resctrl,process
+    # The image's own healthcheck probes cAdvisor's default port 8080.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9180/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro

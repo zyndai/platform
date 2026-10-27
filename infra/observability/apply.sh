@@ -5,8 +5,8 @@
 # Copies this directory to ~/.zynd-obs (the compose file bind-mounts configs, and
 # a git checkout swaps files under a running container on every deploy), creates
 # ~/.zynd-obs/.env with a random Grafana password on first run, starts/updates
-# the stack and reloads whatever config changed. It never touches the app
-# containers or pm2.
+# the stack and reloads whatever config changed, and installs the pm2 exporter's
+# systemd unit. It never touches the app containers or pm2.
 set -Eeuo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,6 +38,21 @@ if [[ -n "$changes" ]]; then
       "${COMPOSE[@]}" restart "${svc%%:*}"
     fi
   done
+fi
+
+# pm2 exporter: a host service (it reads pm2, which isn't in a container), so
+# installing its systemd unit needs sudo (ubuntu has it passwordless here).
+unit=zynd-pm2-exporter.service
+if ! systemctl is-active --quiet "$unit" || grep -q ' pm2-exporter/' <<<"$changes"; then
+  if sudo -n true 2>/dev/null; then
+    sudo install -m 644 "$DEST/pm2-exporter/$unit" "/etc/systemd/system/$unit"
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$unit" >/dev/null 2>&1
+    sudo systemctl restart "$unit"
+    log "$unit (re)started"
+  else
+    log "WARNING: no passwordless sudo, install $DEST/pm2-exporter/$unit by hand"
+  fi
 fi
 
 "${COMPOSE[@]}" ps

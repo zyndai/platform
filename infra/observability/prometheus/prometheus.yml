@@ -20,6 +20,34 @@ scrape_configs:
       - targets: ["127.0.0.1:9100"]
         labels: { project: box, env: shared }
 
+  # pm2 processes (see pm2-exporter/). project/env come from the process name:
+  #   api -> persona-api, web -> persona-web, cards-web -> cards-web, X-dev -> env dev
+  - job_name: pm2
+    static_configs:
+      - targets: ["127.0.0.1:9209"]
+        labels: { project: pm2, env: shared }
+    metric_relabel_configs:
+      - source_labels: [name]
+        regex: .+
+        target_label: env
+        replacement: prod
+      - source_labels: [name]
+        regex: .+-dev
+        target_label: env
+        replacement: dev
+      - source_labels: [name]
+        regex: (.+?)(?:-dev)?
+        target_label: project
+        replacement: $1
+      - source_labels: [project, name]
+        regex: api;.*
+        target_label: project
+        replacement: persona-api
+      - source_labels: [project, name]
+        regex: web;.*
+        target_label: project
+        replacement: persona-web
+
   - job_name: caddy
     metrics_path: /metrics
     static_configs:

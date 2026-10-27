@@ -225,6 +225,13 @@
       "when": 1793002051188,
       "tag": "0031_card_suggestions",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1793113095783,
+      "tag": "0032_companion_devices",
+      "breakpoints": true
     }
   ]
 }

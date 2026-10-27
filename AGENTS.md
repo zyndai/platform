@@ -33,6 +33,7 @@ If a task mentions either of those by name, it's the wrong repo.
 |---|---|---|---|
 | `apps/persona-web` | Persona's web UI (chat, connections, groups, settings) | Next.js 16 | persona.zynd.ai |
 | `apps/cards-web` | Public profile card site (new — replaces the old `dashboard` cards pages) | Next.js | cards.zynd.ai |
+| `apps/zynd-companion` | Zynd Companion: Chromium extension that sets Working on / Currently exploring from the page you are on. Paired to a signed-in card by a revocable device token | TypeScript / esbuild (MV3) | Chrome Web Store (not published) |
 | `services/persona-api` | Persona's FastAPI backend: orchestrator, A2A protocol, MCP tools | FastAPI / Python | (behind persona-web) |
 | `services/cards-api` | Cards' FastAPI backend: onboarding, publish, search | FastAPI / Python | api.zynd.ai/cards |
 | `services/memory` | Shared context/memory layer: ingest, matching, MCP server, OAuth for AI clients | FastAPI / Python | api.zynd.ai |

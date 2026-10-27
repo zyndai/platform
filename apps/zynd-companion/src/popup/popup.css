@@ -1,0 +1,97 @@
+:root {
+  --bg: #ffffff;
+  --panel: #f5f6fa;
+  --text: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --accent: #4f6cf0;
+  --accent-text: #ffffff;
+  --danger: #b91c1c;
+  --warn-bg: #fef3c7;
+  --warn-text: #78350f;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11141c;
+    --panel: #1a1f2b;
+    --text: #e8ebf3;
+    --muted: #94a0b8;
+    --line: #2a3142;
+    --accent: #7b93ff;
+    --accent-text: #0b0f1a;
+    --danger: #f87171;
+    --warn-bg: #3b2f12;
+    --warn-text: #fde68a;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  width: 360px;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { padding: 14px 16px 12px; }
+h2 { margin: 0 0 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+section { margin-top: 14px; }
+.who { display: flex; align-items: center; gap: 10px; }
+.avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--panel); object-fit: cover; flex: none; }
+.who-name { font-weight: 650; }
+.who-sub { color: var(--muted); font-size: 12px; }
+.who a { color: inherit; }
+input[type="text"], textarea {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+textarea { resize: none; height: 54px; }
+input:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.row { display: flex; gap: 6px; align-items: stretch; }
+.row input { flex: 1; min-width: 0; }
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 11px;
+}
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 650; }
+button.link { border: 0; background: none; padding: 0; color: var(--muted); text-decoration: underline; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  max-width: 100%;
+  padding: 3px 4px 3px 9px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip button { border: 0; background: none; padding: 0 5px; line-height: 1; color: var(--muted); border-radius: 999px; }
+.kinds { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+.kinds button { padding: 3px 9px; border-radius: 999px; font-size: 12px; }
+.kinds button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.hint { color: var(--muted); font-size: 12px; }
+.addr { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 4px 0 0; }
+.clips { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.clips li { display: flex; align-items: center; gap: 8px; }
+.clips a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.tag { flex: none; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
+.x { border: 0; background: none; color: var(--muted); padding: 0 4px; }
+.banner { margin-top: 12px; padding: 9px 11px; border-radius: 10px; background: var(--warn-bg); color: var(--warn-text); }
+.banner .row { margin-top: 7px; }
+.status { min-height: 18px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.status.error { color: var(--danger); }
+footer { display: flex; justify-content: space-between; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.center { text-align: center; padding: 8px 0 4px; }
+.center h1 { font-size: 16px; margin: 6px 0; }
+.center p { color: var(--muted); margin: 0 0 14px; }

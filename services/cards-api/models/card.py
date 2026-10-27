@@ -20,6 +20,11 @@ class TopicFields(BaseModel):
             return value
         return list(dict.fromkeys(text for item in value if (text := clean_topic(item))))
 
+    @field_validator("exploring", mode="before", check_fields=False)
+    @classmethod
+    def _valid_exploring(cls, value):
+        return _clean_exploring(value)
+
 
 def _clean(value):
     if isinstance(value, dict):
@@ -244,6 +249,39 @@ class CardFact(BaseModel):
     confidence: float | None = None
 
 
+EXPLORING_KINDS = ("repo", "paper", "video", "post", "newsletter", "blog", "news", "link")
+
+
+class ExploringItem(BaseModel):
+    """Something the owner is reading, watching or trying right now, clipped from the browser
+    by the Zynd Companion extension. Shown on the card for a while, then it ages out."""
+
+    url: str = ""
+    title: str = ""
+    kind: str = "link"
+    note: str = ""
+    added_at: str = ""
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _http_only(cls, value):
+        # Rendered as an <a href> on the public card.
+        return value if isinstance(value, str) and urlparse(value).scheme in ("http", "https") else ""
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _known_kind(cls, value):
+        return value if value in EXPLORING_KINDS else "link"
+
+
+def _clean_exploring(value):
+    """Stored lists are read on every card load: drop an entry that is not a link rather than fail the card."""
+    if not isinstance(value, list):
+        return value
+    items = [ExploringItem.model_validate(v) if isinstance(v, dict) else v for v in value]
+    return [i for i in items if isinstance(i, ExploringItem) and i.url]
+
+
 class CardView(TopicFields):
     """Canonical public card: identity + approved live memory facts."""
 
@@ -254,6 +292,7 @@ class CardView(TopicFields):
     skills: list[Skill] = Field(default_factory=list)
     projects: list[Project] = Field(default_factory=list)
     working_on: list[str] = Field(default_factory=list)
+    exploring: list[ExploringItem] = Field(default_factory=list)
     can_help_with: list[str] = Field(default_factory=list)
     love_talking_about: list[str] = Field(default_factory=list)
     availability: str = ""
@@ -288,6 +327,8 @@ class AgentProfileCard(TopicFields):
     industries: list[str] = Field(default_factory=list)
     availability: str = ""
     working_on: list[str] = Field(default_factory=list)
+    # Clipped from the browser by the Zynd Companion extension (services/companion.py).
+    exploring: list[ExploringItem] = Field(default_factory=list)
     can_help_with: list[str] = Field(default_factory=list)
     connect_with: list[str] = Field(default_factory=list)
     love_talking_about: list[str] = Field(default_factory=list)

@@ -113,6 +113,8 @@ export interface AgentProfileCard {
   industries: string[];
   availability: string;
   working_on: string[];
+  /** Clipped by Zynd Companion; the API only sends the last 30 days on public reads. */
+  exploring?: ExploringItem[];
   can_help_with: string[];
   connect_with: string[];
   love_talking_about: string[];
@@ -158,6 +160,15 @@ export interface AgentProfileCard {
   previous_handles?: string[];
 }
 
+/** A page the owner clipped from their browser with Zynd Companion; shown for 30 days. */
+export interface ExploringItem {
+  url: string;
+  title: string;
+  kind: "repo" | "paper" | "video" | "post" | "newsletter" | "blog" | "news" | "link";
+  note: string;
+  added_at: string;
+}
+
 /** S06 canonical public object from GET /cards/by-handle/{handle}/view */
 export interface CardFact {
   text: string;
@@ -177,6 +188,7 @@ export interface CardView {
   skills: Skill[];
   projects: Project[];
   working_on: string[];
+  exploring?: ExploringItem[];
   can_help_with: string[];
   love_talking_about: string[];
   availability: string;

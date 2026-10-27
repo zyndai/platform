@@ -46,6 +46,7 @@ import { memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
 import { readEdition } from "@/lib/editions";
 import { EditionHero } from "./edition-banner";
 import { EditionSignals } from "./edition-signals";
+import { ExploringCard } from "./exploring-card";
 import { cleanTopic, publicTopics } from "@/lib/profile-quality";
 import { BeaconCard } from "@/components/BeaconCard";
 import { BookingAvailability } from "@/components/BookingAvailability";
@@ -1047,6 +1048,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
               )}
             </div>
             )}
+            <ExploringCard items={card.exploring ?? []} nowMs={nowMs} />
 
             {/* ── AI FACT + WORK EXP: equal height, fact card fills ── */}
             {claimed && card.beacon && Date.parse(card.beacon.created_at) <= nowMs && Date.parse(card.beacon.expires_at) > nowMs && <BeaconCard key={card.beacon.expires_at} beacon={card.beacon} />}

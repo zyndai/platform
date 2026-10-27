@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 import config
 from api.agents import router as agents_router
 from api.cards import router as cards_router
+from api.companion import router as companion_router
 from api.health import router as health_router
 from api.mcp import router as mcp_router
 from api.onboard import router as onboard_router
@@ -76,7 +77,7 @@ app = FastAPI(title="Zynd Cards API", version="1.0.0", lifespan=lifespan)
 @app.middleware("http")
 async def owner_no_cache(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith(("/cards/mine", "/cards/notifications", "/internal/owner-status")) or "/intro" in request.url.path:
+    if request.url.path.startswith(("/cards/mine", "/cards/notifications", "/cards/companion", "/internal/owner-status")) or "/intro" in request.url.path:
         response.headers["Cache-Control"] = "no-store"
         response.headers["Vary"] = "Authorization"
     return response
@@ -114,6 +115,7 @@ app.include_router(visitors_router, prefix="/cards", tags=["Visitor privacy"])
 app.include_router(network_router, prefix="/cards", tags=["Cards network"])
 app.include_router(owner_home_router, prefix="/cards", tags=["Owner home"])
 app.include_router(intros_router,prefix="/cards",tags=["Intros"])
+app.include_router(companion_router, prefix="/cards/companion", tags=["Companion"])
 app.include_router(cards_router, prefix="/cards", tags=["Cards"])
 app.include_router(mcp_router, prefix="/cards", tags=["MCP connector"])
 app.include_router(agents_router, prefix="/v1/agents", tags=["Agents"])

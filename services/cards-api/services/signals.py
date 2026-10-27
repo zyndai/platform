@@ -14,20 +14,31 @@ Precedence, memory first, then stored, case-insensitive dedupe:
   working_on     <- live `is_working_on` facts, newest approved first (they expire ~14 days
                     after approval, after which the stored list is all that is left)
   can_help_with  <- live `has_expertise_in` facts, highest confidence first
+  exploring      <- the owner's browser clips (services/companion.py) from the last
+                    EXPLORING_VISIBLE_DAYS days; older ones stay stored but stop showing
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from models.card import AgentProfileCard
 from services.card_view import fact_object, fact_predicate, live_facts
 
 WORKING_ON_CAP = 4
 CAN_HELP_WITH_CAP = 6
+EXPLORING_VISIBLE_DAYS = 30   # "currently" should not outlive the person
 
 
 def _clean(items: list[str] | None) -> list[str]:
     return [i.strip() for i in (items or []) if isinstance(i, str) and i.strip()]
+
+
+def _added_after(added_at: str, cutoff: datetime) -> bool:
+    try:
+        when = datetime.fromisoformat(added_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (when if when.tzinfo else when.replace(tzinfo=timezone.utc)) > cutoff
 
 
 def merge_unique(memory_first: list[str], stored: list[str] | None, cap: int) -> list[str]:
@@ -77,5 +88,11 @@ def derive_public_signals(card: AgentProfileCard, now: datetime | None = None) -
     if expertise:
         update["can_help_with"] = merge_unique(
             [fact_object(f) for f in expertise], card.can_help_with, CAN_HELP_WITH_CAP)
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=EXPLORING_VISIBLE_DAYS)
+    recent = [i for i in card.exploring if _added_after(i.added_at, cutoff)]
+    if len(recent) != len(card.exploring):
+        update["exploring"] = recent
 
     return card.model_copy(update=update) if update else card

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 
 import config
 from api.agents import router as agents_router
@@ -123,3 +124,8 @@ app.include_router(chat_router, prefix="/v1/chat", tags=["Chat"])
 app.include_router(health_router, prefix="/health", tags=["Health"])
 app.include_router(internal_router, prefix="/internal", tags=["Internal"])
 app.include_router(events_router, tags=["Events"])
+
+# Prometheus scrape endpoint for infra/observability: request counts and latency per
+# route template. Paths that match no route (scanners) are grouped as "none", so label
+# cardinality stays bounded. Caddy answers 404 for /metrics on every public host.
+Instrumentator(excluded_handlers=["/metrics"]).instrument(app).expose(app, include_in_schema=False)

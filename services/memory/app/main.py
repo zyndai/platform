@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app import log_setup
 from app.auth import issue_personal_token, verify_access_meta
@@ -64,6 +65,12 @@ app.include_router(oauth_ui_router)
 app.include_router(connect_router)
 app.include_router(docs_router)
 app.include_router(plugin_review_router)
+
+# Prometheus scrape endpoint for infra/observability: request counts and latency per
+# route template. Paths that match no route (scanners) are grouped as "none", so label
+# cardinality stays bounded. Caddy answers 404 for /metrics on every public host. This
+# covers the API only; the MCP and plugin servers are separate apps (see Caddy's access log).
+Instrumentator(excluded_handlers=["/metrics"]).instrument(app).expose(app, include_in_schema=False)
 
 _PRIVACY_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">

@@ -43,6 +43,16 @@ Multi-line output is joined into one entry: a Python traceback, a faulthandler
 dump, a Next.js error with its stack are each a single log line in Loki, and
 the pm2 `YYYY-MM-DDTHH:MM:SS:` prefix is stripped (Loki has its own timestamp).
 
+App metrics: cards-api and memory-api (the API, not the MCP/plugin servers)
+expose `/metrics` (prometheus-fastapi-instrumentator): `http_requests_total`
+and `http_request_duration_seconds_bucket` by `handler` (the route template, so
+`/cards/{handle}`, never the raw path; unmatched paths are one `none` value),
+`method` and `status` (`2xx`..`5xx`), plus `process_resident_memory_bytes`.
+Caddy answers 404 for `/metrics` on the public hosts, but the containers also
+publish 8001/8002 on the box's public IP, so close those ports. MCP and plugin
+traffic is only visible in the Caddy access log (per path) and in the
+container CPU/RAM series.
+
 pm2 metrics (`pm2_process_memory_bytes`, `pm2_process_cpu_percent`,
 `pm2_process_restarts_total`, `pm2_process_uptime_seconds`,
 `pm2_process_online`, `pm2_up`) carry the same `project`/`env` labels.
@@ -99,5 +109,4 @@ The one env var is `GRAFANA_ADMIN_PASSWORD`, a secret kept only in
 
 ## Not done yet
 
-FastAPI `/metrics`, dashboards and alert rules. See the phases in the monitoring
-plan.
+Dashboards and alert rules. See the phases in the monitoring plan.

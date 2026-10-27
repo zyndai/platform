@@ -48,6 +48,23 @@ scrape_configs:
         target_label: project
         replacement: persona-web
 
+  # The two FastAPI services expose /metrics (prometheus-fastapi-instrumentator):
+  # request counts and latency per route template, plus process RAM/CPU.
+  # Ports are the ones the containers publish on the host (prod 8001/8002, dev 8101/8102).
+  - job_name: cards-api
+    static_configs:
+      - targets: ["127.0.0.1:8002"]
+        labels: { project: cards-api, env: prod }
+      - targets: ["127.0.0.1:8102"]
+        labels: { project: cards-api, env: dev }
+
+  - job_name: memory-api
+    static_configs:
+      - targets: ["127.0.0.1:8001"]
+        labels: { project: memory-api, env: prod }
+      - targets: ["127.0.0.1:8101"]
+        labels: { project: memory-api, env: dev }
+
   - job_name: caddy
     metrics_path: /metrics
     static_configs:

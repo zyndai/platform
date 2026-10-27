@@ -25,26 +25,27 @@ export function track(event: string, meta?: Record<string, unknown>, handle?: st
   }
 }
 
-/** Server-side agent_fetch logger for route handlers. Non-blocking. */
-export function logAgentFetch(
+/** Awaitable so server callers can keep delivery alive with Next's after(). */
+export async function logAgentFetch(
   endpoint: string,
   userAgent: string | null | undefined,
   handle?: string,
-): void {
+): Promise<void> {
   if (!eventsEnabled) return;
   const body = JSON.stringify({
     events: [{ event: "agent_fetch", handle, meta: { endpoint } }],
   });
   try {
-    void fetch(`${CARDS_API}/events`, {
+    await fetch(`${CARDS_API}/events`, {
       method: "POST",
+      signal: AbortSignal.timeout(5000),
       headers: {
         "Content-Type": "application/json",
         ...(userAgent ? { "User-Agent": userAgent } : {}),
       },
       body,
       keepalive: true,
-    }).catch(() => undefined);
+    });
   } catch {
     // ignore
   }

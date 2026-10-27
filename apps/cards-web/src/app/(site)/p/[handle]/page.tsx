@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { after } from "next/server";
 import { BadgeCheck, Calendar, Clock, Globe, Search, Sparkles, Video } from "lucide-react";
 
 import {
@@ -29,6 +31,7 @@ import { CountUp } from "./count-up";
 import { AutoScroll } from "./auto-scroll";
 import { ContributionHeatmap } from "./contribution-heatmap";
 import { ProfileView } from "@/components/ProfileView";
+import { logAgentFetch } from "@/lib/track";
 import { parseSearchRef } from "@/lib/search-link";
 import { ProfileChatWidget } from "@/components/ProfileChatWidget";
 import { FallbackAvatar } from "@/components/FallbackAvatar";
@@ -407,6 +410,15 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
   // canonical one so links, sharing and SEO settle on a single address.
   if (card.handle && card.handle !== handle) {
     redirect(`/p/${encodeURIComponent(card.handle)}`);
+  }
+
+  // Crawlers may read HTML without mounting ProfileView. Preserve their header
+  // at this boundary; our backend fetches otherwise identify only the web server.
+  // Human view counts still come from ProfileView (agent_fetch is separate).
+  const requestHeaders = await headers();
+  if (!requestHeaders.has("next-router-prefetch") && requestHeaders.get("purpose") !== "prefetch") {
+    const userAgent = requestHeaders.get("user-agent");
+    after(() => logAgentFetch("profile-page", userAgent, handle));
   }
 
   const { identity } = card;

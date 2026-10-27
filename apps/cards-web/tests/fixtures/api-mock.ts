@@ -78,6 +78,7 @@ export function startFixtureServer(): Promise<void> {
   let hasDuplicate = true;
   let anonymousMode = true;
   let humanViews = 12;
+  let capturedEvents: { event: string; handle?: string; meta?: { endpoint?: string }; userAgent: string }[] = [];
   let namedVisits = 0;
   const namedVisitIds = new Set<string>();
   let prefs = { weekly_digest: true, email_nudges: false, morning_digest: true };
@@ -168,15 +169,18 @@ export function startFixtureServer(): Promise<void> {
       return;
     }
     if (path === "/__s10/reset") {
+      capturedEvents = [];
       namedVisitIds.clear();
       ownerCard = cardFixture("owner"); hasDuplicate = true; anonymousMode = true; humanViews = 12; namedVisits = 0; prefs = { weekly_digest: true, email_nudges: false, morning_digest: true };
       return json(200, {});
     }
+    if (path === "/__s10/events") return json(200, capturedEvents);
     if (path === "/events") {
       let raw = "";
       req.on("data", chunk => { raw += chunk; });
       req.on("end", () => {
         const events = JSON.parse(raw || "{}").events || [];
+        capturedEvents.push(...events.map((event: { event: string; handle?: string; meta?: { endpoint?: string } }) => ({ ...event, userAgent: req.headers["user-agent"] || "" })));
         for (const event of events) if (event.event === "view" && event.handle === "owner" && event.meta?.endpoint === "profile-page" && (req.headers["user-agent"] || "").includes("Mozilla/")) humanViews++;
         return json(204, {});
       });

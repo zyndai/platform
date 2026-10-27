@@ -10,7 +10,7 @@ from uuid import UUID
 import httpx
 
 import config
-from models.card import AgentProfileCard, CardSynthesis, Source, WritingSample
+from models.card import AgentProfileCard, CardSynthesis, Source, WorkItem, WritingSample
 from services import embed
 from services.jobs import new_card_id, utcnow
 
@@ -76,6 +76,9 @@ def can_claim(stored_hash: str | None, claim_token: str | None) -> bool:
         return bool(claim_token) and hmac.compare_digest(hash_claim_token(claim_token), stored_hash)
     return config.LEGACY_UNOWNED_CLAIM
 
+
+# Slots in writing_samples kept for newsletter / blog posts when X and LinkedIn would fill them all.
+SITE_POST_SLOTS = 4
 
 _HTML_TAG = re.compile(r"<[^>]+>")
 _URL = re.compile(r"https?://\S+", re.I)
@@ -152,6 +155,7 @@ def assemble_card(
     contribution_stats: dict | None = None,
     work_experience: list[dict] | None = None,
     x_scraped: bool | None = None,
+    work_gallery: list[dict] | None = None,
 ) -> AgentProfileCard:
     card_id = new_card_id()
     now = utcnow()
@@ -210,6 +214,7 @@ def assemble_card(
         skills=synth.skills,
         projects=synth.projects,
         writing_samples=synth.writing_samples,
+        work_gallery=[item for w in work_gallery or [] if (item := WorkItem.model_validate(w)).image_url],
         searchable_facts=synth.searchable_facts,
         sources=synth.sources,
         experience_years=synth.experience_years,
@@ -309,12 +314,15 @@ def merge_scraped_posts(
     x_posts: list[dict] | None,
     linkedin_posts: list[dict] | None,
     cap: int = 10,
+    site_posts: list[dict] | None = None,
 ) -> list[WritingSample]:
-    """Guarantee both platforms appear in writing_samples.
+    """Guarantee every platform appears in writing_samples.
 
     The LLM under-fills when both X and LinkedIn sections are present, so
     real scraped posts (dated, with URLs) are injected deterministically,
     interleaved X/LinkedIn-first, and LLM picks fill the remaining slots.
+    Newsletter / blog posts (`site_posts`, each with its own platform) keep a
+    few slots of their own so a busy X feed can't crowd them out.
     """
     def _key(w: WritingSample) -> str:
         url = (w.url or "").strip().rstrip("/")
@@ -332,7 +340,7 @@ def merge_scraped_posts(
         seen.add(key)
         result.append(w)
 
-    def norm(posts: list[dict] | None, platform: str) -> list[WritingSample]:
+    def norm(posts: list[dict] | None, platform: str | None) -> list[WritingSample]:
         out: list[WritingSample] = []
         for p in posts or []:
             if not isinstance(p, dict):
@@ -341,7 +349,7 @@ def merge_scraped_posts(
             if not excerpt or is_thin_excerpt(excerpt):
                 continue
             out.append(WritingSample(
-                platform=platform,
+                platform=platform or str(p.get("platform") or "blog"),
                 excerpt=excerpt,
                 url=str(p.get("url") or ""),
                 posted_at=str(p.get("posted_at") or ""),
@@ -358,9 +366,12 @@ def merge_scraped_posts(
         if i < len(li_norm):
             interleaved.append(li_norm[i])
 
+    site_norm = norm(site_posts, None)[:SITE_POST_SLOTS]
     for w in interleaved:
-        if len(result) >= cap:
+        if len(result) >= cap - len(site_norm):
             break
+        add(w)
+    for w in site_norm:
         add(w)
     for w in llm_samples:
         if len(result) >= cap:

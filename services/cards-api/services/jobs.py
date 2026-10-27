@@ -30,6 +30,8 @@ class _Job:
         # whole build is in. Keyed by URL; insertion order is display order.
         self.sources: dict[str, dict] = {}
         self.stage = "reading"
+        # Which kind of professional the synthesis decided this is (synthesis/taxonomy.py); "" until ready.
+        self.persona = ""
         self.task: asyncio.Task | None = None
 
 
@@ -46,12 +48,13 @@ def get_job(job_id: str) -> _Job | None:
     return _jobs.get(job_id)
 
 
-def set_ready(job_id: str, card: AgentProfileCard, scrape_raw: dict | None = None) -> None:
+def set_ready(job_id: str, card: AgentProfileCard, scrape_raw: dict | None = None, persona: str = "") -> None:
     if job := _jobs.get(job_id):
         job.status = "ready"
         job.stage = "ready"
         job.card = card
         job.scrape_raw = scrape_raw
+        job.persona = persona
 
 
 def set_error(job_id: str, message: str) -> None:

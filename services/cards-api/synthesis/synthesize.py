@@ -2,6 +2,7 @@ import json
 
 import config
 from models.card import CardSynthesis
+from synthesis import taxonomy
 
 _SYSTEM = """\
 You synthesize a single-person professional profile from raw source data.
@@ -42,6 +43,10 @@ Rules:
   single-word or emoji-only posts, posts shorter than 40 chars with no real content,
   and posts that are just URLs or "True" / "Yup" / reaction words.
   Prioritise posts that show expertise, opinions, or things the person built.
+  The "Website / Portfolio" section may list the person's OWN newsletter or blog posts
+  (Substack, Medium, Ghost, a personal blog). Include up to 5 of them: `platform` is "substack",
+  "medium" or "blog" by site, `excerpt` is the post title plus its subtitle or first sentence when
+  shown, and `url` is the post's own URL. Skip the site's navigation, recommendations and other authors.
 - `projects`: Also use GitHub `recent_activity` — if the person pushed to a repo
   that is not already in their top repos, add it as a project with the commit
   messages as description context. PR titles are strong signals of what they build.
@@ -83,6 +88,7 @@ Rules:
 
 Schema:
 {
+  "persona": "engineering|founder|product_design|marketing_sales|creator|research|investor|general",
   "identity": {"name": str, "headline": str, "location": str, "avatar_url": str, "avatar_bg_url": str, "links": {"github": str|null, "x": str|null, "linkedin": str|null, "website": str|null}},
   "citation_snippet": str,
   "summary": str,
@@ -103,43 +109,7 @@ Schema:
 }
 """
 
-# The one-tap chips on the create page (apps/cards-web/src/app/(site)/create/
-# chips.ts). A suggestion that reuses a label lands pre-selected on that chip;
-# anything else shows up as a custom chip.
-CHIP_VOCAB = {
-    "working_on": [
-        "Building a startup", "Building with AI", "Open source", "Side project", "Indie hacking",
-        "B2B SaaS", "Consumer apps", "Deep tech / research", "Freelancing", "At a company",
-        "Doing research", "Grad school", "Writing", "Teaching / mentoring", "Community building",
-        "Design / creative work", "Investing", "Job hunting",
-    ],
-    "can_help_with": [
-        "Code review", "System design", "ML / AI", "Cloud / infra", "Data / analytics", "Security",
-        "Technical interviews", "Hiring", "Career advice", "Fundraising", "Pitching / storytelling",
-        "Sales", "Marketing", "Go-to-market", "Design", "Legal / compliance", "Immigration / visas",
-        "Public speaking",
-    ],
-    "connect_with": [
-        "Founders", "Investors", "Engineers", "ML Researchers", "Product Managers", "Designers",
-        "Operators", "Scientists", "Recruiters", "Mentors", "Potential co-founders", "Customers",
-        "Students", "Writers", "DevRel", "Researchers in my field", "Healthcare builders",
-        "Robotics people",
-    ],
-    "love_talking_about": [
-        "AI / ML", "Agentic AI", "Startups", "Developer tools", "Open source", "Web3 / Crypto",
-        "Climate tech", "Robotics", "Hardware", "Design", "Research", "SaaS",
-        "Engineering culture", "Books", "Philosophy", "Personal finance", "Gaming",
-        "History / science",
-    ],
-}
-
-_SYSTEM += """
-Preferred labels for `working_on`, `can_help_with`, `connect_with` and
-`love_talking_about`: the person picks from these on screen. When one fits what
-the evidence shows, use that label EXACTLY as written; only write your own short
-phrase when none fits. The evidence rules above still apply: never pad a list
-with a label the data does not support.
-""" + "".join(f"\n{key}: {' | '.join(labels)}" for key, labels in CHIP_VOCAB.items()) + "\n"
+_SYSTEM += taxonomy.prompt_section()
 
 
 def _build_user_prompt(

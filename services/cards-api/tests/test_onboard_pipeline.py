@@ -123,3 +123,50 @@ def test_cancel_stops_a_running_build(monkeypatch):
         assert cancel_job(job_id) is False  # nothing left to stop
 
     asyncio.run(scenario())
+
+
+def test_newsletter_and_portfolio_sources_become_posts_and_a_gallery(monkeypatch):
+    """A Substack's posts and a Behance profile's projects are proof too: they go on the card without the LLM."""
+    post_url = "https://ada.substack.com/p/how-i-hire"
+    cover = "https://mir-s3-cdn-cf.behance.net/projects/202/aaa.jpg"
+
+    async def fake_fetch(url):
+        if "substack" in url:
+            posts = [{"platform": "substack", "excerpt": "How I hire designers who ship", "url": post_url, "posted_at": ""}]
+            return "writing", "Title: Ada's notes\n\nMarkdown Content:\nPlain words about hiring designers who ship.", {"posts_raw": posts}
+        gallery = [{"title": "Orbit", "url": "https://www.behance.net/gallery/1/Orbit", "image_url": cover, "source": "behance"}]
+        return "portfolio", "Title: Ada on Behance", {"gallery": gallery}
+
+    def fake_synthesize(*_a, **_k):
+        return CardSynthesis(persona="Product Design", identity={"name": "Ada"})
+
+    monkeypatch.setattr(onboard_api, "_safe_fetch_url", fake_fetch)
+    monkeypatch.setattr(onboard_api, "synthesize_card", fake_synthesize)
+
+    job_id = create_job()
+    urls = ["https://ada.substack.com", "https://www.behance.net/ada"]
+    asyncio.run(onboard_api._run_pipeline(job_id, urls, None))
+
+    job = get_job(job_id)
+    assert job.error is None
+    assert [(w.platform, w.url) for w in job.card.writing_samples] == [("substack", post_url)]
+    assert [(g.title, g.image_url) for g in job.card.work_gallery] == [("Orbit", cover)]
+    assert job.persona == "product_design"
+
+    substack = job.sources["https://ada.substack.com"]
+    assert substack["kind"] == "writing" and substack["preview"]["facts"] == ["1 recent posts"]
+    assert substack["preview"]["posts"] == ["How I hire designers who ship"]
+    behance = job.sources["https://www.behance.net/ada"]
+    assert behance["kind"] == "portfolio" and behance["preview"]["images"] == [cover]
+
+    status = asyncio.run(onboard_api.get_onboard_status(job_id))
+    assert status["persona"] == "product_design"
+
+
+def test_source_kinds_are_classified_by_host():
+    classify = onboard_api._classify_url
+    assert classify("https://ada.substack.com/archive") == "writing"
+    assert classify("https://www.behance.net/ada") == "portfolio"
+    assert classify("https://dribbble.com/ada") == "portfolio"
+    assert classify("https://github.com/ada") == "github"
+    assert classify("https://ada.dev") == "website"

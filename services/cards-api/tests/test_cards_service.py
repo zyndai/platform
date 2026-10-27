@@ -530,3 +530,21 @@ def test_get_card_by_owner_falls_back_to_unpublished_owned_card(monkeypatch):
     assert handle == "chandan-kumar-c5r4"
     assert card.status == "pending_review"
     assert q.status_filters == ["published"]  # published pass ran first
+
+
+def test_site_posts_keep_their_own_slots_when_social_would_fill_the_cap():
+    x_posts = [{"platform": "x", "excerpt": f"Shipped tweet number {i} today.", "url": f"https://x.com/a/status/{i}", "posted_at": ""} for i in range(12)]
+    site_posts = [
+        {"platform": "substack", "excerpt": f"Newsletter issue number {i} on pricing", "url": f"https://a.substack.com/p/{i}", "posted_at": ""}
+        for i in range(5)
+    ]
+    merged = cards_service.merge_scraped_posts([], x_posts, None, site_posts=site_posts)
+    assert len(merged) == 10
+    assert sum(w.platform == "substack" for w in merged) == 4  # SITE_POST_SLOTS
+    assert sum(w.platform == "x" for w in merged) == 6
+
+
+def test_site_posts_without_social_all_land():
+    site_posts = [{"platform": "medium", "excerpt": "A long read about shipping slower", "url": "https://medium.com/@a/x-1234567890ab", "posted_at": ""}]
+    merged = cards_service.merge_scraped_posts([], None, None, site_posts=site_posts)
+    assert [(w.platform, w.url) for w in merged] == [("medium", "https://medium.com/@a/x-1234567890ab")]

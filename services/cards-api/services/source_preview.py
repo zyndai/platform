@@ -17,6 +17,11 @@ _LABELLED = {
 _BIO_MAX = 240
 _POSTS_SHOWN = 3
 _POST_MAX = 200
+_TITLE_MAX = 100
+_IMAGES_SHOWN = 4
+# Pages read through Jina Reader: no labelled name/headline lines, a "Title:" header instead.
+_PAGE_KINDS = ("website", "writing", "portfolio")
+_MARKDOWN_START = "Markdown Content:"
 
 
 def _labelled(text: str, labels: tuple[str, ...]) -> str:
@@ -30,6 +35,16 @@ def _labelled(text: str, labels: tuple[str, ...]) -> str:
 def _clip(value: str, limit: int) -> str:
     value = " ".join(value.split())
     return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
+
+
+def _first_paragraph(text: str) -> str:
+    """The first run of plain prose on a page, skipping the navigation links and headings above it."""
+    body = text.split(_MARKDOWN_START, 1)[-1]
+    for block in re.split(r"\n\s*\n", body):
+        block = " ".join(block.split())
+        if len(block) >= 40 and not block.startswith(("[", "!", "#", "*", "-", "|", "<")):
+            return block
+    return ""
 
 
 def _post_excerpts(posts: list | None) -> list[str]:
@@ -69,6 +84,11 @@ def text_preview(kind: str, text: str, stats: dict | None) -> dict:
         facts.append(f"{stats['followers']} followers")
     if stats.get("posts") not in (None, "", "—", 0):
         facts.append(f"{stats['posts']} posts")
+    gallery = stats.get("gallery") or []
+    if stats.get("posts_raw") and kind in _PAGE_KINDS:
+        facts.append(f"{len(stats['posts_raw'])} recent posts")
+    if gallery:
+        facts.append(f"{len(gallery)} projects")
     preview = {
         "name": _labelled(text, _LABELLED["name"]),
         "headline": _labelled(text, _LABELLED["headline"]),
@@ -77,9 +97,13 @@ def text_preview(kind: str, text: str, stats: dict | None) -> dict:
         "avatar": stats.get("avatar") or "",
         "facts": facts,
         "posts": _post_excerpts(stats.get("posts_raw")),
+        "images": [g["image_url"] for g in gallery if g.get("image_url")][:_IMAGES_SHOWN],
     }
-    if kind == "website" and not preview["name"]:
-        preview["bio"] = preview["bio"] or _clip(text, _BIO_MAX)
+    if kind in _PAGE_KINDS and not preview["name"]:
+        preview["headline"] = preview["headline"] or _clip(_labelled(text, ("Title",)), _TITLE_MAX)
+        # Text that never went through the reader has no header to skip; with a header, no prose means no bio.
+        prose = _first_paragraph(text) or ("" if _MARKDOWN_START in text else text)
+        preview["bio"] = preview["bio"] or _clip(prose, _BIO_MAX)
     return preview
 
 

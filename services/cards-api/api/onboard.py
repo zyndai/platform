@@ -17,6 +17,7 @@ from scraping import github as github_scraper
 from scraping import linkedin as linkedin_scraper
 from scraping import website as website_scraper
 from scraping import x as x_scraper
+from scraping import sites as site_scraper
 from scraping.resume import extract_resume_text
 from services import cards as cards_service
 from services.jobs import cancel_job, create_job, get_job, set_error, set_ready, set_source, set_stage, utcnow
@@ -78,6 +79,10 @@ def _classify_url(url: str) -> str:
         return "x"
     if host == "linkedin.com" or host.endswith(".linkedin.com"):
         return "linkedin"
+    if site_scraper.is_writing_url(url):
+        return "writing"
+    if site_scraper.portfolio_platform(url):
+        return "portfolio"
     return "website"
 
 
@@ -94,7 +99,10 @@ def _handle_from_url(url: str) -> str | None:
 
 
 async def _safe_fetch_url(url: str) -> tuple[str, str, dict | None]:
-    """Returns (kind, text, stats_or_None). kind ∈ {'x', 'linkedin', 'website'}."""
+    """Returns (kind, text, stats_or_None). kind ∈ {'x', 'linkedin', 'writing', 'portfolio', 'website'}.
+
+    For a newsletter / blog / design portfolio, stats holds what scraping/sites.py
+    found on the page: `posts_raw` (post links) and/or `gallery` (project tiles)."""
     kind = _classify_url(url)
     try:
         if kind == "x":
@@ -102,8 +110,12 @@ async def _safe_fetch_url(url: str) -> tuple[str, str, dict | None]:
         elif kind == "linkedin":
             text, stats = await linkedin_scraper.fetch_linkedin_profile(url)
         else:
-            text = await website_scraper.fetch_website(url)
-            stats = None
+            text, markdown = await website_scraper.fetch_page(url)
+            found = {
+                "posts_raw": site_scraper.extract_posts(markdown, url),
+                "gallery": site_scraper.extract_gallery(markdown, url),
+            }
+            stats = {k: v for k, v in found.items() if v} or None
         logger.info("scraped %s url=%s chars=%d", kind, url, len(text))
         return kind, text, stats
     except Exception as exc:
@@ -183,6 +195,8 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
                 expanded.append(u)
 
         website_texts: list[str] = []
+        site_posts: list[dict] = []
+        work_gallery: list[dict] = []
         x_texts: list[str] = []
         linkedin_texts: list[str] = []
         x_stats_data: dict | None = None
@@ -209,6 +223,8 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
                         linkedin_url_used = orig_url
                 else:
                     website_texts.append(text)
+                    site_posts += (stats or {}).get("posts_raw") or []
+                    work_gallery += (stats or {}).get("gallery") or []
 
         # Exclude resume — user-uploaded private document; public scrapes only
         scrape_raw: dict = {
@@ -255,7 +271,7 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
         li_posts_raw = (linkedin_stats_data or {}).pop("posts_raw", None) if linkedin_stats_data else None
         work_experience_raw = (linkedin_stats_data or {}).pop("work_experience_raw", None) if linkedin_stats_data else None
         synth.writing_samples = cards_service.merge_scraped_posts(
-            synth.writing_samples, x_posts_raw, li_posts_raw
+            synth.writing_samples, x_posts_raw, li_posts_raw, site_posts=site_posts,
         )
 
         card = cards_service.assemble_card(
@@ -266,6 +282,7 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
             contribution_stats=github_data.get("contribution_stats") if github_data else None,
             work_experience=work_experience_raw or None,
             x_scraped=bool(x_texts),
+            work_gallery=work_gallery[: site_scraper.GALLERY_ITEMS],
         )
 
         # Set handles before set_ready so publish sees them immediately
@@ -274,7 +291,7 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
             job.handle_github = github_handle
             job.handle_x = x_handle
             job.linkedin_url = linkedin_url_used
-        set_ready(job_id, card, scrape_raw=scrape_raw)
+        set_ready(job_id, card, scrape_raw=scrape_raw, persona=synth.persona)
     except Exception as exc:
         logger.warning("onboarding pipeline failed job=%s type=%s", job_id, type(exc).__name__)
         set_error(job_id, "We couldn't finish building your card. Your inputs are kept; please try again.")
@@ -343,6 +360,7 @@ async def get_onboard_status(job_id: str):
         "url_warnings": job.url_warnings,
         "stage": job.stage,
         "sources": list(job.sources.values()),
+        "persona": job.persona,
     }
 
 

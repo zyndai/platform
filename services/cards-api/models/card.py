@@ -220,6 +220,21 @@ class Beacon(BaseModel):
         return self
 
 
+class WorkItem(BaseModel):
+    """One piece of visual work (a Behance project, a Dribbble shot) shown as a tile on the card."""
+
+    title: str = ""
+    url: str = ""
+    image_url: str = ""
+    source: str = ""
+
+    @field_validator("url", "image_url", mode="before")
+    @classmethod
+    def _http_only(cls, value):
+        # Both end up in an <a href> / <img src> on the public card.
+        return value if isinstance(value, str) and urlparse(value).scheme in ("http", "https") else ""
+
+
 class CardFact(BaseModel):
     text: str = ""
     type: str = ""
@@ -264,6 +279,8 @@ class AgentProfileCard(TopicFields):
     skills: list[Skill] = Field(default_factory=list)
     projects: list[Project] = Field(default_factory=list)
     writing_samples: list[WritingSample] = Field(default_factory=list)
+    # Visual proof from a design portfolio (Behance, Dribbble); shown as a tile grid.
+    work_gallery: list[WorkItem] = Field(default_factory=list)
     searchable_facts: list[str] = Field(default_factory=list)
     sources: list[Source] = Field(default_factory=list)
     review: Review = Field(default_factory=Review)
@@ -316,6 +333,9 @@ class AgentProfileCard(TopicFields):
 class CardSynthesis(TopicFields):
     """The subset the LLM produces; id/status/timestamps are assembled server-side."""
 
+    # Which kind of professional this is; picks the create page's chip vocabulary. Not stored on the card.
+    persona: str = ""
+
     identity: Identity = Field(default_factory=Identity)
     citation_snippet: str = ""
     summary: str = ""
@@ -349,6 +369,12 @@ class CardSynthesis(TopicFields):
             if isinstance(cleaned.get(key), str):
                 cleaned[key] = []
         return cleaned
+
+    @field_validator("persona", mode="before")
+    @classmethod
+    def _known_persona(cls, v):
+        from synthesis.taxonomy import normalize_persona
+        return normalize_persona(v)
 
     @field_validator("experience_years", mode="before")
     @classmethod

@@ -1,0 +1,134 @@
+# Every series carries `project` and `env` so dashboards can filter on them:
+#   project: cards-api, memory-api, mcp, worker, chatgpt-plugin, claude-plugin,
+#            cards-web, persona-api, persona-web, postgres, redis, box, caddy
+#   env:     prod | dev | shared
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+        labels: { project: monitoring, env: shared }
+
+  - job_name: node
+    static_configs:
+      - targets: ["127.0.0.1:9100"]
+        labels: { project: box, env: shared }
+
+  - job_name: caddy
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:2019"]
+        labels: { project: caddy, env: shared }
+
+  # Containers. project/env come from the compose labels cAdvisor keeps:
+  #   compose project zynd -> prod, zynd-dev -> dev
+  #   compose service api -> memory-api, cards -> cards-api, X-dev -> X
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["127.0.0.1:9180"]
+    metric_relabel_configs:
+      # cAdvisor reports the cgroup of every container plus parents; keep only
+      # the compose-managed ones and the standalone test Postgres.
+      - source_labels: [container_label_com_docker_compose_service, name]
+        regex: ";(?:zynd-cards-test-pg)|.+;.*"
+        action: keep
+      - source_labels: [container_label_com_docker_compose_project]
+        regex: zynd-dev
+        target_label: env
+        replacement: dev
+      - source_labels: [container_label_com_docker_compose_project]
+        regex: zynd
+        target_label: env
+        replacement: prod
+      - source_labels: [container_label_com_docker_compose_service]
+        regex: (.+?)(?:-dev)?
+        target_label: project
+        replacement: $1
+      - source_labels: [project]
+        regex: api
+        target_label: project
+        replacement: memory-api
+      - source_labels: [project]
+        regex: cards
+        target_label: project
+        replacement: cards-api
+      # This stack's own containers count as one project.
+      - source_labels: [container_label_com_docker_compose_project]
+        regex: zynd-obs
+        target_label: env
+        replacement: shared
+      - source_labels: [container_label_com_docker_compose_project]
+        regex: zynd-obs
+        target_label: project
+        replacement: monitoring
+      # The test Postgres has no compose labels.
+      - source_labels: [name]
+        regex: zynd-cards-test-pg
+        target_label: project
+        replacement: cards-test-pg
+      - source_labels: [name]
+        regex: zynd-cards-test-pg
+        target_label: env
+        replacement: test
+      - regex: container_label_com_docker_compose_(project|service)
+        action: labeldrop
+
+  # Uptime of the public URLs. Any answer below 500 counts as up: the API roots
+  # legitimately return 404.
+  - job_name: probe-prod
+    metrics_path: /probe
+    params: { module: [http_up] }
+    static_configs:
+      - targets:
+          - https://cards.zynd.ai
+          - https://cards.api.zynd.ai/health
+          - https://api.zynd.ai/health
+          - https://persona.zynd.ai
+          - https://persona.api.zynd.ai/health
+        labels: { env: prod }
+    relabel_configs: &probe_relabel
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: url
+      - source_labels: [__param_target]
+        regex: https://([^./]+\.)?(cards\.api)\..*
+        target_label: project
+        replacement: cards-api
+      - source_labels: [__param_target]
+        regex: https://(dev\.)?cards\.zynd\.ai
+        target_label: project
+        replacement: cards-web
+      - source_labels: [__param_target]
+        regex: https://(dev\.)?api\.zynd\.ai.*
+        target_label: project
+        replacement: memory-api
+      - source_labels: [__param_target]
+        regex: https://(dev\.)?persona\.zynd\.ai
+        target_label: project
+        replacement: persona-web
+      - source_labels: [__param_target]
+        regex: https://(dev\.)?persona\.api\.zynd\.ai.*
+        target_label: project
+        replacement: persona-api
+      - target_label: __address__
+        replacement: 127.0.0.1:9115
+
+  - job_name: probe-dev
+    metrics_path: /probe
+    params: { module: [http_up] }
+    static_configs:
+      - targets:
+          - https://dev.cards.zynd.ai
+          - https://dev.cards.api.zynd.ai/health
+          - https://dev.api.zynd.ai/health
+          - https://dev.persona.zynd.ai
+          - https://dev.persona.api.zynd.ai/health
+        labels: { env: dev }
+    relabel_configs: *probe_relabel

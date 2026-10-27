@@ -1,0 +1,12 @@
+modules:
+  # Up = the TLS handshake works and the server answers below 500. A 404 is fine:
+  # the API roots have no page, and a 404 still proves Caddy and the app are up.
+  http_up:
+    prober: http
+    timeout: 10s
+    http:
+      valid_status_codes: [200, 204, 301, 302, 307, 308, 401, 403, 404]
+      method: GET
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: false
+      fail_if_not_ssl: true

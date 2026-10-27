@@ -1,0 +1,140 @@
+# Monitoring stack for the single box: metrics (Prometheus), logs (Loki), the log
+# shipper (Alloy), dashboards (Grafana) and the exporters that feed them.
+# See README.md. Run it through apply.sh, not by hand, so the config is copied
+# to ~/.zynd-obs first (bind-mounting the git checkout breaks when git swaps files).
+#
+# Everything uses host networking and binds 127.0.0.1 only. Most of the apps
+# listen on loopback, which a bridge-network container can't reach, and nothing
+# here should be reachable from the internet. Reach Grafana over an SSH tunnel:
+#   ssh -L 3030:127.0.0.1:3030 <box>   ->   http://localhost:3030
+#
+# Ports: grafana 3030, prometheus 9090, loki 3100 (grpc 9096), alloy 12345,
+# node_exporter 9100, blackbox 9115, cadvisor 9180.
+name: zynd-obs
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    network_mode: host
+    restart: unless-stopped
+    mem_limit: 1g
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.listen-address=127.0.0.1:9090
+      - --web.enable-lifecycle
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+
+  loki:
+    image: grafana/loki:3.5.0
+    network_mode: host
+    restart: unless-stopped
+    mem_limit: 1g
+    command: -config.file=/etc/loki/config.yml
+    volumes:
+      - ./loki:/etc/loki:ro
+      - loki-data:/loki
+
+  # Reads the pm2 log files, the Docker container logs and Caddy's access log
+  # and pushes them to Loki. Root, because it reads the Docker socket and
+  # caddy's 0600 access.log.
+  alloy:
+    image: grafana/alloy:v1.9.0
+    network_mode: host
+    user: root
+    restart: unless-stopped
+    mem_limit: 512m
+    command:
+      - run
+      - --server.http.listen-addr=127.0.0.1:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./alloy:/etc/alloy:ro
+      - alloy-data:/var/lib/alloy/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /home/ubuntu/.pm2/logs:/pm2-logs:ro
+      - /var/log/caddy:/caddy-logs:ro
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:12.0.0
+    network_mode: host
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      GF_SERVER_HTTP_ADDR: 127.0.0.1
+      GF_SERVER_HTTP_PORT: "3030"
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+
+  # The box itself: RAM, CPU, disk, network, OOM kills.
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    network_mode: host
+    pid: host
+    restart: unless-stopped
+    mem_limit: 128m
+    command:
+      - --web.listen-address=127.0.0.1:9100
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|run/docker/.+|var/lib/docker/.+)($$|/)
+    volumes:
+      - /:/host:ro,rslave
+
+  # Per-container memory/CPU. Only the compose labels are kept, which is what
+  # the project/env labels in prometheus.yml are derived from. Needs >= 0.55:
+  # earlier releases can't identify containers when Docker uses the containerd
+  # image store (Docker 29 default), and report only the root cgroup.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    network_mode: host
+    restart: unless-stopped
+    mem_limit: 256m
+    command:
+      - --listen_ip=127.0.0.1
+      - --port=9180
+      - --docker_only=true
+      - --housekeeping_interval=30s
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service
+      - --disable_metrics=percpu,sched,tcp,udp,advtcp,hugetlb,referenced_memory,cpu_topology,resctrl,process
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+
+  # Black-box uptime and TLS-expiry probes against the public URLs.
+  blackbox:
+    image: prom/blackbox-exporter:v0.26.0
+    network_mode: host
+    restart: unless-stopped
+    mem_limit: 64m
+    command:
+      - --config.file=/etc/blackbox/blackbox.yml
+      - --web.listen-address=127.0.0.1:9115
+    volumes:
+      - ./blackbox:/etc/blackbox:ro
+
+volumes:
+  prometheus-data:
+  loki-data:
+  alloy-data:
+  grafana-data:

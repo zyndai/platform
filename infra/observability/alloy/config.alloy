@@ -1,0 +1,213 @@
+// Ships three log sources to Loki, all labelled `project` and `env` the same
+// way as the metrics in prometheus/prometheus.yml:
+//   1. Docker container logs  (compose project zynd = prod, zynd-dev = dev)
+//   2. pm2 process logs       (api, web, cards-web and their -dev twins)
+//   3. Caddy's JSON access log
+
+loki.write "default" {
+  endpoint {
+    url = "http://127.0.0.1:3100/loki/api/v1/push"
+  }
+}
+
+// ── 1. Docker containers ───────────────────────────────────────────────
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "30s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "zynd-dev"
+    target_label  = "env"
+    replacement   = "dev"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "zynd"
+    target_label  = "env"
+    replacement   = "prod"
+  }
+  // Compose service name minus the -dev suffix, with the two services whose
+  // name says little renamed to match the rest of the platform.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "(.+?)(?:-dev)?"
+    target_label  = "project"
+    replacement   = "$1"
+  }
+  rule {
+    source_labels = ["project"]
+    regex         = "api"
+    target_label  = "project"
+    replacement   = "memory-api"
+  }
+  rule {
+    source_labels = ["project"]
+    regex         = "cards"
+    target_label  = "project"
+    replacement   = "cards-api"
+  }
+  // This stack's own containers count as one project.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "zynd-obs"
+    target_label  = "env"
+    replacement   = "shared"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "zynd-obs"
+    target_label  = "project"
+    replacement   = "monitoring"
+  }
+  // The standalone test Postgres has no compose labels.
+  rule {
+    source_labels = ["container"]
+    regex         = "zynd-cards-test-pg"
+    target_label  = "project"
+    replacement   = "cards-test-pg"
+  }
+  rule {
+    source_labels = ["container"]
+    regex         = "zynd-cards-test-pg"
+    target_label  = "env"
+    replacement   = "test"
+  }
+  // Only the zynd stack: skip anything else Docker runs on the box.
+  rule {
+    source_labels = ["container"]
+    regex         = "zynd-.*"
+    action        = "keep"
+  }
+}
+
+loki.source.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.containers.output
+  forward_to       = [loki.process.docker.receiver]
+  refresh_interval = "30s"
+}
+
+loki.process "docker" {
+  forward_to = [loki.write.default.receiver]
+
+  stage.static_labels {
+    values = { source = "docker" }
+  }
+}
+
+// ── 2. pm2 processes ───────────────────────────────────────────────────
+// Only the live <name>-out.log / <name>-error.log files; the rotated
+// <name>-out__<date>.log copies are history and are not re-read.
+
+local.file_match "pm2" {
+  path_targets = [
+    {"__path__" = "/pm2-logs/*-out.log"},
+    {"__path__" = "/pm2-logs/*-error.log"},
+  ]
+}
+
+discovery.relabel "pm2" {
+  targets = local.file_match.pm2.targets
+
+  rule {
+    source_labels = ["__path__"]
+    regex         = "/pm2-logs/(.+)-(out|error)\\.log"
+    target_label  = "process"
+    replacement   = "$1"
+  }
+  rule {
+    source_labels = ["__path__"]
+    regex         = "/pm2-logs/(.+)-(out|error)\\.log"
+    target_label  = "stream"
+    replacement   = "$2"
+  }
+  rule {
+    source_labels = ["process"]
+    regex         = ".*"
+    target_label  = "env"
+    replacement   = "prod"
+  }
+  rule {
+    source_labels = ["process"]
+    regex         = ".*-dev"
+    target_label  = "env"
+    replacement   = "dev"
+  }
+  rule {
+    source_labels = ["process"]
+    regex         = "(.+?)(?:-dev)?"
+    target_label  = "project"
+    replacement   = "$1"
+  }
+  rule {
+    source_labels = ["project"]
+    regex         = "api"
+    target_label  = "project"
+    replacement   = "persona-api"
+  }
+  rule {
+    source_labels = ["project"]
+    regex         = "web"
+    target_label  = "project"
+    replacement   = "persona-web"
+  }
+}
+
+loki.source.file "pm2" {
+  targets    = discovery.relabel.pm2.output
+  forward_to = [loki.process.pm2.receiver]
+}
+
+loki.process "pm2" {
+  forward_to = [loki.write.default.receiver]
+
+  stage.static_labels {
+    values = { source = "pm2" }
+  }
+}
+
+// ── 3. Caddy access log ────────────────────────────────────────────────
+// One JSON object per request. host and status become labels (a handful of
+// values each); the rest stays in the line for `| json` in LogQL.
+
+local.file_match "caddy" {
+  path_targets = [{"__path__" = "/caddy-logs/access.log"}]
+}
+
+loki.source.file "caddy" {
+  targets    = local.file_match.caddy.targets
+  forward_to = [loki.process.caddy.receiver]
+}
+
+loki.process "caddy" {
+  forward_to = [loki.write.default.receiver]
+
+  stage.static_labels {
+    values = { source = "caddy", project = "caddy", env = "shared" }
+  }
+  stage.json {
+    expressions = {
+      ts     = "ts",
+      status = "status",
+      host   = "request.host",
+    }
+  }
+  stage.timestamp {
+    source = "ts"
+    format = "Unix"
+  }
+  stage.labels {
+    values = { host = "", status = "" }
+  }
+}

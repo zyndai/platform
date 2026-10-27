@@ -39,6 +39,7 @@ If a task mentions either of those by name, it's the wrong repo.
 | `services/memory` | Shared context/memory layer: ingest, matching, MCP server, OAuth for AI clients | FastAPI / Python | api.zynd.ai |
 | `infra/persona-box` | pm2 configs for the box running persona-api + persona-web | — | — |
 | `infra/api-box` | Caddy + docker-compose for the box running cards-api + memory | — | — |
+| `infra/observability` | Monitoring for the single box: Prometheus, Loki, Alloy, Grafana, alert rules. Start with `docs/MONITORING.md` | Docker Compose / Grafana | — (SSH tunnel only) |
 | `packages/db` | **All migrations** for the shared aafo database, Drizzle: one independent history per Postgres schema (identity / persona=`public` / cards) — read its `README.md` before any schema change | TypeScript / Drizzle | — |
 | `packages/contracts` | Shared API contracts. **Planned, not built yet.** | — | — |
 | `docs/plans` | Architecture and migration plans behind this repo — start with `docs/plans/README.md` | — | — |

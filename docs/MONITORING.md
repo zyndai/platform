@@ -21,18 +21,50 @@ both. `project` is `cards-api`, `memory-api`, `mcp`, `worker`, `chatgpt-plugin`,
 
 ## Open it
 
-Grafana only listens on the box's loopback. Reach it through an SSH tunnel:
+Two public URLs, both on this box behind host Caddy with a Let's Encrypt certificate
+(`infra/single-box/Caddyfile`). Each needs an A record pointing at the box.
+
+| URL | What | Login |
+|---|---|---|
+| **https://monitor.zynd.ai** | Grafana: dashboards, **Explore** (Prometheus and Loki queries), alerts | Grafana's own accounts |
+| **https://metrics.zynd.ai** | Prometheus UI and query API (Status -> Targets, `/alerts`, raw PromQL) | HTTP basic auth, user `prometheus` |
+
+Loki stays on loopback; search logs through Grafana's Explore. The tunnel is the fallback
+if a public name is down:
 
 ```bash
-ssh -L 3030:127.0.0.1:3030 <user>@<box>      # then http://localhost:3030
+ssh -L 3030:127.0.0.1:3030 -L 9090:127.0.0.1:9090 <user>@<box>   # localhost:3030, localhost:9090
 ```
 
-Log in as `admin`. The password is `GRAFANA_ADMIN_PASSWORD` in `~/.zynd-obs/.env` on
-the box. Prometheus (9090) and Loki (3100) are reachable the same way if you want
-to run raw queries, and `127.0.0.1:9090/alerts` shows what is firing.
+**Grafana accounts:** one named account per person (Administration -> Users and access),
+not a shared `admin`. The first-run `admin` password is `GRAFANA_ADMIN_PASSWORD` in
+`~/.zynd-obs/.env` on the box; change it in Grafana, after which that value is stale.
+Give most people the Viewer role: **a Viewer can still search every log line**, and the
+logs hold user emails (in request paths such as `/v1/service/findability/<email>`),
+client IPs and OAuth query strings, so keep the account list short.
 
-Nothing is public, and nothing here is notified yet: **no alert is sent anywhere**
-until a channel (Slack, Telegram, email) and an Alertmanager are added.
+### Public URLs
+
+**metrics.zynd.ai credentials.** Prometheus has no login, so Caddy asks for one. The
+bcrypt hash is in `/etc/caddy/metrics-basicauth.conf` on the box (`root:caddy`, 640, not in
+git, imported by the Caddyfile); the password is in `~ubuntu/.zynd-obs/.metrics-password`
+as `user:password`. To change it:
+
+```bash
+PW=$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-28)
+printf 'basicauth {\n\tprometheus %s\n}\n' "$(caddy hash-password --plaintext "$PW")" | sudo tee /etc/caddy/metrics-basicauth.conf >/dev/null
+printf 'prometheus:%s\n' "$PW" > ~/.zynd-obs/.metrics-password && sudo systemctl reload caddy
+```
+
+Prometheus's `/-/quit` and `/-/reload` are enabled for `apply.sh` (it reloads on loopback),
+so Caddy answers 403 for them on the public name. Don't enable Prometheus's admin API.
+
+**Moving a name.** The hostnames are constants in `infra/single-box/Caddyfile` and, for
+Grafana's redirect URLs, `GF_SERVER_DOMAIN` and `GF_SERVER_ROOT_URL` in
+`infra/observability/docker-compose.yml`.
+
+Nothing is notified: **no alert is sent anywhere** until a channel (Slack, Telegram,
+email) and an Alertmanager are added.
 
 ## Something is wrong: where to look
 

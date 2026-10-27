@@ -5,7 +5,8 @@
 #
 # Everything uses host networking and binds 127.0.0.1 only. Most of the apps
 # listen on loopback, which a bridge-network container can't reach, and nothing
-# here should be reachable from the internet. Reach Grafana over an SSH tunnel:
+# here should be reachable from the internet, except Grafana, which host Caddy serves at
+# https://monitor.zynd.ai. Without that, reach it over an SSH tunnel:
 #   ssh -L 3030:127.0.0.1:3030 <box>   ->   http://localhost:3030
 #
 # Ports: grafana 3030, prometheus 9090, loki 3100 (grpc 9096), alloy 12345,
@@ -69,6 +70,15 @@ services:
     environment:
       GF_SERVER_HTTP_ADDR: 127.0.0.1
       GF_SERVER_HTTP_PORT: "3030"
+      # Public URL, served by host Caddy (infra/single-box/Caddyfile). Also reachable
+      # over an SSH tunnel at localhost:3030.
+      GF_SERVER_DOMAIN: monitor.zynd.ai
+      GF_SERVER_ROOT_URL: https://monitor.zynd.ai/
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_COOKIE_SAMESITE: lax
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_USERS_ALLOW_ORG_CREATE: "false"
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
       GF_USERS_ALLOW_SIGN_UP: "false"

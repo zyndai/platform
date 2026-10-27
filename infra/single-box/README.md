@@ -182,8 +182,7 @@ Deliberate choices, same as the live dev channel (persona-api `CLAUDE.md`):
   (`persona.zynd.ai`). At startup persona-api re-points registry entities at
   that base URL, so a second instance must not claim it.
 - No `TELEGRAM_BOT_TOKEN`: only prod may own the bot's webhook.
-- No `NEXT_PUBLIC_GA_ID` (no analytics from a test box), no dev-bearer keys on
-  memory.
+- No dev-bearer keys on memory.
 - cards-api runs against aafo's `cards` schema (`SUPABASE_DB_SCHEMA=cards`),
   trusting aafo's issuer; the tables are empty until the cards cutover.
 

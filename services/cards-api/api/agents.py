@@ -147,7 +147,7 @@ async def lookup_agents(
 
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: str):
+async def get_agent(agent_id: str, request: Request):
     """One agent profile. Unclaimed (scraped, no owner) cards are hidden from
     agents by default — same as /v1/agents/search — when S03 tiering is on.
     Always a CardView so agents see the same facts as /view, data.json, and chat."""
@@ -159,4 +159,7 @@ async def get_agent(agent_id: str):
         raise HTTPException(status_code=404, detail="agent not found")
     from services.card_view import build_card_view
 
-    return build_card_view(card, claimed=bool(claimed))
+    view = build_card_view(card, claimed=bool(claimed))
+    events_service.emit("agent_fetch", handle=card.handle, request=request,
+                        meta={"endpoint": "agent-profile"})
+    return view

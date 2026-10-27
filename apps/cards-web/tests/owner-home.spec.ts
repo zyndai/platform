@@ -39,6 +39,10 @@ test.describe("S10 owner home", () => {
     ).toBe("rgb(23, 32, 51)");
     await expect(page.getByText("12", { exact: true })).toBeVisible();
     await expect(page.getByText("4", { exact: true })).toBeVisible();
+    const agentBreakdown = page.getByRole("region", { name: "Which agents visited" });
+    await expect(agentBreakdown.getByText("Claude-User", { exact: true })).toBeVisible();
+    await expect(agentBreakdown.getByText("GPTBot", { exact: true })).toBeVisible();
+    await expect(agentBreakdown.getByText("2 requests", { exact: true })).toBeVisible();
     const questionHistory = page.getByRole("region", { name: "Recent assistant questions" });
     await expect(questionHistory.getByText("What projects is Alice building?", { exact: true })).toBeVisible();
     await expect(questionHistory.getByText('<img src=x onerror="window.questionHistoryXss=1">', { exact: true })).toBeVisible();

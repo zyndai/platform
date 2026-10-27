@@ -10,12 +10,36 @@
 	# which makes every issuance attempt error out. Setting acme_ca drops the
 	# ZeroSSL issuer. Not needed on a current Caddy.
 	acme_ca https://acme-v02.api.letsencrypt.org/directory
+
+	# Per-host request/latency/status metrics, scraped by Prometheus from the
+	# admin endpoint (127.0.0.1:2019/metrics). See infra/observability.
+	servers {
+		metrics
+	}
+}
+
+# Shared by every site below: JSON access log (rotated by Caddy, read by
+# Alloy into Loki) and a 404 for /metrics so app metrics stay internal.
+# Must be the first thing in each site so its handle wins.
+(observability) {
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 50mb
+			roll_keep 5
+		}
+		format json
+	}
+	@metrics path /metrics /metrics/*
+	handle @metrics {
+		respond 404
+	}
 }
 
 # persona-web. /api/* also goes to persona-api on this host, same rule as the
 # live persona box: the OAuth callbacks and A2A URLs registered with providers
 # and the registry are https://persona.zynd.ai/api/...
 persona.zynd.ai {
+	import observability
 	handle /api/* {
 		reverse_proxy 127.0.0.1:8000
 	}
@@ -26,22 +50,26 @@ persona.zynd.ai {
 
 # persona-api on its own host (what persona-web's NEXT_PUBLIC_API_URL points at).
 persona.api.zynd.ai {
+	import observability
 	reverse_proxy 127.0.0.1:8000
 }
 
 # cards-web
 cards.zynd.ai {
+	import observability
 	reverse_proxy 127.0.0.1:3002
 }
 
 # cards-api on its own host (what cards-web's NEXT_PUBLIC_API_URL points at).
 cards.api.zynd.ai {
+	import observability
 	reverse_proxy 127.0.0.1:8002
 }
 
 # memory API, plus the legacy paths clients already call on api.zynd.ai
 # (same routing as infra/api-box/Caddyfile).
 api.zynd.ai {
+	import observability
 	# OpenAI plugin domain verification (token from the plugin's MCP settings page).
 	handle /.well-known/openai-apps-challenge {
 		header Content-Type text/plain
@@ -105,6 +133,7 @@ api.zynd.ai {
 # localhost-only behind these HTTPS names; no extra public ports.
 
 dev.persona.zynd.ai {
+	import observability
 	handle /api/* {
 		reverse_proxy 127.0.0.1:8100
 	}
@@ -114,18 +143,22 @@ dev.persona.zynd.ai {
 }
 
 dev.persona.api.zynd.ai {
+	import observability
 	reverse_proxy 127.0.0.1:8100
 }
 
 dev.cards.zynd.ai {
+	import observability
 	reverse_proxy 127.0.0.1:3102
 }
 
 dev.cards.api.zynd.ai {
+	import observability
 	reverse_proxy 127.0.0.1:8102
 }
 
 dev.api.zynd.ai {
+	import observability
 	handle /chatgpt/mcp* {
 		reverse_proxy 127.0.0.1:8191
 	}
@@ -175,6 +208,7 @@ dev.api.zynd.ai {
 # The web apps are built against the domains above, so this is only useful for
 # poking at persona-api directly (http://<ip>:3000/api/...).
 http://:3000 {
+	import observability
 	handle /api/* {
 		reverse_proxy 127.0.0.1:8000
 	}

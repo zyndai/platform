@@ -2,6 +2,7 @@ import json
 
 import config
 from models.card import CardSynthesis
+from synthesis import taxonomy
 
 _SYSTEM = """\
 You synthesize a single-person professional profile from raw source data.
@@ -42,6 +43,10 @@ Rules:
   single-word or emoji-only posts, posts shorter than 40 chars with no real content,
   and posts that are just URLs or "True" / "Yup" / reaction words.
   Prioritise posts that show expertise, opinions, or things the person built.
+  The "Website / Portfolio" section may list the person's OWN newsletter or blog posts
+  (Substack, Medium, Ghost, a personal blog). Include up to 5 of them: `platform` is "substack",
+  "medium" or "blog" by site, `excerpt` is the post title plus its subtitle or first sentence when
+  shown, and `url` is the post's own URL. Skip the site's navigation, recommendations and other authors.
 - `projects`: Also use GitHub `recent_activity` — if the person pushed to a repo
   that is not already in their top repos, add it as a project with the commit
   messages as description context. PR titles are strong signals of what they build.
@@ -83,6 +88,7 @@ Rules:
 
 Schema:
 {
+  "persona": "engineering|founder|product_design|marketing_sales|creator|research|investor|general",
   "identity": {"name": str, "headline": str, "location": str, "avatar_url": str, "avatar_bg_url": str, "links": {"github": str|null, "x": str|null, "linkedin": str|null, "website": str|null}},
   "citation_snippet": str,
   "summary": str,
@@ -102,6 +108,8 @@ Schema:
   "github_stats": {"total_repos": int, "active_repos": int, "top_languages": [str], "total_commits": int|null}
 }
 """
+
+_SYSTEM += taxonomy.prompt_section()
 
 
 def _build_user_prompt(

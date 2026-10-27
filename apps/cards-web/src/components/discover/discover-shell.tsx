@@ -4,10 +4,10 @@ import { EDITION_FONT_VARS } from "@/components/editions/fonts";
 import { DiscoverNav, type DiscoverPage } from "./discover-nav";
 import "./discover.css";
 
-const CRUMBS: Record<DiscoverPage, string> = { directory: "Directory", network: "Network" };
+const CRUMBS: Record<DiscoverPage, string> = { directory: "Directory", network: "Network", create: "Create" };
 
 /**
- * The page around Directory and Network: the public card's lavender canvas,
+ * The page around Directory, Network and Create: the public card's lavender canvas,
  * its fonts, and a light header in place of the dark site navbar. `main` carries
  * the background so the page owns its canvas on top of the dark site shell.
  * `app` is for a full-height tool (the messenger): less room under the content,

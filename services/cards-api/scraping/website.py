@@ -99,10 +99,19 @@ async def fetch_linktree_links(url: str) -> list[str]:
     return _extract_urls(markdown)
 
 
-async def fetch_website(url: str) -> str:
-    """Return clean text from a public URL via Jina Reader, capped at 8 000 chars."""
+async def fetch_page(url: str) -> tuple[str, str]:
+    """(text capped at 8 000 chars for the model, the whole page's markdown).
+
+    Post links and project images sit past the cap on long pages, so the
+    extractors in scraping/sites.py read the whole markdown.
+    """
     if not url or not url.startswith(("http://", "https://")):
         raise ValueError(f"Invalid URL: {url!r}")
 
-    text = await _jina_fetch(url)
-    return text[:_MAX_CHARS]
+    markdown = await _jina_fetch(url)
+    return markdown[:_MAX_CHARS], markdown
+
+
+async def fetch_website(url: str) -> str:
+    """Return clean text from a public URL via Jina Reader, capped at 8 000 chars."""
+    return (await fetch_page(url))[0]

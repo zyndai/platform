@@ -36,7 +36,7 @@ from app.services.control import confirm_fact, forget_fact, near_matches
 from app.services.export import active_context, build_jsonld_export, context_slice
 from app.services.findability import get_card
 from app.services.ingest import clean_text, ingest_turns
-from app.services import people_search, search_trail
+from app.services import mcp_analytics, people_search, search_trail
 from app.services.matching import match_users
 from app.services.self_context import load_self_context, normalize_profile, read_brief
 
@@ -74,7 +74,7 @@ WRITE - exactly one durable-fact tool: use report_user_info with typed fields at
 
 CORRECT: confirm_fact_tool and forget_fact_tool use the exact predicate and object from get_my_context.facts; never claim success on a false result.
 EXPORT: export_my_context only for an explicit backup, download, or export request.
-PEOPLE / CARDS NETWORK: find_people returns one list of people from the Cards index (claimed and unclaimed Cards, Zynd members, and LinkedIn only when too few strong matches exist); connect to a result with its handle. A people:message token can send and decide Cards-native connection requests, DM accepted Cards connections, create groups, invite connected Cards (invitees must accept), and message groups. Never claim a request, invitation, or message succeeded unless the tool says so.
+PEOPLE / CARDS NETWORK: find_people returns one list of people (Zynd Cards, Zynd members and LinkedIn). Show each person with their url: their Card page when they have one, their LinkedIn otherwise. Offer to connect only to people whose next_action is connect, using their handle; never tell the user someone is not on Zynd, has no claimed Card or cannot be connected to. A people:message token can send and decide Cards-native connection requests, DM accepted Cards connections, create groups, invite connected Cards (invitees must accept), and message groups. Never claim a request, invitation, or message succeeded unless the tool says so.
 CARD OWNER: list_pending_facts, approve_fact, dismiss_fact, set_looking_for, and list_intros when granted by the token. Change headlines in the card editor.
 
 Use only tools visible in the client's actual tool list; export and hosted-page tools retain their existing legacy user scope requirement. Do not search for unavailable tools.
@@ -572,15 +572,20 @@ async def find_people(
     Cards is the people index. Each result is one person:
       handle, name, headline, location, why (why they matched), sources, claimed,
       score, match_quality (exact | close | loose), url, and next_action:
-        connect          — a claimed Card: call request_card_connection(target_handle=handle)
-        invite_to_claim  — no claimed Card yet: call invite_to_claim(invite_ref=...) (only offered when enabled)
-        view_profile     — nothing to act on; url is their public page or LinkedIn
+        connect          — call request_card_connection(target_handle=handle) if the user wants to connect
+        invite_to_claim  — call invite_to_claim(invite_ref=...) if the user wants to reach them through Zynd
+        view_profile     — the user reaches them through url
+    Present every person the same way: name, headline, and their url (their Card page when they
+    have a Card, their LinkedIn otherwise). Do not sort people into "on Zynd" and "not on Zynd",
+    and never say someone has no claimed Card, is not on Zynd, or cannot be connected to: give
+    their link. Offer connecting only for the people whose next_action is connect.
     When the response has a `note` saying nothing matched exactly, call the people "the closest
-    matches" and say what differs (match_quality and `relaxed` show it); never present a loose
-    match as an exact one.
-    LinkedIn people are searched only when too few strong matches were found (or when sources
-    names "quickenrich"). Contact details are never in results; they are shared once a
-    connection is accepted.
+    matches" and say in a few words what differs (match_quality and `relaxed` show it); never
+    present a loose match as an exact one, and do not add a caveat to each person.
+    Do not comment on the user's own profile or what is missing from it. If a tighter search
+    needs something about the user (what they are building, their stage), ask one short question
+    after the results.
+    Contact details are never in results; they are shared once a connection is accepted.
 
     Pass a natural-language target description (e.g. "seed-stage investor who
     backs dev-tools in India"). To find one specific person, pass their name, and their
@@ -600,9 +605,11 @@ async def find_people(
     carries `verified` (identities proven, e.g. "linkedin") and `why`, which says how current an
     approved fact is."""
     wanted, explicit = people_search.requested_sources(sources)
-    return await people_search.find(
+    result = await people_search.find(
         await _get_pool(), uid, target, limit=max(1, min(k, 20)), wanted=wanted, explicit=explicit,
         group_id=(group_id or "").strip())
+    await mcp_analytics.record_people(result, endpoint="memory-mcp", tool="find_people")
+    return result
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
@@ -710,7 +717,8 @@ async def list_card_connections(uid: str = Depends(_uid)) -> dict:
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
 async def request_card_connection(target_handle: str, message: str = "",
                                   uid: str = Depends(_uid)) -> dict:
-    """Send a connection request to a claimed, published Card by handle."""
+    """Send a connection request to a person from find_people whose next_action is "connect",
+    by their handle. For anyone else, give the user their url from find_people instead."""
     return await cards_network_tools.request_connection(
         await _get_pool(), uid, target_handle, message,
         from_search=await search_trail.came_from(uid, handle=target_handle))

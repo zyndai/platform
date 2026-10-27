@@ -160,6 +160,17 @@ def rate_limited(key: str) -> bool:
     return False
 
 
+def attributed_meta(meta: Any, user_agent: str | None) -> dict:
+    """Derive the advertised agent from the header, overriding payload claims."""
+    clean = dict(sanitize_meta(meta) or {})
+    clean.pop("agent_name", None)
+    name = ua_class.agent_name(user_agent)
+    if name:
+        clean["agent_name"] = name
+    # Preserve attribution even if adding the label exceeds the metadata limit.
+    return sanitize_meta(clean) or ({"agent_name": name} if name else {})
+
+
 def _insert_rows(rows: list[dict]) -> None:
     if not rows or not events_enabled():
         return
@@ -206,8 +217,9 @@ def insert_batch(
             ref=e.get("ref"),
             session_hash=sh,
             # Only the validated chat handler may populate owner question history.
-            meta={k: v for k, v in (e.get("meta") or {}).items()
+            meta=attributed_meta({k: v for k, v in (e.get("meta") or {}).items()
                   if k not in {"question", "question_truncated", "question_source"}} if isinstance(e.get("meta"), dict) else None,
+                  user_agent),
         )
         for e in events
     ]
@@ -239,7 +251,7 @@ def emit(
         actor_class=actor,
         ref=ref,
         session_hash=sh,
-        meta=meta,
+        meta=attributed_meta(meta, ua),
     )
 
     async def _run() -> None:

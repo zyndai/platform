@@ -11,7 +11,7 @@ import httpx
 
 import config
 from models.card import AgentProfileCard, CardSynthesis, Source, WorkItem, WritingSample
-from services import embed
+from services import card_cache, embed
 from services.jobs import new_card_id, utcnow
 
 logger = logging.getLogger(__name__)
@@ -553,6 +553,7 @@ def insert_card(
         if clean_via:
             row["created_via"] = clean_via
     sb.table("agent_profile_cards").upsert(row, on_conflict="id").execute()
+    card_cache.invalidate()
     return handle
 
 
@@ -747,6 +748,7 @@ def update_card(
         update_payload["handle"] = effective_handle
 
     sb.table("agent_profile_cards").update(update_payload).eq("handle", handle).execute()
+    card_cache.invalidate()
     return True, effective_handle
 
 
@@ -1059,6 +1061,7 @@ def claim_card_by_owner(handle: str, principal: dict) -> tuple[bool, str]:
     if owner_user_id and config.WRITES_OWNER_USER_ID:
         update["owner_user_id"] = owner_user_id      # Cards networking identifies owners by this
     sb.table("agent_profile_cards").update(update).eq("handle", handle).execute()
+    card_cache.invalidate()
     card_id = row.get("id")
     if card_id:
         from services import trust
@@ -1173,6 +1176,7 @@ def request_takedown(handle: str, requester_user_id: str | None, note: str | Non
     except Exception as exc:
         logger.warning("takedown insert failed handle=%s err=%s", handle, exc)
     sb.table("agent_profile_cards").update({"status": "takedown_requested"}).eq("handle", handle).execute()
+    card_cache.invalidate()
     _notify_takedown(handle, requester_user_id, note)
     return True
 
@@ -1220,6 +1224,7 @@ def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:
             vec = embed.embed_text(embed.card_search_text(AgentProfileCard.model_validate(saved)))
             if vec:
                 sb.table("agent_profile_cards").update({"embedding": vec}).eq("handle", handle).eq("updated_at", saved["updated_at"]).execute()
+                card_cache.invalidate()
         except Exception:
             pass  # FTS is current; a stale revoked-fact vector is never retained.
         return True
@@ -1244,12 +1249,15 @@ def update_card_memory(handle: str, zynd_memory: list[dict] | None) -> bool:
     except Exception as exc:
         logger.warning("re-embed after memory update failed handle=%s err=%s", handle, exc)
     sb.table("agent_profile_cards").update(payload).eq("handle", handle).execute()
+    card_cache.invalidate()
     return True
 
 
 def patch_system_fields(handle: str, patch: dict) -> dict | None:
     """Service-only atomic writes for memory/scrapers, preserving owner edits."""
-    return config.get_supabase().rpc("s10_patch_system_fields", {"p_handle": handle, "p_patch": patch}).execute().data
+    saved = config.get_supabase().rpc("s10_patch_system_fields", {"p_handle": handle, "p_patch": patch}).execute().data
+    card_cache.invalidate()
+    return saved
 
 
 def get_card_for_owner(handle: str, email: str) -> AgentProfileCard | None:

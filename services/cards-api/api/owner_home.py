@@ -13,7 +13,7 @@ from postgrest.exceptions import APIError
 import config
 from api.mcp import _principal, _owner_email
 from models.card import AgentProfileCard
-from services import owner_home, cards
+from services import card_cache, owner_home, cards
 from services.digest import valid_zone
 from services.zynd_memory import ping_revalidate
 
@@ -254,6 +254,7 @@ async def save_section(handle: str, section: str, body: Section, authorization: 
         try:
             vector = embed_text(card_search_text(AgentProfileCard.model_validate(result)))
             config.get_supabase().table("agent_profile_cards").update({"embedding": vector}).eq("handle", handle).eq("updated_at", result["updated_at"]).execute()
+            card_cache.invalidate()
         except Exception:
             pass
     asyncio.create_task(asyncio.to_thread(reembed))

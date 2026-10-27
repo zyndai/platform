@@ -82,3 +82,19 @@ def test_memorys_real_parameters_surface_the_right_people():
             if not set(top[:k]) <= set(case["relevant"]) or not set(case["relevant"]) <= set(top):
                 misses.append(f"{case['target']!r}: want {case['relevant']} got {top}")
     assert not misses, misses
+
+
+
+def test_with_no_investors_wanting_to_meet_one_never_scores_like_being_one():
+    """Prod has no investor Cards, and most of its cards say "looking to connect with … Investors".
+    Over the golden corpus without its investors, an investor query may still return closest matches,
+    but none of them scores like a match (memory caps a loose match at 0.45). Before the wish was left
+    out of the person's text, a designer in Bengaluru scored 0.83 for "investors in Bengaluru"."""
+    import copy
+
+    doc = copy.deepcopy(search_golden.load())
+    doc["cards"] = [c for c in doc["cards"] if not c["handle"].startswith("inv_")]
+    doc["queries"] = [dict(q, relevant=[]) for q in doc["queries"] if q["role"] == "investor"]
+    for r in search_golden.evaluate(doc):
+        high = {h: s for h, s in r.scores.items() if s > 0.45}
+        assert not high, (r.target, high)

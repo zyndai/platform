@@ -15,7 +15,9 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.config import settings
-from app.services.people_query import COUNTRIES, TargetQuery, parse_target_heuristic, title_filters
+from app.services.people_query import (
+    COUNTRIES, ROLE_COMPANY_WORDS, ROLE_STRONG_TITLES, TargetQuery, parse_target_heuristic, title_filters,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,13 @@ _GENERIC_TOPIC_WORDS = frozenset({
 
 _SHORT_SIGNALS = frozenset({"ai", "ml", "vr", "ar", "ux", "ui", "it", "b2b", "b2c"})
 
+# bio_li matches whole words and phrases of the company's About text: a bare "seed" found "SEED
+# Healthcare", "seed stage" finds funds (checked against the live API, 2026-10-26).
+_STAGE_PHRASES: dict[str, tuple[str, ...]] = {
+    "seed": ("seed stage", "seed fund"),
+    "pre-seed": ("pre-seed", "pre seed"), "preseed": ("pre-seed", "pre seed"), "pre seed": ("pre-seed", "pre seed"),
+}
+
 
 def company_phrases(query: TargetQuery, limit: int = 3) -> list[str]:
     """What the person's company's About text would say, kept as whole phrases ("developer tools",
@@ -92,7 +101,7 @@ def company_phrases(query: TargetQuery, limit: int = 3) -> list[str]:
     phrases = phrases[:limit]
     if query.role == "investor":
         if query.stage:
-            phrases.insert(0, query.stage)
+            phrases[:0] = _STAGE_PHRASES.get(query.stage, (query.stage,))
         if not query.topics:
             phrases += ["venture", "capital"]
     return phrases
@@ -109,6 +118,9 @@ def quickenrich_body(query: TargetQuery, limit: int) -> dict | None:
     body: dict = {"page": 1, "per_page": max(1, min(limit, 10))}
     keywords = company_phrases(query) if query.company_hint else []
     include, exclude = title_filters(query)
+    if not keywords and query.role in ROLE_STRONG_TITLES:
+        # with nothing about the company, "Principal" or "Managing Partner" returns consultancies
+        include = [t for t in include if t in ROLE_STRONG_TITLES[query.role]]
     if include:
         body["title"] = {"include": include, "exclude": exclude}
     if keywords:
@@ -117,8 +129,12 @@ def quickenrich_body(query: TargetQuery, limit: int) -> dict | None:
         return None   # a location alone would return arbitrary people
     if query.country_code:
         body["country_code"] = {"include": [query.country_code], "exclude": []}
-    if query.locality:
-        body["locality"] = {"include": [query.locality], "exclude": []}
+    # country_code is the company's country (people in Los Altos come back for IN); locality is where
+    # the person is, and matches a country name as a word of "Bengaluru, Karnataka, India".
+    place = query.locality or ("" if query.country_code in _LOCALITY_OMITS_COUNTRY
+                               else _COUNTRY_NAMES.get(query.country_code, ""))
+    if place:
+        body["locality"] = {"include": [place], "exclude": []}
     return body
 
 
@@ -327,6 +343,8 @@ def _qe_headers() -> dict:
     return {name: value, "Accept": "application/json"}
 
 
+# US localities are often "Richmond, Virginia", with no country, so a country-word filter would miss them.
+_LOCALITY_OMITS_COUNTRY = frozenset({"US"})
 _COUNTRY_NAMES: dict[str, str] = {"US": "United States", "GB": "United Kingdom", "AE": "United Arab Emirates"}
 for _name, _code in COUNTRIES.items():
     _COUNTRY_NAMES.setdefault(_code, _name.title())
@@ -342,9 +360,17 @@ def _linkedin_with_scheme(value: object) -> object:
 
 
 def _qe_location(record: dict) -> str:
-    place = _public_text(_na(record.get("city")) or _na(record.get("locality")), 80)
-    code = _na(record.get("country_code")).upper() or _na(record.get("country")).upper()
-    country = _COUNTRY_NAMES.get(code, _public_text(_na(record.get("country")), 60)) if code else ""
+    """Where the person is. `locality` is theirs and already ends in the country ("Bengaluru,
+    Karnataka, India"); `city` is an office address ("Vihar Road", "Palo Alto") and `country_code`
+    the company's country, so they are only a fallback, and never appended to a locality."""
+    locality = _public_text(_na(record.get("locality")), 120)
+    if locality:
+        return locality
+    place = _public_text(_na(record.get("city")), 80)
+    code = _na(record.get("country_code")).upper()
+    country = _COUNTRY_NAMES.get(code, "") if code else ""
+    if country and country.lower() in place.lower():
+        country = ""
     return ", ".join(part for part in (place, country) if part)
 
 
@@ -372,7 +398,7 @@ def _shape_qe(records: list) -> list[dict]:
             "connection_eligible": False,
         }
         row["location"] = _qe_location(record)
-        row["city"] = _public_text(_na(record.get("city")) or _na(record.get("locality")), 80)
+        row["city"] = row["location"].split(",")[0].strip()
         row["country_code"] = _na(record.get("country_code")).upper()[:2]
         out.append(row)
     return out
@@ -391,30 +417,40 @@ def has_excluded_title(row: dict, query: TargetQuery) -> bool:
     return _fit_words(row.get("title") or "", title_filters(query)[1])
 
 
-def rank_quickenrich(rows: list[dict], query: TargetQuery) -> list[dict]:
-    """Order LinkedIn people by how well they fit the target and give each a score.
+LINKEDIN_PRIOR = 0.8      # as people_results.LINKEDIN_PRIOR: a LinkedIn match is a weaker signal than a Card
+BROAD_TITLE = 0.6         # "Principal" at a company that does not look like the role's kind of organisation
 
-    title_fit is 1 for a title with an include word and no exclude word, else 0.5; location_fit is
-    1 for the target city or country; company_fit is 1 when a topic word is in the company name.
-    The score 0.30 + 0.25 x mean(fits) keeps them below exact Card matches (plan Phase 1 replaces
-    this with one scorer for every source)."""
+
+def title_strength(row: dict, query: TargetQuery) -> float:
+    """How surely the title is the asked role: 1 for a title that says it ("General Partner", or any
+    include word for roles with no strong-title row), BROAD_TITLE for a broad one ("Principal",
+    "Managing Partner") unless the company looks like a fund, 0 for an excluded word."""
     include, exclude = title_filters(query)
-    topic_words = [w for t in query.topics for w in re.findall(r"[A-Za-z0-9]{3,}", t)]
-    scored = []
-    for index, row in enumerate(rows):
-        fits: list[float] = []
-        if include:
-            title = row.get("title") or ""
-            fits.append(1.0 if _fit_words(title, include) and not _fit_words(title, exclude) else 0.5)
-        if query.locality or query.country_code:
-            city = (row.get("city") or "").lower()
-            fits.append(1.0 if (query.locality and city == query.locality.lower())
-                        or (query.country_code and row.get("country_code") == query.country_code) else 0.0)
-        if topic_words:
-            fits.append(1.0 if _fit_words(row.get("company") or "", topic_words) else 0.0)
-        score = 0.30 + 0.25 * (sum(fits) / len(fits)) if fits else 0.30
-        scored.append(({**row, "score": round(score, 3)}, index))
-    scored.sort(key=lambda pair: (-pair[0]["score"], pair[1]))
+    title = row.get("title") or ""
+    if not include:
+        return 1.0
+    if _fit_words(title, exclude):
+        return 0.0
+    strong = ROLE_STRONG_TITLES.get(query.role)
+    if strong is None:
+        return 1.0 if _fit_words(title, include) else BROAD_TITLE
+    if _fit_words(title, list(strong)):
+        return 1.0
+    company_words = ROLE_COMPANY_WORDS.get(query.role, ())
+    company = re.findall(r"[a-z0-9]+", (row.get("company") or "").lower())
+    if any(tok == w.lower() or tok.endswith(w.lower()) for tok in company for w in company_words):   # "247VC"
+        return 1.0
+    return BROAD_TITLE if _fit_words(title, include) else 0.5
+
+
+def rank_quickenrich(rows: list[dict], query: TargetQuery) -> list[dict]:
+    """Give each LinkedIn person a score on the same scale as Cards and Zynd, before the shared fit
+    (role, place) that people_results.rescore applies to every source: LINKEDIN_PRIOR x how surely
+    their title is the asked role. Ties keep people with a profile URL first, then the provider's
+    order."""
+    scored = [({**row, "score": round(LINKEDIN_PRIOR * title_strength(row, query), 3)}, index)
+              for index, row in enumerate(rows)]
+    scored.sort(key=lambda pair: (-pair[0]["score"], not pair[0].get("linkedin_url"), pair[1]))
     return [row for row, _ in scored]
 
 

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 import config
 from api.auth import verify_supabase_jwt
 from models.card import AgentProfileCard
+from services import card_cache
 from services import cards as cards_service
 from services import events as events_service
 from services.jobs import utcnow
@@ -147,7 +148,7 @@ async def get_card_by_handle(handle: str, request: Request):
 
 
 @router.get("/by-handle/{handle}/view", response_model=None)
-async def get_card_view(handle: str):
+async def get_card_view(handle: str, request: Request):
     from models.card import CardView
     from services.card_view import build_card_view
 
@@ -158,6 +159,8 @@ async def get_card_view(handle: str):
     if claimed is False:
         raise HTTPException(status_code=404, detail="card not found")
     view: CardView = build_card_view(found, claimed=True)
+    events_service.emit("view", handle=found.handle or handle, request=request,
+                        meta={"endpoint": "card-view"})
     return view
 
 
@@ -330,6 +333,7 @@ async def refresh_linkedin(
     sb.table("agent_profile_cards").update(
         {"card": card_json, "updated_at": card_json["updated_at"]}
     ).eq("handle", handle).execute()
+    card_cache.invalidate()
 
     return {"work_experience": work_experience}
 
@@ -405,6 +409,7 @@ async def refresh_github(
     sb.table("agent_profile_cards").update(
         {"card": card_json, "updated_at": card_json["updated_at"]}
     ).eq("handle", handle).execute()
+    card_cache.invalidate()
 
     return {"github_stats": github_stats, "contribution_stats": contribution_stats}
 
@@ -504,6 +509,7 @@ async def _refresh_avatar_job(handle: str) -> None:
             sb.table("agent_profile_cards").update(
                 {"card": card_json, "updated_at": card_json["updated_at"]}
             ).eq("handle", handle).execute()
+            card_cache.invalidate()
         logger.info("avatar self-heal handle=%s action=%s", handle, action)
     except Exception as exc:
         logger.warning("avatar self-heal failed handle=%s: %s", handle, exc)

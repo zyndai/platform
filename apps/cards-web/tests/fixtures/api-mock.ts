@@ -90,6 +90,7 @@ export function startFixtureServer(): Promise<void> {
   let hasDuplicate = true;
   let anonymousMode = true;
   let humanViews = 12;
+  let capturedEvents: { event: string; handle?: string; meta?: { endpoint?: string }; userAgent: string }[] = [];
   let namedVisits = 0;
   const namedVisitIds = new Set<string>();
   let prefs = { weekly_digest: true, email_nudges: false, morning_digest: true };
@@ -98,7 +99,7 @@ export function startFixtureServer(): Promise<void> {
     completeness: { score: 75, actions: [{ section: "projects", title: "Add a project", href: "/p/owner/edit#projects" }] },
     inbox_count: 3, connection: { memory_connected: true, assistants_available: false },
     sources: [{ platform: "github", scraped_at: "2026-10-10T00:00:00Z", state: "fresh" }],
-    activity: { available: true, views: humanViews, agent_hits: 4, intro_requests: null, queries: [], query_capture_available: false, chat_topics: [], chat_questions: [{ question: "What projects is Alice building?", category: "work", asked_at: "2026-10-15T10:00:00Z", truncated: false }, { question: '<img src=x onerror="window.questionHistoryXss=1">', category: "other", asked_at: "2026-10-15T09:00:00Z", truncated: false }] },
+    activity: { available: true, views: humanViews, agent_hits: 4, agent_clients: [{ name: "Claude-User", provider: "Claude", count: 2 }, { name: "GPTBot", provider: "ChatGPT / OpenAI", count: 1 }, { name: "Unknown", provider: "Unknown", count: 1 }], intro_requests: null, queries: [], query_capture_available: false, chat_topics: [], chat_questions: [{ question: "What projects is Alice building?", category: "work", asked_at: "2026-10-15T10:00:00Z", truncated: false }, { question: '<img src=x onerror="window.questionHistoryXss=1">', category: "other", asked_at: "2026-10-15T09:00:00Z", truncated: false }] },
     visitors: { available: true, items: !anonymousMode && namedVisits ? [{ name: "Alice Chen", handle: "owner", visited_at: "2026-10-15T10:00:00Z", visits: namedVisits }] : [] },
     notification_prefs: prefs,
     duplicates: hasDuplicate ? [{ id: "id-old-owner", handle: "old-owner", name: "Alice Chen", status: "published" }] : [],
@@ -182,15 +183,18 @@ export function startFixtureServer(): Promise<void> {
       return;
     }
     if (path === "/__s10/reset") {
+      capturedEvents = [];
       namedVisitIds.clear();
       ownerCard = cardFixture("owner"); hasDuplicate = true; anonymousMode = true; humanViews = 12; namedVisits = 0; prefs = { weekly_digest: true, email_nudges: false, morning_digest: true };
       return json(200, {});
     }
+    if (path === "/__s10/events") return json(200, capturedEvents);
     if (path === "/events") {
       let raw = "";
       req.on("data", chunk => { raw += chunk; });
       req.on("end", () => {
         const events = JSON.parse(raw || "{}").events || [];
+        capturedEvents.push(...events.map((event: { event: string; handle?: string; meta?: { endpoint?: string } }) => ({ ...event, userAgent: req.headers["user-agent"] || "" })));
         for (const event of events) if (event.event === "view" && event.handle === "owner" && event.meta?.endpoint === "profile-page" && (req.headers["user-agent"] || "").includes("Mozilla/")) humanViews++;
         return json(204, {});
       });

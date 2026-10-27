@@ -74,8 +74,7 @@ can stay empty until you work on it: Google/LinkedIn/Twitter/GitHub/Notion
 OAuth apps (persona-api, memory), Telegram (`TELEGRAM_BOT_TOKEN`,
 `TELEGRAM_WEBHOOK_SECRET`), enrichment (`QUICKENRICH_*`, `APIFY_*`), web
 search (`EXA_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`), the X bot
-(`X_*`), SEO pings (`INDEXNOW_KEY`, `BING_*`), analytics
-(`NEXT_PUBLIC_GA_ID`, `NEXT_PUBLIC_ANALYTICS_ID`) and the Zynd network
+(`X_*`), SEO pings (`INDEXNOW_KEY`, `BING_*`) and the Zynd network
 (`ZYND_*`, `NGROK_AUTH_TOKEN`). OAuth logins in the browser also need
 `http://localhost:3000/**` and `http://localhost:3002/**` in the Supabase
 project's Auth redirect URLs.

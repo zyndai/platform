@@ -21,6 +21,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.config import settings
+from app.services import mcp_analytics
 
 _INSTRUCTIONS = """\
 You are connected to Zynd Cards — a public directory of real people (engineers,
@@ -190,18 +191,7 @@ async def _http_get(path: str, params: dict | None = None) -> Any:
 
 async def _emit_agent_fetch(tool: str, category: str, handle: str | None = None) -> None:
     """Best-effort S04 event via cards-api. Never stores full query text."""
-    try:
-        payload = {
-            "events": [{
-                "event": "agent_fetch",
-                "handle": handle,
-                "meta": {"tool": tool, "category": category, "endpoint": "cards-public-mcp"},
-            }],
-        }
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-            await client.post(f"{_base()}/events", json=payload)
-    except Exception:
-        pass
+    await mcp_analytics.record_fetches([handle], endpoint="cards-public-mcp", tool=tool, category=category)
 
 
 async def search_people_impl(
@@ -237,6 +227,7 @@ async def search_people_impl(
     if not people and "cards_unavailable" in (result.get("warnings") or []):
         raise RuntimeError("Cards search is unavailable")          # an outage is not "nobody matched"
     results = [_map_person(p) for p in people]
+    await mcp_analytics.record_people(result, endpoint="cards-public-mcp", tool="search_people")
     await _emit_agent_fetch("search_people", coarse_query_category(q or role or skills))
     out = {
         "query": q,
@@ -283,6 +274,7 @@ async def get_card_impl(handle: str) -> dict:
     ttl = max(0, settings.s11_get_card_cache_ttl_seconds)
     cached = _cache.get(h)
     if cached and cached[0] > now:
+        await _emit_agent_fetch("get_card", "card", handle=h)
         return _with_cache_control(cached[1], _bounded_ttl(cached[1], ttl))
     try:
         data = await _http_get(f"/cards/by-handle/{h}/view")

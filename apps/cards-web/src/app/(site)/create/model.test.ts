@@ -117,3 +117,10 @@ test("a project cover the person removed is not published", () => {
   assert.deepEqual(out.work_gallery?.map((w) => w.title), ["Orbit"]);
   assert.deepEqual(finalizeCard(card(), none, "", new Set()).work_gallery, []);
 });
+
+test("who the person wants to meet is saved, but never searchable as who they are", () => {
+  const out = finalizeCard(card(), { ...none, connect_with: ["Investors"], love_talking_about: ["Startups"] }, "", new Set());
+  assert.deepEqual(out.connect_with, ["Investors"]);
+  assert.ok(!out.searchable_facts.some((f) => /connect with/i.test(f)));
+  assert.ok(out.searchable_facts.some((f) => /loves talking about Startups/.test(f)));
+});

@@ -172,7 +172,8 @@ export function finalizeCard(
   const name = card.identity.name || "This person";
   const facts = [...card.searchable_facts];
   if (answers.working_on.length) facts.push(`${name} — working on ${answers.working_on.join(", ")} — Zynd`);
-  if (answers.connect_with.length) facts.push(`${name} — looking to connect with ${answers.connect_with.join(", ")} — Zynd`);
+  // connect_with is saved on the card as-is and left out of searchable_facts: it says who the owner
+  // wants to meet, and search read it as who the owner is.
   if (answers.love_talking_about.length) facts.push(`${name} — loves talking about ${answers.love_talking_about.join(", ")} — Zynd`);
 
   const have = new Set(card.skills.map((s) => s.name.toLowerCase()));

@@ -107,3 +107,23 @@ async def test_browser_consent_desktop_and_mobile(app):
         text=True, capture_output=True, timeout=45, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("route", ["/oauth/login", "/oauth/login/callback"])
+async def test_pages_use_the_product_design_system(app, route):
+    """Same faces, accent and brand header as cards.zynd.ai, not a one-off look."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        page = (await client.get(route, params={"zynd_oauth": "sealed-request"})).text
+    assert "Plus+Jakarta+Sans" in page and "Space+Mono" in page
+    assert "#6C5CE7" in page and "#1E1B4B" in page
+    assert 'class="brand"' in page and "data:image/png;base64," in page
+    for link in ("/privacy", "/terms", "/support"):
+        assert f"{oauth_ui.settings.cards_site_base_url.rstrip('/')}{link}" in page
+    assert "linear-gradient(135deg,#8B5CF6" not in page
+
+
+async def test_login_page_names_the_brand_the_way_the_site_does(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        page = (await client.get("/oauth/login", params={"zynd_oauth": "sealed-request"})).text
+    assert "<title>Sign in to Zynd</title>" in page and "<h1 id=\"title\">Sign in to Zynd</h1>" in page
+    assert "ZYND" not in page

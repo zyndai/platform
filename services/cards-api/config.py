@@ -225,7 +225,14 @@ def get_llm_client():
     )
 
 
-def get_openai_client():
-    from openai import OpenAI
+_openai_client = None
 
-    return OpenAI(api_key=OPENAI_API_KEY)
+
+def get_openai_client():
+    """One client for the process: a new one per call paid a fresh TLS handshake on every search."""
+    global _openai_client
+    if _openai_client is None:
+        from openai import OpenAI
+
+        _openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    return _openai_client

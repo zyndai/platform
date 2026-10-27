@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 from models.card import AgentProfileCard, Beacon
 import config
+from services import card_cache
 
 
 def active_beacon(card: AgentProfileCard, now: datetime | None = None) -> Beacon | None:
@@ -28,6 +29,7 @@ def save_beacon(handle: str, email: str, text: str | None) -> dict | None:
     saved = (sb.table("agent_profile_cards").update({"card": data, "updated_at": now.isoformat()})
              .eq("id", row["id"]).eq("updated_at", row["updated_at"])
              .ilike("owner_email", _like_literal(email)).neq("status", "merged").execute().data)
+    card_cache.invalidate()
     if not saved:
         raise HTTPException(409, "Your card changed. Reload before publishing this beacon.")
     return value

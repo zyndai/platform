@@ -17,15 +17,21 @@ log() { printf '[obs %s] %s\n' "$(date -u +%T)" "$*"; }
 
 mkdir -p "$DEST"
 changes="$(rsync -rlti --delete --exclude='.env' --exclude='apply.sh' --exclude='.gitkeep' \
-  --exclude='README.md' --exclude='.env.example' --exclude='build_dashboards.py' "$SRC"/ "$DEST"/ | grep -E '^>f' || true)"
+  --exclude='README.md' --exclude='.env.example' --exclude='build_dashboards.py' \
+  --exclude='tests' --exclude='__pycache__' --exclude='import' "$SRC"/ "$DEST"/ | grep -E '^>f' || true)"
 
 if [[ ! -f "$DEST/.env" ]]; then
   (umask 077; printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 16)" > "$DEST/.env")
   log "created $DEST/.env with a random Grafana admin password"
 fi
 
+if ! grep -q '^LOGS_API_KEYS=.' "$DEST/.env"; then
+  (umask 077; printf 'LOGS_API_KEYS=%s\n' "$(openssl rand -hex 24)" >> "$DEST/.env")
+  log "added a LOGS_API_KEYS to $DEST/.env"
+fi
+
 "${COMPOSE[@]}" config --quiet
-"${COMPOSE[@]}" up -d --remove-orphans
+"${COMPOSE[@]}" up -d --build --remove-orphans
 
 # `up -d` leaves running containers alone when only a bind-mounted file changed.
 if [[ -n "$changes" ]]; then

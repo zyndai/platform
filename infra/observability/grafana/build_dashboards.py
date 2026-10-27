@@ -13,6 +13,9 @@ import json
 from pathlib import Path
 
 OUT = Path(__file__).parent / "dashboards"
+# Not provisioned: dashboards to import by hand (Dashboards -> New -> Import), which then
+# belong to Grafana and can be edited and saved in the UI.
+IMPORT = Path(__file__).parent / "import"
 PROM = {"type": "prometheus", "uid": "prometheus"}
 LOKI = {"type": "loki", "uid": "loki"}
 
@@ -108,9 +111,9 @@ class Dash:
             "panels": self.panels,
         }
 
-    def write(self):
-        OUT.mkdir(exist_ok=True)
-        (OUT / f"{self.uid}.json").write_text(json.dumps(self.build(), indent=2, ensure_ascii=False) + "\n")
+    def write(self, out=OUT):
+        out.mkdir(exist_ok=True)
+        (out / f"{self.uid}.json").write_text(json.dumps(self.build(), indent=2, ensure_ascii=False) + "\n")
 
 
 # ── Panel builders ────────────────────────────────────────────────────
@@ -447,10 +450,102 @@ def edge():
                "Raw access-log entries; expand one for the full request."), 24, 10)
     d.write()
 
+# ── 5. Overview (importable, not provisioned) ─────────────────────────
+
+def overview():
+    d = Dash("zynd-overview", "Zynd overview",
+             "Everything on one screen: are the public URLs up, is the box healthy, how are the APIs "
+             "doing, which processes are restarting, and the latest errors. Pick prod or dev at the top. "
+             "The provisioned dashboards in the Zynd folder go deeper.", time_from="now-3h")
+    d.var_custom("env", "Environment", ["prod", "dev"], "prod")
+    env = 'env="$env"'
+
+    d.row("Status")
+    d.add(stat("Public URLs", [instant(f"probe_success{{{env}}}", "{{project}}")], "short",
+               steps(("red", None), ("green", 1)), mappings=UP_MAPPING, color_mode="background", graph=False,
+               text_mode="value_and_name"), 10, 5)
+    d.add(stat("RAM used", [instant("100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)")],
+               "percent", steps(("green", None), ("yellow", 70), ("red", 85)), 0), 3, 5)
+    d.add(stat("Disk used", [instant('100 * (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})')],
+               "percent", steps(("green", None), ("yellow", 70), ("red", 80)), 0), 3, 5)
+    d.add(stat("CPU busy", [instant('100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[$__rate_interval])))')],
+               "percent", steps(("green", None), ("yellow", 60), ("red", 85)), 0), 3, 5)
+    d.add(stat("Errors logged", [instant(f'sum(count_over_time({{source=~"docker|pm2", {env}, level="error"}}[$__range])) or vector(0)', ds=LOKI)],
+               "short", steps(("green", None), ("yellow", 1), ("red", 100)), 0,
+               description="Log records at level=error in the selected range, all projects in this env."), 3, 5)
+    d.add(stat("Firing alerts", [instant('count(ALERTS{alertstate="firing"}) or vector(0)')], "short",
+               steps(("green", None), ("orange", 1), ("red", 3)), 0, graph=False,
+               description="All environments. Details: Alerting -> Alert rules."), 2, 5)
+
+    d.row("Resources")
+    d.add(timeseries("Memory by project", [
+        tgt(f'sum by (project) (container_memory_working_set_bytes{{{env}}})', "{{project}}", ref="A"),
+        tgt(f'sum by (project) (pm2_process_memory_bytes{{{env}}})', "{{project}}", ref="B")],
+        "bytes", stack=True, legend="table"), 12, 8)
+    d.add(timeseries("CPU by project (cores)", [
+        tgt(f'sum by (project) (rate(container_cpu_usage_seconds_total{{{env}}}[$__rate_interval]))', "{{project}}", ref="A"),
+        tgt(f'sum by (project) (pm2_process_cpu_percent{{{env}}}) / 100', "{{project}}", ref="B")],
+        "short", stack=True, legend="table"), 12, 8)
+
+    d.row("APIs (cards-api, memory-api)")
+    d.add(timeseries("Requests per second", [
+        tgt(f'sum by (project, status) (rate(http_requests_total{{{env}}}[$__rate_interval]))', "{{project}} {{status}}")],
+        "reqps", stack=True, legend="table", description="Includes the /health probes."), 8, 8)
+    d.add(timeseries("5xx share", [
+        tgt(f'(sum by (project) (rate(http_requests_total{{{env}, status="5xx"}}[$__rate_interval])) or sum by (project) (rate(http_requests_total{{{env}}}[$__rate_interval])) * 0) '
+            f'/ sum by (project) (rate(http_requests_total{{{env}}}[$__rate_interval]))', "{{project}}")],
+        "percentunit", min_=0, thresholds_line=steps(("green", None), ("red", 0.05)),
+        description="The red line is 5%, the alert threshold."), 8, 8)
+    d.add(timeseries("Latency p95", [
+        tgt(f'histogram_quantile(0.95, sum by (le, project) (rate(http_request_duration_seconds_bucket{{{env}, handler!="none"}}[$__rate_interval])))', "{{project}}")],
+        "s", legend="table"), 8, 8)
+
+    d.row("Processes")
+    d.add(table("pm2 processes", [
+        instant(f"pm2_process_online{{{env}}}", ref="A", format="table"),
+        instant(f"pm2_process_memory_bytes{{{env}}}", ref="B", format="table"),
+        instant(f"pm2_process_uptime_seconds{{{env}}}", ref="C", format="table"),
+        instant(f"increase(pm2_process_restarts_total{{{env}}}[$__range])", ref="D", format="table")],
+        transformations=[
+            {"id": "merge", "options": {}},
+            {"id": "organize", "options": {
+                "excludeByName": {"Time": True, "job": True, "instance": True, "env": True, "project": True},
+                "indexByName": {"name": 0, "Value #A": 1, "Value #B": 2, "Value #C": 3, "Value #D": 4},
+                "renameByName": {"name": "process"}}}],
+        overrides=[col("Value #A", name="state", mapping=[{"type": "value", "options": {
+            "0": {"text": "down", "color": "red", "index": 0}, "1": {"text": "online", "color": "green", "index": 1}}}],
+                       cell={"type": "color-text"}),
+                   col("Value #B", "bytes", name="memory"), col("Value #C", "s", name="uptime"),
+                   col("Value #D", "short", name="restarts (range)", cell={"type": "color-text"},
+                       thresholds=steps(("green", None), ("yellow", 1), ("red", 3)))],
+        sort_by="process"), 12, 8)
+    d.add(table("Containers", [
+        instant(f'container_memory_working_set_bytes{{{env}}}', ref="A", format="table"),
+        instant(f'time() - container_start_time_seconds{{{env}}}', ref="B", format="table")],
+        description="Uptime resets on every deploy (the container is recreated).",
+        transformations=[
+            {"id": "merge", "options": {}},
+            {"id": "organize", "options": {
+                "excludeByName": {"Time": True, "job": True, "instance": True, "id": True, "image": True, "env": True},
+                "indexByName": {"project": 0, "name": 1, "Value #A": 2, "Value #B": 3},
+                "renameByName": {"name": "container"}}}],
+        overrides=[col("Value #A", "bytes", name="memory"), col("Value #B", "s", name="uptime")],
+        sort_by="memory"), 12, 8)
+
+    d.row("Logs and edge")
+    d.add(timeseries("Errors by project", [tgt(f'sum by (project) (count_over_time({{source=~"docker|pm2", {env}, level="error"}} [$__auto]))', "{{project}}", ds=LOKI)],
+                     "short", stack=True, bars=True), 12, 7)
+    d.add(timeseries("Public traffic by host (Caddy)", [tgt('sum by (host) (rate({source="caddy"} != "Blackbox Exporter" [$__auto]))', "{{host}}", ds=LOKI)],
+                     "reqps", stack=True, description="All hosts, prod and dev; excludes the uptime probes."), 12, 7)
+    d.add(logs("Latest errors", f'{{source=~"docker|pm2", {env}, level="error"}}',
+               "Tracebacks and Next.js stacks are one entry each. Expand one for its labels.", max_lines=200), 24, 12)
+    d.write(IMPORT)
+
 
 if __name__ == "__main__":
     box_overview()
     project()
     logs_explorer()
     edge()
-    print("wrote", ", ".join(sorted(p.name for p in OUT.glob("*.json"))))
+    overview()
+    print("wrote", ", ".join(sorted(p.name for p in [*OUT.glob("*.json"), *IMPORT.glob("*.json")])))

@@ -10,7 +10,7 @@
 #   ssh -L 3030:127.0.0.1:3030 <box>   ->   http://localhost:3030
 #
 # Ports: grafana 3030, prometheus 9090, loki 3100 (grpc 9096), alloy 12345,
-# node_exporter 9100, blackbox 9115, cadvisor 9180.
+# node_exporter 9100, blackbox 9115, cadvisor 9180, logs-api 8200.
 name: zynd-obs
 
 services:
@@ -91,6 +91,18 @@ services:
       - grafana-data:/var/lib/grafana
     depends_on:
       - prometheus
+      - loki
+
+  # Authenticated, bounded HTTP API over Loki (logs-api/app.py): list what is collected and
+  # filter lines by project, env, level, text and time. Loopback only; Caddy fronts it.
+  logs-api:
+    build: ./logs-api
+    network_mode: host
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      LOGS_API_KEYS: ${LOGS_API_KEYS:?set LOGS_API_KEYS in .env}
+    depends_on:
       - loki
 
   # The box itself: RAM, CPU, disk, network, OOM kills.

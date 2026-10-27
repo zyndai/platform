@@ -172,6 +172,14 @@ https://169.58.17.193:9443 {
 	reverse_proxy 127.0.0.1:9090
 }
 
+# Logs API (infra/observability/logs-api): its own bearer-key auth, self-signed HTTPS on a
+# port that must be allowed in ufw by hand (4443).
+https://169.58.17.193:4443 {
+	tls internal
+	import observability
+	reverse_proxy 127.0.0.1:8200
+}
+
 # ── DEV instance (branch `dev`; see docker-compose.dev.yml, ecosystem.dev.config.js) ──
 # Same shape as prod above, on the dev.* names and the dev ports. Everything is
 # localhost-only behind these HTTPS names; no extra public ports.

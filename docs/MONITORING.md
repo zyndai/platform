@@ -93,6 +93,7 @@ email) and an Alertmanager are added.
 | A traceback or a crash | **Logs**, the "Crashes" panel | The record is joined: the whole traceback is one entry |
 | Traffic spike or scanners | **Edge**: top 404 paths, clients, user agents | |
 | "Did the deploy work?" | **Project**: uptime and restarts reset; error count after | |
+| A script needs the logs | **Logs API**, below | |
 | Disk filling | **Box overview**, "Disk used" | `docker system df` on the box (images and build cache are the usual cause) |
 
 Use `level` rather than the pm2 `stream` label: uvicorn writes its INFO lines to
@@ -102,6 +103,18 @@ stderr, so `stream="error"` is not "errors". LogQL to paste into Explore:
 {level="error", env="prod"}
 {project="cards-api", env="prod"} |= "Traceback"
 sum by (host) (count_over_time({source="caddy", status=~"5.."}[5m]))
+```
+
+## Pull logs from a script: the logs API
+
+`https://169.58.17.193:4443` (self-signed, so `curl -k`; needs ufw port 4443) lists what is collected and
+returns filtered logs as JSON, with a bearer key from `LOGS_API_KEYS` in `~/.zynd-obs/.env`. It is a
+bounded front for Loki, which stays private. Full reference and examples: "Logs API" in
+`infra/observability/README.md`, and the live page at `/docs`.
+
+```bash
+curl -sk -H "Authorization: Bearer $KEY" "https://169.58.17.193:4443/v1/sources?since=6h"      # what exists
+curl -sk -H "Authorization: Bearer $KEY" "https://169.58.17.193:4443/v1/logs?project=cards-api&env=prod&level=error&since=2h&q=timeout"
 ```
 
 ## Add something

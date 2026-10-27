@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlparse
 
 import config
-from services import cards, events, zynd_mcp, zynd_memory
+from services import cards, events, ua_class, zynd_mcp, zynd_memory
 from services.card_view import expires_at, fact_predicate, _parse_ts
 from services.completeness import completeness
 
@@ -45,7 +45,7 @@ def activity(handle: str, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     empty = {"available": False, "views": None, "agent_hits": None,
              "intro_requests": None, "queries": [], "query_capture_available": False,
-             "chat_topics": [], "chat_questions": []}
+             "chat_topics": [], "chat_questions": [], "agent_clients": None}
     if not events.events_enabled():
         return empty
     try:
@@ -62,10 +62,28 @@ def activity(handle: str, now: datetime | None = None) -> dict:
                 "intro_requests": count("intro_request") if config.FEATURE_S12_INTROS else None,
                 "queries": queries, "query_capture_available": bool(queries),
                 "chat_topics": chat_topics(sb, handle, since),
-                "chat_questions": chat_questions(sb, handle, since)}
+                "chat_questions": chat_questions(sb, handle, since),
+                "agent_clients": agent_clients(sb, handle, since)}
     except Exception:
         # An unavailable event store is not zero traffic.
         return empty
+
+
+def agent_clients(sb, handle: str, since: str) -> list[dict] | None:
+    """Bounded breakdown of the latest AI profile requests; old rows stay unknown."""
+    try:
+        rows = (sb.table("card_events").select("meta").eq("handle", handle)
+                .in_("event", ["view", "agent_fetch"]).eq("actor_class", "ai_agent")
+                .gte("ts", since).order("ts", desc=True).limit(1000).execute().data or [])
+        counts = Counter()
+        for row in rows:
+            meta = row.get("meta")
+            name = meta.get("agent_name") if isinstance(meta, dict) else None
+            counts[name if isinstance(name, str) and name in ua_class.AGENT_PROVIDERS else "Unknown"] += 1
+        return [{"name": name, "provider": ua_class.AGENT_PROVIDERS.get(name, "Unknown"), "count": count}
+                for name, count in counts.most_common()]
+    except Exception:
+        return None
 
 
 def query_summaries(sb, handle: str, since: str) -> list[dict]:

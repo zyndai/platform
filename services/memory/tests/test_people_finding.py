@@ -272,6 +272,7 @@ def world():
         return out
 
     patches = {
+        "analytics": patch("app.services.mcp_analytics.record_fetches", AsyncMock()),
         "pool": patch("app.mcp_http._get_pool", AsyncMock(return_value=MagicMock())),
         "cards": patch("app.services.people_search.people_discovery.search_cards", AsyncMock(side_effect=lambda *a, **k: state["cards"])),
         "lookup": patch("app.services.people_search.people_discovery.lookup_cards", AsyncMock(side_effect=lambda *a, **k: state["lookup"])),

@@ -148,7 +148,7 @@ async def get_card_by_handle(handle: str, request: Request):
 
 
 @router.get("/by-handle/{handle}/view", response_model=None)
-async def get_card_view(handle: str):
+async def get_card_view(handle: str, request: Request):
     from models.card import CardView
     from services.card_view import build_card_view
 
@@ -159,6 +159,8 @@ async def get_card_view(handle: str):
     if claimed is False:
         raise HTTPException(status_code=404, detail="card not found")
     view: CardView = build_card_view(found, claimed=True)
+    events_service.emit("view", handle=found.handle or handle, request=request,
+                        meta={"endpoint": "card-view"})
     return view
 
 

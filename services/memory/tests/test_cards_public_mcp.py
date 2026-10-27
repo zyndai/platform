@@ -261,6 +261,9 @@ def test_get_card_cache_control_and_hit(monkeypatch):
     assert first["cache_control"] == "public, max-age=60"
     assert second["cache_control"] == "public, max-age=60"
     assert mock_client.get.await_count == 1
+    assert mock_client.post.await_count == 2  # Cached reads still count.
+    assert all("Zynd-MCP" in call.kwargs["headers"]["User-Agent"]
+               for call in mock_client.post.await_args_list)
 
 
 def test_get_card_404():
@@ -319,6 +322,26 @@ async def test_removed_public_intro_cannot_be_called():
         result = await client.call_tool("request_intro", {}, raise_on_error=False)
     assert result.is_error
     assert "Unknown tool" in result.content[0].text
+
+
+@pytest.mark.parametrize("mode", ["legacy", "auto"])
+async def test_real_mcp_sessions_keep_their_identity_on_cached_reads(monkeypatch, mode):
+    from mcp.types import Implementation
+
+    monkeypatch.setattr(pub.settings, "s11_get_card_cache_ttl_seconds", 60)
+    upstream = AsyncMock(return_value={"handle": "alice", "claimed": True})
+    monkeypatch.setattr(pub, "_http_get", upstream)
+    http = MagicMock()
+    http.__aenter__ = AsyncMock(return_value=http)
+    http.__aexit__ = AsyncMock(return_value=None)
+    http.post = AsyncMock(return_value=_FakeResp({}, status=204))
+    monkeypatch.setattr(pub.httpx, "AsyncClient", lambda **kw: http)
+    for name in ("codex-mcp-client", "claude-ai"):
+        async with Client(mcp, client_info=Implementation(name=name, version="test"), mode=mode) as client:
+            result = await client.call_tool("get_card", {"handle": "alice"})
+            assert not result.is_error
+    assert upstream.await_count == 1
+    assert [c.kwargs["headers"]["User-Agent"] for c in http.post.await_args_list] == ["Codex", "Claude-MCP"]
 
 
 def test_merged_app_carries_auth_middleware():

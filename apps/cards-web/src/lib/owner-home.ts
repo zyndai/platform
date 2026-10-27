@@ -20,6 +20,7 @@ export interface OwnerStatus {
     available: boolean;
     views: number | null;
     agent_hits: number | null;
+    agent_clients?: { name: string; provider: string; count: number }[] | null;
     intro_requests: number | null;
     queries: { query: string; count?: number }[];
     query_capture_available: boolean;

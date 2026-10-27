@@ -59,6 +59,27 @@ export function DiscoveryAnalytics({ activity, profile, visitors }: {
       </div>
       {!activity.available && <p className="oh-discovery-unavailable">Activity measurement is unavailable. Counts will appear when event collection is enabled.</p>}
 
+      <section className="oh-discovery-insight oh-discovery-history" aria-labelledby="agent-clients">
+        <div className="oh-discovery-insight-title">
+          <h3 id="agent-clients"><Sparkles size={18} aria-hidden="true" />Which agents visited</h3>
+          <span className="oh-discovery-count">Latest 1,000 · Last 7 days</span>
+        </div>
+        <p className="oh-discovery-description">Reported client identities, not verified model names. Older requests without a saved client name appear as Unknown.</p>
+        {activity.agent_clients?.length ? (
+          <ul className="oh-visitors">
+            {activity.agent_clients.map((agent) => (
+              <li className="oh-visitor" key={agent.name}>
+                <div className="oh-visitor-identity">
+                  <span className="oh-visitor-name">{agent.provider}</span>
+                  <span className="oh-visitor-meta">{agent.name}</span>
+                </div>
+                <span className="oh-visitor-count">{agent.count.toLocaleString("en-US")} {agent.count === 1 ? "request" : "requests"}</span>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="oh-discovery-empty">{activity.agent_clients ? "No recognized AI clients recorded in the last 7 days." : "Agent breakdown is unavailable."}</p>}
+      </section>
+
       <section className="oh-discovery-insight oh-discovery-history oh-visitors-panel" aria-labelledby="recent-visitors">
         <div className="oh-discovery-insight-title">
           <h3 id="recent-visitors"><UsersRound size={18} aria-hidden="true" />People who visited</h3>

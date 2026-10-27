@@ -17,6 +17,10 @@ from services import events, owner_home, ua_class
     ("ChatGPT-User/1.0", "ChatGPT-User"),
     ("GPTBot/1.0", "GPTBot"),
     ("PerplexityBot", "PerplexityBot"),
+    ("python-httpx/0.28 Codex", "Codex"),
+    ("python-httpx/0.28 ChatGPT-MCP", "ChatGPT-MCP"),
+    ("python-httpx/0.28 Claude-MCP", "Claude-MCP"),
+    ("Mozilla/5.0 Zynd-MCP", "Zynd-MCP"),
     ("curl/8.0", None), (None, None), ("Mozilla/5.0", None),
 ])
 def test_attribution_on_both_event_paths(monkeypatch, header, name):

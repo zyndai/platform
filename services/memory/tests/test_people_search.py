@@ -48,10 +48,11 @@ def world():
               AsyncMock(side_effect=lambda *a, **k: state["group"])),
         patch("app.services.people_search.active_context", AsyncMock(return_value=[
             {"predicate": "is_building", "object": "AI agents"}, {"predicate": "has_skill", "object": "Python"}])),
+        patch("app.services.mcp_analytics.record_fetches", AsyncMock()),
     ]
     mocks = [p.start() for p in patches]
     state["mocks"] = dict(zip(["pool", "cards_search", "zynd_search", "match", "external_search", "directory_call",
-                               "prefs", "group", "ctx"], mocks))
+                               "prefs", "group", "ctx", "analytics"], mocks))
     yield state
     for p in patches:
         p.stop()

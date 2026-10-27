@@ -15,6 +15,7 @@ _AI_AGENT = (
     "Applebot-Extended",
     "Meta-ExternalAgent",
     "cohere-ai",
+    "Codex", "ChatGPT-MCP", "Claude-MCP", "Perplexity-MCP", "Zynd-MCP",
 )
 
 _SEARCH_BOT = (
@@ -35,6 +36,9 @@ AGENT_PROVIDERS = {
     "Bytespider": "ByteDance", "CCBot": "Common Crawl",
     "Amazonbot": "Amazon", "Applebot-Extended": "Apple",
     "Meta-ExternalAgent": "Meta", "cohere-ai": "Cohere",
+    "Codex": "Codex / OpenAI", "ChatGPT-MCP": "ChatGPT / OpenAI",
+    "Claude-MCP": "Claude", "Perplexity-MCP": "Perplexity",
+    "Zynd-MCP": "Unidentified MCP client",
 }
 
 

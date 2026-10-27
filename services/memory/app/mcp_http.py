@@ -36,7 +36,7 @@ from app.services.control import confirm_fact, forget_fact, near_matches
 from app.services.export import active_context, build_jsonld_export, context_slice
 from app.services.findability import get_card
 from app.services.ingest import clean_text, ingest_turns
-from app.services import people_search, search_trail
+from app.services import mcp_analytics, people_search, search_trail
 from app.services.matching import match_users
 from app.services.self_context import load_self_context, normalize_profile, read_brief
 
@@ -605,9 +605,11 @@ async def find_people(
     carries `verified` (identities proven, e.g. "linkedin") and `why`, which says how current an
     approved fact is."""
     wanted, explicit = people_search.requested_sources(sources)
-    return await people_search.find(
+    result = await people_search.find(
         await _get_pool(), uid, target, limit=max(1, min(k, 20)), wanted=wanted, explicit=explicit,
         group_id=(group_id or "").strip())
+    await mcp_analytics.record_people(result, endpoint="memory-mcp", tool="find_people")
+    return result
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})

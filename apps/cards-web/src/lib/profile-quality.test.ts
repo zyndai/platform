@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cardDeclarations, cleanTopic, publicTopics } from "./profile-quality";
+import { cardDeclarations, cleanTopic, publicTopics } from "./profile-quality.ts";
 
 test("metadata keeps real short topics and excludes narrative and placeholders", () => {
   assert.deepEqual(publicTopics([{ name: "general" }, { name: "Python" }, { name: "python" }], [

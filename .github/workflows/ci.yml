@@ -49,6 +49,10 @@ jobs:
         run: bash "$GITHUB_WORKSPACE/.github/scripts/eslint-baseline.sh" ${{ matrix.lint_baseline }}
       - name: Typecheck
         run: npx tsc --noEmit
+      - name: Unit tests
+        # node:test with Node 22's type stripping: the *.test.ts files import their modules as .ts.
+        if: matrix.app == 'cards-web'
+        run: npm test
       - name: Build
         # Turbopack first, like production. persona-web is pinned to next@16.2.1,
         # whose Turbopack font handler fails on some Google Fonts responses

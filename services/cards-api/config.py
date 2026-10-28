@@ -191,6 +191,13 @@ FEATURE_S10_HOME: bool = os.getenv("FEATURE_S10_HOME", "true").lower() in ("1", 
 FEATURE_S10_DIGEST: bool = os.getenv("FEATURE_S10_DIGEST", "false").lower() in ("1", "true", "yes")
 S10_MAILER: str = os.getenv("S10_MAILER", "noop")  # noop | smtp
 
+# Email a claimed card's owner as soon as an AI agent reads the card (services/ai_read_alerts.py).
+# Sends through S10_MAILER, so nothing goes out unless that is "smtp" too. Off by default.
+FEATURE_AI_READ_ALERTS: bool = os.getenv("FEATURE_AI_READ_ALERTS", "false").lower() in ("1", "true", "yes")
+# At most one alert per card in this many hours. Floored at 1: a 0 here would email the owner
+# on every crawler hit.
+AI_READ_ALERT_COOLDOWN_HOURS: int = max(1, int(os.getenv("AI_READ_ALERT_COOLDOWN_HOURS", "24")))
+
 
 def _get_supabase():
     global _sb_service

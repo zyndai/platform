@@ -6,6 +6,13 @@ import { ATTR_COOKIE, type AttrPayload } from "@/lib/attr";
 const UTM_KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"] as const;
 const MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
+/** Our own "get a card" CTAs (profile card bar, /visibility report). They only
+ *  fill an empty ref: a visitor who came in through a share link or a campaign
+ *  keeps that ref, which is the channel that actually brought them. */
+function isInternalCtaRef(ref: string): boolean {
+  return ref === "visibility" || ref === "card_bar" || ref.startsWith("card_bar:");
+}
+
 function readExisting(request: NextRequest): AttrPayload | null {
   const raw = request.cookies.get(ATTR_COOKIE)?.value;
   if (!raw) return null;
@@ -22,7 +29,7 @@ export async function proxy(request: NextRequest) {
   // 301. Never forward a visitor session to this public lookup.
   const mergedPath = pathname.match(/^\/p\/([^/]+)(\/.*)?$/);
   const aliasPath = pathname.match(/^\/([^/]+)$/);
-  const reserved = new Set(["home", "create", "auth", "directory", "find", "search", "for-ai", "privacy", "terms", "support", "claude", "companion"]);
+  const reserved = new Set(["home", "create", "auth", "directory", "find", "search", "for-ai", "privacy", "terms", "support", "claude", "companion", "visibility"]);
   const slug = mergedPath?.[1] || (aliasPath && !reserved.has(aliasPath[1]) ? aliasPath[1] : null);
   if (slug) {
     try {
@@ -45,14 +52,15 @@ export async function proxy(request: NextRequest) {
     if (v) utm[key] = v.slice(0, 128);
   }
 
-  if (!ref && Object.keys(utm).length === 0) {
+  const existing = readExisting(request);
+  const incomingRef = ref && existing?.ref && isInternalCtaRef(ref) ? null : ref;
+  if (!incomingRef && Object.keys(utm).length === 0) {
     return NextResponse.next();
   }
-
-  const existing = readExisting(request);
-  let nextRef = ref?.slice(0, 64) || existing?.ref;
+  let nextRef = incomingRef?.slice(0, 64) || existing?.ref;
   // Campaign beats share: keep an existing non-share ref when the new one is card:*.
-  if (existing?.ref && ref?.startsWith("card:") && !existing.ref.startsWith("card:")) {
+  // An internal CTA ref isn't a campaign, so a share link may still replace it.
+  if (existing?.ref && incomingRef?.startsWith("card:") && !existing.ref.startsWith("card:") && !isInternalCtaRef(existing.ref)) {
     nextRef = existing.ref;
   }
 

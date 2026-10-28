@@ -189,7 +189,8 @@ function VisibilityResult({ report, link }: { report: VisibilityReport; link: st
               : "There's a Zynd card with your name that nobody has claimed yet."
             : "A Zynd card gives agents one accurate, citable page about you."}
         </p>
-        <Link href={cta.href} className="dc-btn dc-btn-primary">{cta.label}</Link>
+        {/* No prefetch: proxy.ts runs on prefetches too and would stamp ref=visibility on visitors who never clicked. */}
+        <Link href={cta.href} prefetch={false} className="dc-btn dc-btn-primary">{cta.label}</Link>
       </div>
     </section>
   );

@@ -199,7 +199,11 @@ def _event_store():
                                                httpx_client=transport))
 
 
-def _insert_rows(rows: list[dict]) -> bool:
+def _insert_rows(rows: list[dict], *, server_observed: bool = False) -> bool:
+    """server_observed: the rows came from one of our servers (cards-web, memory) carrying
+    EVENTS_SERVER_TOKEN. Only those can email an owner (services/ai_read_alerts.py). Reads that
+    cards-api serves itself (emit) do not count: their actor_class comes from the caller's
+    User-Agent, so anyone could GET a card as "Claude-User" and trigger an email."""
     if not rows or not events_enabled():
         return True
     try:
@@ -207,7 +211,7 @@ def _insert_rows(rows: list[dict]) -> bool:
     except Exception:
         logger.exception("card_events insert failed (%d rows)", len(rows))
         return False
-    if config.FEATURE_AI_READ_ALERTS:
+    if server_observed and config.FEATURE_AI_READ_ALERTS:
         from services import ai_read_alerts
         ai_read_alerts.schedule(rows)
     return True
@@ -237,6 +241,7 @@ def insert_batch(
     *,
     user_agent: str | None,
     ip: str | None,
+    server_observed: bool = False,
 ) -> bool:
     if not events_enabled() or not events:
         return True
@@ -256,7 +261,7 @@ def insert_batch(
         )
         for e in events
     ]
-    return _insert_rows(rows)
+    return _insert_rows(rows, server_observed=server_observed)
 
 
 def emit(

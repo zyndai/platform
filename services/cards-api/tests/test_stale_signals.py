@@ -23,6 +23,11 @@ def card(**kwargs):
     return AgentProfileCard(id="c1", handle="alice", **{"working_on": ["Zynd Cards"], **kwargs})
 
 
+@pytest.fixture
+def stale_on(monkeypatch):
+    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", True)
+
+
 # ── freshness rules ──
 
 def test_legacy_card_without_a_stamp_is_never_stale():
@@ -43,7 +48,7 @@ def test_empty_working_on_has_nothing_to_go_stale():
     assert stale_signals.working_on_is_stale(c, NOW) is False
 
 
-def test_live_memory_fact_makes_the_public_list_fresh():
+def test_live_memory_fact_makes_the_public_list_fresh(stale_on):
     # #given an old stored stamp, but memory approved a new "is_working_on" two days ago
     approved = NOW - timedelta(days=2)
     c = card(working_on_updated_at=NOW - timedelta(days=200),
@@ -55,14 +60,75 @@ def test_live_memory_fact_makes_the_public_list_fresh():
     assert stale_signals.working_on_is_stale(public, NOW) is False
 
 
-def test_memory_fact_from_the_future_cannot_pin_the_list_fresh():
+def test_memory_fact_from_the_future_cannot_pin_the_list_fresh(stale_on):
     c = card(zynd_memory=[{"predicate": "is_working_on", "object": "X", "approved_at": (NOW + timedelta(days=1)).isoformat()}])
     assert derive_public_signals(c, NOW).working_on_updated_at == NOW
 
 
-def test_stamp_reaches_the_card_view():
+def test_stamp_reaches_the_card_view(stale_on):
     stamp = NOW - timedelta(days=100)
     assert build_card_view(card(working_on_updated_at=stamp), claimed=True).working_on_updated_at == stamp
+
+
+# ── flag off: public reads exactly as before the feature ──
+
+def _public_routes(monkeypatch, stored: AgentProfileCard) -> TestClient:
+    """GET /cards/{id}, /cards/by-handle/{h}, /cards/by-handle/{h}/view and /cards?q= over one stored
+    row whose card JSON carries the 0033 mirror."""
+    from api import cards as card_routes
+    from services import cards as cards_service
+
+    row = {"card": stored.model_dump(mode="json"), "handle": "alice", "claimed": True}
+    assert "working_on_updated_at" in row["card"]
+    monkeypatch.setattr(cards_service, "_select_public", lambda sb, finish: SimpleNamespace(data=[row]))
+    monkeypatch.setattr(cards_service, "get_card", lambda _id: stored)
+    monkeypatch.setattr(cards_service, "get_card_by_handle", lambda _h: stored)
+    monkeypatch.setattr(cards_service, "search_cards", lambda q: [stored])
+    monkeypatch.setattr(cards_service, "card_is_claimed", lambda _h: True)
+    monkeypatch.setattr(cards_service, "claimed_by_handles", lambda hs: {h: True for h in hs})
+    monkeypatch.setattr(card_routes.events_service, "emit", lambda *a, **k: None)
+    monkeypatch.setattr(config, "get_supabase", lambda: MagicMock())
+    app = FastAPI()
+    app.include_router(card_routes.router, prefix="/cards")
+    return TestClient(app)
+
+
+def _public_reads(client: TestClient) -> dict[str, dict]:
+    reads = {path: client.get(path) for path in ("/cards/c1", "/cards/by-handle/alice", "/cards/by-handle/alice/view")}
+    reads["/cards?q=zynd"] = client.get("/cards", params={"q": "zynd"})
+    assert all(r.status_code == 200 for r in reads.values()), {p: r.status_code for p, r in reads.items()}
+    return {path: (r.json()[0] if isinstance(r.json(), list) else r.json()) for path, r in reads.items()}
+
+
+def test_flag_off_public_reads_carry_no_stamp(monkeypatch):
+    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", False)
+    # #given a stored card whose JSON already has the trigger's mirror, plus a live memory fact
+    stored = card(working_on_updated_at=NOW - timedelta(days=200),
+                  zynd_memory=[{"predicate": "is_working_on", "object": "Agent search",
+                                "approved_at": datetime.now(timezone.utc).isoformat()}])
+    # #when it is read through every public route
+    for path, body in _public_reads(_public_routes(monkeypatch, stored)).items():
+        # #then the field is absent, not just null
+        assert "working_on_updated_at" not in body, path
+        assert body["working_on"], path
+
+
+def test_flag_off_card_view_and_derived_card_have_no_stamp(monkeypatch):
+    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", False)
+    stored = card(working_on_updated_at=NOW - timedelta(days=200),
+                  zynd_memory=[{"predicate": "is_working_on", "object": "X", "approved_at": NOW.isoformat()}])
+    assert derive_public_signals(stored, NOW).working_on_updated_at is None
+    view = build_card_view(stored, claimed=True)
+    assert view.working_on_updated_at is None
+    assert "working_on_updated_at" not in view.model_dump(mode="json")
+    # The stored card itself is untouched: the mirror belongs to the 0033 trigger.
+    assert stored.working_on_updated_at == NOW - timedelta(days=200)
+
+
+def test_flag_on_public_reads_carry_the_stamp(monkeypatch, stale_on):
+    stored = card(working_on_updated_at=NOW - timedelta(days=200))
+    for path, body in _public_reads(_public_routes(monkeypatch, stored)).items():
+        assert body["working_on_updated_at"].startswith("2026-04-11"), path
 
 
 def test_unknown_stamp_is_not_written_into_the_stored_card_json():
@@ -198,7 +264,9 @@ def test_confirm_other_database_errors_are_not_hidden(api):
 
 def test_confirm_is_hidden_while_the_flag_is_off(api, monkeypatch):
     monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", False)
-    assert api.client.post(URL, headers={"Authorization": "Bearer owner"}).status_code == 404
+    res = api.client.post(URL, headers={"Authorization": "Bearer owner"})
+    assert res.status_code == 404
+    assert res.json()["detail"] == "Stale signals are turned off"
     assert api.table.updates == []
 
 

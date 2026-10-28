@@ -35,6 +35,11 @@ export async function logAgentFetch(
   const body = JSON.stringify({
     events: [{ event: "agent_fetch", handle, meta: { endpoint } }],
   });
+  // Shared secret with cards-api: only events carrying it count as real AI
+  // reads (AI-read alerts), since anyone can POST a crawler User-Agent to the
+  // public /events endpoint. Not NEXT_PUBLIC_, so client bundles never get it;
+  // every caller of this function is a server route or server component.
+  const serverToken = process.env.EVENTS_SERVER_TOKEN;
   try {
     const response = await fetch(`${CARDS_API}/events`, {
       method: "POST",
@@ -42,6 +47,7 @@ export async function logAgentFetch(
       headers: {
         "Content-Type": "application/json",
         ...(userAgent ? { "User-Agent": userAgent } : {}),
+        ...(serverToken ? { "X-Zynd-Server-Event": serverToken } : {}),
       },
       body,
       keepalive: true,

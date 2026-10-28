@@ -45,10 +45,12 @@ router = APIRouter()
 @router.get("")
 async def search_cards(q: str = Query("", max_length=200)):
     if q:
+        from services import stale_signals
+
         cards = cards_service.search_cards(q)
         claimed = cards_service.claimed_by_handles([c.handle for c in cards if c.handle])
         return [
-            {**c.model_dump(mode="json"), "claimed": claimed.get(c.handle, False)}
+            {**stale_signals.for_public_read(c).model_dump(mode="json"), "claimed": claimed.get(c.handle, False)}
             for c in cards
         ]
     return cards_service.list_published_public()

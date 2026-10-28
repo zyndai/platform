@@ -101,6 +101,11 @@ FEATURE_S08_ONBOARDING_V2: bool = os.getenv("FEATURE_S08_ONBOARDING_V2", "false"
 # Optional fixed prefix for the daily-rotating IP salt. Empty = derive from
 # SUPABASE_JWT_SECRET + UTC date.
 EVENTS_IP_SALT: str = os.getenv("EVENTS_IP_SALT", "")
+# Shared secret our own servers (cards-web's server-side agent-fetch log, Memory's MCP reads)
+# send as X-Zynd-Server-Event on POST /events. Only batches carrying it can trigger an AI-read
+# alert email: the endpoint is public and actor_class comes from a User-Agent anyone can set.
+# Empty = nothing is trusted, so no alert is ever sent from POST /events.
+EVENTS_SERVER_TOKEN: str = os.getenv("EVENTS_SERVER_TOKEN", "")
 
 # S03 "Not me" takedown: when a visitor reports a scraped card isn't theirs,
 # cards-api posts the request to the shared Mattermost incoming webhook so a
@@ -132,6 +137,9 @@ FEATURE_AI_VISIBILITY: bool = os.getenv("FEATURE_AI_VISIBILITY", "false").lower(
 AI_VISIBILITY_MODEL: str = os.getenv("AI_VISIBILITY_MODEL", "perplexity/sonar")
 # Shown to the visitor under the answer ("Answer from <label> via API").
 AI_VISIBILITY_MODEL_LABEL: str = os.getenv("AI_VISIBILITY_MODEL_LABEL", "Perplexity Sonar")
+# Paid model calls per UTC day across every visitor (services/visibility.py), so many addresses
+# cannot add up to an unbounded bill. 300 is about $1.80 a day at the price above.
+AI_VISIBILITY_DAILY_CAP: int = max(0, int(os.getenv("AI_VISIBILITY_DAILY_CAP", "300")))
 
 # ── OpenAI (embeddings) ──
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")

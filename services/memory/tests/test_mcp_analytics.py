@@ -44,6 +44,23 @@ async def test_batching_deduplication_and_delivery_failure(monkeypatch):
     await analytics.record_fetches(["alice"], endpoint="memory-mcp", tool="find_people")
 
 
+async def test_server_token_is_sent_only_when_configured(monkeypatch):
+    monkeypatch.setattr(analytics.settings, "cards_api_base_url", "http://cards.test")
+    monkeypatch.setattr(analytics, "advertised_user_agent", lambda: "Codex")
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.post = AsyncMock(return_value=MagicMock())
+    monkeypatch.setattr(analytics.httpx, "AsyncClient", lambda **kw: client)
+    monkeypatch.setattr(analytics.settings, "events_server_token", "")
+    await analytics.record_fetches(["alice"], endpoint="memory-mcp", tool="get_card")
+    monkeypatch.setattr(analytics.settings, "events_server_token", "shared-secret")
+    await analytics.record_fetches(["alice"], endpoint="memory-mcp", tool="get_card")
+    first, second = (c.kwargs["headers"] for c in client.post.await_args_list)
+    assert first == {"User-Agent": "Codex"}
+    assert second == {"User-Agent": "Codex", "X-Zynd-Server-Event": "shared-secret"}
+
+
 async def test_authenticated_find_people_records_only_returned_public_cards(monkeypatch):
     from app import mcp_http as m
     result = {"people": [

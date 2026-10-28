@@ -10,7 +10,8 @@ interface Signal {
   items: string[];
   /** Unchanged for lib/stale-signals STALE_DAYS: chips dim, with a hint. */
   stale?: boolean;
-  /** Under the hint, e.g. the owner's confirm prompt. */
+  /** Under the hint, e.g. the owner's confirm prompt. Rendered even when not
+   *  stale so the prompt's state (its "Thanks") survives the card turning fresh. */
   staleFooter?: ReactNode;
 }
 
@@ -52,12 +53,8 @@ export function EditionSignals({ signals }: { signals: Signal[] }) {
               ))}
               {more > 0 && <li className="ed-signal-chip ed-signal-more">+{more} more</li>}
             </ul>
-            {signal.stale && (
-              <>
-                <p className="ed-signal-stale">Not updated in 3+ months</p>
-                {signal.staleFooter}
-              </>
-            )}
+            {signal.stale && <p className="ed-signal-stale">Not updated in 3+ months</p>}
+            {signal.staleFooter}
           </section>
         );
       })}

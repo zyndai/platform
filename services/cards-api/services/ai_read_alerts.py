@@ -1,9 +1,16 @@
 """Email a card owner right after an AI agent reads their card. Flag off = no-op.
 
 Owners otherwise only learn about AI reads by opening /home. The trigger is a stored `view` or
-`agent_fetch` card_event whose actor_class is `ai_agent` (crawlers like Googlebot and
-unidentified clients do not count), for a published, claimed card whose owner has not turned
-the morning digest off.
+`agent_fetch` card_event that
+  - was reported by one of our servers (cards-web page and data.json reads, memory's MCP reads)
+    with EVENTS_SERVER_TOKEN (services/events.py _insert_rows). A plain POST /events and the
+    reads cards-api records itself (emit) never trigger: their actor_class comes from the
+    caller's User-Agent, which anyone can set;
+  - names an agent from ALERT_AGENTS, the clients that fetch a card because a person asked them
+    something just now. Training and index crawlers (GPTBot, ClaudeBot, CCBot, OAI-SearchBot,
+    PerplexityBot, ...) still count as AI reads on /home, but never email anyone; neither do
+    search bots or unidentified clients;
+for a published, claimed card whose owner has not turned the morning digest off.
 
 Throttle: at most one email per card per AI_READ_ALERT_COOLDOWN_HOURS. The last send is a
 server-only `ai_read_alert_sent` row in card_events, so the limit needs no migration and holds
@@ -31,6 +38,14 @@ logger = logging.getLogger(__name__)
 TRIGGER_EVENTS = frozenset({"view", "agent_fetch"})
 _TRIGGER_ACTOR = "ai_agent"
 
+# User-initiated fetchers only (ua_class tokens). A crawl reads every card in one pass, so a
+# crawler here would mail every owner whenever it ran. OAI-SearchBot and PerplexityBot are left
+# out: both build their provider's search index ahead of time rather than fetching for one
+# question (OpenAI's per-question fetcher is ChatGPT-User).
+ALERT_AGENTS = frozenset({
+    "ChatGPT-User", "Claude-User", "Codex", "ChatGPT-MCP", "Claude-MCP", "Perplexity-MCP", "Zynd-MCP",
+})
+
 # After a check that did not send (unclaimed card, opted out, already alerted, no mailer),
 # skip that card's DB lookups for this long. Crawlers hit the same card in bursts, and an
 # owner who claims a card or turns email back on waits at most this long for the next alert.
@@ -49,8 +64,9 @@ def enabled() -> bool:
 
 
 def schedule(rows: list[dict]) -> None:
-    """Queue an alert check for each card an AI agent just read. Called after the rows are
-    stored; never raises, never waits on the database or the mailer."""
+    """Queue an alert check for each card an AI agent just read. Called after server-observed
+    rows are stored (never for a plain POST /events); never raises, never waits on the database
+    or the mailer."""
     if not enabled():
         return
     try:
@@ -62,16 +78,17 @@ def schedule(rows: list[dict]) -> None:
         logger.exception("ai read alert scheduling failed")
 
 
-def _ai_reads(rows: list[dict]) -> dict[str, str | None]:
+def _ai_reads(rows: list[dict]) -> dict[str, str]:
     """handle -> advertised agent token, one entry per card."""
-    reads: dict[str, str | None] = {}
+    reads: dict[str, str] = {}
     for row in rows:
         handle = row.get("handle")
         if row.get("event") not in TRIGGER_EVENTS or row.get("actor_class") != _TRIGGER_ACTOR or not handle:
             continue
         meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
         name = meta.get("agent_name")
-        reads.setdefault(handle, name if name in ua_class.AGENT_PROVIDERS else None)
+        if name in ALERT_AGENTS:
+            reads.setdefault(handle, name)
     return reads
 
 

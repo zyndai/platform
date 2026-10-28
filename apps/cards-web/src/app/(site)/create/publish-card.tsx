@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, TriangleAlert } from "lucide-react";
 
-import { AlternateSignIn } from "@/components/auth/alternate-sign-in";
+import { AlternateSignIn, type AlternateSignInMethod } from "@/components/auth/alternate-sign-in";
 import { slugifyHandle } from "./model";
 import { handleIsFree } from "./publish";
 
@@ -21,7 +21,7 @@ export function PublishCard({ ready, building, hasSource, statusText, handle, on
   authenticated: boolean;
   onSignIn: () => void;
   /** Google / email sign-in (behind flags): save the draft before leaving. */
-  onBeforeAlternateSignIn: () => void;
+  onBeforeAlternateSignIn: (method: AlternateSignInMethod) => void;
   onPublish: () => void;
   publishing: boolean;
   error: string | null;

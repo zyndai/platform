@@ -648,6 +648,9 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
   // Everyone sees stale Working on chips dimmed; only the owner gets Confirm / Update.
   const workingOnStale = featureStaleSignals() && isWorkingOnStale(card.working_on_updated_at, card.working_on, nowMs);
+  // The prompt stays mounted on the owner's Working on card even when it isn't stale, so its
+  // "Thanks" survives the refresh that un-dims the chips; it renders nothing otherwise.
+  const ownerConfirmsWorkingOn = featureStaleSignals() && isOwner;
 
   const showLinkedin = !!(linkedinHandle || linkedinUrl || liJobs.length > 0);
   const showX = !!(v.x.handle || v.x.followers != null);
@@ -763,6 +766,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
         .pf-obs-row { display: grid; grid-template-columns: var(--obs-cols, 1fr); gap: 16px; }
         /* Working on unchanged for STALE_DAYS (lib/stale-signals.ts) */
         .pf-obs-chip-stale { opacity: .55; }
+        .pf-obs-stale:empty { display: none; }
         .pf-obs-stale { margin-top: 10px; font-size: 0.62rem; line-height: 1.45; font-weight: 700; opacity: .85; }
         .pf-obs-stale p { margin: 0; }
         .pf-obs-stale .stale-wo-action { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
@@ -1021,9 +1025,9 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                     key: obs.key,
                     label: obs.label,
                     items: obs.items.filter((item) => !isBlank(item)),
-                    ...(stale ? {
-                      stale,
-                      staleFooter: isOwner ? <StaleWorkingOnPrompt handle={card.handle ?? handle} className="ed-signal-stale-prompt" /> : null,
+                    ...(stale ? { stale } : {}),
+                    ...(obs.key === "working_on" && ownerConfirmsWorkingOn ? {
+                      staleFooter: <StaleWorkingOnPrompt handle={card.handle ?? handle} stale={stale} className="ed-signal-stale-prompt" />,
                     } : {}),
                   };
                 })}
@@ -1078,10 +1082,10 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                           </span>
                         ))}
                       </div>
-                      {stale && (
+                      {(stale || (obs.key === "working_on" && ownerConfirmsWorkingOn)) && (
                         <div className="pf-obs-stale pf-mono">
-                          <p>Not updated in 3+ months</p>
-                          {isOwner && <StaleWorkingOnPrompt handle={card.handle ?? handle} />}
+                          {stale && <p>Not updated in 3+ months</p>}
+                          {obs.key === "working_on" && ownerConfirmsWorkingOn && <StaleWorkingOnPrompt handle={card.handle ?? handle} stale={stale} />}
                         </div>
                       )}
                     </div>

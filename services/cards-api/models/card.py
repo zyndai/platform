@@ -320,6 +320,15 @@ class CardView(TopicFields):
     links: dict[str, str] = Field(default_factory=dict)
     beacon: Beacon | None = None
 
+    @model_serializer(mode="wrap")
+    def _omit_unknown_working_on_stamp(self, handler):
+        # Unknown (or FEATURE_STALE_SIGNALS off, services/signals.py) leaves the key out, so the
+        # public view is exactly what it was before the field existed.
+        data = handler(self)
+        if isinstance(data, dict) and data.get("working_on_updated_at") is None:
+            data.pop("working_on_updated_at", None)
+        return data
+
 
 class AgentProfileCard(TopicFields):
     id: str

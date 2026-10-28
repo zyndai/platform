@@ -14,6 +14,8 @@ OWNER = "alice@example.com"
 TOKEN = "00000000-0000-4000-8000-000000000001"
 REAL_SUBMIT = ai_read_alerts._submit
 CLAUDE_UA = "Mozilla/5.0 (compatible; Claude-User/1.0; +https://anthropic.com)"
+SERVER_TOKEN = "server-token-for-tests"
+SERVER = {"X-Zynd-Server-Event": SERVER_TOKEN}
 
 
 class RecordingMailer:
@@ -53,6 +55,7 @@ def world(monkeypatch):
     monkeypatch.setattr(config, "MAINTENANCE_READONLY", False)
     monkeypatch.setattr(config, "SITE_BASE_URL", "https://zynd.ai")
     monkeypatch.setattr(config, "API_BASE_URL", "https://api.zynd.ai")
+    monkeypatch.setattr(config, "EVENTS_SERVER_TOKEN", SERVER_TOKEN)
     db = FakeSupabase(agent_profile_cards=[card()], card_events=[])
     monkeypatch.setattr(config, "get_supabase", lambda: db)
     monkeypatch.setattr(events_service, "_event_store", lambda: db)
@@ -74,7 +77,7 @@ def test_flag_off_is_a_no_op(world, monkeypatch):
     monkeypatch.setattr(config, "FEATURE_AI_READ_ALERTS", False)
     submitted = []
     monkeypatch.setattr(ai_read_alerts, "_submit", lambda *args: submitted.append(args))
-    assert events_service._insert_rows([ai_read()]) is True
+    assert events_service._insert_rows([ai_read()], server_observed=True) is True
     assert submitted == [] and mailer.sent == [] and alerts(db) == []
 
 
@@ -82,6 +85,29 @@ def test_flag_off_is_a_no_op(world, monkeypatch):
 def test_non_ai_reads_do_not_alert(world, actor):
     db, mailer = world
     ai_read_alerts.schedule([ai_read(actor=actor)])
+    assert mailer.sent == [] and alerts(db) == []
+
+
+@pytest.mark.parametrize("crawler", ["GPTBot", "ClaudeBot", "anthropic-ai", "CCBot", "Bytespider", "Google-Extended",
+                                     "Amazonbot", "Applebot-Extended", "Meta-ExternalAgent", "cohere-ai",
+                                     "OAI-SearchBot", "PerplexityBot"])
+def test_bulk_crawlers_do_not_alert(world, crawler):
+    db, mailer = world
+    ai_read_alerts.schedule([ai_read(agent=crawler)])
+    assert mailer.sent == [] and alerts(db) == []
+
+
+@pytest.mark.parametrize("agent", sorted(ai_read_alerts.ALERT_AGENTS))
+def test_user_initiated_agents_alert(world, agent):
+    db, mailer = world
+    ai_read_alerts.schedule([ai_read(agent=agent)])
+    assert len(mailer.sent) == 1 and alerts(db)[0]["meta"] == {"agent_name": agent}
+
+
+def test_read_without_an_agent_name_does_not_alert(world):
+    db, mailer = world
+    ai_read_alerts.schedule([ai_read(agent=None), {"event": "view", "handle": "alice", "actor_class": "ai_agent",
+                                                   "meta": {"agent_name": "Made-Up-Agent"}}])
     assert mailer.sent == [] and alerts(db) == []
 
 
@@ -178,7 +204,7 @@ def test_burst_of_reads_checks_the_card_once(world, monkeypatch):
     submitted = []
     monkeypatch.setattr(ai_read_alerts, "_submit", lambda fn, *args: submitted.append(args))
     ai_read_alerts.schedule([ai_read(), ai_read(event="view")])
-    ai_read_alerts.schedule([ai_read(agent="GPTBot")])
+    ai_read_alerts.schedule([ai_read(agent="ChatGPT-User")])
     assert len(submitted) == 1
 
 
@@ -206,15 +232,48 @@ def test_real_background_pool_sends_off_the_calling_thread(world, monkeypatch):
     assert len(mailer.sent) == 1 and len(alerts(db)) == 1
 
 
-def test_ai_read_through_post_events_sends_the_alert(world):
-    db, mailer = world
+def _post_ai_read(**headers):
     from main import app
 
-    response = TestClient(app).post("/events", json={"events": [{"event": "agent_fetch", "handle": "alice"}]},
-                                    headers={"User-Agent": CLAUDE_UA})
-    assert response.status_code == 204
+    return TestClient(app).post("/events", json={"events": [{"event": "agent_fetch", "handle": "alice"}]},
+                                headers={"User-Agent": CLAUDE_UA, **headers})
+
+
+def test_ai_read_from_our_server_through_post_events_sends_the_alert(world):
+    db, mailer = world
+    assert _post_ai_read(**SERVER).status_code == 204
     assert [m["subject"] for m in mailer.sent] == ["Claude just read your Zynd card"]
     assert len(alerts(db)) == 1
+    # The token is a credential, never stored with the event.
+    assert SERVER_TOKEN not in str(db.rows("card_events"))
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-Zynd-Server-Event": "wrong"}, {"X-Zynd-Server-Event": ""},
+                                     {"X-Zynd-Server-Event": SERVER_TOKEN + "x"}])
+def test_public_post_events_cannot_trigger_the_alert(world, headers):
+    db, mailer = world
+    # #given anyone posting an AI read with a Claude User-Agent and no (or a wrong) server token
+    assert _post_ai_read(**headers).status_code == 204
+    # #then the read is still counted, but no owner is emailed
+    assert any(r["event"] == "agent_fetch" for r in db.rows("card_events"))
+    assert mailer.sent == [] and alerts(db) == []
+
+
+def test_no_server_token_configured_trusts_nobody(world, monkeypatch):
+    db, mailer = world
+    monkeypatch.setattr(config, "EVENTS_SERVER_TOKEN", "")
+    for headers in ({}, {"X-Zynd-Server-Event": ""}, SERVER):
+        assert _post_ai_read(**headers).status_code == 204
+    assert mailer.sent == [] and alerts(db) == []
+
+
+def test_read_cards_api_served_itself_does_not_alert(world):
+    db, mailer = world
+    # #when anyone GETs a card from cards-api with an AI User-Agent (no running loop: inline insert)
+    events_service.emit("agent_fetch", handle="alice", user_agent=CLAUDE_UA, meta={"endpoint": "agent-profile"})
+    # #then the read is stored, but a spoofable User-Agent alone never emails the owner
+    assert any(r["event"] == "agent_fetch" for r in db.rows("card_events"))
+    assert mailer.sent == [] and alerts(db) == []
 
 
 def test_mailer_exception_does_not_break_ingest(world, monkeypatch, caplog):
@@ -224,7 +283,7 @@ def test_mailer_exception_does_not_break_ingest(world, monkeypatch, caplog):
 
     with caplog.at_level(logging.INFO):
         response = TestClient(app).post("/events", json={"events": [{"event": "agent_fetch", "handle": "alice"}]},
-                                        headers={"User-Agent": CLAUDE_UA})
+                                        headers={"User-Agent": CLAUDE_UA, **SERVER})
     assert response.status_code == 204
     assert any(r["event"] == "agent_fetch" for r in db.rows("card_events"))
     # The window was claimed before sending, so a failed send is not retried on every read.
@@ -240,7 +299,7 @@ def test_lookup_failure_does_not_break_ingest(world, monkeypatch):
         raise RuntimeError("db down")
 
     monkeypatch.setattr(ai_read_alerts, "_owner_row", broken)
-    assert events_service._insert_rows([ai_read()]) is True
+    assert events_service._insert_rows([ai_read()], server_observed=True) is True
     assert mailer.sent == []
     assert "alice" not in ai_read_alerts._inflight and "alice" not in ai_read_alerts._quiet_until
 

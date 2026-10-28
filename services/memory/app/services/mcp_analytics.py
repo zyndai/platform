@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 EVENT_BATCH_SIZE = 20
 EVENT_TIMEOUT_SECONDS = 5
 MCP_CLIENT_INFO_KEY = "io.modelcontextprotocol/clientInfo"
+SERVER_EVENT_HEADER = "X-Zynd-Server-Event"
 CLIENT_LABELS = {
     "codex": "Codex", "chatgpt": "ChatGPT-MCP", "claude": "Claude-MCP",
     "perplexity": "Perplexity-MCP",
@@ -48,11 +49,14 @@ async def record_fetches(handles: list[str | None], *, endpoint: str, tool: str,
         return
     unique = list(dict.fromkeys(handles))
     try:
+        headers = {"User-Agent": advertised_user_agent()}
+        if settings.events_server_token:
+            headers[SERVER_EVENT_HEADER] = settings.events_server_token
         async with httpx.AsyncClient(timeout=EVENT_TIMEOUT_SECONDS) as client:
             for start in range(0, len(unique), EVENT_BATCH_SIZE):
                 response = await client.post(
                     f"{settings.cards_api_base_url.rstrip('/')}/events",
-                    headers={"User-Agent": advertised_user_agent()},
+                    headers=headers,
                     json={"events": [{"event": "agent_fetch", "handle": handle,
                           "meta": {"endpoint": endpoint, "tool": tool, "category": category}}
                          for handle in unique[start:start + EVENT_BATCH_SIZE]]},

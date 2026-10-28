@@ -41,6 +41,15 @@ def enabled() -> bool:
     return config.FEATURE_STALE_SIGNALS
 
 
+def for_public_read(card: AgentProfileCard) -> AgentProfileCard:
+    """The card with its working_on_updated_at dropped while the flag is off. The 0033 trigger
+    mirrors the stamp into the card JSON whatever the flag says, and flag off must leave public
+    reads exactly as they were. Reads only: writes keep the mirror, which the trigger owns."""
+    if enabled() or card.working_on_updated_at is None:
+        return card
+    return card.model_copy(update={"working_on_updated_at": None})
+
+
 def working_on_is_stale(card: AgentProfileCard, now: datetime | None = None) -> bool:
     """True only when the card shows Working on items and their known stamp is STALE_DAYS old."""
     if not any(isinstance(item, str) and item.strip() for item in card.working_on):

@@ -7,6 +7,7 @@ bounded) and are never logged, so a visitor can check themselves without leaving
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import re
@@ -129,10 +130,44 @@ def is_zynd_url(url: str) -> bool:
 _hits: dict[str, deque[float]] = defaultdict(deque)
 _hits_lock = threading.Lock()
 
+# Paid calls so far on the current UTC day, across every visitor. Per process like _hits, so
+# the real ceiling is AI_VISIBILITY_DAILY_CAP times the worker count.
+_daily_day: str | None = None
+_daily_count = 0
+_daily_lock = threading.Lock()
+
+
+def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        ip = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        return ip.ipv4_mapped
+    return ip
+
+
+def _is_proxy(ip: ipaddress.IPv4Address | ipaddress.IPv6Address | None) -> bool:
+    # Host Caddy reaches the container over loopback or Docker's bridge (a private address).
+    return ip is not None and (ip.is_loopback or ip.is_private)
+
 
 def client_key(request) -> str:
-    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    return forwarded or (request.client.host if request.client else "unknown")
+    """Rate-limit key for the visitor. X-Forwarded-For is believed only from our own proxy: the
+    container port is also published on the box's public IP, so a direct caller could otherwise
+    name a new address on every request. The last entry is the one our proxy wrote; earlier
+    ones are whatever the client sent."""
+    peer = (request.client.host if request.client else "") or ""
+    ip = _parse_ip(peer)
+    if _is_proxy(ip):
+        forwarded = _parse_ip((request.headers.get("x-forwarded-for") or "").split(",")[-1])
+        ip = forwarded or ip
+    if ip is None:
+        return peer or "unknown"
+    if isinstance(ip, ipaddress.IPv6Address):
+        # One subscriber usually holds a whole /64, so per-address keys would be free to rotate.
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
 
 
 def allow_check(client: str) -> bool:
@@ -148,6 +183,28 @@ def allow_check(client: str) -> bool:
         if len(_hits) > _MAX_TRACKED_CLIENTS:
             for key in [k for k, v in _hits.items() if not v or now - v[-1] > RATE_WINDOW_SECONDS]:
                 _hits.pop(key, None)
+        return True
+
+
+def refund_check(client: str) -> None:
+    """Give back the slot allow_check just took: a check that got no answer is not one of the
+    visitor's checks."""
+    with _hits_lock:
+        hits = _hits.get(client)
+        if hits:
+            hits.pop()
+
+
+def allow_daily_call(now: datetime | None = None) -> bool:
+    """Not refunded when the call fails: a timed-out search may still have been billed."""
+    global _daily_day, _daily_count
+    day = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
+    with _daily_lock:
+        if day != _daily_day:
+            _daily_day, _daily_count = day, 0
+        if _daily_count >= config.AI_VISIBILITY_DAILY_CAP:
+            return False
+        _daily_count += 1
         return True
 
 
@@ -186,6 +243,9 @@ def reset_state() -> None:
         _cache.clear()
     with _hits_lock:
         _hits.clear()
+    global _daily_day, _daily_count
+    with _daily_lock:
+        _daily_day, _daily_count = None, 0
 
 
 # ── Model call ──────────────────────────────────────────────────────────────
@@ -238,7 +298,7 @@ def ask_model(query: VisibilityQuery, client=None) -> ModelAnswer:
     """Blocking: run it in a thread. Raises VisibilityUnavailable with a visitor-facing message."""
     if not config.OPENROUTER_API_KEY and client is None:
         raise VisibilityUnavailable("The AI check is not configured right now.", 503)
-    from openai import APIConnectionError, APIStatusError, APITimeoutError
+    from openai import APIError, APITimeoutError
 
     client = (client or config.get_llm_client()).with_options(timeout=LLM_TIMEOUT_SECONDS, max_retries=0)
     try:
@@ -252,7 +312,7 @@ def ask_model(query: VisibilityQuery, client=None) -> ModelAnswer:
         )
     except APITimeoutError as exc:
         raise VisibilityUnavailable("The AI took too long to answer. Try again in a minute.", 504) from exc
-    except (APIConnectionError, APIStatusError) as exc:
+    except APIError as exc:
         # The name is deliberately left out of the log line.
         logger.warning("visibility model call failed: %s", type(exc).__name__)
         raise VisibilityUnavailable("We couldn't reach the AI right now. Try again in a minute.", 502) from exc
@@ -300,7 +360,15 @@ async def run_check(query: VisibilityQuery, client: str) -> dict:
         if not allow_check(client):
             raise VisibilityUnavailable(
                 f"You've run {RATE_LIMIT} checks this hour. Try again later.", 429)
-        answer, card = await asyncio.gather(asyncio.to_thread(ask_model, query), _card_or_none(query.name))
+        if not allow_daily_call():
+            refund_check(client)
+            raise VisibilityUnavailable(
+                "The AI check has reached its limit for today. Try again tomorrow.", 429)
+        try:
+            answer, card = await asyncio.gather(asyncio.to_thread(ask_model, query), _card_or_none(query.name))
+        except VisibilityUnavailable:
+            refund_check(client)
+            raise
         remember_answer(query, answer)
     else:
         card = await _card_or_none(query.name)

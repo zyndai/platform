@@ -11,7 +11,8 @@ from services import cards as cards_service
 from services import lookup as lookup_service
 from services import visibility
 
-client = TestClient(app)
+# Requests arrive from loopback, as they do through host Caddy, so X-Forwarded-For names the visitor.
+client = TestClient(app, client=("127.0.0.1", 50000))
 URL = "/cards/visibility/check"
 
 
@@ -186,6 +187,116 @@ def test_missing_api_key_is_503(llm, monkeypatch):
     res = _check()
     assert res.status_code == 503
     assert llm.calls == []
+
+
+# ── who the visitor is ──
+
+def _request(peer, forwarded=None):
+    headers = {} if forwarded is None else {"x-forwarded-for": forwarded}
+    return SimpleNamespace(client=SimpleNamespace(host=peer) if peer else None, headers=headers)
+
+
+def test_forwarded_for_from_a_public_caller_is_ignored(llm):
+    # #given a caller hitting the published container port directly, naming a new address each time
+    # (A real public address: Python counts the documentation ranges as private.)
+    direct = TestClient(app, client=("8.8.4.4", 40000))
+    for i in range(visibility.RATE_LIMIT):
+        res = direct.post(URL, json={"name": f"Person {i}"}, headers={"x-forwarded-for": f"10.0.0.{i}"})
+        assert res.status_code == 200
+    # #then they are still one visitor
+    res = direct.post(URL, json={"name": "Person extra"}, headers={"x-forwarded-for": "10.0.0.99"})
+    assert res.status_code == 429
+    assert len(llm.calls) == visibility.RATE_LIMIT
+    assert visibility.client_key(_request("8.8.4.4", "203.0.113.7")) == "8.8.4.4"
+
+
+@pytest.mark.parametrize("proxy", ["127.0.0.1", "::1", "172.18.0.1", "10.1.2.3"])
+def test_forwarded_for_from_our_proxy_names_the_visitor(proxy):
+    assert visibility.client_key(_request(proxy, "203.0.113.7")) == "203.0.113.7"
+    # Our proxy appends; anything before its entry came from the client.
+    assert visibility.client_key(_request(proxy, "1.2.3.4, 203.0.113.7")) == "203.0.113.7"
+    # No usable header: the proxy's own address.
+    own = visibility.client_key(_request(proxy))
+    assert own == (proxy if "." in proxy else "::/64")
+    assert visibility.client_key(_request(proxy, "not-an-ip")) == own
+
+
+def test_ipv6_visitors_are_keyed_by_their_64():
+    a = visibility.client_key(_request("2a00:1450:4001:80b::1", "203.0.113.7"))
+    b = visibility.client_key(_request("127.0.0.1", "2a00:1450:4001:80b:ffff:abcd:0:9"))
+    assert a == b == "2a00:1450:4001:80b::/64"
+    assert visibility.client_key(_request("2a00:1450:4001:80c::1")) != a
+    assert visibility.client_key(_request("::ffff:8.8.4.4", "203.0.113.7")) == "8.8.4.4"
+
+
+def test_unparseable_peer_falls_back_to_its_name():
+    assert visibility.client_key(_request("testclient", "203.0.113.7")) == "testclient"
+    assert visibility.client_key(_request(None, "203.0.113.7")) == "unknown"
+
+
+# ── budget ──
+
+def test_daily_cap_across_all_visitors(llm, monkeypatch):
+    monkeypatch.setattr(config, "AI_VISIBILITY_DAILY_CAP", 2)
+    assert _check(name="Person 1", ip="198.51.100.1").status_code == 200
+    assert _check(name="Person 2", ip="198.51.100.2").status_code == 200
+    blocked = _check(name="Person 3", ip="198.51.100.3")
+    assert blocked.status_code == 429
+    assert "limit for today" in blocked.json()["detail"]
+    assert len(llm.calls) == 2
+    # The refused visitor kept their hourly slots, and a cached answer is still served.
+    assert "198.51.100.3" not in visibility._hits or not visibility._hits["198.51.100.3"]
+    assert _check(name="Person 1", ip="198.51.100.3").json()["cached"] is True
+
+
+def test_daily_cap_resets_on_the_next_utc_day(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    visibility.reset_state()
+    monkeypatch.setattr(config, "AI_VISIBILITY_DAILY_CAP", 1)
+    today = datetime(2026, 10, 28, 23, 59, tzinfo=timezone.utc)
+    assert visibility.allow_daily_call(today) is True
+    assert visibility.allow_daily_call(today) is False
+    assert visibility.allow_daily_call(today + timedelta(minutes=2)) is True
+    visibility.reset_state()
+
+
+def _timeout():
+    import httpx
+    from openai import APITimeoutError
+
+    return APITimeoutError(request=httpx.Request("POST", "https://openrouter.ai"))
+
+
+def _api_error():
+    import httpx
+    from openai import APIError
+
+    return APIError("bad response", httpx.Request("POST", "https://openrouter.ai"), body=None)
+
+
+@pytest.mark.parametrize("make_error, status", [(_timeout, 504), (_api_error, 502)])
+def test_failed_model_call_does_not_spend_the_visitors_hour(llm, make_error, status):
+    llm.error = make_error()
+    for _ in range(visibility.RATE_LIMIT + 2):
+        assert _check().status_code == status
+    llm.error = None
+    assert _check().status_code == 200
+
+
+def test_any_openai_error_is_a_readable_502(llm):
+    llm.error = _api_error()
+    res = _check()
+    assert res.status_code == 502
+    assert "couldn't reach the AI" in res.json()["detail"]
+
+
+def test_unconfigured_check_does_not_spend_the_visitors_hour(llm, monkeypatch):
+    monkeypatch.setattr(config, "OPENROUTER_API_KEY", "")
+    for _ in range(visibility.RATE_LIMIT + 2):
+        assert _check().status_code == 503
+    monkeypatch.setattr(config, "OPENROUTER_API_KEY", "test-key")
+    assert _check().status_code == 200
 
 
 def _lookup_rows(*rows):

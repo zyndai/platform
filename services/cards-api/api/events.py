@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+import config
 from services import events as events_service
 
 router = APIRouter()
+
+SERVER_EVENT_HEADER = "X-Zynd-Server-Event"
 
 
 class EventItem(BaseModel):
@@ -21,6 +25,15 @@ class EventItem(BaseModel):
 
 class EventsBody(BaseModel):
     events: list[EventItem] = Field(default_factory=list)
+
+
+def _from_our_server(request: Request) -> bool:
+    """The caller holds EVENTS_SERVER_TOKEN. Empty token = nobody does."""
+    expected = config.EVENTS_SERVER_TOKEN
+    supplied = request.headers.get(SERVER_EVENT_HEADER)
+    if not expected or supplied is None:
+        return False
+    return hmac.compare_digest(supplied.encode(), expected.encode())
 
 
 @router.post("/events")
@@ -44,7 +57,8 @@ async def post_events(body: EventsBody, request: Request):
 
     ua = request.headers.get("user-agent")
     payload = [item.model_dump() for item in body.events]
-    saved = await asyncio.to_thread(events_service.insert_batch, payload, user_agent=ua, ip=ip)
+    saved = await asyncio.to_thread(events_service.insert_batch, payload, user_agent=ua, ip=ip,
+                                    server_observed=_from_our_server(request))
     if saved is False:
         raise HTTPException(status_code=503, detail="event storage unavailable")
     return Response(status_code=204)

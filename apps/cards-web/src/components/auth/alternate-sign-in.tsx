@@ -3,14 +3,19 @@
 import { useId, useState, type FormEvent } from "react";
 import { emailSignInEnabled, googleSignInEnabled } from "@/lib/auth/providers";
 import { MAX_EMAIL_LENGTH, isPlausibleEmail, sendMagicLink, startGoogleOAuth } from "@/lib/auth/session";
+import { shareClaimIntentAcrossTabs } from "@/lib/claim-tokens";
 import "./alternate-sign-in.css";
+
+/** Google returns to this tab; an email magic link opens a new one, so anything
+ *  saved for the return trip must outlive this tab's sessionStorage. */
+export type AlternateSignInMethod = "google" | "email";
 
 interface SignInTarget {
   /** Path to land on after sign-in. Sanitized again by the callback. */
   next: string;
   intent?: "card";
   /** Runs right before the sign-in starts (e.g. to save a draft or claim handle). */
-  onBeforeSignIn?: () => void;
+  onBeforeSignIn?: (method: AlternateSignInMethod) => void;
 }
 
 interface AlternateSignInProps extends SignInTarget {
@@ -52,7 +57,7 @@ function GoogleSignInButton({ className, next, intent, onBeforeSignIn }: SignInT
   async function signIn() {
     setRedirecting(true);
     setError(null);
-    onBeforeSignIn?.();
+    onBeforeSignIn?.("google");
     try {
       const message = await startGoogleOAuth(next, intent);
       if (message) {
@@ -98,54 +103,63 @@ function EmailLinkForm({ buttonClassName, next, intent, onBeforeSignIn }: SignIn
       return;
     }
     setStatus({ kind: "sending" });
-    onBeforeSignIn?.();
+    onBeforeSignIn?.("email");
+    shareClaimIntentAcrossTabs();
     const message = await sendMagicLink(address, next, intent);
     setStatus(message ? { kind: "error", message } : { kind: "sent", to: address });
   }
 
-  if (status.kind === "sent") {
-    return (
-      <div role="status" className="zas-sent">
-        <p>
-          Check <strong>{status.to}</strong> for a sign-in link. Open it in this browser to
-          finish signing in. The link expires in an hour.
-        </p>
-        <button type="button" className="zas-link" onClick={() => setStatus({ kind: "idle" })}>
-          Use a different email
-        </button>
-      </div>
-    );
-  }
-
   const sending = status.kind === "sending";
+  const sent = status.kind === "sent";
+  // The status region stays mounted from first render so screen readers
+  // announce the "check your email" text when it appears in it.
   return (
-    <form className="zas-form" onSubmit={submit} noValidate>
-      <div className="zas-or" aria-hidden="true"><span>or</span></div>
-      <label className="zas-label" htmlFor={inputId}>Email</label>
-      <input
-        id={inputId}
-        className="zas-input"
-        type="email"
-        inputMode="email"
-        autoComplete="email"
-        autoCapitalize="off"
-        spellCheck={false}
-        placeholder="you@example.com"
-        maxLength={MAX_EMAIL_LENGTH}
-        value={email}
-        aria-invalid={status.kind === "error"}
-        aria-describedby={status.kind === "error" ? errorId : undefined}
-        onChange={(e) => {
-          setEmail(e.target.value);
-          if (status.kind === "error") setStatus({ kind: "idle" });
-        }}
-      />
-      {status.kind === "error" && (
-        <p id={errorId} role="alert" className="zas-error">{status.message}</p>
+    <div>
+      <div className={sent ? "zas-sent" : undefined}>
+        <div role="status" aria-live="polite">
+          {sent && (
+            <p>
+              Check <strong>{status.to}</strong> for a sign-in link. Open it in this browser to
+              finish signing in. The link expires in an hour.
+            </p>
+          )}
+        </div>
+        {sent && (
+          <button type="button" className="zas-link" onClick={() => setStatus({ kind: "idle" })}>
+            Use a different email
+          </button>
+        )}
+      </div>
+      {!sent && (
+        <form className="zas-form" onSubmit={submit} noValidate>
+          <div className="zas-or" aria-hidden="true"><span>or</span></div>
+          <label className="zas-label" htmlFor={inputId}>Email</label>
+          <input
+            id={inputId}
+            className="zas-input"
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            autoCapitalize="off"
+            spellCheck={false}
+            placeholder="you@example.com"
+            maxLength={MAX_EMAIL_LENGTH}
+            value={email}
+            aria-invalid={status.kind === "error"}
+            aria-describedby={status.kind === "error" ? errorId : undefined}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (status.kind === "error") setStatus({ kind: "idle" });
+            }}
+          />
+          {status.kind === "error" && (
+            <p id={errorId} role="alert" className="zas-error">{status.message}</p>
+          )}
+          <button type="submit" disabled={sending} className={buttonClassName}>
+            {sending ? "Sending…" : "Email me a sign-in link"}
+          </button>
+        </form>
       )}
-      <button type="submit" disabled={sending} className={buttonClassName}>
-        {sending ? "Sending…" : "Email me a sign-in link"}
-      </button>
-    </form>
+    </div>
   );
 }

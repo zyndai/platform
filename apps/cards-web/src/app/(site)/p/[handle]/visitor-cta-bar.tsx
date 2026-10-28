@@ -3,6 +3,7 @@
 import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { X } from "lucide-react";
+import { hasClaimToken, subscribeClaimTokens } from "@/lib/claim-tokens";
 import { track } from "@/lib/track";
 
 const DISMISS_KEY = "zynd:visitor-cta-dismissed";
@@ -21,22 +22,27 @@ function readStoredDismissal(): boolean {
   }
 }
 
-// Hidden until hydration so a visitor who already dismissed it never sees it flash in.
-function readServerDismissal(): boolean {
+// Hidden until hydration so a visitor who already dismissed it, or who made this
+// card, never sees it flash in.
+function hiddenOnServer(): boolean {
   return true;
 }
 
 /** Shown only to viewers who are neither the owner nor a card holder (decided by
- *  the page). Stacks under the chat widget (z 50) and share/QR overlays (z 100+);
+ *  the page), nor its anonymous creator: the browser that published it holds its
+ *  claim token. Stacks under the QR popover's backdrop (z 40), the chat widget
+ *  (z 50) and share overlays (z 100+);
  *  on desktop it stops short of the chat button's corner, and on phones it stays
  *  under the button's 76px bottom offset (sub-line clamped to keep it that short). */
 export function VisitorCtaBar({ handle }: { handle: string }) {
-  const isStoredDismissed = useSyncExternalStore(subscribeToDismissal, readStoredDismissal, readServerDismissal);
+  const isStoredDismissed = useSyncExternalStore(subscribeToDismissal, readStoredDismissal, hiddenOnServer);
+  const isCreator = useSyncExternalStore(subscribeClaimTokens, () => hasClaimToken(handle), hiddenOnServer);
   const [isDismissedThisVisit, setIsDismissedThisVisit] = useState(false);
-  if (isStoredDismissed || isDismissedThisVisit) return null;
+  if (isStoredDismissed || isCreator || isDismissedThisVisit) return null;
 
-  // `ref` rides the existing attribution cookie (proxy.ts) into onboarding and the card row.
-  const createHref = `/create?${new URLSearchParams({ ref: "card_bar", from: handle })}`;
+  // `ref` rides the existing attribution cookie (proxy.ts) into onboarding and the card row,
+  // naming the card that converted the visitor. proxy.ts never lets it replace a share or campaign ref.
+  const createHref = `/create?${new URLSearchParams({ ref: `card_bar:${handle}` })}`;
 
   function dismiss() {
     setIsDismissedThisVisit(true);
@@ -87,7 +93,7 @@ export function VisitorCtaBar({ handle }: { handle: string }) {
       <style>{`
         .pf-cta-spacer { height: 96px; }
         .pf-cta-bar {
-          position: fixed; z-index: 40; bottom: 24px; left: 24px; right: 96px; margin: 0 auto; max-width: 560px;
+          position: fixed; z-index: 30; bottom: 24px; left: 24px; right: 96px; margin: 0 auto; max-width: 560px;
           display: flex; align-items: center; gap: 12px; padding: 12px 10px 12px 18px;
           background: #fff; border: 1px solid #e2e8f0; border-radius: 16px;
           box-shadow: 0 10px 30px -12px rgba(15, 23, 42, 0.25);

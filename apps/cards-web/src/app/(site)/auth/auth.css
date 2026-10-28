@@ -25,3 +25,4 @@
 .dc .da-reviewer { margin-top: 14px; text-align: center; }
 .dc .da-note { margin-top: 18px; text-align: center; font: 400 12px/1.4 var(--dc-mono); letter-spacing: .06em; color: var(--dc-faint); }
 .dc .da-fine { margin-top: 8px; text-align: center; font: 500 12.5px/1.55 var(--dc-ui); color: var(--dc-faint); }
+.dc .da-panel .zas { margin-top: 10px; }

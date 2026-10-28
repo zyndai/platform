@@ -1,8 +1,11 @@
 "use client";
 
 /**
- * Cards login — LinkedIn only (D12: persona's login, no Google/GitHub/magic
- * link). Magic link comes back once an email provider (SMTP) is chosen.
+ * Cards login. LinkedIn is the default and always first (D12: persona's
+ * login). Google and the email magic link exist behind NEXT_PUBLIC_AUTH_GOOGLE
+ * / NEXT_PUBLIC_AUTH_EMAIL (lib/auth/providers.ts), both off by default;
+ * turning either on reverses D12 for that method. With both off this page is
+ * LinkedIn-only, exactly as before.
  *
  * Drawn in the product's look (the directory's `.dc` canvas) because that is
  * where the "Sign in" buttons that lead here live.
@@ -13,6 +16,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { EDITION_FONT_VARS } from "@/components/editions/fonts";
 import { startLinkedInOAuth } from "@/lib/auth/session";
+import { alternateSignInEnabled, emailSignInEnabled, googleSignInEnabled } from "@/lib/auth/providers";
+import { AlternateSignIn } from "@/components/auth/alternate-sign-in";
 import "@/components/discover/discover.css";
 import "./auth.css";
 
@@ -26,6 +31,18 @@ function LinkedInIcon() {
       />
     </svg>
   );
+}
+
+/** Copy for the `?error=` codes the callback sends back (auth/callback/route.ts). */
+function callbackErrorCopy(code: string): string {
+  if (code === "auth_callback_failed") return "Sign-in failed — please try again.";
+  if (emailSignInEnabled && code === "link_expired") {
+    return "That sign-in link has expired or was already used. Request a new one below.";
+  }
+  if (emailSignInEnabled && code === "link_other_browser") {
+    return "Sign-in couldn't finish in this browser. If you used an emailed link, open it in the browser you requested it from, or request a new one below.";
+  }
+  return code;
 }
 
 function AuthPageContent() {
@@ -58,7 +75,7 @@ function AuthPageContent() {
 
             {oauthError && (
               <p role="alert" className="da-error">
-                {oauthError === "auth_callback_failed" ? "Sign-in failed — please try again." : oauthError}
+                {callbackErrorCopy(oauthError)}
               </p>
             )}
 
@@ -66,6 +83,8 @@ function AuthPageContent() {
               <LinkedInIcon />
               Sign in with LinkedIn
             </button>
+
+            <AlternateSignIn next={next || "/directory"} buttonClassName="dc-btn da-provider" />
 
             {next.startsWith("/review/") && (
               <p className="da-reviewer">
@@ -77,8 +96,14 @@ function AuthPageContent() {
 
             <p className="da-note">Secure authentication powered by Supabase</p>
             <p className="da-fine">
-              You&apos;ll be redirected to LinkedIn to sign in. Zynd never sees or stores
-              your LinkedIn password.
+              {alternateSignInEnabled ? (
+                <>Zynd never sees or stores your {googleSignInEnabled ? "LinkedIn or Google" : "LinkedIn"} password.</>
+              ) : (
+                <>
+                  You&apos;ll be redirected to LinkedIn to sign in. Zynd never sees or stores
+                  your LinkedIn password.
+                </>
+              )}
             </p>
           </div>
         </section>

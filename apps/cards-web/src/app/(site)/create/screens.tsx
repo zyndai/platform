@@ -4,6 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { ArrowRight, ArrowUpRight, Check } from "lucide-react";
 
+import { AlternateSignIn } from "@/components/auth/alternate-sign-in";
+import { setClaimHandle } from "@/lib/auth/next-cookie";
+import { alternateSignInEnabled } from "@/lib/auth/providers";
+
 const COPIED_MS = 1600;
 
 /** The card is live and was published without signing in. */
@@ -38,6 +42,14 @@ export function PublishedScreen({ handle, authenticated, onClaim }: { handle: st
           <button type="button" className="dc-btn dc-btn-ghost cr-ghost-btn" onClick={onClaim}>Claim with LinkedIn</button>
         )}
       </div>
+      {alternateSignInEnabled && !authenticated && (
+        <div style={{ width: "100%" }}>
+          <AlternateSignIn
+            next={`/p/${encodeURIComponent(handle)}`} intent="card" onBeforeSignIn={() => setClaimHandle(handle)}
+            buttonClassName="dc-btn dc-btn-ghost cr-ghost-btn"
+          />
+        </div>
+      )}
     </section>
   );
 }

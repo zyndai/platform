@@ -167,8 +167,11 @@ export function CreateBuilder() {
     return next;
   });
 
-  const signIn = () => {
+  const persistDraft = () => {
     saveDraft({ urls, picks, persona: personaPick, location: locationEdit, calendly, googleCalendar, handle: customHandle });
+  };
+  const signIn = () => {
+    persistDraft();
     void startLinkedInOAuth("/create", "card");
   };
   const claim = () => {
@@ -292,7 +295,7 @@ export function CreateBuilder() {
           <PublishCard
             ready={canPublish} building={build.status === "running"} hasSource={hasSource} statusText={statusText}
             handle={customHandle} onHandle={setCustomHandle}
-            authenticated={authenticated} onSignIn={signIn}
+            authenticated={authenticated} onSignIn={signIn} onBeforeAlternateSignIn={persistDraft}
             onPublish={() => void publish()} publishing={publishing} error={publishError}
           />
         </div>

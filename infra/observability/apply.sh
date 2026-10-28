@@ -16,7 +16,9 @@ COMPOSE=(docker compose -f "$DEST/docker-compose.yml" --env-file "$DEST/.env")
 log() { printf '[obs %s] %s\n' "$(date -u +%T)" "$*"; }
 
 mkdir -p "$DEST"
-changes="$(rsync -rlti --delete --exclude='.env' --exclude='apply.sh' --exclude='.gitkeep' \
+# --delete leaves excluded paths alone, so everything that exists only on the box (.env,
+# the metrics.zynd.ai password in .metrics-password) must stay in this exclude list.
+changes="$(rsync -rlti --delete --exclude='.env' --exclude='.metrics-password' --exclude='apply.sh' --exclude='.gitkeep' \
   --exclude='README.md' --exclude='.env.example' --exclude='build_dashboards.py' \
   --exclude='tests' --exclude='__pycache__' --exclude='import' "$SRC"/ "$DEST"/ | grep -E '^>f' || true)"
 
@@ -36,8 +38,13 @@ fi
 # `up -d` leaves running containers alone when only a bind-mounted file changed.
 if [[ -n "$changes" ]]; then
   log "config changed:"; sed 's/^/  /' <<<"$changes"
+  # Prometheus runs without --web.enable-lifecycle (that would let anything on the box
+  # stop it through /-/quit), so it is reloaded with SIGHUP. A signal reports nothing
+  # back, so the config is checked first: a bad one stops this script here, as a failed
+  # /-/reload used to, instead of being silently ignored by Prometheus.
   if grep -q ' prometheus/' <<<"$changes"; then
-    curl -fsS -X POST http://127.0.0.1:9090/-/reload && log "prometheus reloaded"
+    "${COMPOSE[@]}" exec -T prometheus promtool check config /etc/prometheus/prometheus.yml
+    "${COMPOSE[@]}" kill -s SIGHUP prometheus && log "prometheus reloaded"
   fi
   for svc in loki:loki/ alloy:alloy/ blackbox:blackbox/ grafana:grafana/; do
     if grep -q " ${svc#*:}" <<<"$changes"; then

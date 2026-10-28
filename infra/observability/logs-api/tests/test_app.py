@@ -124,6 +124,7 @@ def test_since_start_end_and_limits():
     {"since": "soon"}, {"since": "15"}, {"start": "yesterday"},
     {"start": "2026-10-28T11:00:00Z", "end": "2026-10-28T10:00:00Z"},     # empty
     {"since": "30d"},                                                    # beyond retention
+    {"since": "0s"}, {"since": "00m"},                                   # zero length
 ])
 def test_bad_ranges_are_422(client, params):
     assert client.get("/v1/logs", params=params, headers=AUTH).status_code == 422
@@ -150,10 +151,56 @@ def test_entries_are_flattened_sorted_and_stamped(client, loki):
 def test_truncated_pages_with_a_cursor(client, loki):
     loki["respond"] = lambda req: httpx.Response(200, json=streams((T0 + 3, "c"), (T0 + 2, "b")))
     r = client.get("/v1/logs?limit=2", headers=AUTH).json()
-    assert r["truncated"] is True and r["next"] == {"end": str(T0 + 2)}
+    # the oldest timestamp's entries are held back for the next page, which ends just past them
+    assert r["truncated"] is True and [e["line"] for e in r["entries"]] == ["c"]
+    assert r["next"] == {"end": str(T0 + 3)}
     # the cursor goes back in as `end`
     client.get(f"/v1/logs?limit=2&end={r['next']['end']}", headers=AUTH)
-    assert loki["calls"][-1].url.params["end"] == str(T0 + 2)
+    assert loki["calls"][-1].url.params["end"] == str(T0 + 3)
+
+
+def loki_window(entries):
+    """A Loki that honours start (inclusive), end (exclusive), direction and limit."""
+    def respond(req):
+        p = req.url.params
+        start, end, limit = int(p["start"]), int(p["end"]), int(p["limit"])
+        hits = sorted((e for e in entries if start <= e[0] < end), key=lambda e: e[0], reverse=p["direction"] == "backward")
+        return httpx.Response(200, json=streams(*hits[:limit]))
+    return respond
+
+
+def page_through(client, limit):
+    lines, end, pages = [], T0 + 100, 0
+    while True:
+        r = client.get("/v1/logs", params={"limit": limit, "start": str(T0), "end": str(end)}, headers=AUTH).json()
+        lines += [e["line"] for e in r["entries"]]
+        pages += 1
+        assert pages < 50, "paging does not advance"
+        if "next" not in r:
+            return lines
+        end = int(r["next"]["end"])
+
+
+def test_paging_never_skips_or_repeats_entries_that_share_a_timestamp(client, loki):
+    # Five entries at T0+5: with limit 3 the first page ends inside that group, which the old
+    # cursor (end = oldest ts, exclusive) skipped the rest of.
+    entries = [(T0 + 9, "a"), (T0 + 5, "b1"), (T0 + 5, "b2"), (T0 + 5, "b3"), (T0 + 5, "b4"),
+               (T0 + 5, "b5"), (T0 + 2, "c"), (T0 + 1, "d")]
+    loki["respond"] = loki_window(entries)
+    lines = page_through(client, limit=3)
+    assert sorted(lines) == sorted(line for _, line in entries)
+    assert len(lines) == len(entries)
+
+
+def test_a_page_that_is_one_timestamp_returns_all_of_it_and_moves_on(client, loki):
+    entries = [(T0 + 5, f"b{i}") for i in range(4)] + [(T0 + 1, "d")]
+    loki["respond"] = loki_window(entries)
+    r = client.get("/v1/logs", params={"limit": 2, "start": str(T0), "end": str(T0 + 100)}, headers=AUTH).json()
+    assert sorted(e["line"] for e in r["entries"]) == ["b0", "b1", "b2", "b3"]
+    assert r["next"] == {"end": str(T0 + 5)}
+    sent = loki["calls"][-1].url.params        # the group was fetched on its own, 1 ns wide
+    assert (sent["start"], sent["end"], sent["limit"]) == (str(T0 + 5), str(T0 + 6), str(logs_api.MAX_LIMIT))
+    assert page_through(client, limit=2)[-1] == "d"
 
 
 # ── /v1/stats ───────────────────────────────────────────────────────────
@@ -169,6 +216,12 @@ def test_stats_groups_and_buckets(client, loki):
 def test_stats_rejects_bad_group_and_too_many_points(client):
     assert client.get("/v1/stats?group_by=message", headers=AUTH).status_code == 422
     assert client.get("/v1/stats?since=7d&step=10s", headers=AUTH).status_code == 422
+
+
+@pytest.mark.parametrize("step", ["0s", "0m", "000h"])
+def test_stats_rejects_a_zero_step(client, step):
+    # 0s used to reach span // step and fail with a ZeroDivisionError (a 500)
+    assert client.get("/v1/stats", params={"since": "1h", "step": step}, headers=AUTH).status_code == 422
 
 
 # ── /v1/sources ─────────────────────────────────────────────────────────

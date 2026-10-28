@@ -145,7 +145,12 @@ if [[ "$PLAN_ONLY" == 1 ]]; then log "--plan: nothing changed"; exit 0; fi
 
 # Caddy is not managed by deploys (needs root): just say when it drifted.
 if ! cmp -s infra/single-box/Caddyfile /etc/caddy/Caddyfile 2>/dev/null; then
-  log "NOTE: infra/single-box/Caddyfile differs from /etc/caddy/Caddyfile. As root: install -m644 it there, then 'systemctl reload caddy'."
+  log "NOTE: infra/single-box/Caddyfile differs from /etc/caddy/Caddyfile. As root: 'caddy validate --config infra/single-box/Caddyfile --adapter caddyfile', then install -m644 it there and 'systemctl reload caddy'."
+fi
+# The Caddyfile imports this through a glob so a missing file can't stop Caddy, but the
+# Prometheus sites then answer 503 to everyone; say so instead of leaving it silent.
+if [[ ! -e /etc/caddy/metrics-basicauth.conf ]]; then
+  log "NOTE: /etc/caddy/metrics-basicauth.conf is missing, so metrics.zynd.ai and :9443 answer 503. Create it: infra/single-box/README.md, step 5."
 fi
 
 # ── actions ───────────────────────────────────────────────────────────────

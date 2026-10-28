@@ -120,9 +120,94 @@ def test_cancel_stops_a_running_build(monkeypatch):
         except asyncio.CancelledError:
             pass
         assert job.task.cancelled()
+        assert job.status == "cancelled"  # not "running" forever
         assert cancel_job(job_id) is False  # nothing left to stop
 
     asyncio.run(scenario())
+
+
+def test_a_cancelled_build_never_reaches_the_model(monkeypatch):
+    calls: list[str] = []
+
+    async def fake_fetch(url):
+        return "website", "page text", None
+
+    def fake_synthesize(*_a, **_k):
+        calls.append("synthesize")
+        return CardSynthesis(identity={"name": "Ada"})
+
+    monkeypatch.setattr(onboard_api, "_safe_fetch_url", fake_fetch)
+    monkeypatch.setattr(onboard_api, "synthesize_card", fake_synthesize)
+
+    job_id = create_job()
+    # The flag cancel_job sets, as if the cancellation itself had been lost on the way.
+    get_job(job_id).cancelled = True
+    asyncio.run(onboard_api._run_pipeline(job_id, ["https://example.com"], None))
+
+    assert calls == []
+    assert get_job(job_id).status == "cancelled"
+
+
+def test_finished_jobs_are_evicted_after_their_ttl():
+    from services.jobs import JOB_TTL_SECONDS
+
+    old_id = create_job()
+    running_id = create_job()
+
+    async def never_done():
+        await asyncio.sleep(3600)
+
+    async def scenario():
+        get_job(running_id).task = asyncio.create_task(never_done())
+        for job_id in (old_id, running_id):
+            get_job(job_id).created_at -= JOB_TTL_SECONDS + 1
+        fresh_id = create_job()
+        try:
+            assert get_job(old_id) is None
+            assert get_job(running_id) is not None  # its pipeline timeout ends it, not the TTL
+            assert get_job(fresh_id) is not None
+        finally:
+            get_job(running_id).task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_start_is_rate_limited_per_ip(monkeypatch):
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    monkeypatch.setattr(onboard_api, "_start_hits", onboard_api.defaultdict(onboard_api.deque))
+    started: list[str] = []
+
+    async def fake_pipeline(job_id, urls, resume_text):
+        started.append(job_id)
+
+    monkeypatch.setattr(onboard_api, "_run_pipeline", fake_pipeline)
+
+    def request(ip: str) -> Request:
+        return Request({"type": "http", "method": "POST", "path": "/onboard/start", "headers": [
+            (b"x-forwarded-for", ip.encode()),
+        ]})
+
+    async def start(ip: str):
+        # Called directly, so FastAPI's Form()/File() defaults must be passed explicitly.
+        await onboard_api.start_onboard(request(ip), url=["https://example.com"], resume=None, source=None, ref=None, utm=None)
+
+    async def scenario():
+        for _ in range(onboard_api._MAX_STARTS_PER_WINDOW):
+            await start("203.0.113.7")
+        try:
+            await start("203.0.113.7")
+        except HTTPException as exc:
+            assert exc.status_code == 429
+        else:
+            raise AssertionError("the build after the limit must be refused")
+        # Another network is not held up by the first one.
+        await start("198.51.100.2")
+        await asyncio.sleep(0)
+
+    asyncio.run(scenario())
+    assert len(started) == onboard_api._MAX_STARTS_PER_WINDOW + 1
 
 
 def test_newsletter_and_portfolio_sources_become_posts_and_a_gallery(monkeypatch):

@@ -46,7 +46,8 @@ def portfolio_platform(url: str) -> str | None:
 # ── newsletter / blog posts ──────────────────────────────────────────────────
 
 _LINK = re.compile(r"(?<!!)\[(?P<text>[^\]\n]{12,220})\]\((?P<href>https?://[^)\s]+)\)")
-_MEDIUM_POST = re.compile(r"^/(?:@?[\w.-]+/)?[\w-]+-[0-9a-f]{8,}$")
+# A Medium story's path ends in a slug plus the hex id Medium gives every story.
+_MEDIUM_STORY = re.compile(r"^[\w-]+-[0-9a-f]{8,}$")
 
 
 def writing_platform(url: str, markdown: str = "") -> str | None:
@@ -59,13 +60,36 @@ def writing_platform(url: str, markdown: str = "") -> str | None:
     return None
 
 
-def _is_post_link(platform: str, page_host: str, href: str) -> bool:
+def _medium_author(url: str) -> str | None:
+    """The handle a pasted Medium page belongs to: medium.com/@ada or ada.medium.com."""
+    parsed = urlparse(url)
+    host = _host(url)
+    if host == "medium.com":
+        first = parsed.path.strip("/").split("/")[0]
+        return first[1:].lower() if first.startswith("@") and len(first) > 1 else None
+    if host.endswith(".medium.com"):
+        return host.removesuffix(".medium.com")
+    return None
+
+
+def _is_post_link(platform: str, page_url: str, href: str) -> bool:
+    """Only the pasted person's own posts: profile and archive pages also link
+    other writers' stories (recommendations, responses, "more from Medium")."""
     parsed = urlparse(href)
     host = (parsed.hostname or "").lower().removeprefix("www.")
     if platform == "substack":
         # A post lives on the newsletter's own host under /p/<slug>.
-        return host == page_host and parsed.path.startswith("/p/") and len(parsed.path) > 3
-    return _on(host, "medium.com") and bool(_MEDIUM_POST.match(parsed.path))
+        return host == _host(page_url) and parsed.path.startswith("/p/") and len(parsed.path) > 3
+    author = _medium_author(page_url)
+    if not author:
+        return False
+    parts = parsed.path.strip("/").split("/")
+    if host == f"{author}.medium.com":
+        return len(parts) == 1 and bool(_MEDIUM_STORY.match(parts[0]))
+    return (
+        host == "medium.com" and len(parts) == 2 and parts[0].lower() == f"@{author}"
+        and bool(_MEDIUM_STORY.match(parts[1]))
+    )
 
 
 def extract_posts(markdown: str, url: str, limit: int = POSTS_PER_SITE) -> list[dict]:
@@ -73,11 +97,10 @@ def extract_posts(markdown: str, url: str, limit: int = POSTS_PER_SITE) -> list[
     platform = writing_platform(url, markdown)
     if not platform:
         return []
-    page_host = _host(url)
     by_href: dict[str, list[str]] = {}
     for m in _LINK.finditer(markdown):
         href = m.group("href").split("?")[0].split("#")[0]
-        if not _is_post_link(platform, page_host, href):
+        if not _is_post_link(platform, url, href):
             continue
         text = " ".join(m.group("text").split())
         texts = by_href.setdefault(href, [])
@@ -108,7 +131,8 @@ def _is_work_image(platform: str, img: str) -> bool:
     parsed = urlparse(img)
     host = (parsed.hostname or "").lower()
     if platform == "behance":
-        return _on(host, "behance.net") and parsed.path.startswith("/projects/")
+        # The one Behance host the image proxy (cards-web api/img) serves.
+        return host == "mir-s3-cdn-cf.behance.net" and parsed.path.startswith("/projects/")
     return host == "cdn.dribbble.com" and (
         parsed.path.startswith("/userupload/") or "/screenshots/" in parsed.path
     )

@@ -3,6 +3,8 @@ import asyncio
 import logging
 import os
 import tempfile
+import time
+from collections import defaultdict, deque
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
@@ -20,13 +22,35 @@ from scraping import x as x_scraper
 from scraping import sites as site_scraper
 from scraping.resume import extract_resume_text
 from services import cards as cards_service
-from services.jobs import cancel_job, create_job, get_job, set_error, set_ready, set_source, set_stage, utcnow
+from services.jobs import (
+    cancel_job, create_job, get_job, set_cancelled, set_error, set_ready, set_source, set_stage, utcnow,
+)
 from services.source_preview import build_preview
 from synthesis.synthesize import synthesize_card
 
 router = APIRouter()
 SOURCE_TIMEOUT_SECONDS = 60
 PIPELINE_TIMEOUT_SECONDS = 180
+
+# Per-IP sliding window on /start. Every build scrapes each source and makes a
+# paid model call, and the endpoint is public. Room for someone pasting links one
+# at a time and rebuilding a few times, shared office networks included.
+_START_WINDOW_SECONDS = 10 * 60
+_MAX_STARTS_PER_WINDOW = 20
+_start_hits: dict[str, deque[float]] = defaultdict(deque)
+
+
+def _start_rate_limited(key: str) -> bool:
+    now = time.monotonic()
+    q = _start_hits[key]
+    while q and now - q[0] > _START_WINDOW_SECONDS:
+        q.popleft()
+    if len(q) >= _MAX_STARTS_PER_WINDOW:
+        return True
+    q.append(now)
+    if len(_start_hits) > 10_000:  # bound memory: drop every key
+        _start_hits.clear()
+    return False
 
 
 def _source_warning(job_id: str, url: str, code: str = "inaccessible") -> None:
@@ -128,6 +152,9 @@ async def _run_pipeline(job_id: str, urls: list[str], resume_text: str | None) -
         await asyncio.wait_for(_build_pipeline(job_id, urls, resume_text), PIPELINE_TIMEOUT_SECONDS)
     except TimeoutError:
         set_error(job_id, "Building your card took too long. Your inputs are kept; retry or use fewer sources.")
+    except asyncio.CancelledError:
+        set_cancelled(job_id)
+        raise
 
 
 async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None) -> None:
@@ -238,6 +265,12 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
             set_error(job_id, "None of these sources could be read. Use a public profile URL or upload a résumé, then retry.")
             return
 
+        # A started model call can't be taken back (it runs in a thread and bills),
+        # so a build the page has already replaced stops here.
+        job = get_job(job_id)
+        if job is None or job.cancelled:
+            set_cancelled(job_id)
+            return
         set_stage(job_id, "synthesizing")
         synth = await asyncio.to_thread(synthesize_card,
             github_data,
@@ -316,6 +349,11 @@ async def start_onboard(
     ref: str | None = Form(default=None),
     utm: str | None = Form(default=None),
 ):
+    from services import events as events_service
+
+    if _start_rate_limited(events_service.client_ip(request) or "anon"):
+        raise HTTPException(status_code=429, detail="Too many card builds from this network. Wait a few minutes and try again.")
+
     resume_text = None
     if resume is not None:
         suffix = ".pdf" if resume.content_type == "application/pdf" else ".docx"
@@ -332,7 +370,6 @@ async def start_onboard(
 
     job_id = create_job()
     get_job(job_id).task = asyncio.create_task(_run_pipeline(job_id, list(url), resume_text))
-    from services import events as events_service
 
     start_meta: dict = {}
     if clean_source := events_service.sanitize_source(source):

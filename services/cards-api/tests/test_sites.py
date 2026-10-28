@@ -82,6 +82,43 @@ def test_medium_posts_need_the_hex_suffix_medium_gives_every_story():
     assert posts[0]["platform"] == "medium"
 
 
+def test_medium_posts_are_only_the_pasted_authors_own():
+    page = (
+        "[Why small teams ship faster](https://medium.com/@ada/why-small-teams-ship-faster-3f9a1c2b7d4e)\n"
+        "[Notes on compilers, part one](https://ada.medium.com/notes-on-compilers-part-one-9b8c7d6e5f4a)\n"
+        "[Someone else's story we recommend](https://medium.com/@grace/someone-elses-story-1a2b3c4d5e6f)\n"
+        "[A story on another writer's subdomain](https://grace.medium.com/another-writers-story-0f1e2d3c4b5a)\n"
+        "[A story in a publication feed](https://medium.com/some-publication/a-publication-story-abcdef123456)\n"
+    )
+    mine = ["https://medium.com/@ada/why-small-teams-ship-faster-3f9a1c2b7d4e",
+            "https://ada.medium.com/notes-on-compilers-part-one-9b8c7d6e5f4a"]
+    assert [p["url"] for p in sites.extract_posts(page, "https://medium.com/@Ada")] == mine
+    assert [p["url"] for p in sites.extract_posts(page, "https://ada.medium.com/")] == mine
+    # A page that names no author (a publication, the home page) gives no posts; synthesis still reads its text.
+    assert sites.extract_posts(page, "https://medium.com/some-publication") == []
+
+
+def test_substack_posts_from_other_newsletters_are_left_out():
+    assert [p["url"] for p in sites.extract_posts(SUBSTACK, "https://ada.substack.com")] == [
+        "https://ada.substack.com/p/how-to-tell-if-a-startup-has-a-moat",
+        "https://ada.substack.com/p/a-second-post",
+    ]
+    assert sites.extract_posts(SUBSTACK, "https://other.substack.com") == [
+        {"platform": "substack", "excerpt": "Someone else's recommended post",
+         "url": "https://other.substack.com/p/someone-elses-post", "posted_at": ""},
+    ]
+
+
+def test_behance_covers_come_only_from_the_cdn_the_image_proxy_serves():
+    page = (
+        "[![Image 1: Orbit](https://mir-s3-cdn-cf.behance.net/projects/202/aaa111.jpg)](https://www.behance.net/gallery/111/Orbit)\n"
+        "[![Image 2: Elsewhere](https://evil.behance.net/projects/202/x.jpg)](https://www.behance.net/gallery/333/Elsewhere)\n"
+    )
+    assert [g["image_url"] for g in sites.extract_gallery(page, "https://www.behance.net/ada")] == [
+        "https://mir-s3-cdn-cf.behance.net/projects/202/aaa111.jpg",
+    ]
+
+
 def test_source_kinds():
     assert sites.is_writing_url("https://ada.substack.com") and sites.is_writing_url("https://dev.to/ada")
     assert not sites.is_writing_url("https://example.com/blog")

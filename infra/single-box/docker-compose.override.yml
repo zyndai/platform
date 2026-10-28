@@ -13,8 +13,10 @@
 #     --env-file ~/.zynd-box/compose.env up -d
 #
 # Note: Docker publishes these ports through its own iptables chain, which
-# bypasses ufw's INPUT rules. Publishing 8001/8002/8090 here is what exposes
-# them; the ufw rules only document (and gate the non-Docker) ports.
+# bypasses ufw's INPUT rules. Publishing 8001/8002/8090/8091 here is what exposes
+# them; the ufw rules only document (and gate the non-Docker) ports. They also
+# bypass host Caddy, so the /metrics 404 it adds on the domains does not apply:
+# memory's and cards-api's /metrics are public on <ip>:8001 and <ip>:8002.
 services:
   api:
     ports:

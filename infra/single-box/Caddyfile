@@ -19,15 +19,52 @@
 }
 
 # Shared by every site below: JSON access log (rotated by Caddy, read by
-# Alloy into Loki) and a 404 for /metrics so app metrics stay internal.
-# Must be the first thing in each site so its handle wins.
+# Alloy into Loki) and a 404 for /metrics on these hostnames. That 404 only
+# covers traffic through Caddy: cards-api and memory also publish 8001/8002 on
+# the public IP (infra/single-box/docker-compose.override.yml), where /metrics
+# is still served. Must be the first thing in each site so its handle wins.
+#
+# The log records every request header and the full URI, and everything in it
+# ends up in Loki, readable by every Grafana Viewer. Caddy 2.6 only redacts
+# Authorization, Cookie, Set-Cookie and Proxy-Authorization, so the filter
+# below also blanks the other headers that carry a credential (the Telegram
+# webhook secret, the API/claim/refresh-token headers cards-api and the MCP
+# plugins read) and the query parameters that do (persona-api's legacy
+# /api/oauth/*/authorize?token=<JWT>, OAuth code/state, Supabase token_hash).
+# Referer gets the same treatment, as it repeats a page's full URL. Alloy
+# redacts the same patterns again (alloy/config.alloy, "redact") in case a
+# new header or path slips past this list. Only the filter actions Caddy 2.6.2
+# (Ubuntu's package) supports are used here.
 (observability) {
 	log {
 		output file /var/log/caddy/access.log {
 			roll_size 50mb
 			roll_keep 5
 		}
-		format json
+		format filter {
+			wrap json
+			fields {
+				request>headers>X-Telegram-Bot-Api-Secret-Token replace REDACTED
+				request>headers>X-Api-Key replace REDACTED
+				request>headers>X-Key replace REDACTED
+				request>headers>X-Claim-Token replace REDACTED
+				request>headers>X-Avatar-Refresh-Token replace REDACTED
+				# Matches name=value for each sensitive parameter in the referring URL; value runs to the next & or #.
+				request>headers>Referer regexp "([?&](?:token|token_hash|access_token|refresh_token|id_token|code|state|client_secret|api_key|key)=)[^&#]*" "${1}REDACTED"
+				request>uri query {
+					replace token REDACTED
+					replace token_hash REDACTED
+					replace access_token REDACTED
+					replace refresh_token REDACTED
+					replace id_token REDACTED
+					replace code REDACTED
+					replace state REDACTED
+					replace client_secret REDACTED
+					replace api_key REDACTED
+					replace key REDACTED
+				}
+			}
+		}
 	}
 	@metrics path /metrics /metrics/*
 	handle @metrics {
@@ -128,6 +165,22 @@ api.zynd.ai {
 	}
 }
 
+# Basic auth for the two Prometheus sites. The hash lives in
+# /etc/caddy/metrics-basicauth.conf on the box (root:caddy 640, NOT in git; see
+# docs/MONITORING.md, "Public URLs"). It is imported through a one-character
+# glob (`?` stands for the dot) because Caddy rejects the whole config when a
+# plain import path is missing, which would take every site on this box down
+# on the next restart; a glob with no match is only a warning. With the file
+# missing there is no basicauth at all, so the sites must not fall open: only a
+# request basicauth has accepted ({http.auth.user.id} set) gets past the 503.
+# The match is written as "not authenticated" so that a missing placeholder,
+# or an expression error, also lands on the 503.
+(metrics_auth) {
+	import /etc/caddy/metrics-basicauth?conf
+	@not_authenticated not expression `{http.auth.user.id} != null && {http.auth.user.id} != ""`
+	respond @not_authenticated "Prometheus basic auth is not configured on this box" 503
+}
+
 # Grafana (infra/observability). Grafana does its own login; /metrics is hidden by the
 # shared snippet. Loki stays on loopback and is reached through Grafana's Explore. Needs
 # an A record -> this box.
@@ -142,13 +195,12 @@ monitor.zynd.ai {
 }
 
 # Prometheus UI and query API. Prometheus has no login of its own, so Caddy asks for a
-# username and password; the bcrypt hash is in /etc/caddy/metrics-basicauth.conf on the
-# box (root:caddy 640, NOT in git; see docs/MONITORING.md, "Public URLs"). The lifecycle
-# endpoints are switched on for apply.sh's local reload, so they are refused here:
-# anyone with the password could otherwise stop Prometheus.
+# username and password (metrics_auth above). Prometheus runs without its lifecycle API,
+# so /-/quit and /-/reload are refused there; they are refused here as well so that
+# turning it back on can never let anyone with the password stop Prometheus.
 metrics.zynd.ai {
 	import observability
-	import /etc/caddy/metrics-basicauth.conf
+	import metrics_auth
 	@lifecycle path /-/quit /-/reload
 	respond @lifecycle 403
 	reverse_proxy 127.0.0.1:9090
@@ -156,7 +208,8 @@ metrics.zynd.ai {
 
 # Direct access by the box's IP, for before DNS exists and as a fallback after: the same
 # two tools on their own HTTPS ports with self-signed certificates (tls internal), so
-# the browser warns once. The ports must be allowed in ufw by hand (3443, 9443).
+# the browser warns once. The ports must be allowed in ufw by hand (3443, 9443), from
+# the operators' IPs only (docs/MONITORING.md).
 https://169.58.17.193:3443 {
 	tls internal
 	import observability
@@ -166,14 +219,14 @@ https://169.58.17.193:3443 {
 https://169.58.17.193:9443 {
 	tls internal
 	import observability
-	import /etc/caddy/metrics-basicauth.conf
+	import metrics_auth
 	@lifecycle path /-/quit /-/reload
 	respond @lifecycle 403
 	reverse_proxy 127.0.0.1:9090
 }
 
 # Logs API (infra/observability/logs-api): its own bearer-key auth, self-signed HTTPS on a
-# port that must be allowed in ufw by hand (4443).
+# port that must be allowed in ufw by hand (4443), from the operators' IPs only.
 https://169.58.17.193:4443 {
 	tls internal
 	import observability

@@ -6,11 +6,42 @@
 //
 // Sources 1 and 2 go through a per-runtime step that joins multi-line records
 // (tracebacks, Next.js stacks, faulthandler dumps) into one entry, then through
-// the shared "levels" step that sets the `level` label.
+// the shared "levels" step that sets the `level` label. Every source then goes
+// through "redact" before Loki.
 
 loki.write "default" {
   endpoint {
     url = "http://127.0.0.1:3100/loki/api/v1/push"
+  }
+}
+
+// ── Redaction (every source) ───────────────────────────────────────────
+// Loki is searchable by every Grafana Viewer and the logs API, so credentials
+// must not reach it. Caddy already filters its own log (infra/single-box/Caddyfile,
+// "observability"); this is the second line for what that list misses and for
+// the app logs (uvicorn's access lines print the full query string too). Each
+// stage.replace swaps only the capture group for REDACTED.
+loki.process "redact" {
+  forward_to = [loki.write.default.receiver]
+
+  // The value of a credential-bearing query parameter, wherever a URL appears
+  // (request URI, Referer, an app's own log line): ?token=, &code=, ... up to
+  // the next &, #, quote or whitespace.
+  stage.replace {
+    expression = "(?i)[?&](?:token|token_hash|access_token|refresh_token|id_token|code|state|client_secret|api_key|key)=([^&#\"\\s]+)"
+    replace    = "REDACTED"
+  }
+  // The whole value list of any request/response header in Caddy's JSON whose
+  // name says it holds a secret ("X-Something-Token": ["..."]).
+  stage.replace {
+    expression = "(?i)\"[A-Za-z0-9-]*(?:token|secret|key|signature|password)[A-Za-z0-9-]*\":\\[((?:\"(?:[^\"\\\\]|\\\\.)*\",?)*)\\]"
+    replace    = "\"REDACTED\""
+  }
+  // A JWT (header.payload.signature, header and payload both base64url JSON,
+  // so both start with eyJ) anywhere in a line.
+  stage.replace {
+    expression = "(eyJ[A-Za-z0-9_-]+\\.eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+)"
+    replace    = "REDACTED"
   }
 }
 
@@ -303,7 +334,7 @@ loki.process "pm2_node" {
 // not used for Python.
 
 loki.process "levels" {
-  forward_to = [loki.write.default.receiver]
+  forward_to = [loki.process.redact.receiver]
 
   stage.static_labels {
     values = { level = "info" }
@@ -353,6 +384,12 @@ loki.process "levels" {
 // ── 3. Caddy access log ────────────────────────────────────────────────
 // One JSON object per request. host and status become labels (a handful of
 // values each); the rest stays in the line for `| json` in LogQL.
+//
+// request.host is the client's Host header, and the catch-all http://:3000 site
+// takes any value, so it is mapped onto the hostnames the Caddyfile serves and
+// everything else becomes "other". Used as is, every made-up Host would open a
+// new Loki stream (a cheap way to flood Loki's index). Keep the list in step
+// with infra/single-box/Caddyfile.
 
 local.file_match "caddy" {
   path_targets = [{"__path__" = "/caddy-logs/access.log"}]
@@ -364,21 +401,31 @@ loki.source.file "caddy" {
 }
 
 loki.process "caddy" {
-  forward_to = [loki.write.default.receiver]
+  forward_to = [loki.process.redact.receiver]
 
   stage.static_labels {
     values = { source = "caddy", project = "caddy", env = "shared" }
   }
   stage.json {
     expressions = {
-      ts     = "ts",
-      status = "status",
-      host   = "request.host",
+      ts          = "ts",
+      status      = "status",
+      client_host = "request.host",
     }
   }
   stage.timestamp {
     source = "ts"
     format = "Unix"
+  }
+  // Sets `host` only when client_host is exactly one of the served names (any
+  // case); the IP sites keep their port so the three tools stay apart.
+  stage.regex {
+    source     = "client_host"
+    expression = "^(?i)(?P<host>(?:dev\\.)?(?:persona|persona\\.api|cards|cards\\.api|api)\\.zynd\\.ai|monitor\\.zynd\\.ai|metrics\\.zynd\\.ai|169\\.58\\.17\\.193:(?:3000|3443|9443|4443))$"
+  }
+  stage.template {
+    source   = "host"
+    template = "{{ if .Value }}{{ ToLower .Value }}{{ else }}other{{ end }}"
   }
   stage.labels {
     values = { host = "", status = "" }

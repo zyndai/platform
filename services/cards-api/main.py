@@ -22,6 +22,7 @@ from api.owner_home import router as owner_home_router
 from api.intros import router as intros_router
 from api.visitors import router as visitors_router
 from api.network import router as network_router
+from api.visibility import router as visibility_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -115,6 +116,7 @@ app.include_router(ask_router, prefix="/ask", tags=["Ask"])
 app.include_router(visitors_router, prefix="/cards", tags=["Visitor privacy"])
 app.include_router(network_router, prefix="/cards", tags=["Cards network"])
 app.include_router(owner_home_router, prefix="/cards", tags=["Owner home"])
+app.include_router(visibility_router, prefix="/cards/visibility", tags=["AI visibility"])
 app.include_router(intros_router,prefix="/cards",tags=["Intros"])
 app.include_router(companion_router, prefix="/cards/companion", tags=["Companion"])
 app.include_router(cards_router, prefix="/cards", tags=["Cards"])

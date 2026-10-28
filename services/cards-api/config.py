@@ -124,6 +124,15 @@ OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-pro"
 OPENROUTER_REFERER: str = os.getenv("OPENROUTER_REFERER", "https://zynd.ai")
 OPENROUTER_APP_NAME: str = os.getenv("OPENROUTER_APP_NAME", "zynd-cards")
 
+# AI visibility report (POST /cards/visibility/check): what a web-searching model says about a
+# name today. Off = the endpoint 404s. The model must search the web itself, so it is separate
+# from OPENROUTER_MODEL. perplexity/sonar on OpenRouter (checked 2026-10-28): $1/M tokens in and
+# out plus $0.005 per request for search, about $0.006 per uncached check.
+FEATURE_AI_VISIBILITY: bool = os.getenv("FEATURE_AI_VISIBILITY", "false").lower() in ("1", "true", "yes")
+AI_VISIBILITY_MODEL: str = os.getenv("AI_VISIBILITY_MODEL", "perplexity/sonar")
+# Shown to the visitor under the answer ("Answer from <label> via API").
+AI_VISIBILITY_MODEL_LABEL: str = os.getenv("AI_VISIBILITY_MODEL_LABEL", "Perplexity Sonar")
+
 # ── OpenAI (embeddings) ──
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 

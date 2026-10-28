@@ -1,6 +1,7 @@
 """POST /events — batched, rate-limited, unauthenticated allow-list."""
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -43,5 +44,7 @@ async def post_events(body: EventsBody, request: Request):
 
     ua = request.headers.get("user-agent")
     payload = [item.model_dump() for item in body.events]
-    events_service.insert_batch(payload, user_agent=ua, ip=ip)
+    saved = await asyncio.to_thread(events_service.insert_batch, payload, user_agent=ua, ip=ip)
+    if saved is False:
+        raise HTTPException(status_code=503, detail="event storage unavailable")
     return Response(status_code=204)

@@ -45,7 +45,8 @@ def activity(handle: str, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     empty = {"available": False, "views": None, "agent_hits": None,
              "intro_requests": None, "queries": [], "query_capture_available": False,
-             "chat_topics": [], "chat_questions": [], "agent_clients": None}
+             "chat_topics": [], "chat_questions": [], "agent_clients": None,
+             "unidentified_clients": None}
     if not events.events_enabled():
         return empty
     try:
@@ -63,7 +64,8 @@ def activity(handle: str, now: datetime | None = None) -> dict:
                 "queries": queries, "query_capture_available": bool(queries),
                 "chat_topics": chat_topics(sb, handle, since),
                 "chat_questions": chat_questions(sb, handle, since),
-                "agent_clients": agent_clients(sb, handle, since)}
+                "agent_clients": agent_clients(sb, handle, since),
+                "unidentified_clients": unidentified_clients(sb, handle, since)}
     except Exception:
         # An unavailable event store is not zero traffic.
         return empty
@@ -81,6 +83,27 @@ def agent_clients(sb, handle: str, since: str) -> list[dict] | None:
             name = meta.get("agent_name") if isinstance(meta, dict) else None
             counts[name if isinstance(name, str) and name in ua_class.AGENT_PROVIDERS else "Unknown"] += 1
         return [{"name": name, "provider": ua_class.AGENT_PROVIDERS.get(name, "Unknown"), "count": count}
+                for name, count in counts.most_common()]
+    except Exception:
+        return None
+
+
+def unidentified_clients(sb, handle: str, since: str) -> list[dict] | None:
+    """Only newly attributed unknown requests; legacy rows include internal reads."""
+    try:
+        rows = (sb.table("card_events").select("meta,ts").eq("handle", handle)
+                .in_("event", ["view", "agent_fetch"]).eq("actor_class", "unknown")
+                .in_("meta->>client_name", list(ua_class.UNIDENTIFIED_CLIENTS))
+                .gte("ts", since).order("ts", desc=True).limit(1000).execute().data or [])
+        counts = Counter()
+        latest = {}
+        for row in rows:
+            meta = row.get("meta")
+            name = meta.get("client_name") if isinstance(meta, dict) else None
+            if name in ua_class.UNIDENTIFIED_CLIENTS:
+                counts[name] += 1
+                latest.setdefault(name, row.get("ts"))
+        return [{"name": name, "count": count, "last_seen": latest[name]}
                 for name, count in counts.most_common()]
     except Exception:
         return None

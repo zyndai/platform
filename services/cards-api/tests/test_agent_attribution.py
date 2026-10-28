@@ -91,3 +91,78 @@ def test_agent_breakdown_groups_known_clients_and_preserves_legacy_unknown():
     q.limit.assert_called_once_with(1000)
     q.execute.side_effect = RuntimeError("unavailable")
     assert owner_home.agent_clients(sb, "alice", "2026-10-20") is None
+
+
+def test_node_stays_unknown_and_internal_website_reads_are_not_events(monkeypatch):
+    monkeypatch.setattr(config, "FEATURE_S04_EVENTS", True)
+    monkeypatch.setattr(config, "SUPABASE_DB_SCHEMA", "cards")
+    insert = MagicMock()
+    monkeypatch.setattr(events, "_insert_rows", insert)
+    events.emit("view", handle="alice", user_agent=ua_class.INTERNAL_CARDS_CLIENT)
+    insert.assert_not_called()
+    events.emit("view", handle="alice", user_agent="node")
+    row = insert.call_args.args[0][0]
+    assert row["actor_class"] == "unknown"
+    assert row["meta"] == {"client_name": "Node.js"}
+    assert events.attributed_meta({"client_name": "ChatGPT"}, "curl/8") == {"client_name": "curl"}
+
+
+def test_unidentified_breakdown_is_separate_and_excludes_legacy_internal_reads():
+    sb = MagicMock()
+    q = sb.table.return_value
+    for method in ("select", "eq", "in_", "gte", "order", "limit"):
+        getattr(q, method).return_value = q
+    q.execute.return_value = SimpleNamespace(data=[
+        {"meta": {"client_name": "Node.js"}, "ts": "2026-10-28T05:34:18Z"},
+        {"meta": {"client_name": "Node.js"}, "ts": "2026-10-28T05:30:00Z"},
+        {"meta": None}, {"meta": {"client_name": "ChatGPT"}},
+    ])
+    assert owner_home.unidentified_clients(sb, "alice", "2026-10-20") == [
+        {"name": "Node.js", "count": 2, "last_seen": "2026-10-28T05:34:18Z"}]
+    q.eq.assert_any_call("actor_class", "unknown")
+    q.in_.assert_any_call("meta->>client_name", list(ua_class.UNIDENTIFIED_CLIENTS))
+    q.execute.side_effect = RuntimeError("unavailable")
+    assert owner_home.unidentified_clients(sb, "alice", "2026-10-20") is None
+
+
+def test_event_write_failure_is_not_acknowledged_as_success(monkeypatch):
+    from api.events import router
+    monkeypatch.setattr(config, "FEATURE_S04_EVENTS", True)
+    monkeypatch.setattr(config, "SUPABASE_DB_SCHEMA", "cards")
+    sb = MagicMock()
+    sb.table.return_value.insert.return_value.execute.side_effect = RuntimeError("connection failed")
+    monkeypatch.setattr(events, "_event_store", lambda: sb)
+    app = FastAPI()
+    app.include_router(router)
+    events._hits.clear()
+    assert TestClient(app).post("/events", json={"events": [{"event": "agent_fetch", "handle": "alice"}]}).status_code == 503
+
+
+def test_event_connection_uses_http1_and_preserves_schema(monkeypatch):
+    import httpx
+    import supabase
+    real_client = httpx.Client
+    clients = []
+
+    def client(**kwargs):
+        assert kwargs["http2"] is False and kwargs["http1"] is True
+        result = real_client(**kwargs)
+        clients.append(result)
+        return result
+
+    create = MagicMock()
+    monkeypatch.setattr(httpx, "Client", client)
+    monkeypatch.setattr(supabase, "create_client", create)
+    monkeypatch.setattr(config, "SUPABASE_DB_SCHEMA", "cards")
+    events._event_store.cache_clear()
+    try:
+        events._event_store()
+        events._event_store()
+        create.assert_called_once()
+        options = create.call_args.kwargs["options"]
+        assert options.schema == "cards"
+        assert options.httpx_client is clients[0]
+    finally:
+        events._event_store.cache_clear()
+        for transport in clients:
+            transport.close()

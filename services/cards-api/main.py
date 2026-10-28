@@ -5,10 +5,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 
 import config
 from api.agents import router as agents_router
 from api.cards import router as cards_router
+from api.companion import router as companion_router
 from api.health import router as health_router
 from api.mcp import router as mcp_router
 from api.onboard import router as onboard_router
@@ -76,7 +78,7 @@ app = FastAPI(title="Zynd Cards API", version="1.0.0", lifespan=lifespan)
 @app.middleware("http")
 async def owner_no_cache(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith(("/cards/mine", "/cards/notifications", "/internal/owner-status")) or "/intro" in request.url.path:
+    if request.url.path.startswith(("/cards/mine", "/cards/notifications", "/cards/companion", "/internal/owner-status")) or "/intro" in request.url.path:
         response.headers["Cache-Control"] = "no-store"
         response.headers["Vary"] = "Authorization"
     return response
@@ -114,6 +116,7 @@ app.include_router(visitors_router, prefix="/cards", tags=["Visitor privacy"])
 app.include_router(network_router, prefix="/cards", tags=["Cards network"])
 app.include_router(owner_home_router, prefix="/cards", tags=["Owner home"])
 app.include_router(intros_router,prefix="/cards",tags=["Intros"])
+app.include_router(companion_router, prefix="/cards/companion", tags=["Companion"])
 app.include_router(cards_router, prefix="/cards", tags=["Cards"])
 app.include_router(mcp_router, prefix="/cards", tags=["MCP connector"])
 app.include_router(agents_router, prefix="/v1/agents", tags=["Agents"])
@@ -121,3 +124,8 @@ app.include_router(chat_router, prefix="/v1/chat", tags=["Chat"])
 app.include_router(health_router, prefix="/health", tags=["Health"])
 app.include_router(internal_router, prefix="/internal", tags=["Internal"])
 app.include_router(events_router, tags=["Events"])
+
+# Prometheus scrape endpoint for infra/observability: request counts and latency per
+# route template. Paths that match no route (scanners) are grouped as "none", so label
+# cardinality stays bounded. Caddy answers 404 for /metrics on every public host.
+Instrumentator(excluded_handlers=["/metrics"]).instrument(app).expose(app, include_in_schema=False)

@@ -1,0 +1,145 @@
+# promtool unit tests for alerts.yml. Run (from the repo root, or on the box in ~/.zynd-obs):
+#   docker run --rm --entrypoint promtool -v $PWD/infra/observability/prometheus:/etc/prometheus:ro \
+#     prom/prometheus:v3.5.0 test rules /etc/prometheus/alerts_test.yml
+rule_files:
+  - alerts.yml
+evaluation_interval: 1m
+
+tests:
+  # Box RAM: 10% available fires only after the 5m `for`.
+  - interval: 1m
+    input_series:
+      - series: 'node_memory_MemAvailable_bytes{project="box", env="shared"}'
+        values: '1000x20'
+      - series: 'node_memory_MemTotal_bytes{project="box", env="shared"}'
+        values: '10000x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: BoxMemoryLow
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: BoxMemoryLow
+        exp_alerts:
+          - exp_labels: { severity: warning, project: box, env: shared }
+            exp_annotations:
+              summary: "Box RAM is low: 10% available"
+              description: "The box has no swap, so running out means the kernel kills processes. See the Box overview dashboard, 'Memory by project'."
+      # 10% is not below the 7% critical line.
+      - eval_time: 10m
+        alertname: BoxMemoryCritical
+        exp_alerts: []
+
+  # A URL that is down is critical in prod and only a warning in dev.
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{project="cards-web", env="prod", url="https://cards.zynd.ai"}'
+        values: '0x20'
+      - series: 'probe_success{project="cards-web", env="dev", url="https://dev.cards.zynd.ai"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: PublicURLDown
+        exp_alerts:
+          - exp_labels: { severity: critical, project: cards-web, env: prod, url: "https://cards.zynd.ai" }
+            exp_annotations:
+              summary: "https://cards.zynd.ai is not answering (prod)"
+              description: "Project dashboard, env=prod, project=cards-web. Edge dashboard shows the Caddy side."
+      - eval_time: 3m
+        alertname: PublicURLDownDev
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: PublicURLDownDev
+        exp_alerts:
+          - exp_labels: { severity: warning, project: cards-web, env: dev, url: "https://dev.cards.zynd.ai" }
+            exp_annotations:
+              summary: "https://dev.cards.zynd.ai is not answering (dev)"
+
+  # One restart is a deploy; three in 15 minutes is a crash loop.
+  - interval: 1m
+    input_series:
+      - series: 'pm2_process_restarts_total{name="api", project="persona-api", env="prod"}'
+        values: '0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+      - series: 'pm2_process_restarts_total{name="web", project="persona-web", env="prod"}'
+        values: '0 0 1 2 3 4 4 4 4 4 4 4 4 4 4 4 4 4'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: Pm2RestartLoop
+        exp_alerts:
+          - exp_labels: { severity: warning, name: web, project: persona-web, env: prod }
+            exp_annotations:
+              summary: "pm2 process web restarted 4 times in 15 minutes"
+              description: "Project dashboard, env=prod, project=persona-web, then the Logs dashboard filtered to level=error."
+
+  # A container that vanishes alerts; the one-minute gap of a redeploy does not.
+  - interval: 1m
+    input_series:
+      - series: 'container_memory_working_set_bytes{project="worker", env="prod", name="zynd-worker-1"}'
+        values: '1x40 _x30'
+      - series: 'container_memory_working_set_bytes{project="mcp", env="prod", name="zynd-mcp-1"}'
+        values: '1x40 _x1 1x29'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: ContainerGoneProd
+        exp_alerts:
+          - exp_labels: { severity: critical, project: worker, env: prod, name: zynd-worker-1 }
+            exp_annotations:
+              summary: "Container zynd-worker-1 (prod) disappeared"
+
+  # 10% 5xx on prod is critical; the dev rule stays quiet for prod series.
+  - interval: 1m
+    input_series:
+      - series: 'http_requests_total{project="cards-api", env="prod", handler="/cards/{card_id}", status="5xx"}'
+        values: '0+6x20'
+      - series: 'http_requests_total{project="cards-api", env="prod", handler="/cards/{card_id}", status="2xx"}'
+        values: '0+54x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: High5xxRateProd
+        exp_alerts:
+          - exp_labels: { severity: critical, project: cards-api, env: prod }
+            exp_annotations:
+              summary: "cards-api (prod): 10% of requests are 5xx"
+      - eval_time: 12m
+        alertname: High5xxRateDev
+        exp_alerts: []
+
+  # The temporary exclusion: prod app targets may be down, everything else may not.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="memory-api", env="prod", instance="127.0.0.1:8001"}'
+        values: '0x20'
+      - series: 'up{job="memory-api", env="dev", instance="127.0.0.1:8101"}'
+        values: '0x20'
+      - series: 'up{job="node", env="shared", instance="127.0.0.1:9100"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ScrapeTargetDown
+        exp_alerts:
+          - exp_labels: { severity: warning, job: memory-api, env: dev, instance: "127.0.0.1:8101" }
+            exp_annotations:
+              summary: "Prometheus cannot scrape memory-api (127.0.0.1:8101)"
+              description: "The exporter or service is down, or its port changed. Metrics for it are missing meanwhile."
+          - exp_labels: { severity: warning, job: node, env: shared, instance: "127.0.0.1:9100" }
+            exp_annotations:
+              summary: "Prometheus cannot scrape node (127.0.0.1:9100)"
+              description: "The exporter or service is down, or its port changed. Metrics for it are missing meanwhile."
+
+  # Certificate expiry: 10 days left (the series is a unix timestamp, test time starts at 0).
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{url="x"}'
+        values: '1x5'
+      - series: 'probe_ssl_earliest_cert_expiry{project="cards-web", env="prod", url="https://cards.zynd.ai"}'
+        values: '864000x200'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: CertificateExpiresSoon
+        exp_alerts:
+          - exp_labels: { severity: warning, project: cards-web, env: prod, url: "https://cards.zynd.ai" }
+            exp_annotations:
+              summary: "The certificate for https://cards.zynd.ai expires in 9d 22h 30m 0s"
+              description: "Caddy renews at 30 days left; under 14 means renewal is failing. journalctl -u caddy."
+      - eval_time: 90m
+        alertname: CertificateExpiresVerySoon
+        exp_alerts: []

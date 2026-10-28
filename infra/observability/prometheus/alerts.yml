@@ -1,0 +1,217 @@
+# Alert rules. Evaluated by Prometheus and shown in Grafana (Alerting -> Alert rules ->
+# data source Prometheus) and at 127.0.0.1:9090/alerts. Nothing is sent anywhere yet:
+# there is no Alertmanager, so no notification channel. Adding one means a new
+# alertmanager container, an `alerting:` block in prometheus.yml and a receiver.
+#
+# Severity: critical = something is down or about to be (prod), warning = look soon.
+# Every alert carries project/env where the metric has them. Unit tests: alerts_test.yml
+#   docker run --rm --entrypoint promtool -v $PWD/prometheus:/etc/prometheus:ro \
+#     prom/prometheus:v3.5.0 test rules /etc/prometheus/alerts_test.yml
+groups:
+  - name: box
+    rules:
+      - alert: BoxMemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.15
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Box RAM is low: {{ $value | humanizePercentage }} available"
+          description: "The box has no swap, so running out means the kernel kills processes. See the Box overview dashboard, 'Memory by project'."
+
+      - alert: BoxMemoryCritical
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.07
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Box RAM is almost gone: {{ $value | humanizePercentage }} available"
+          description: "OOM kills are imminent. See the Box overview dashboard, 'Top memory users'."
+
+      - alert: BoxOOMKill
+        expr: increase(node_vmstat_oom_kill[5m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "The kernel killed a process for lack of memory"
+          description: "Check the Logs dashboard and the pm2 / container restart counts to see which one."
+
+      - alert: BoxDiskFilling
+        expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.20
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Root disk has {{ $value | humanizePercentage }} free"
+          description: "Likely culprits: Docker images and build cache (docker system df), logs, Loki/Prometheus volumes."
+
+      - alert: BoxDiskCritical
+        expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.10
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Root disk has only {{ $value | humanizePercentage }} free"
+
+      - alert: BoxDiskFullIn24h
+        expr: predict_linear(node_filesystem_avail_bytes{mountpoint="/"}[6h], 24 * 3600) < 0
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "At the current rate the root disk fills up within 24 hours"
+
+      - alert: BoxCPUHigh
+        expr: 100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 90
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Box CPU has been above 90% for 15 minutes ({{ $value | printf \"%.0f\" }}%)"
+          description: "See the Box overview dashboard, 'CPU by project (cores)'."
+
+  - name: services
+    rules:
+      # A public URL answers below 500 (the API roots legitimately return 404).
+      - alert: PublicURLDown
+        expr: probe_success{env="prod"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.url }} is not answering (prod)"
+          description: "Project dashboard, env=prod, project={{ $labels.project }}. Edge dashboard shows the Caddy side."
+
+      - alert: PublicURLDownDev
+        expr: probe_success{env="dev"} == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.url }} is not answering (dev)"
+
+      - alert: Pm2Down
+        expr: pm2_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "The pm2 daemon is not answering"
+          description: "persona-api, persona-web and cards-web (prod and dev) are all run by it. systemctl status pm2-ubuntu."
+
+      - alert: Pm2ProcessDown
+        expr: pm2_process_online{env="prod"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "pm2 process {{ $labels.name }} is not online (prod)"
+
+      - alert: Pm2ProcessDownDev
+        expr: pm2_process_online{env="dev"} == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "pm2 process {{ $labels.name }} is not online (dev)"
+
+      # Restarts include deploys; three inside 15 minutes is a crash loop, not a deploy.
+      - alert: Pm2RestartLoop
+        expr: increase(pm2_process_restarts_total[15m]) >= 3
+        labels: { severity: warning }
+        annotations:
+          summary: "pm2 process {{ $labels.name }} restarted {{ $value | printf \"%.0f\" }} times in 15 minutes"
+          description: "Project dashboard, env={{ $labels.env }}, project={{ $labels.project }}, then the Logs dashboard filtered to level=error."
+
+      # A recreated container is a new series (new id), so only a container that restarts
+      # in place (its restart policy at work) counts here, not a deploy.
+      - alert: ContainerRestartLoop
+        expr: changes(container_start_time_seconds{project!=""}[15m]) >= 3
+        labels: { severity: warning }
+        annotations:
+          summary: "Container {{ $labels.name }} restarted {{ $value | printf \"%.0f\" }} times in 15 minutes"
+
+      # Seen in the last 30 minutes but not now. A deploy recreates a container in well
+      # under 2 minutes with the same name, so `for` rides it out. Resolves after 30
+      # minutes even if the container stays gone: it flags the removal, it is not a state.
+      - alert: ContainerGoneProd
+        expr: |
+          count by (project, env, name) (container_memory_working_set_bytes{project!="", env="prod"} offset 30m)
+          unless
+          count by (project, env, name) (container_memory_working_set_bytes{project!="", env="prod"})
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Container {{ $labels.name }} (prod) disappeared"
+
+      - alert: ContainerGoneDev
+        expr: |
+          count by (project, env, name) (container_memory_working_set_bytes{project!="", env=~"dev|shared"} offset 30m)
+          unless
+          count by (project, env, name) (container_memory_working_set_bytes{project!="", env=~"dev|shared"})
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Container {{ $labels.name }} ({{ $labels.env }}) disappeared"
+
+  - name: apps
+    rules:
+      # prod cards-api / memory-api have no /metrics until prod runs the phase 3 build,
+      # so a missing prod series is not an alert yet (see ScrapeTargetDown).
+      - alert: High5xxRateDev
+        expr: |
+          sum by (project, env) (rate(http_requests_total{env="dev", status="5xx"}[5m]))
+            / sum by (project, env) (rate(http_requests_total{env="dev"}[5m])) > 0.05
+          and sum by (project, env) (rate(http_requests_total{env="dev"}[5m])) > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.project }} ({{ $labels.env }}): {{ $value | humanizePercentage }} of requests are 5xx"
+          description: "Project dashboard, Traffic row ('Busiest routes' has the 4xx+5xx column), then the error logs."
+
+      - alert: High5xxRateProd
+        expr: |
+          sum by (project, env) (rate(http_requests_total{env="prod", status="5xx"}[5m]))
+            / sum by (project, env) (rate(http_requests_total{env="prod"}[5m])) > 0.05
+          and sum by (project, env) (rate(http_requests_total{env="prod"}[5m])) > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.project }} (prod): {{ $value | humanizePercentage }} of requests are 5xx"
+
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(0.95, sum by (le, project, env) (rate(http_request_duration_seconds_bucket{handler!="none"}[5m]))) > 2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.project }} ({{ $labels.env }}) p95 latency is {{ $value | printf \"%.1f\" }}s"
+          description: "Project dashboard, 'Latency p95, by route' shows which route."
+
+  - name: certificates
+    rules:
+      - alert: CertificateExpiresSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 14 * 86400
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "The certificate for {{ $labels.url }} expires in {{ $value | humanizeDuration }}"
+          description: "Caddy renews at 30 days left; under 14 means renewal is failing. journalctl -u caddy."
+
+      - alert: CertificateExpiresVerySoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 7 * 86400
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "The certificate for {{ $labels.url }} expires in {{ $value | humanizeDuration }}"
+
+  - name: monitoring
+    rules:
+      # TEMPORARY exclusion: prod cards-api / memory-api (8001/8002) answer 404 for
+      # /metrics until prod runs the phase 3 build. Drop the second clause after that deploy.
+      - alert: ScrapeTargetDown
+        expr: |
+          up{job!~"cards-api|memory-api"} == 0
+          or up{job=~"cards-api|memory-api", env="dev"} == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Prometheus cannot scrape {{ $labels.job }} ({{ $labels.instance }})"
+          description: "The exporter or service is down, or its port changed. Metrics for it are missing meanwhile."
+
+      # Alloy could not hand entries to Loki. A new container whose Docker history is older
+      # than Loki's 7-day limit causes a one-off burst of these; a sustained one is real.
+      - alert: LogsBeingDropped
+        expr: sum(increase(loki_write_dropped_entries_total[15m])) > 50
+        labels: { severity: warning }
+        annotations:
+          summary: "Alloy dropped {{ $value | printf \"%.0f\" }} log entries in 15 minutes"
+          description: "docker logs zynd-obs-alloy-1 | grep 'final error' shows Loki's reason (too old, rate limited, ring not ready)."

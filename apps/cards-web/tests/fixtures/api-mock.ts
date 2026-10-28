@@ -49,6 +49,18 @@ export function cardFixture(handle: string, opts: { claimed?: boolean; name?: st
   };
 }
 
+/** What a designer's draft adds to the base card: other answers, visual work, writing from a newsletter. */
+const DESIGNER_DRAFT = {
+  summary: "Designs brand systems.",
+  working_on: ["Brand identity"],
+  can_help_with: ["Design systems"],
+  writing_samples: [{ platform: "substack", excerpt: "How I hire designers who ship", url: "https://ada.substack.com/p/how-i-hire", posted_at: "" }],
+  work_gallery: [
+    { title: "Brand system for Orbit", url: "https://www.behance.net/gallery/1/Orbit", image_url: "https://mir-s3-cdn-cf.behance.net/projects/202/a.jpg", source: "behance" },
+    { title: "Poster series", url: "https://www.behance.net/gallery/2/Posters", image_url: "https://mir-s3-cdn-cf.behance.net/projects/202/b.jpg", source: "behance" },
+  ],
+};
+
 /** Public facts on the owner card: more than the editor shows collapsed, so the count and
  *  the list can be checked against each other. */
 const OWNER_FACTS: Array<{ predicate: string; object: string; provenance: string; evidence: string | null }> = [
@@ -87,12 +99,14 @@ export function startFixtureServer(): Promise<void> {
     completeness: { score: 75, actions: [{ section: "projects", title: "Add a project", href: "/p/owner/edit#projects" }] },
     inbox_count: 3, connection: { memory_connected: true, assistants_available: false },
     sources: [{ platform: "github", scraped_at: "2026-10-10T00:00:00Z", state: "fresh" }],
-    activity: { available: true, views: humanViews, agent_hits: 4, agent_clients: [{ name: "Claude-User", provider: "Claude", count: 2 }, { name: "GPTBot", provider: "ChatGPT / OpenAI", count: 1 }, { name: "Unknown", provider: "Unknown", count: 1 }], intro_requests: null, queries: [], query_capture_available: false, chat_topics: [], chat_questions: [{ question: "What projects is Alice building?", category: "work", asked_at: "2026-10-15T10:00:00Z", truncated: false }, { question: '<img src=x onerror="window.questionHistoryXss=1">', category: "other", asked_at: "2026-10-15T09:00:00Z", truncated: false }] },
+    activity: { available: true, views: humanViews, agent_hits: 4, unidentified_clients: [{ name: "Node.js", count: 3, last_seen: "2026-10-28T05:34:18Z" }], agent_clients: [{ name: "Claude-User", provider: "Claude", count: 2 }, { name: "GPTBot", provider: "ChatGPT / OpenAI", count: 1 }, { name: "Unknown", provider: "Unknown", count: 1 }], intro_requests: null, queries: [], query_capture_available: false, chat_topics: [], chat_questions: [{ question: "What projects is Alice building?", category: "work", asked_at: "2026-10-15T10:00:00Z", truncated: false }, { question: '<img src=x onerror="window.questionHistoryXss=1">', category: "other", asked_at: "2026-10-15T09:00:00Z", truncated: false }] },
     visitors: { available: true, items: !anonymousMode && namedVisits ? [{ name: "Alice Chen", handle: "owner", visited_at: "2026-10-15T10:00:00Z", visits: namedVisits }] : [] },
     notification_prefs: prefs,
     duplicates: hasDuplicate ? [{ id: "id-old-owner", handle: "old-owner", name: "Alice Chen", status: "published" }] : [],
     nudges: [{ id: "n1", kind: "expiring", title: "What you are looking for expires within 3 days", href: "/p/owner/edit#memory" }],
   });
+  let onboardUrls: string[] = [];
+  let onboardPolls = 0;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
     const path = url.pathname;
@@ -237,15 +251,37 @@ export function startFixtureServer(): Promise<void> {
       }
     }
 
+    // The create page starts a build as soon as a link is pasted. The job reports each
+    // source as "reading", then "done", then the written draft, one poll at a time.
     if (req.method === "POST" && path === "/onboard/start") {
-      return json(200, { job_id: "job1" });
+      let raw = "";
+      req.on("data", chunk => { raw += chunk; });
+      req.on("end", () => {
+        onboardUrls = [...raw.matchAll(/name="url"\r\n\r\n([^\r\n]+)/g)].map(m => m[1]);
+        onboardPolls = 0;
+        json(200, { job_id: "job1" });
+      });
+      return;
     }
+    if (req.method === "POST" && path === "/onboard/job1/cancel") return json(200, { cancelled: false });
     if (path === "/onboard/job1") {
+      onboardPolls += 1;
+      const done = onboardPolls >= 2;
+      const ready = onboardPolls >= 3;
+      // A design-portfolio link makes the draft a designer's: another persona, visual work and a newsletter's posts.
+      const designer = onboardUrls.some(u => /behance\.net|dribbble\.com/.test(u));
       return json(200, {
-        status: "ready",
-        card: { ...cardFixture("draft-card"), status: "draft", handle: "", claimed: undefined, id: "id-draft" },
+        status: ready ? "ready" : "running",
+        stage: ready ? "ready" : done ? "synthesizing" : "reading",
+        card: ready ? { ...cardFixture("draft-card"), status: "draft", handle: "", claimed: undefined, id: "id-draft", ...(designer ? DESIGNER_DRAFT : {}) } : null,
+        persona: ready ? (designer ? "product_design" : "engineering") : "",
         error: null,
         url_warnings: [],
+        sources: onboardUrls.map(url => /behance\.net|dribbble\.com/.test(url)
+          ? { url, kind: "portfolio", state: done ? "done" : "reading",
+              preview: done ? { headline: "Ada on Behance", facts: ["2 projects"], images: DESIGNER_DRAFT.work_gallery.map(w => w.image_url) } : {} }
+          : { url, kind: "github", state: done ? "done" : "reading",
+              preview: done ? { name: "Bob Okafor", headline: "Engineer", facts: ["9 public repos"] } : {} }),
       });
     }
     if (path === "/onboard/claim-candidates") {
@@ -272,6 +308,10 @@ export function startFixtureServer(): Promise<void> {
     if (path === "/cards/mine") {
       if (req.headers.authorization) return json(200, { card: ownerCard, handle: "owner" });
       return json(200, null);
+    }
+    if (path === "/cards/by-handle/designer") {
+      // A designer's published card: no GitHub, a newsletter's posts and a portfolio's project covers.
+      return json(200, { ...cardFixture("designer", { name: "Ada Okoye" }), ...DESIGNER_DRAFT, identity: { name: "Ada Okoye", headline: "Brand designer", location: "Lagos", avatar_url: "", links: { linkedin: "https://www.linkedin.com/in/ada-okoye/" } } });
     }
     if (path === "/cards/by-handle/unclaimed" || path === "/cards/by-handle/claimed") {
       const handle = path.split("/").pop()!;

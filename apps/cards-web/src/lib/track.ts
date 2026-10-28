@@ -36,7 +36,7 @@ export async function logAgentFetch(
     events: [{ event: "agent_fetch", handle, meta: { endpoint } }],
   });
   try {
-    await fetch(`${CARDS_API}/events`, {
+    const response = await fetch(`${CARDS_API}/events`, {
       method: "POST",
       signal: AbortSignal.timeout(5000),
       headers: {
@@ -46,7 +46,8 @@ export async function logAgentFetch(
       body,
       keepalive: true,
     });
+    if (!response.ok) console.warn("Profile fetch tracking failed", { endpoint, status: response.status });
   } catch {
-    // ignore
+    console.warn("Profile fetch tracking delivery failed", { endpoint });
   }
 }

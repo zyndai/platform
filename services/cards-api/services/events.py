@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import hashlib
 import hmac
 import json
@@ -9,6 +10,7 @@ import logging
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -57,6 +59,7 @@ _MAX_BATCH = 20
 _WINDOW_SECONDS = 60
 _MAX_PER_WINDOW = 60
 _META_MAX_BYTES = 2048
+_EVENT_WRITE_TIMEOUT_SECONDS = 10
 _hits: dict[str, deque[float]] = defaultdict(deque)
 
 CREATED_VIA = frozenset({"web", "mcp", "import", "invite"})
@@ -164,20 +167,40 @@ def attributed_meta(meta: Any, user_agent: str | None) -> dict:
     """Derive the advertised agent from the header, overriding payload claims."""
     clean = dict(sanitize_meta(meta) or {})
     clean.pop("agent_name", None)
+    clean.pop("client_name", None)
     name = ua_class.agent_name(user_agent)
+    attribution = {}
     if name:
-        clean["agent_name"] = name
+        attribution["agent_name"] = name
+    elif ua_class.classify(user_agent) == "unknown":
+        attribution["client_name"] = ua_class.unidentified_client(user_agent)
+    clean.update(attribution)
     # Preserve attribution even if adding the label exceeds the metadata limit.
-    return sanitize_meta(clean) or ({"agent_name": name} if name else {})
+    return sanitize_meta(clean) or attribution
 
 
-def _insert_rows(rows: list[dict]) -> None:
+@lru_cache(maxsize=1)
+def _event_store():
+    """Isolate background writes from the shared client's HTTP/2 connections."""
+    import httpx
+    from supabase import ClientOptions, create_client
+
+    transport = httpx.Client(http1=True, http2=False, timeout=_EVENT_WRITE_TIMEOUT_SECONDS)
+    atexit.register(transport.close)
+    return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY,
+                         options=ClientOptions(schema=config.SUPABASE_DB_SCHEMA,
+                                               httpx_client=transport))
+
+
+def _insert_rows(rows: list[dict]) -> bool:
     if not rows or not events_enabled():
-        return
+        return True
     try:
-        config.get_supabase().table("card_events").insert(rows).execute()
+        _event_store().table("card_events").insert(rows).execute()
+        return True
     except Exception:
         logger.exception("card_events insert failed (%d rows)", len(rows))
+        return False
 
 
 def _build_row(
@@ -204,9 +227,9 @@ def insert_batch(
     *,
     user_agent: str | None,
     ip: str | None,
-) -> None:
+) -> bool:
     if not events_enabled() or not events:
-        return
+        return True
     actor = ua_class.classify(user_agent)
     sh = session_hash_for_ip(ip)
     rows = [
@@ -223,7 +246,7 @@ def insert_batch(
         )
         for e in events
     ]
-    _insert_rows(rows)
+    return _insert_rows(rows)
 
 
 def emit(
@@ -243,6 +266,8 @@ def emit(
     if request is not None:
         ua = ua or request.headers.get("user-agent")
         ip = client_ip(request)
+    if event in {"view", "agent_fetch"} and ua == ua_class.INTERNAL_CARDS_CLIENT:
+        return
     actor = ua_class.classify(ua)
     sh = session_hash_for_ip(ip)
     row = _build_row(

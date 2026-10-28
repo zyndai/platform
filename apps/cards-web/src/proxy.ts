@@ -22,7 +22,7 @@ export async function proxy(request: NextRequest) {
   // 301. Never forward a visitor session to this public lookup.
   const mergedPath = pathname.match(/^\/p\/([^/]+)(\/.*)?$/);
   const aliasPath = pathname.match(/^\/([^/]+)$/);
-  const reserved = new Set(["home", "create", "auth", "directory", "find", "search", "for-ai", "privacy", "terms", "support", "claude"]);
+  const reserved = new Set(["home", "create", "auth", "directory", "find", "search", "for-ai", "privacy", "terms", "support", "claude", "companion"]);
   const slug = mergedPath?.[1] || (aliasPath && !reserved.has(aliasPath[1]) ? aliasPath[1] : null);
   if (slug) {
     try {

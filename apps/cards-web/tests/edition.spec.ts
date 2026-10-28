@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
+import { LINK_PLACEHOLDER } from "./fixtures/create";
 import { signIn } from "./fixtures/sign-in";
 
 /**
@@ -156,18 +157,16 @@ test.describe("limited-edition card style", () => {
   });
 
   test("create flow offers the style last and publishes the choice", async ({ page }) => {
-    // #given a new card in review
+    // #given a new card, built from one pasted link
     await page.goto("/create");
-    const input = page.getByPlaceholder("github.com/you  or  linkedin.com/in/you");
+    const input = page.getByPlaceholder(LINK_PLACEHOLDER);
     await input.fill("github.com/bob");
     await input.press("Enter");
-    await page.getByRole("button", { name: "Build my card" }).click();
-    await page.getByRole("button", { name: "Continue without signing in" }).click();
-    const style = page.locator(".zc-card", { has: page.getByText("Card style", { exact: true }) });
+    const style = page.locator(".cr-block", { has: page.getByText("Card style", { exact: true }) });
     await expect(style).toBeVisible({ timeout: 45_000 });
 
-    // #then Card style is the last section, right before Publish
-    await expect(page.locator(".zc-card:has-text('Card style') + .zc-ctarow")).toHaveCount(1);
+    // #then Card style is the last block of the draft, before the optional extras
+    await expect(page.locator(".cr-profile-body > .cr-block").last()).toContainText("Card style");
 
     // #when they pick the edition and publish
     await style.getByRole("button", { name: /Mumbai Builder Week/ }).click();

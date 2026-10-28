@@ -35,9 +35,9 @@ function AccountChip() {
   );
 }
 
-export type DiscoverPage = "directory" | "network";
+export type DiscoverPage = "directory" | "network" | "create";
 
-/** Right side of the Directory / Network header: where to go, and who you are. */
+/** Right side of the Directory / Network / Create header: where to go, and who you are. */
 export function DiscoverNav({ active }: { active: DiscoverPage }) {
   const { authenticated } = useAuth();
   const { handle } = useMyCard();
@@ -58,7 +58,7 @@ export function DiscoverNav({ active }: { active: DiscoverPage }) {
       {!authenticated && (
         <Link href={`/auth?next=${encodeURIComponent(pathname || "/directory")}`} className="dc-pill">Sign in</Link>
       )}
-      {!handle && <Link href="/create" className="dc-cta">Create your card</Link>}
+      {!handle && active !== "create" && <Link href="/create" className="dc-cta">Create your card</Link>}
       {authenticated && <AccountChip />}
     </nav>
   );

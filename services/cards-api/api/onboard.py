@@ -17,9 +17,11 @@ from scraping import github as github_scraper
 from scraping import linkedin as linkedin_scraper
 from scraping import website as website_scraper
 from scraping import x as x_scraper
+from scraping import sites as site_scraper
 from scraping.resume import extract_resume_text
 from services import cards as cards_service
-from services.jobs import create_job, get_job, set_error, set_ready, utcnow
+from services.jobs import cancel_job, create_job, get_job, set_error, set_ready, set_source, set_stage, utcnow
+from services.source_preview import build_preview
 from synthesis.synthesize import synthesize_card
 
 router = APIRouter()
@@ -38,14 +40,20 @@ def _source_warning(job_id: str, url: str, code: str = "inaccessible") -> None:
 
 
 async def _fetch_source(job_id: str, url: str) -> tuple[str, str, dict | None]:
+    kind = _classify_url(url)
     try:
         result = await asyncio.wait_for(_safe_fetch_url(url), SOURCE_TIMEOUT_SECONDS)
-        if not result[1]:
-            _source_warning(job_id, url)
-        return result
     except TimeoutError:
         _source_warning(job_id, url, "timeout")
-        return _classify_url(url), "", None
+        set_source(job_id, url, kind, "failed")
+        return kind, "", None
+    kind, text, stats = result
+    if text:
+        set_source(job_id, url, kind, "done", build_preview(kind, text, stats))
+    else:
+        _source_warning(job_id, url)
+        set_source(job_id, url, kind, "failed")
+    return result
 
 
 class PublishRequest(BaseModel):
@@ -71,6 +79,10 @@ def _classify_url(url: str) -> str:
         return "x"
     if host == "linkedin.com" or host.endswith(".linkedin.com"):
         return "linkedin"
+    if site_scraper.is_writing_url(url):
+        return "writing"
+    if site_scraper.portfolio_platform(url):
+        return "portfolio"
     return "website"
 
 
@@ -87,7 +99,10 @@ def _handle_from_url(url: str) -> str | None:
 
 
 async def _safe_fetch_url(url: str) -> tuple[str, str, dict | None]:
-    """Returns (kind, text, stats_or_None). kind ∈ {'x', 'linkedin', 'website'}."""
+    """Returns (kind, text, stats_or_None). kind ∈ {'x', 'linkedin', 'writing', 'portfolio', 'website'}.
+
+    For a newsletter / blog / design portfolio, stats holds what scraping/sites.py
+    found on the page: `posts_raw` (post links) and/or `gallery` (project tiles)."""
     kind = _classify_url(url)
     try:
         if kind == "x":
@@ -95,8 +110,12 @@ async def _safe_fetch_url(url: str) -> tuple[str, str, dict | None]:
         elif kind == "linkedin":
             text, stats = await linkedin_scraper.fetch_linkedin_profile(url)
         else:
-            text = await website_scraper.fetch_website(url)
-            stats = None
+            text, markdown = await website_scraper.fetch_page(url)
+            found = {
+                "posts_raw": site_scraper.extract_posts(markdown, url),
+                "gallery": site_scraper.extract_gallery(markdown, url),
+            }
+            stats = {k: v for k, v in found.items() if v} or None
         logger.info("scraped %s url=%s chars=%d", kind, url, len(text))
         return kind, text, stats
     except Exception as exc:
@@ -120,6 +139,14 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
         github_urls = [u for u in urls if _classify_url(u) == "github"]
         other_urls = [u for u in urls if _classify_url(u) != "github"]
 
+        # The page lists every pasted source as soon as the build starts and
+        # watches each one move to done / failed. Only the first GitHub profile
+        # is read; the rest are shown as skipped rather than left "reading".
+        for u in urls:
+            set_source(job_id, u, _classify_url(u), "reading")
+        for extra in github_urls[1:]:
+            set_source(job_id, extra, "github", "skipped")
+
         if github_urls:
             github_handle = _handle_from_url(github_urls[0])
             if github_handle:
@@ -127,6 +154,7 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
                     github_data = await asyncio.wait_for(github_scraper.fetch_github(github_handle), SOURCE_TIMEOUT_SECONDS)
                 except Exception as exc:
                     _source_warning(job_id, github_urls[0], "timeout" if isinstance(exc, TimeoutError) else "failed")
+                    set_source(job_id, github_urls[0], "github", "failed")
                     logger.warning("github scrape skipped handle=%s err=%s", github_handle, exc)
                     github_data = None
                     github_handle = None
@@ -138,8 +166,11 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
                             "url": github_urls[0],
                             "message": f"GitHub user '{github_handle}' not found. Check the username and try again.",
                         })
+                    set_source(job_id, github_urls[0], "github", "failed")
                     github_data = None
                     github_handle = None
+                elif github_data:
+                    set_source(job_id, github_urls[0], "github", "done", build_preview("github", github=github_data))
 
         x_urls = [u for u in other_urls if _classify_url(u) == "x"]
         if x_urls:
@@ -153,13 +184,19 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
                     links = await asyncio.wait_for(website_scraper.fetch_linktree_links(u), SOURCE_TIMEOUT_SECONDS)
                     logger.info("linktree %s -> %d links", u, len(links))
                     expanded.extend(links)
+                    set_source(job_id, u, "website", "done")
+                    for link in links:
+                        set_source(job_id, link, _classify_url(link), "reading")
                 except Exception as exc:
                     _source_warning(job_id, u, "timeout" if isinstance(exc, TimeoutError) else "failed")
+                    set_source(job_id, u, "website", "failed")
                     logger.warning("linktree expand failed url=%s err=%s", u, exc)
             else:
                 expanded.append(u)
 
         website_texts: list[str] = []
+        site_posts: list[dict] = []
+        work_gallery: list[dict] = []
         x_texts: list[str] = []
         linkedin_texts: list[str] = []
         x_stats_data: dict | None = None
@@ -186,6 +223,8 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
                         linkedin_url_used = orig_url
                 else:
                     website_texts.append(text)
+                    site_posts += (stats or {}).get("posts_raw") or []
+                    work_gallery += (stats or {}).get("gallery") or []
 
         # Exclude resume — user-uploaded private document; public scrapes only
         scrape_raw: dict = {
@@ -199,6 +238,7 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
             set_error(job_id, "None of these sources could be read. Use a public profile URL or upload a résumé, then retry.")
             return
 
+        set_stage(job_id, "synthesizing")
         synth = await asyncio.to_thread(synthesize_card,
             github_data,
             resume_text,
@@ -231,7 +271,7 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
         li_posts_raw = (linkedin_stats_data or {}).pop("posts_raw", None) if linkedin_stats_data else None
         work_experience_raw = (linkedin_stats_data or {}).pop("work_experience_raw", None) if linkedin_stats_data else None
         synth.writing_samples = cards_service.merge_scraped_posts(
-            synth.writing_samples, x_posts_raw, li_posts_raw
+            synth.writing_samples, x_posts_raw, li_posts_raw, site_posts=site_posts,
         )
 
         card = cards_service.assemble_card(
@@ -242,6 +282,7 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
             contribution_stats=github_data.get("contribution_stats") if github_data else None,
             work_experience=work_experience_raw or None,
             x_scraped=bool(x_texts),
+            work_gallery=work_gallery[: site_scraper.GALLERY_ITEMS],
         )
 
         # Set handles before set_ready so publish sees them immediately
@@ -250,7 +291,7 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
             job.handle_github = github_handle
             job.handle_x = x_handle
             job.linkedin_url = linkedin_url_used
-        set_ready(job_id, card, scrape_raw=scrape_raw)
+        set_ready(job_id, card, scrape_raw=scrape_raw, persona=synth.persona)
     except Exception as exc:
         logger.warning("onboarding pipeline failed job=%s type=%s", job_id, type(exc).__name__)
         set_error(job_id, "We couldn't finish building your card. Your inputs are kept; please try again.")
@@ -290,7 +331,7 @@ async def start_onboard(
         raise HTTPException(status_code=400, detail="At least one source is required")
 
     job_id = create_job()
-    asyncio.create_task(_run_pipeline(job_id, list(url), resume_text))
+    get_job(job_id).task = asyncio.create_task(_run_pipeline(job_id, list(url), resume_text))
     from services import events as events_service
 
     start_meta: dict = {}
@@ -317,7 +358,18 @@ async def get_onboard_status(job_id: str):
         "card": job.card.model_dump(mode="json") if job.card else None,
         "error": job.error,
         "url_warnings": job.url_warnings,
+        "stage": job.stage,
+        "sources": list(job.sources.values()),
+        "persona": job.persona,
     }
+
+
+@router.post("/{job_id}/cancel")
+async def cancel_onboard(job_id: str):
+    """The page started a newer build (a source was added or fixed): stop paying for this one."""
+    if not get_job(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    return {"cancelled": cancel_job(job_id)}
 
 
 @router.post("/{job_id}/publish")

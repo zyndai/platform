@@ -13,6 +13,8 @@ removes it; forgetting the memory fact removes that one; neither resurrects the 
 Precedence, memory first, then stored, case-insensitive dedupe:
   working_on     <- live `is_working_on` facts, newest approved first (they expire ~14 days
                     after approval, after which the stored list is all that is left)
+  working_on_updated_at <- the stored stamp (cards migration 0033), moved up to the newest live
+                    `is_working_on` approval: the list is as fresh as its freshest source
   can_help_with  <- live `has_expertise_in` facts, highest confidence first
   exploring      <- the owner's browser clips (services/companion.py) from the last
                     EXPLORING_VISIBLE_DAYS days; older ones stay stored but stop showing
@@ -22,7 +24,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from models.card import AgentProfileCard
-from services.card_view import fact_object, fact_predicate, live_facts
+from services.card_view import _parse_ts, fact_object, fact_predicate, live_facts
 
 WORKING_ON_CAP = 4
 CAN_HELP_WITH_CAP = 6
@@ -62,12 +64,20 @@ def _confidence(fact: dict) -> float:
         return 0.0
 
 
+def _newest_approval(facts: list[dict], now: datetime) -> datetime | None:
+    """Latest approved_at among the facts, never later than now (a clock-skewed approval must not
+    keep a list looking fresh forever)."""
+    stamps = [t for f in facts if (t := _parse_ts(f.get("approved_at")))]
+    return min(max(stamps), now) if stamps else None
+
+
 def derive_public_signals(card: AgentProfileCard, now: datetime | None = None) -> AgentProfileCard:
     """A copy of the card whose working_on / can_help_with reflect live memory facts.
 
     Returns the card unchanged when memory has nothing live for a list, so people who
     never connected an agent keep exactly what they had.
     """
+    now = now or datetime.now(timezone.utc)
     facts = live_facts(card.zynd_memory, now)
     update: dict = {}
 
@@ -79,6 +89,9 @@ def derive_public_signals(card: AgentProfileCard, now: datetime | None = None) -
     if working:
         update["working_on"] = merge_unique(
             [fact_object(f) for f in working], card.working_on, WORKING_ON_CAP)
+        stamp = _newest_approval(working, now)
+        if stamp and (card.working_on_updated_at is None or stamp > card.working_on_updated_at):
+            update["working_on_updated_at"] = stamp
 
     expertise = sorted(
         (f for f in facts if fact_predicate(f) == "has_expertise_in"),
@@ -89,7 +102,6 @@ def derive_public_signals(card: AgentProfileCard, now: datetime | None = None) -
         update["can_help_with"] = merge_unique(
             [fact_object(f) for f in expertise], card.can_help_with, CAN_HELP_WITH_CAP)
 
-    now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=EXPLORING_VISIBLE_DAYS)
     recent = [i for i in card.exploring if _added_after(i.added_at, cutoff)]
     if len(recent) != len(card.exploring):

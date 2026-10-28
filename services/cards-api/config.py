@@ -191,6 +191,12 @@ FEATURE_S10_HOME: bool = os.getenv("FEATURE_S10_HOME", "true").lower() in ("1", 
 FEATURE_S10_DIGEST: bool = os.getenv("FEATURE_S10_DIGEST", "false").lower() in ("1", "true", "yes")
 S10_MAILER: str = os.getenv("S10_MAILER", "noop")  # noop | smtp
 
+# Dim a card's "Working on" chips, offer the owner a "Still working on this?" confirm, and add a
+# nudge line to the morning digest once Working on has not changed for STALE_DAYS
+# (services/stale_signals.py). Off by default. Needs packages/db cards migration 0033 for the
+# timestamp; without it every card reads as "unknown" (never stale) and confirm answers 503.
+FEATURE_STALE_SIGNALS: bool = os.getenv("FEATURE_STALE_SIGNALS", "false").lower() in ("1", "true", "yes")
+
 
 def _get_supabase():
     global _sb_service

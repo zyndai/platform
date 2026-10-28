@@ -46,6 +46,8 @@ import { memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
 import { readEdition } from "@/lib/editions";
 import { EditionHero } from "./edition-banner";
 import { EditionSignals } from "./edition-signals";
+import { StaleWorkingOnPrompt } from "./stale-working-on";
+import { featureStaleSignals, isWorkingOnStale } from "@/lib/stale-signals";
 import { ExploringCard } from "./exploring-card";
 import { cleanTopic, publicTopics } from "@/lib/profile-quality";
 import { BeaconCard } from "@/components/BeaconCard";
@@ -637,6 +639,9 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
   // The Connect / Message button: for visitors to a claimed Card (never the owner, never an unclaimed one).
   const showConnect = claimed && !isOwner;
 
+  // Everyone sees stale Working on chips dimmed; only the owner gets Confirm / Update.
+  const workingOnStale = featureStaleSignals() && isWorkingOnStale(card.working_on_updated_at, card.working_on, nowMs);
+
   const showLinkedin = !!(linkedinHandle || linkedinUrl || liJobs.length > 0);
   const showX = !!(v.x.handle || v.x.followers != null);
   const showGithub = cardHasGithub;
@@ -749,6 +754,13 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
         .pf-social-mid { margin-top: 12px; padding-top: 12px; flex: 1; min-height: 0; }
         .pf-social-cta { margin-top: auto; display: flex; align-items: center; justify-content: center; min-height: 36px; padding: 9px 14px; border-radius: 10px; font-size: 0.68rem; font-weight: 700; text-decoration: none; }
         .pf-obs-row { display: grid; grid-template-columns: var(--obs-cols, 1fr); gap: 16px; }
+        /* Working on unchanged for STALE_DAYS (lib/stale-signals.ts) */
+        .pf-obs-chip-stale { opacity: .55; }
+        .pf-obs-stale { margin-top: 10px; font-size: 0.62rem; line-height: 1.45; font-weight: 700; opacity: .85; }
+        .pf-obs-stale p { margin: 0; }
+        .pf-obs-stale .stale-wo-action { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+        .pf-obs-stale .stale-wo-action:disabled { opacity: .6; cursor: default; }
+        .pf-obs-stale .stale-wo-error { color: #b91c1c; }
         .pf-gh-row { display: grid; grid-template-columns: var(--gh-cols, 1fr 1fr); gap: 16px; }
         .pf-proj-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
         .pf-gallery-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
@@ -996,7 +1008,18 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             {/* ── RIGHT STACK: Dossier + Signals (8 col); edition cards draw their own ── */}
             {edition && (
               <EditionSignals
-                signals={obsessions.map((obs) => ({ key: obs.key, label: obs.label, items: obs.items.filter((item) => !isBlank(item)) }))}
+                signals={obsessions.map((obs) => {
+                  const stale = obs.key === "working_on" && workingOnStale;
+                  return {
+                    key: obs.key,
+                    label: obs.label,
+                    items: obs.items.filter((item) => !isBlank(item)),
+                    ...(stale ? {
+                      stale,
+                      staleFooter: isOwner ? <StaleWorkingOnPrompt handle={card.handle ?? handle} className="ed-signal-stale-prompt" /> : null,
+                    } : {}),
+                  };
+                })}
               />
             )}
             {!edition && (
@@ -1027,8 +1050,14 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
               {/* Signal cards row */}
               {obsessions.length > 0 && (
                 <div className="pf-obs-row" style={{ "--obs-cols": `repeat(${obsessions.length}, 1fr)` } as React.CSSProperties}>
-                  {obsessions.map((obs) => (
-                    <div key={obs.key} className={`pf-obs-card ${obs.card} rounded-[20px] p-[18px] flex flex-col justify-between`}>
+                  {obsessions.map((obs) => {
+                    const stale = obs.key === "working_on" && workingOnStale;
+                    return (
+                    <div
+                      key={obs.key}
+                      id={stale ? "working-on" : undefined}
+                      className={`pf-obs-card ${obs.card} rounded-[20px] p-[18px] flex flex-col justify-between${stale ? " is-stale" : ""}`}
+                    >
                       <div className={`${label_} pf-mono`} style={{ color: "inherit", opacity: 0.8 }}>
                         <span>┌ {obs.label.toUpperCase()}</span>
                         <span className={`${obs.chip} text-[0.6rem] px-2 py-0.5 rounded-full font-mono font-bold`}>
@@ -1037,13 +1066,20 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                       </div>
                       <div className="pf-obs-chips" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
                         {obsessionSources[obs.key].slice(0, 4).map((item) => (
-                          <span key={item} className={`${obs.chip} text-[0.65rem] font-bold font-mono px-2.5 py-1 rounded-full`}>
+                          <span key={item} className={`${obs.chip} text-[0.65rem] font-bold font-mono px-2.5 py-1 rounded-full${stale ? " pf-obs-chip-stale" : ""}`}>
                             {item}
                           </span>
                         ))}
                       </div>
+                      {stale && (
+                        <div className="pf-obs-stale pf-mono">
+                          <p>Not updated in 3+ months</p>
+                          {isOwner && <StaleWorkingOnPrompt handle={card.handle ?? handle} />}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

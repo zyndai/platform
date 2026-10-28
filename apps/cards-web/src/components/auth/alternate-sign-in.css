@@ -1,0 +1,18 @@
+/* Google + email sign-in options (components/auth/alternate-sign-in.tsx).
+ * Scoped under .dc because the colours and fonts are the directory canvas's
+ * tokens (components/discover/discover.css). */
+.dc .zas { display: grid; gap: 10px; }
+.dc .zas svg { flex: none; }
+.dc .zas-form { display: grid; gap: 8px; }
+.dc .zas-or { display: flex; align-items: center; gap: 10px; margin: 4px 0; font: 400 11px/1 var(--dc-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dc-faint); }
+.dc .zas-or::before, .dc .zas-or::after { content: ""; flex: 1; height: 1px; background: var(--dc-line); }
+.dc .zas-label { font: 600 12.5px/1.4 var(--dc-ui); color: var(--dc-soft); text-align: left; }
+.dc .zas-input { width: 100%; min-height: 46px; padding: 11px 14px; border-radius: 13px; border: 1px solid var(--dc-edge); background: #fff; -webkit-appearance: none; appearance: none; font: 500 16px/1.4 var(--dc-ui); color: var(--dc-ink); outline: 0; transition: border-color .15s, box-shadow .15s; }
+.dc .zas-input::placeholder { color: var(--dc-faint); }
+.dc .zas-input:focus { border-color: var(--dc-accent); box-shadow: 0 0 0 4px rgba(108, 92, 231, .14); }
+.dc .zas-input:focus-visible { outline: none; }
+.dc .zas-input[aria-invalid="true"] { border-color: #FECDD3; }
+.dc .zas-error { margin: 0; font: 600 12.5px/1.5 var(--dc-ui); color: #BE123C; text-align: left; }
+.dc .zas-sent { display: grid; gap: 8px; padding: 12px 14px; border-radius: 14px; background: var(--dc-tint); border: 1px solid var(--dc-edge); font: 500 13px/1.55 var(--dc-ui); color: var(--dc-ink); text-align: left; }
+.dc .zas-sent p { margin: 0; overflow-wrap: anywhere; }
+.dc .zas-link { justify-self: start; padding: 0; border: 0; background: none; font: 700 12.5px/1.4 var(--dc-ui); color: var(--dc-accent-hi); cursor: pointer; }

@@ -204,6 +204,10 @@ export function featureS06CardView(): boolean {
   return process.env.NEXT_PUBLIC_FEATURE_S06_CARDVIEW === "true";
 }
 
+export function featureVisitorCta(): boolean {
+  return process.env.NEXT_PUBLIC_FEATURE_VISITOR_CTA === "true";
+}
+
 /** S03: a card is claimed only when the API says so. Missing `claimed`
  *  (failed or stale read) stays quiet to agents — never fail open. */
 export function cardIsClaimed(card: { claimed?: boolean } | null | undefined): boolean {

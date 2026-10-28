@@ -108,6 +108,18 @@ def test_s08_funnel_events_allowlisted(client):
     assert sb.table.call_count >= 5
 
 
+def test_visitor_cta_click_allowlisted_and_stored_with_card_handle(client):
+    c, sb = client
+    r = c.post("/events", json={"events": [
+        {"event": "visitor_cta_click", "handle": "alice", "meta": {"target": "card_bar"}},
+    ]})
+    assert r.status_code == 204
+    rows = sb.table.return_value.insert.call_args.args[0]
+    assert rows[0]["event"] == "visitor_cta_click"
+    assert rows[0]["handle"] == "alice"
+    assert rows[0]["meta"]["target"] == "card_bar"
+
+
 def test_post_events_batch_too_large_400(client):
     c, sb = client
     r = c.post("/events", json={"events": [{"event": "view"}] * 21})

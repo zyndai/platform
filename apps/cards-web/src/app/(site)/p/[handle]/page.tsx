@@ -11,7 +11,9 @@ import {
   fetchGithubExtras,
   cardCanonicalUrl,
   featureS06CardView,
+  featureVisitorCta,
   getMyCard,
+  lookupMyCardHandle,
   type AgentProfileCard,
   type CardFact,
   type CardView,
@@ -41,6 +43,7 @@ import { ProjectsCard } from "./projects-card";
 import { WorkGallery } from "./work-gallery";
 import { MemoryCard } from "./memory-card";
 import { ClaimBanner } from "./claim-banner";
+import { VisitorCtaBar } from "./visitor-cta-bar";
 import { ConnectionButton } from "@/components/network/ConnectionButton";
 import { memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
 import { readEdition } from "@/lib/editions";
@@ -622,13 +625,16 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
   let isOwner = false;
   let isSignedIn = false;
+  let viewerMayHaveCard = false;
   try {
     const supabase = await createClient();
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.access_token && !visitorPreview) {
       isSignedIn = true;
-      const myCard = await getMyCard(session.access_token);
-      isOwner = !!(myCard && myCard.handle === handle);
+      const mine = await lookupMyCardHandle(session.access_token);
+      isOwner = !!(mine.card && mine.handle === handle);
+      // A failed lookup is not proof of "no card": card holders must never get the sign-up bar.
+      viewerMayHaveCard = mine.failed || !!mine.handle;
     }
   } catch {
     // Auth check is best-effort
@@ -636,6 +642,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
   // The Connect / Message button: for visitors to a claimed Card (never the owner, never an unclaimed one).
   const showConnect = claimed && !isOwner;
+  const showVisitorCta = featureVisitorCta() && !isOwner && !viewerMayHaveCard;
 
   const showLinkedin = !!(linkedinHandle || linkedinUrl || liJobs.length > 0);
   const showX = !!(v.x.handle || v.x.followers != null);
@@ -1519,6 +1526,8 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
               <Link href="/create" className="hover:text-slate-800">CREATE</Link>
             </div>
           </footer>
+
+          {showVisitorCta && <VisitorCtaBar handle={card.handle ?? handle} />}
 
         </div>
       </div>

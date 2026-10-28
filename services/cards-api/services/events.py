@@ -38,6 +38,8 @@ ALLOWED_EVENTS = frozenset({
     "fact_approved",
     "fact_dismissed",
     "chat_message",
+    # Click on the public card's "Get your own" bar; create_start still fires only when a build starts.
+    "visitor_cta_click",
 })
 
 # Emitted only by the API itself. Kept out of ALLOWED_EVENTS so the unauthenticated POST /events

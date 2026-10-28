@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { GoogleAnalytics } from "@next/third-parties/google";
-import { Chakra_Petch, Fraunces, Geist, Geist_Mono, Instrument_Sans, Playfair_Display, Space_Grotesk } from "next/font/google";
+import { Chakra_Petch, Fraunces, Geist, Geist_Mono, Instrument_Sans, Space_Grotesk } from "next/font/google";
+import localFont from "next/font/local";
 import Script from "next/script";
 import "./globals.css";
 
@@ -42,10 +43,13 @@ const instrumentSans = Instrument_Sans({
   display: "swap",
 });
 
-const playfairDisplay = Playfair_Display({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  style: ["normal", "italic"],
+// Bundle Playfair: Google's query-string font URLs break this Next version's loader.
+const playfairDisplay = localFont({
+  src: [
+    { path: "./fonts/playfair-display/normal.ttf", weight: "400 700", style: "normal" },
+    { path: "./fonts/playfair-display/italic.ttf", weight: "400 700", style: "italic" },
+  ],
+  adjustFontFallback: "Times New Roman",
   variable: "--font-playfair",
   display: "swap",
 });

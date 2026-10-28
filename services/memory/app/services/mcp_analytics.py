@@ -44,6 +44,7 @@ def advertised_user_agent() -> str:
 async def record_fetches(handles: list[str | None], *, endpoint: str, tool: str, category: str = "card") -> None:
     """Count returned cards, including cached reads; never log queries or caller IDs."""
     if not settings.cards_api_base_url:
+        logger.warning("MCP card analytics unavailable endpoint=%s tool=%s", endpoint, tool)
         return
     unique = list(dict.fromkeys(handles))
     try:
@@ -57,13 +58,21 @@ async def record_fetches(handles: list[str | None], *, endpoint: str, tool: str,
                          for handle in unique[start:start + EVENT_BATCH_SIZE]]},
                 )
                 response.raise_for_status()
+        logger.info("MCP card analytics recorded endpoint=%s tool=%s profiles=%d", endpoint, tool, len(unique))
+    except httpx.HTTPStatusError as exc:
+        logger.warning("MCP card analytics delivery failed endpoint=%s tool=%s status=%d",
+                       endpoint, tool, exc.response.status_code)
     except Exception:
         logger.warning("MCP card analytics delivery failed endpoint=%s tool=%s", endpoint, tool)
 
 
 async def record_people(result: dict, *, endpoint: str, tool: str) -> None:
-    handles = [p["handle"] for p in result.get("people", [])
-               if p.get("claimed") is True and isinstance(p.get("handle"), str)
-               and p["handle"] and "card" in (p.get("sources") or [])]
+    # find_people assigns a handle only when a person has a published Card.
+    # `sources` says how they were found (including Zynd similarity), and
+    # `claimed` controls connection eligibility. Neither decides whether the
+    # returned profile was read. External people without Cards have no handle.
+    handles = [p["handle"].strip() for p in result.get("people", [])
+               if isinstance(p, dict) and isinstance(p.get("handle"), str)
+               and p["handle"].strip()]
     if handles:
         await record_fetches(handles, endpoint=endpoint, tool=tool, category="search_result")

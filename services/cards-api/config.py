@@ -207,6 +207,12 @@ FEATURE_AI_READ_ALERTS: bool = os.getenv("FEATURE_AI_READ_ALERTS", "false").lowe
 # on every crawler hit.
 AI_READ_ALERT_COOLDOWN_HOURS: int = max(1, int(os.getenv("AI_READ_ALERT_COOLDOWN_HOURS", "24")))
 
+# Dim a card's "Working on" chips, offer the owner a "Still working on this?" confirm, and add a
+# nudge line to the morning digest once Working on has not changed for STALE_DAYS
+# (services/stale_signals.py). Off by default. Needs packages/db cards migration 0033 for the
+# timestamp; without it every card reads as "unknown" (never stale) and confirm answers 503.
+FEATURE_STALE_SIGNALS: bool = os.getenv("FEATURE_STALE_SIGNALS", "false").lower() in ("1", "true", "yes")
+
 
 def _get_supabase():
     global _sb_service

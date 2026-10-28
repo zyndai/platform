@@ -1,5 +1,5 @@
 from urllib.parse import urlparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from typing import Literal
 
@@ -65,6 +65,20 @@ def _coerce_industries(v):
     if isinstance(v, list):
         return [x for x in v if x]
     return []
+
+
+def _timestamp_or_none(v):
+    """working_on_updated_at is read on every card load: junk reads as unknown, never a failed card."""
+    if isinstance(v, datetime):
+        when = v
+    elif isinstance(v, str) and v.strip():
+        try:
+            when = datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
 
 EDITION_IDS = ("mumbai-26",)
@@ -292,6 +306,8 @@ class CardView(TopicFields):
     skills: list[Skill] = Field(default_factory=list)
     projects: list[Project] = Field(default_factory=list)
     working_on: list[str] = Field(default_factory=list)
+    # When Working on last changed or was confirmed (services/stale_signals.py). None = unknown.
+    working_on_updated_at: datetime | None = None
     exploring: list[ExploringItem] = Field(default_factory=list)
     can_help_with: list[str] = Field(default_factory=list)
     love_talking_about: list[str] = Field(default_factory=list)
@@ -327,6 +343,10 @@ class AgentProfileCard(TopicFields):
     industries: list[str] = Field(default_factory=list)
     availability: str = ""
     working_on: list[str] = Field(default_factory=list)
+    # Mirror of agent_profile_cards.working_on_updated_at, written into the card JSON by the
+    # database trigger from cards migration 0033; cards-api never sets it on a write (the trigger
+    # rewrites it from the column). None = unknown: a card from before 0033, or it is not applied.
+    working_on_updated_at: datetime | None = None
     # Clipped from the browser by the Zynd Companion extension (services/companion.py).
     exploring: list[ExploringItem] = Field(default_factory=list)
     can_help_with: list[str] = Field(default_factory=list)
@@ -359,6 +379,20 @@ class AgentProfileCard(TopicFields):
     @classmethod
     def _coerce_experience_card(cls, v):
         return _coerce_experience(v)
+
+    @field_validator("working_on_updated_at", mode="before")
+    @classmethod
+    def _lenient_working_on_stamp(cls, v):
+        return _timestamp_or_none(v)
+
+    @model_serializer(mode="wrap")
+    def _omit_unknown_working_on_stamp(self, handler):
+        # The dump is also what cards-api stores as the card JSON: a card with no stamp is saved
+        # exactly as before the field existed rather than gaining a null key.
+        data = handler(self)
+        if isinstance(data, dict) and data.get("working_on_updated_at") is None:
+            data.pop("working_on_updated_at", None)
+        return data
 
     @field_validator("industries", mode="before")
     @classmethod

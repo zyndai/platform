@@ -49,6 +49,7 @@ every service listed as a reader.
 | `realtime.messages` policy `cards network can receive broadcasts` | cards | cards 0023 | Supabase Realtime private `cards:*` topics; review alongside any other `realtime.messages` policy |
 | message/connection/invitation/member triggers in `cards` | cards | cards 0023 | sequence assignment, inbox summaries, read-state init, and Realtime Broadcast |
 | `cards.v_funnel_daily`, `cards.v_funnel_daily_totals`, `cards.purge_card_events` | cards | cards 0022 | Cards analytics/retention; deployed daily-view contract preserved |
+| `cards.stamp_working_on_updated_at()` + trigger `agent_profile_cards_working_on_stamp` | cards | cards 0033 | keeps `agent_profile_cards.working_on_updated_at` (and its `card->'working_on_updated_at'` mirror) current on every write that changes `card->'working_on'`; read by cards-api `services/stale_signals.py` |
 | publication `supabase_realtime` (9 persona tables) | persona | persona 0000 | persona-web realtime |
 | extension `vector` (schema `extensions`) | cards | cards 0000 | — |
 | schemas `cards`, `identity` + their grants | cards / shared | cards 0000, identity 0000 | — |

@@ -232,6 +232,13 @@
       "when": 1793113095783,
       "tag": "0032_companion_devices",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793183055198,
+      "tag": "0033_stale_working_on",
+      "breakpoints": true
     }
   ]
 }

@@ -297,6 +297,7 @@ export async function fetchCard(id: string): Promise<AgentProfileCard | null> {
 export async function fetchCardByHandle(handle: string): Promise<AgentProfileCard | null> {
   try {
     const res = await fetch(`${API_BASE}/cards/by-handle/${handle}`, {
+      ...(typeof window === "undefined" ? { headers: { "User-Agent": "Zynd-Cards-Web/1.0" } } : {}),
       ...(ownerHomeEnabled ? { cache: "no-store" as const } : { next: { revalidate: 60 } }),
     });
     if (!res.ok) return null;
@@ -309,6 +310,7 @@ export async function fetchCardByHandle(handle: string): Promise<AgentProfileCar
 export async function fetchCardView(handle: string): Promise<CardView | null> {
   try {
     const res = await fetch(`${API_BASE}/cards/by-handle/${encodeURIComponent(handle)}/view`, {
+      ...(typeof window === "undefined" ? { headers: { "User-Agent": "Zynd-Cards-Web/1.0" } } : {}),
       ...(ownerHomeEnabled ? { cache: "no-store" as const } : { next: { revalidate: 60 } }),
     });
     if (!res.ok) return null;

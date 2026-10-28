@@ -44,7 +44,7 @@ def test_public_event_batch_cannot_forge_question_history(monkeypatch):
         "question": "Fabricated question", "question_source": "profile_chat",
         "question_truncated": False, "category": "work",
     }}], user_agent="browser", ip=None)
-    assert insert.call_args.args[0][0]["meta"] == {"category": "work"}
+    assert insert.call_args.args[0][0]["meta"] == {"category": "work", "client_name": "Unidentified"}
 
 
 def test_history_is_handle_scoped_limited_and_ignores_legacy_or_untrusted_rows():

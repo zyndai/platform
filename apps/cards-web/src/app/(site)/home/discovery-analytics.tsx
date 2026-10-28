@@ -80,6 +80,32 @@ export function DiscoveryAnalytics({ activity, profile, visitors }: {
         ) : <p className="oh-discovery-empty">{activity.agent_clients ? "No recognized AI clients recorded in the last 7 days." : "Agent breakdown is unavailable."}</p>}
       </section>
 
+      <section className="oh-discovery-insight oh-discovery-history" aria-labelledby="unidentified-clients">
+        <div className="oh-discovery-insight-title">
+          <h3 id="unidentified-clients"><Eye size={18} aria-hidden="true" />Unidentified profile requests</h3>
+          <span className="oh-discovery-count">Latest 1,000 · Last 7 days</span>
+        </div>
+        <p className="oh-discovery-description">These clients fetched your profile without identifying an AI provider. Node.js can be used by many services, so these requests do not increase the ChatGPT count. Recording starts with this tracking update.</p>
+        {activity.unidentified_clients?.length ? (
+          <ul className="oh-visitors">
+            {activity.unidentified_clients.map((client) => (
+              <li className="oh-visitor" key={client.name}>
+                <div className="oh-visitor-identity">
+                  <span className="oh-visitor-name">{client.name}</span>
+                  <span className="oh-visitor-meta">
+                    Provider unknown
+                    {client.last_seen && !Number.isNaN(Date.parse(client.last_seen)) && (
+                      <> · Last seen <time dateTime={client.last_seen}>{new Date(client.last_seen).toLocaleString("en-US", { timeZone: "UTC", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} UTC</time></>
+                    )}
+                  </span>
+                </div>
+                <span className="oh-visitor-count">{client.count.toLocaleString("en-US")} {client.count === 1 ? "request" : "requests"}</span>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="oh-discovery-empty">{activity.unidentified_clients ? "No unidentified profile requests recorded since this tracking update." : "Unidentified request tracking is unavailable."}</p>}
+      </section>
+
       <section className="oh-discovery-insight oh-discovery-history oh-visitors-panel" aria-labelledby="recent-visitors">
         <div className="oh-discovery-insight-title">
           <h3 id="recent-visitors"><UsersRound size={18} aria-hidden="true" />People who visited</h3>

@@ -21,6 +21,7 @@ export interface OwnerStatus {
     views: number | null;
     agent_hits: number | null;
     agent_clients?: { name: string; provider: string; count: number }[] | null;
+    unidentified_clients?: { name: string; count: number; last_seen: string | null }[] | null;
     intro_requests: number | null;
     queries: { query: string; count?: number }[];
     query_capture_available: boolean;

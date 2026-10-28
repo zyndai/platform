@@ -69,6 +69,7 @@ def client(monkeypatch):
     monkeypatch.setattr(config, "MAINTENANCE_READONLY", False)
     sb = MagicMock()
     monkeypatch.setattr(config, "get_supabase", lambda: sb)
+    monkeypatch.setattr(events_service, "_event_store", lambda: sb)
     from main import app
 
     return TestClient(app), sb

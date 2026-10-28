@@ -4,7 +4,7 @@ test.beforeEach(async ({ request }) => {
   await request.post("http://127.0.0.1:3030/__s10/reset");
 });
 
-for (const agent of ["ChatGPT-User/1.0", "Claude-User/1.0", "PerplexityBot/1.0"]) {
+for (const agent of ["ChatGPT-User/1.0", "Claude-User/1.0", "PerplexityBot/1.0", "node"]) {
   test(`records an HTML fetch without JavaScript from ${agent}`, async ({ request }) => {
     const response = await request.get("/p/owner", { headers: { "User-Agent": agent } });
     expect(response.ok()).toBe(true);

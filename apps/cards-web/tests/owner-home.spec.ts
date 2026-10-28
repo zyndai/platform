@@ -43,6 +43,10 @@ test.describe("S10 owner home", () => {
     await expect(agentBreakdown.getByText("Claude-User", { exact: true })).toBeVisible();
     await expect(agentBreakdown.getByText("GPTBot", { exact: true })).toBeVisible();
     await expect(agentBreakdown.getByText("2 requests", { exact: true })).toBeVisible();
+    const unidentified = page.getByRole("region", { name: "Unidentified profile requests" });
+    await expect(unidentified.getByText("Node.js", { exact: true })).toBeVisible();
+    await expect(unidentified.getByText("3 requests", { exact: true })).toBeVisible();
+    await expect(unidentified.getByText(/Provider unknown/)).toBeVisible();
     const questionHistory = page.getByRole("region", { name: "Recent assistant questions" });
     await expect(questionHistory.getByText("What projects is Alice building?", { exact: true })).toBeVisible();
     await expect(questionHistory.getByText('<img src=x onerror="window.questionHistoryXss=1">', { exact: true })).toBeVisible();

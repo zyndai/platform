@@ -1,5 +1,20 @@
 """User-Agent → actor_class for S04 card_events."""
 
+# Website data reads are followed by a separate event with the visitor's header.
+INTERNAL_CARDS_CLIENT = "Zynd-Cards-Web/1.0"
+UNIDENTIFIED_CLIENTS = ("Node.js", "curl", "Python HTTP client", "Unidentified")
+
+
+def unidentified_client(user_agent: str | None) -> str:
+    ua = (user_agent or "").strip().lower()
+    if ua == "node" or ua.startswith("node/"):
+        return "Node.js"
+    if ua.startswith("curl/"):
+        return "curl"
+    if ua.startswith(("python-httpx/", "python-requests/")):
+        return "Python HTTP client"
+    return "Unidentified"
+
 _AI_AGENT = (
     "GPTBot",
     "ChatGPT-User",

@@ -225,7 +225,7 @@ async function renderMain(): Promise<void> {
   }
 
   /** The local reminder resets whatever happens; the card's own freshness only where the server can
-   *  record it (it answers 404 while stale signals are off and 503 before migration 0033). */
+   *  record it (404 from a server without the route, 503 before migration 0033). */
   async function keepWorkingOn(): Promise<void> {
     stored.touchedAt = Date.now();
     await touch();

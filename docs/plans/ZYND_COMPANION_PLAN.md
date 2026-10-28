@@ -101,13 +101,13 @@ session ends.
 | `POST /pair` | website session | Create a device, return its token once |
 | `GET /devices` | website session | List the person's devices (no tokens) |
 | `DELETE /devices/{id}` | website session | Revoke one |
-| `POST /mine/exploring/remove` | website session | Remove one exploring item (the /companion/connect page) |
+| `POST /mine/exploring/remove` | website session | Remove one exploring item (the card editor's Interests tab; section saves cannot write `exploring`) |
 | `GET /me` | device token | Header profile, current Working on, current exploring |
 | `POST /working-on` | device token | Put one line on top; refused (422) once 20 are stored, never drops a line |
 | `POST /working-on/remove` | device token | Remove one line |
 | `POST /exploring` | device token | Add or bump an item; capped at 8 |
 | `POST /exploring/remove` | device token | Remove one item |
-| `POST /working-on/confirm` | device token | "Still working on this": the card page's confirm (404 while stale signals are off, 503 before migration 0033) |
+| `POST /working-on/confirm` | device token | "Still working on this": the card page's confirm (503 before migration 0033) |
 | `POST /disconnect` | device token | Revoke this device |
 
 Writes go through a new `cards.companion_save_fields` SQL function: the same

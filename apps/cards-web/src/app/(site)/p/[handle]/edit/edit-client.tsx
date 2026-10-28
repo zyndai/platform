@@ -21,7 +21,7 @@ import {
   type EditForm, type SetField, type TabKey,
 } from "./edit-form";
 import { ProfileTab } from "./profile-tab";
-import { InterestsTab } from "./interests-tab";
+import { ExploringEditor, InterestsTab } from "./interests-tab";
 import { ImportedTab } from "./imported-tab";
 import { AiTab } from "./ai-tab";
 import { BeaconEditor } from "@/components/BeaconEditor";
@@ -315,6 +315,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
           </div>
           <div role="tabpanel" id="pe-panel-interests" aria-labelledby="pe-tab-interests" className="pe-panel" hidden={tab !== "interests"}>
             <InterestsTab form={form} set={set} />
+            <ExploringEditor token={token} initial={initialCard.exploring ?? []} showToast={showToast} />
             {ownerHomeEnabled && <BeaconEditor key={handle} handle={handle} token={token} initial={initialCard.beacon} />}
           </div>
           <div role="tabpanel" id="pe-panel-imported" aria-labelledby="pe-tab-imported" className="pe-panel" hidden={tab !== "imported"}>

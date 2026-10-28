@@ -16,7 +16,7 @@ from postgrest.exceptions import APIError
 from pydantic import BaseModel, Field
 
 from api.mcp import _owner_email, _principal
-from services import companion, owner_home, stale_signals
+from services import companion, owner_home
 
 logger = logging.getLogger(__name__)
 
@@ -159,8 +159,6 @@ async def remove_exploring(body: UrlBody, authorization: str | None = Header(def
 @router.post("/working-on/confirm")
 async def confirm_working_on(authorization: str | None = Header(default=None)):
     """"Yes, keep it" in the extension: the card page's "Still working on this", by device token."""
-    if not stale_signals.enabled():
-        raise HTTPException(404, "Stale signals are turned off")
     device = await _writer(authorization)
     return await _run(companion.confirm_working_on, device["owner_email"])
 

@@ -9,12 +9,10 @@ import {
   browserLabel,
   listCompanionDevices,
   pairCompanion,
-  removeMyExploring,
   revokeCompanionDevice,
   type CompanionDevice,
   type FromExtension,
 } from "@/lib/companion";
-import type { ExploringItem } from "@/lib/cards";
 
 type Phase = "searching" | "missing" | "ready" | "connecting" | "connected" | "error";
 
@@ -37,19 +35,14 @@ export function ConnectClient({
   state,
   token,
   account,
-  exploring,
 }: {
   state: string;
   token: string;
   account: { name: string; handle: string; headline: string } | null;
-  exploring: ExploringItem[];
 }) {
   const [phase, setPhase] = useState<Phase>(state ? "searching" : "missing");
   const [message, setMessage] = useState("");
   const [devices, setDevices] = useState<CompanionDevice[] | null>(null);
-  const [clips, setClips] = useState<ExploringItem[]>(exploring);
-  const [removing, setRemoving] = useState<string | null>(null);
-  const [clipError, setClipError] = useState("");
   const minted = useRef<string | null>(null);
   // Set once an unconfirmed token is taken back: a "paired" arriving after that is for a dead token.
   const gaveUp = useRef(false);
@@ -123,18 +116,6 @@ export function ConnectClient({
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not connect. Please try again.");
       setPhase("error");
-    }
-  }
-
-  async function removeClip(url: string) {
-    setRemoving(url);
-    setClipError("");
-    try {
-      setClips(await removeMyExploring(token, url));
-    } catch (error) {
-      setClipError(error instanceof Error ? error.message : "Could not remove it. Please try again.");
-    } finally {
-      setRemoving(null);
     }
   }
 
@@ -231,37 +212,6 @@ export function ConnectClient({
               <p className="mt-2 text-zinc-300" role="alert">{message}</p>
             </>
           )}
-        </section>
-      )}
-
-      {account && clips.length > 0 && (
-        <section className={`${PANEL} mt-8`} aria-label="Currently exploring on your card">
-          <h2 className="text-lg font-bold">Currently exploring</h2>
-          <p className="mt-1 text-sm text-zinc-400">
-            Links you added from the extension. Your card shows the last 30 days; remove any you no longer want there.
-          </p>
-          <ul className="mt-3 divide-y divide-white/10">
-            {clips.map((clip) => (
-              <li key={clip.url} className="flex items-center justify-between gap-4 py-3">
-                <div className="min-w-0">
-                  <div className="truncate font-semibold">{clip.title || clip.url}</div>
-                  <div className="truncate text-xs text-zinc-500" title={clip.url}>
-                    {clip.url} · added {when(clip.added_at)}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className={QUIET}
-                  disabled={removing !== null}
-                  aria-label={`Remove ${clip.title || clip.url}`}
-                  onClick={() => void removeClip(clip.url)}
-                >
-                  {removing === clip.url ? "Removing…" : "Remove"}
-                </button>
-              </li>
-            ))}
-          </ul>
-          {clipError && <p className="mt-2 text-sm text-red-300" role="alert">{clipError}</p>}
         </section>
       )}
 

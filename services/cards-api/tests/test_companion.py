@@ -434,7 +434,6 @@ def test_the_website_can_remove_a_clip_but_a_device_token_cannot_use_that_route(
 
 
 def test_the_extension_confirms_working_on_through_the_card_pages_confirm(client, monkeypatch):
-    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", True)
     calls = []
     def confirm(handle, email):
         calls.append((handle, email))
@@ -449,9 +448,6 @@ def test_the_extension_confirms_working_on_through_the_card_pages_confirm(client
 
 def test_confirm_says_when_it_is_not_available(client, monkeypatch):
     auth = {"Authorization": f"Bearer {pair(client)['token']}"}
-    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", False)
-    assert client.post("/cards/companion/working-on/confirm", headers=auth).status_code == 404
-    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", True)
     def not_migrated(handle, email):
         raise HTTPException(503, "Confirming isn't available yet")
     monkeypatch.setattr(stale_signals, "confirm_working_on", not_migrated)

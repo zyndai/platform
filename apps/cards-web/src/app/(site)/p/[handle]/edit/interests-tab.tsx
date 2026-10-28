@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
-import { Card, Field, TagInput } from "./edit-ui";
+import type { ExploringItem } from "@/lib/cards";
+import { removeMyExploring } from "@/lib/companion";
+import { Card, Field, TagInput, type ShowToast } from "./edit-ui";
 import type { EditForm, SetField } from "./edit-form";
 
 const LEVELS = ["expert", "advanced", "intermediate", "beginner"] as const;
@@ -73,5 +75,49 @@ export function InterestsTab({ form, set }: { form: EditForm; set: SetField }) {
         </div>
       </Card>
     </>
+  );
+}
+
+function addedOn(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** Clips added from Zynd Companion. Removing saves at once, like the beacon: section saves
+ *  (s10_save_section) cannot write `exploring`, so it goes through the Companion's own save. */
+export function ExploringEditor({ token, initial, showToast }: { token: string; initial: ExploringItem[]; showToast: ShowToast }) {
+  const [clips, setClips] = useState(initial);
+  const [removing, setRemoving] = useState<string | null>(null);
+
+  async function remove(clip: ExploringItem) {
+    setRemoving(clip.url);
+    try {
+      setClips(await removeMyExploring(token, clip.url));
+      showToast("Removed from Currently exploring", "ok");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Could not remove it. Try again.", "err");
+    } finally {
+      setRemoving(null);
+    }
+  }
+
+  if (clips.length === 0) return null;
+  return (
+    <Card id="exploring" title="Currently exploring" hint="Links you added with Zynd Companion. Your card shows the last 30 days.">
+      <div className="pe-list">
+        {clips.map((clip) => (
+          <div key={clip.url} className="pe-item">
+            <div className="pe-item-main">
+              <div className="pe-item-title truncate">{clip.title || clip.url}</div>
+              <div className="pe-item-sub truncate" title={clip.url}>{clip.url}{addedOn(clip.added_at) && ` · added ${addedOn(clip.added_at)}`}</div>
+            </div>
+            <button type="button" className="pe-icon-btn is-danger" disabled={removing !== null}
+              onClick={() => void remove(clip)} aria-label={`Remove ${clip.title || clip.url}`}>
+              <X size={15} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }

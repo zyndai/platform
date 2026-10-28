@@ -2,15 +2,16 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from postgrest.exceptions import APIError
 
 import config
+from api import cards as card_routes
 from api import companion as routes
 from api.auth import Principal, verify_supabase_jwt
 from models.card import AgentProfileCard
-from services import companion, owner_home
+from services import companion, owner_home, stale_signals
 from services.signals import derive_public_signals
 from tests.fake_supabase import FakeSupabase
 
@@ -38,12 +39,28 @@ class Db(FakeSupabase):
         def run():
             if self.save_errors:
                 raise APIError({"code": self.save_errors.pop(0), "message": "boom", "details": None, "hint": None})
+            card = self.card or {}
+            for key, value in params["p_patch"].items():
+                # The function's own checks (cards migration 0032): at most 20 items, and
+                # coalesce(card->key, '[]') IS DISTINCT FROM p_expected->key is a conflict.
+                if len(value) > 20:
+                    raise APIError({"code": "22023", "message": "invalid fields", "details": None, "hint": None})
+                if (card[key] if key in card else []) != params["p_expected"][key]:
+                    raise APIError({"code": "40001", "message": "fields changed", "details": None, "hint": None})
             self.saves.append(params)
-            return SimpleNamespace(data={**(self.card or {}), **params["p_patch"], "handle": params["p_handle"],
+            self.card = {**card, **params["p_patch"]}
+            return SimpleNamespace(data={**self.card, "handle": params["p_handle"],
                                          "updated_at": "2026-10-27T12:00:00+00:00"})
         return SimpleNamespace(execute=run)
 
     card: dict | None = None
+
+
+@pytest.fixture(autouse=True)
+def fresh_rate_limits():
+    companion._hits.clear()
+    yield
+    companion._hits.clear()
 
 
 @pytest.fixture
@@ -73,6 +90,20 @@ def test_clean_url_keeps_the_public_form(raw, expected):
     assert companion.clean_url(raw) == expected
 
 
+@pytest.mark.parametrize("raw,expected", [
+    ("https://docs.example.com/s/abc?pwd=hunter2&lang=en", "https://docs.example.com/s/abc?lang=en"),
+    ("https://bucket.s3.amazonaws.com/f.pdf?X-Amz-Algorithm=A&X-Amz-Credential=c&X-Amz-Signature=s&v=2",
+     "https://bucket.s3.amazonaws.com/f.pdf?v=2"),
+    ("https://storage.googleapis.com/b/o?X-Goog-Signature=s&X-Goog-Credential=c", "https://storage.googleapis.com/b/o"),
+    ("https://app.example.com/cb?code=abc&state=xyz&page=2", "https://app.example.com/cb?page=2"),
+    ("https://api.example.com/x?access_token=t&API_KEY=k&sig=s&auth_token=a&csrfToken=c&q=agents",
+     "https://api.example.com/x?q=agents"),
+    ("https://example.com/p?session_id=1&sid=2&jwt=3&id=4", "https://example.com/p?id=4"),
+])
+def test_clean_url_drops_query_params_that_carry_a_secret(raw, expected):
+    assert companion.clean_url(raw) == expected
+
+
 @pytest.mark.parametrize("raw", [
     "", "   ", "javascript:alert(1)", "file:///etc/passwd", "chrome://extensions", "ftp://example.com/x",
     "http://localhost:3000/", "http://127.0.0.1/", "http://10.0.0.5/admin", "http://192.168.1.1/",
@@ -93,15 +124,29 @@ def test_url_key_treats_spellings_of_one_page_as_equal():
 
 # ── The two lists ────────────────────────────────────────────────────────────
 
-def test_working_on_goes_on_top_without_duplicates_and_stays_within_the_public_cap():
+def test_working_on_goes_on_top_without_duplicates_or_losing_lines():
     out = companion.add_working_on_line(["a", "B", "c", "d"], "  b ")
     assert out == ["b", "a", "c", "d"]
-    out = companion.add_working_on_line(["a", "b", "c", "d"], "new")
-    assert out == ["new", "a", "b", "c"]
-    assert len(out) == companion.WORKING_ON_CAP
+    six = ["a", "b", "c", "d", "e", "f"]
+    assert companion.add_working_on_line(six, "new") == ["new", *six]
     with pytest.raises(ValueError):
         companion.add_working_on_line(["a"], "   ")
     assert companion.remove_working_on_line(["a", "B"], "b") == ["a"]
+
+
+def test_a_full_working_on_list_refuses_a_new_line_instead_of_dropping_one():
+    full = [f"line {n}" for n in range(companion.WORKING_ON_STORED_MAX)]
+    with pytest.raises(ValueError, match="Remove one first"):
+        companion.add_working_on_line(full, "one more")
+    assert companion.add_working_on_line(full, "LINE 7") == ["LINE 7", *[x for x in full if x != "line 7"]]
+
+
+def test_a_line_longer_than_the_extension_writes_can_still_be_removed():
+    long_line = "Building " + "a very long editor line " * 10
+    assert len(long_line) > companion.WORKING_ON_TEXT_MAX
+    assert companion.remove_working_on_line(["keep", long_line], long_line) == ["keep"]
+    assert companion.remove_working_on_line(["keep", "two  spaces\tthere"], " Two spaces there ") == ["keep"]
+    assert companion.remove_working_on_line(["keep", long_line], long_line[:companion.WORKING_ON_TEXT_MAX]) == ["keep", long_line]
 
 
 def test_working_on_text_loses_control_characters_and_is_cut():
@@ -201,6 +246,19 @@ def test_save_sends_the_stored_list_as_the_expected_value(db):
     companion.set_working_on("alice@test.invalid", "Companion")
     assert db.saves == [{"p_email": "alice@test.invalid", "p_handle": "alice",
                          "p_patch": {"working_on": ["Companion", "Old thing"]}, "p_expected": {"working_on": ["Old thing"]}}]
+
+
+def test_a_stored_null_is_sent_back_as_null_so_the_save_does_not_conflict(db):
+    db.card = {"working_on": None, "exploring": []}
+    out = companion.set_working_on("alice@test.invalid", "First line")
+    assert out["working_on"] == ["First line"]
+    assert db.saves[-1]["p_expected"] == {"working_on": None}
+
+
+def test_a_missing_field_is_expected_as_an_empty_list(db):
+    db.card = {"working_on": []}
+    companion.add_exploring("alice@test.invalid", "https://a.com/x", "t", "link", "")
+    assert db.saves[-1]["p_expected"] == {"exploring": []}
 
 
 def test_a_save_that_changes_nothing_writes_nothing(db):
@@ -315,3 +373,99 @@ def test_before_the_migration_is_applied_the_routes_say_so(client, monkeypatch):
     monkeypatch.setattr(companion, "create_device", boom)
     res = client.post("/cards/companion/pair", json={}, headers={"Authorization": "Bearer website-session"})
     assert res.status_code == 503 and "not available" in res.json()["detail"]
+
+
+def test_writes_from_one_device_are_rate_limited(client, monkeypatch):
+    monkeypatch.setattr(companion, "reembed", lambda handle, saved: None)
+    first, second = pair(client), pair(client)
+    auth = {"Authorization": f"Bearer {first['token']}"}
+    for n in range(companion.DEVICE_WRITES_PER_MINUTE):
+        assert client.post("/cards/companion/working-on/remove", json={"text": f"x{n}"}, headers=auth).status_code == 200
+    limited = client.post("/cards/companion/exploring", json={"url": "https://a.com/x"}, headers=auth)
+    assert limited.status_code == 429
+    assert client.get("/cards/companion/me", headers=auth).status_code == 200
+    other = client.post("/cards/companion/working-on/remove", json={"text": "x"},
+                        headers={"Authorization": f"Bearer {second['token']}"})
+    assert other.status_code == 200
+
+
+def test_pairing_is_rate_limited_per_owner(client):
+    for _ in range(companion.PAIRINGS_PER_HOUR):
+        pair(client)
+    res = client.post("/cards/companion/pair", json={}, headers={"Authorization": "Bearer website-session"})
+    assert res.status_code == 429
+
+
+def test_revoking_needs_a_device_id(client):
+    res = client.delete("/cards/companion/devices/not-a-uuid", headers={"Authorization": "Bearer website-session"})
+    assert res.status_code == 422
+
+
+def test_only_a_missing_table_or_function_reads_as_not_available(db, monkeypatch):
+    app = FastAPI()
+    app.include_router(routes.router, prefix="/cards/companion")
+    monkeypatch.setattr(routes, "_principal", lambda authorization: Principal(email="alice@test.invalid", sub="u1", iss="i"))
+    code = {"value": "42883"}
+    def boom(*a, **k):
+        raise APIError({"code": code["value"], "message": "boom", "details": None, "hint": None})
+    monkeypatch.setattr(companion, "list_devices", boom)
+    client = TestClient(app, raise_server_exceptions=False)
+    auth = {"Authorization": "Bearer website-session"}
+    for missing in ("42P01", "42883", "PGRST202", "PGRST205"):
+        code["value"] = missing
+        assert client.get("/cards/companion/devices", headers=auth).status_code == 503
+    code["value"] = "23505"
+    assert client.get("/cards/companion/devices", headers=auth).status_code == 500
+
+
+def test_the_website_can_remove_a_clip_but_a_device_token_cannot_use_that_route(client, db):
+    db.card = {"working_on": [], "exploring": [
+        {"url": "https://a.com/keep", "title": "k", "kind": "link", "note": "", "added_at": NOW.isoformat()},
+        {"url": "https://a.com/gone", "title": "g", "kind": "link", "note": "", "added_at": NOW.isoformat()},
+    ]}
+    device = pair(client)
+    refused = client.post("/cards/companion/mine/exploring/remove", json={"url": "https://a.com/gone"},
+                          headers={"Authorization": f"Bearer {device['token']}"})
+    assert refused.status_code == 401
+    res = client.post("/cards/companion/mine/exploring/remove", json={"url": "https://www.a.com/gone/"},
+                      headers={"Authorization": "Bearer website-session"})
+    assert res.status_code == 200
+    assert [i["url"] for i in res.json()["exploring"]] == ["https://a.com/keep"]
+
+
+def test_the_extension_confirms_working_on_through_the_card_pages_confirm(client, monkeypatch):
+    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", True)
+    calls = []
+    def confirm(handle, email):
+        calls.append((handle, email))
+        return NOW
+    monkeypatch.setattr(stale_signals, "confirm_working_on", confirm)
+    auth = {"Authorization": f"Bearer {pair(client)['token']}"}
+    res = client.post("/cards/companion/working-on/confirm", headers=auth)
+    assert res.status_code == 200 and res.json() == {"working_on_updated_at": NOW.isoformat()}
+    assert calls == [("alice", "alice@test.invalid")]
+    assert client.post("/cards/companion/working-on/confirm", headers={"Authorization": "Bearer website-session"}).status_code == 401
+
+
+def test_confirm_says_when_it_is_not_available(client, monkeypatch):
+    auth = {"Authorization": f"Bearer {pair(client)['token']}"}
+    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", False)
+    assert client.post("/cards/companion/working-on/confirm", headers=auth).status_code == 404
+    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", True)
+    def not_migrated(handle, email):
+        raise HTTPException(503, "Confirming isn't available yet")
+    monkeypatch.setattr(stale_signals, "confirm_working_on", not_migrated)
+    assert client.post("/cards/companion/working-on/confirm", headers=auth).status_code == 503
+
+
+def test_search_results_leave_out_clips_older_than_the_public_window(monkeypatch):
+    fresh = {"url": "https://a.com/new", "added_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()}
+    stale = {"url": "https://a.com/old", "added_at": (datetime.now(timezone.utc) - timedelta(days=31)).isoformat()}
+    card = AgentProfileCard(id="c", handle="alice", exploring=[fresh, stale])
+    monkeypatch.setattr(card_routes.cards_service, "search_cards", lambda q: [card])
+    monkeypatch.setattr(card_routes.cards_service, "claimed_by_handles", lambda handles: {"alice": True})
+    app = FastAPI()
+    app.include_router(card_routes.router, prefix="/cards")
+    res = TestClient(app).get("/cards", params={"q": "alice"})
+    assert res.status_code == 200
+    assert [i["url"] for i in res.json()[0]["exploring"]] == ["https://a.com/new"]

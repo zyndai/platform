@@ -16,6 +16,9 @@ import ipaddress
 import logging
 import re
 import secrets
+import threading
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -23,9 +26,8 @@ from postgrest.exceptions import APIError
 
 import config
 from models.card import EXPLORING_KINDS, ExploringItem, _clean_exploring
-from services import card_cache, owner_home
+from services import card_cache, owner_home, stale_signals
 from services.card_view import cite_as
-from services.signals import WORKING_ON_CAP
 from services.zynd_memory import ping_revalidate
 
 logger = logging.getLogger(__name__)
@@ -38,16 +40,39 @@ SAVE_ATTEMPTS = 2
 PUBLIC_DEVICE_FIELDS = ("id", "label", "created_at", "last_used_at")
 
 WORKING_ON_TEXT_MAX = 120
+# companion_save_fields (cards migration 0032) refuses a list longer than this. It is a storage
+# limit, not the public one: the editor can hold more lines than a card shows (signals.WORKING_ON_CAP),
+# so adding a line must never cut the ones already there.
+WORKING_ON_STORED_MAX = 20
 EXPLORING_MAX = 8                # stored per card
 URL_MAX = 500
 TITLE_MAX = 140
 NOTE_MAX = 200
 LABEL_MAX = 80
 
+# Every write drops the card cache and revalidates the public page, and a Working on write also
+# re-embeds the card (a paid call), so a stuck or scripted extension must not be able to loop them.
+# A person clicking in the popup stays far below these. In-process, so per worker, which is enough
+# to stop a loop (services/lookup.py does the same).
+DEVICE_WRITES_PER_MINUTE = 20
+PAIRINGS_PER_HOUR = 10           # per owner: each one mints a token
+_MAX_TRACKED_KEYS = 5000
+
 _TRACKING_PARAMS = {"fbclid", "gclid", "dclid", "msclkid", "mc_cid", "mc_eid", "igshid", "ref_src", "ref_url",
                     "_hsenc", "_hsmi", "mkt_tok", "yclid", "twclid"}
 # X and Twitter links carry a share-tracking query (?s=20&t=…) that identifies who shared them.
 _NO_QUERY_HOSTS = {"x.com", "twitter.com", "mobile.twitter.com"}
+# Query parameters that carry a credential or a one-time grant: a password-protected share link
+# (?pwd=), a bearer or API token, a presigned S3 / GCS link (X-Amz-Signature, X-Goog-Credential), an
+# OAuth callback's code and state, a session id. The address bar is the easiest place to leak one and
+# the hardest place to spot it, and a card is public and read by AI agents, so they are dropped rather
+# than left to the person to notice. Mirrored in apps/zynd-companion/src/classify.ts (SECRET_PARAMS).
+_SECRET_PARAMS = {"pwd", "passwd", "password", "pass", "token", "access_token", "refresh_token", "id_token",
+                  "auth", "authorization", "key", "apikey", "api_key", "secret", "client_secret", "sig",
+                  "signature", "code", "state", "session", "sessionid", "session_id", "sid", "jwt", "otp",
+                  "ticket", "nonce", "credential", "credentials"}
+_SECRET_PARAM_PREFIXES = ("x-amz-", "x-goog-")
+_SECRET_PARAM_SUFFIXES = ("token", "secret", "password", "signature")
 _PRIVATE_SUFFIXES = (".local", ".localhost", ".internal", ".lan", ".home", ".corp", ".intranet", ".private")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _SPACE = re.compile(r"\s+")
@@ -57,6 +82,40 @@ class CompanionError(Exception):
     def __init__(self, status: int, detail: str):
         super().__init__(detail)
         self.status, self.detail = status, detail
+
+
+# ── Rate limits ──────────────────────────────────────────────────────────────
+
+_hits: dict[str, deque] = defaultdict(deque)
+_hits_lock = threading.Lock()
+
+
+def allow(key: str, limit: int, window_seconds: float) -> bool:
+    """Sliding-window limit: True and the slot is taken, or False when `key` has used `limit`."""
+    now = time.monotonic()
+    with _hits_lock:
+        hits = _hits[key]
+        while hits and now - hits[0] > window_seconds:
+            hits.popleft()
+        if len(hits) >= limit:
+            return False
+        hits.append(now)
+        if len(_hits) > _MAX_TRACKED_KEYS:
+            for stale in [k for k, v in _hits.items() if not v or now - v[-1] > window_seconds]:
+                _hits.pop(stale, None)
+        return True
+
+
+def allow_device_write(device_id) -> bool:
+    return allow(f"device:{device_id}", DEVICE_WRITES_PER_MINUTE, 60.0)
+
+
+def allow_owner_write(email: str) -> bool:
+    return allow(f"owner:{email.strip().lower()}", DEVICE_WRITES_PER_MINUTE, 60.0)
+
+
+def allow_pairing(email: str) -> bool:
+    return allow(f"pair:{email.strip().lower()}", PAIRINGS_PER_HOUR, 3600.0)
 
 
 # ── Device tokens ────────────────────────────────────────────────────────────
@@ -175,9 +234,15 @@ def clean_url(raw) -> str:
     if host.removeprefix("www.") in _NO_QUERY_HOSTS or host in _NO_QUERY_HOSTS:
         query = ""
     else:
-        query = urlencode([(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
-                           if k.lower() not in _TRACKING_PARAMS and not k.lower().startswith("utm_")])
+        query = urlencode([(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if _public_param(k)])
     return urlunsplit((parts.scheme, netloc, parts.path or "/", query, ""))
+
+
+def _public_param(key: str) -> bool:
+    name = key.strip().lower()
+    if name in _TRACKING_PARAMS or name.startswith("utm_"):
+        return False
+    return not (name in _SECRET_PARAMS or name.startswith(_SECRET_PARAM_PREFIXES) or name.endswith(_SECRET_PARAM_SUFFIXES))
 
 
 def url_key(url: str) -> str:
@@ -187,8 +252,12 @@ def url_key(url: str) -> str:
     return f"{host}{parts.path.rstrip('/')}?{parts.query}"
 
 
+def _normal(raw) -> str:
+    return _SPACE.sub(" ", _CONTROL.sub(" ", str(raw or ""))).strip()
+
+
 def _text(raw, limit: int) -> str:
-    return _SPACE.sub(" ", _CONTROL.sub(" ", str(raw or ""))).strip()[:limit].strip()
+    return _normal(raw)[:limit].strip()
 
 
 def build_item(url, title, kind, note, now: datetime | None = None) -> ExploringItem:
@@ -215,13 +284,16 @@ def add_working_on_line(current: list, text) -> list[str]:
     line = _text(text, WORKING_ON_TEXT_MAX)
     if not line:
         raise ValueError("Write what you are working on")
-    rest = [c for c in current if isinstance(c, str) and c.strip() and c.strip().lower() != line.lower()]
-    return [line, *rest][:WORKING_ON_CAP]
+    rest = [c for c in current if isinstance(c, str) and c.strip() and _normal(c).lower() != line.lower()]
+    if len(rest) >= WORKING_ON_STORED_MAX:
+        raise ValueError(f"Working on already has {WORKING_ON_STORED_MAX} lines. Remove one first.")
+    return [line, *rest]
 
 
 def remove_working_on_line(current: list, text) -> list[str]:
-    line = _text(text, WORKING_ON_TEXT_MAX).lower()
-    return [c for c in current if isinstance(c, str) and c.strip().lower() != line]
+    # Not cut to WORKING_ON_TEXT_MAX: the editor can store longer lines, and those must be removable too.
+    line = _normal(text).lower()
+    return [c for c in current if isinstance(c, str) and _normal(c).lower() != line]
 
 
 # ── Writing to the card ──────────────────────────────────────────────────────
@@ -232,15 +304,20 @@ def _save_field(email: str, field: str, build) -> dict:
         row = owner_home.current_row(email)
         if not row:
             raise CompanionError(404, "Create your card first")
-        stored = row["card"].get(field)
+        card = row["card"]
+        stored = card.get(field)
         current = stored if isinstance(stored, list) else []
         updated = build(current)
         if updated == current:
-            return {**row["card"], "handle": row["handle"]}
+            return {**card, "handle": row["handle"]}
+        # companion_save_fields compares this with coalesce(card->field, '[]'): only a missing key
+        # reads as []. A stored JSON null (or any other non-list) is compared as itself, so it is sent
+        # back exactly as stored, or every save of that card would conflict.
+        expected = card[field] if field in card else []
         try:
             saved = config.get_supabase().rpc("companion_save_fields", {
                 "p_email": email.strip().lower(), "p_handle": row["handle"],
-                "p_patch": {field: updated}, "p_expected": {field: current},
+                "p_patch": {field: updated}, "p_expected": {field: expected},
             }).execute().data
         except APIError as exc:
             code = str(exc.code)
@@ -287,6 +364,16 @@ def add_exploring(email: str, url, title, kind, note) -> dict:
 
 def drop_exploring(email: str, url) -> dict:
     return _save_field(email, "exploring", lambda cur: remove_exploring_item(cur, str(url or "")))
+
+
+def confirm_working_on(email: str) -> dict:
+    """"Still working on this" from the extension: the same freshness reset the card page offers."""
+    row = owner_home.current_row(email)
+    if not row:
+        raise CompanionError(404, "Create your card first")
+    confirmed = stale_signals.confirm_working_on(row["handle"], email)
+    ping_revalidate(row["handle"])
+    return {"working_on_updated_at": confirmed.isoformat()}
 
 
 def lists_of(card: dict) -> dict:

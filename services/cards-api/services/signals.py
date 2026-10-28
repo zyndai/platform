@@ -107,9 +107,12 @@ def derive_public_signals(card: AgentProfileCard, now: datetime | None = None) -
         update["can_help_with"] = merge_unique(
             [fact_object(f) for f in expertise], card.can_help_with, CAN_HELP_WITH_CAP)
 
-    cutoff = now - timedelta(days=EXPLORING_VISIBLE_DAYS)
-    recent = [i for i in card.exploring if _added_after(i.added_at, cutoff)]
-    if len(recent) != len(card.exploring):
-        update["exploring"] = recent
-
+    card = without_old_exploring(card, now)
     return card.model_copy(update=update) if update else card
+
+
+def without_old_exploring(card: AgentProfileCard, now: datetime | None = None) -> AgentProfileCard:
+    """The card without the clips older than EXPLORING_VISIBLE_DAYS: what every public read shows."""
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=EXPLORING_VISIBLE_DAYS)
+    recent = [i for i in card.exploring if _added_after(i.added_at, cutoff)]
+    return card if len(recent) == len(card.exploring) else card.model_copy(update={"exploring": recent})

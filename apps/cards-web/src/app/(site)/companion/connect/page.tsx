@@ -25,7 +25,7 @@ export default async function ConnectPage({ searchParams }: { searchParams: Prom
   return (
     <>
       <Navbar />
-      <ConnectClient state={state} token={session.access_token} account={account} />
+      <ConnectClient state={state} token={session.access_token} account={account} exploring={mine?.card.exploring ?? []} />
     </>
   );
 }

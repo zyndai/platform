@@ -1,5 +1,5 @@
 import {
-  ApiError, addExploring, addWorkingOn, disconnect, fetchProfile, removeExploring, removeWorkingOn,
+  ApiError, addExploring, addWorkingOn, confirmWorkingOn, disconnect, fetchProfile, removeExploring, removeWorkingOn,
   type ExploringItem, type Lists, type Profile,
 } from "../api";
 import {
@@ -157,7 +157,7 @@ async function renderMain(): Promise<void> {
       ? h("div", { class: "banner" },
           "It has been a while since you updated your card. Still working on this?",
           h("div", { class: "row" },
-            h("button", { type: "button", onclick: async () => { await touch(); stored.touchedAt = Date.now(); void chrome.runtime.sendMessage({ type: "badge:refresh" }); draw(); } }, "Yes, keep it"),
+            h("button", { type: "button", onclick: () => void keepWorkingOn() }, "Yes, keep it"),
             h("button", { type: "button", onclick: () => workingInput.focus() }, "Update"),
           ))
       : null;
@@ -199,10 +199,10 @@ async function renderMain(): Promise<void> {
     add.addEventListener("click", () => void changeLists(() => addExploring({
       url: found.clip.url, title: tidyText(title.value, TITLE_MAX), kind, note: tidyText(note.value, NOTE_MAX),
     }), "Added to Currently exploring. It is on your card now."));
-    const shown = new URL(found.clip.url);
+    // The whole address, query included: whatever is in it goes on a public card, so the person sees it all.
     return h("div", {},
       title, kinds, note,
-      h("p", { class: "addr", title: found.clip.url }, `Public link: ${shown.hostname.replace(/^www\./, "")}${shown.pathname === "/" ? "" : shown.pathname}`),
+      h("p", { class: "addr" }, `Public link: ${found.clip.url}`),
       h("div", { class: "row", style: "margin-top:8px;justify-content:flex-end" }, add),
     );
   }
@@ -220,6 +220,23 @@ async function renderMain(): Promise<void> {
       line.say(done);
     } catch (error) {
       if (error instanceof ApiError && error.unpaired) return renderConnect(error.message);
+      line.say(error instanceof Error ? error.message : "That did not work.", true);
+    }
+  }
+
+  /** The local reminder resets whatever happens; the card's own freshness only where the server can
+   *  record it (it answers 404 while stale signals are off and 503 before migration 0033). */
+  async function keepWorkingOn(): Promise<void> {
+    stored.touchedAt = Date.now();
+    await touch();
+    void chrome.runtime.sendMessage({ type: "badge:refresh" });
+    draw();
+    try {
+      await confirmWorkingOn();
+      line.say("Thanks. Your card shows Working on as current.");
+    } catch (error) {
+      if (error instanceof ApiError && error.unpaired) return renderConnect(error.message);
+      if (error instanceof ApiError && (error.status === 404 || error.status === 503)) return;
       line.say(error instanceof Error ? error.message : "That did not work.", true);
     }
   }

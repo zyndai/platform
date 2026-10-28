@@ -13,6 +13,17 @@ describe("cleanUrl", () => {
   });
 
   it.each([
+    ["https://docs.example.com/s/abc?pwd=hunter2&lang=en", "https://docs.example.com/s/abc?lang=en"],
+    ["https://bucket.s3.amazonaws.com/f.pdf?X-Amz-Algorithm=A&X-Amz-Credential=c&X-Amz-Signature=s&v=2", "https://bucket.s3.amazonaws.com/f.pdf?v=2"],
+    ["https://storage.googleapis.com/b/o?X-Goog-Signature=s&X-Goog-Credential=c", "https://storage.googleapis.com/b/o"],
+    ["https://app.example.com/cb?code=abc&state=xyz&page=2", "https://app.example.com/cb?page=2"],
+    ["https://api.example.com/x?access_token=t&API_KEY=k&sig=s&auth_token=a&csrfToken=c&q=agents", "https://api.example.com/x?q=agents"],
+    ["https://example.com/p?session_id=1&sid=2&jwt=3&id=4", "https://example.com/p?id=4"],
+  ])("drops the secret-looking query params of %s", (raw, expected) => {
+    expect(cleanUrl(raw)).toEqual({ ok: true, url: expected });
+  });
+
+  it.each([
     "", "   ", "javascript:alert(1)", "file:///etc/passwd", "chrome://extensions", "chrome-extension://abc/popup.html",
     "about:blank", "ftp://example.com/x", "http://localhost:3000/", "http://127.0.0.1/", "http://10.0.0.5/admin",
     "http://192.168.1.1/", "http://169.254.169.254/latest", "http://[::1]/", "http://0.0.0.0/", "http://intranet/wiki",

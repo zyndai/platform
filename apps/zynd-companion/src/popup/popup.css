@@ -81,7 +81,7 @@ button.link { border: 0; background: none; padding: 0; color: var(--muted); text
 .kinds button { padding: 3px 9px; border-radius: 999px; font-size: 12px; }
 .kinds button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .hint { color: var(--muted); font-size: 12px; }
-.addr { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 4px 0 0; }
+.addr { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; margin: 4px 0 0; }
 .clips { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .clips li { display: flex; align-items: center; gap: 8px; }
 .clips a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }

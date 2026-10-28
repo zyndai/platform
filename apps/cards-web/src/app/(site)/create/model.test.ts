@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyEdits, buildUserAnswers, cleanHandle, detectKind, finalizeCard, liveIdentity, normalizeUrl, statusLine, workKey } from "./model.ts";
+import {
+  QUICK_ADD, addSkills, applyEdits, buildUserAnswers, cleanHandle, detectKind, finalizeCard, isBarePrefix, liveIdentity,
+  normalizeUrl, projectKey, removeLink, removeSkill, sameUrls, sampleKey, statusLine, workKey,
+} from "./model.ts";
 
 const source = (url: string, preview: object, state = "done") => ({ url, kind: detectKind(url), state, preview }) as never;
 
@@ -67,7 +70,7 @@ test("edits sit on top of the newest build, so a rebuild never undoes them", () 
 
 test("publishing applies the person's picks, an emptied group included", () => {
   const draft = card({ working_on: ["Open source"], can_help_with: ["Hiring"] });
-  const out = finalizeCard(draft, { ...none, can_help_with: ["Code review", "rust"] }, "  Pune  ", new Set(["project:https://a", "sample:1"]));
+  const out = finalizeCard(draft, { ...none, can_help_with: ["Code review", "rust"] }, "  Pune  ", new Set(["project:https://a", "sample:two"]));
   assert.deepEqual(out.working_on, []); // unticked: must not fall back to the LLM's guess
   assert.deepEqual(out.can_help_with, ["Code review", "rust"]);
   assert.deepEqual(out.skills.map((s) => s.name), ["Rust", "Code review"]); // "rust" already a skill
@@ -113,7 +116,7 @@ test("a project cover the person removed is not published", () => {
     { title: "Orbit", url: "https://b/1", image_url: "https://cdn/a.jpg", source: "behance" },
     { title: "Posters", url: "https://b/2", image_url: "https://cdn/b.jpg", source: "behance" },
   ] });
-  const out = finalizeCard(withWork, none, "", new Set([workKey(1)]));
+  const out = finalizeCard(withWork, none, "", new Set([workKey({ url: "https://b/2", image_url: "https://cdn/b.jpg" })]));
   assert.deepEqual(out.work_gallery?.map((w) => w.title), ["Orbit"]);
   assert.deepEqual(finalizeCard(card(), none, "", new Set()).work_gallery, []);
 });
@@ -123,4 +126,61 @@ test("who the person wants to meet is saved, but never searchable as who they ar
   assert.deepEqual(out.connect_with, ["Investors"]);
   assert.ok(!out.searchable_facts.some((f) => /connect with/i.test(f)));
   assert.ok(out.searchable_facts.some((f) => /loves talking about Startups/.test(f)));
+});
+
+test("a removed row stays removed through a rebuild that reorders, adds or drops rows", () => {
+  const first = card({
+    writing_samples: [{ platform: "x", excerpt: "one", url: "", posted_at: "" }, { platform: "x", excerpt: "two", url: "https://x/2", posted_at: "" }],
+    work_gallery: [{ title: "Orbit", url: "https://b/1", image_url: "https://cdn/a.jpg", source: "behance" }],
+  }) as Parameters<typeof finalizeCard>[0];
+  const excluded = new Set([sampleKey(first.writing_samples[1]), projectKey(first.projects[0]), workKey(first.work_gallery![0])]);
+  const rebuilt = card({
+    projects: [{ name: "new", url: "https://new", description: "", source: "github" }, ...first.projects],
+    writing_samples: [{ platform: "linkedin", excerpt: "fresh", url: "https://li/1", posted_at: "" }, ...first.writing_samples.toReversed()],
+    work_gallery: [{ title: "Posters", url: "https://b/2", image_url: "https://cdn/b.jpg", source: "behance" }, ...first.work_gallery!],
+  });
+  const out = finalizeCard(rebuilt, none, "", excluded);
+  assert.deepEqual(out.projects.map((p) => p.name), ["new", "b"]);
+  assert.deepEqual(out.writing_samples.map((w) => w.excerpt), ["fresh", "one"]);
+  assert.deepEqual(out.work_gallery?.map((w) => w.title), ["Posters"]);
+});
+
+test("a removed link stays removed and a rebuild's new link still shows", () => {
+  const edits = removeLink({}, "github");
+  const rebuilt = card();
+  rebuilt.identity.links = { github: "https://github.com/ada", x: "https://x.com/ada" };
+  assert.deepEqual(applyEdits(rebuilt, edits).identity.links, { github: "", x: "https://x.com/ada" });
+});
+
+test("skill edits are changes, so a rebuild's new skills survive them", () => {
+  let edits = addSkills({}, ["Writing"]);
+  edits = removeSkill(edits, "rust");
+  const rebuilt = card({ skills: [
+    { name: "Rust", level: "advanced", evidence_count: 3 },
+    { name: "TypeScript", level: "advanced", evidence_count: 5 },
+  ] });
+  assert.deepEqual(applyEdits(rebuilt, edits).skills.map((s) => s.name), ["TypeScript", "Writing"]);
+  // Adding back a removed skill, or removing an added one, undoes the earlier change.
+  assert.deepEqual(applyEdits(rebuilt, addSkills(edits, ["RUST"])).skills.map((s) => s.name), ["Rust", "TypeScript", "Writing"]);
+  assert.deepEqual(applyEdits(rebuilt, removeSkill(edits, "writing")).skills.map((s) => s.name), ["TypeScript"]);
+  // A skill the build already has is not listed twice.
+  assert.deepEqual(applyEdits(rebuilt, addSkills({}, ["typescript"])).skills.map((s) => s.name), ["Rust", "TypeScript"]);
+});
+
+test("a tapped quick-add prefix is not a link until a name is typed", () => {
+  for (const { prefix } of QUICK_ADD) {
+    assert.ok(isBarePrefix(prefix), prefix);
+    assert.ok("error" in normalizeUrl(prefix)!, prefix);
+    assert.ok(!isBarePrefix(`${prefix}ada`));
+  }
+  assert.ok(isBarePrefix(" https://www.linkedin.com/in "));
+  assert.deepEqual(normalizeUrl("linkedin.com/in/ada"), { url: "https://linkedin.com/in/ada" });
+  assert.match((normalizeUrl("https://www.linkedin.com/in/") as { error: string }).error, /linkedin\.com\/in\/yourusername/);
+});
+
+test("the same links in another order are the same sources", () => {
+  assert.ok(sameUrls(["https://a", "https://b"], ["https://b", "https://a"]));
+  assert.ok(!sameUrls(["https://a"], ["https://a", "https://b"]));
+  assert.ok(!sameUrls(["https://a", "https://a"], ["https://a", "https://b"]));
+  assert.ok(sameUrls([], []));
 });

@@ -10,6 +10,7 @@ import { CARDS_API } from "@/lib/cards";
 import type { AlternateSignInMethod } from "@/components/auth/alternate-sign-in";
 import { setClaimHandle } from "@/lib/auth/next-cookie";
 import { startLinkedInOAuth } from "@/lib/auth/session";
+import { track } from "@/lib/track";
 import { CardEditor } from "./card-editor";
 import {
   CHIP_GROUPS, DEFAULT_PERSONA, addCustomValues, emptySelections, hasLabel, isPersona, optionsFor, sameLabel,
@@ -17,8 +18,8 @@ import {
 } from "./chips";
 import { discardDraft, saveDraft, takeDraft, type Draft } from "./draft";
 import {
-  applyEdits, buildUserAnswers, cleanHandle, detectKind, finalizeCard, liveIdentity, normalizeUrl, statusLine,
-  type DraftEdits, type TopicAnswers,
+  addSkills, applyEdits, buildUserAnswers, cleanHandle, detectKind, finalizeCard, liveIdentity, normalizeUrl, removeLink,
+  removeSkill, statusLine, type DraftEdits, type TopicAnswers,
 } from "./model";
 import { PublishCard } from "./publish-card";
 import { claimPublished, getToken, publishCard, rememberPublished, syncMemoryOnClaim } from "./publish";
@@ -66,7 +67,7 @@ export function CreateBuilder() {
 
   const alreadyHasCard = authenticated && !!ownHandle;
   const building = !published && !existsHandle && !alreadyHasCard;
-  const { build, retry } = useBuild({ urls, resume, enabled: building });
+  const { build, retry, stale } = useBuild({ urls, resume, enabled: building });
 
   // Links from the landing page's paste bar, and a draft saved before a sign-in round trip.
   const seeded = useRef(false);
@@ -186,6 +187,7 @@ export function CreateBuilder() {
 
   async function publish() {
     if (!finalCard || !build.jobId || build.status !== "ready") return;
+    track("create_publish_click", { signed_in: authenticated, stale });
     setPublishing(true);
     setPublishError(null);
     let leaving = false;
@@ -276,7 +278,7 @@ export function CreateBuilder() {
       <div className="cr-layout">
         <div className="cr-sources-slot">
           <SourcesCard
-            urls={urls} resume={resume} build={build}
+            urls={urls} resume={resume} build={build} stale={stale && hasSource}
             onAdd={addUrl} onReplace={replaceUrl} onRetry={retry} onResume={setResume}
             onRemove={(url) => setUrls((prev) => prev.filter((u) => u !== url))}
           />
@@ -290,6 +292,9 @@ export function CreateBuilder() {
             selections={selections} suggested={suggested} onToggleChip={toggleChip} onAddChip={addChip}
             location={location} locationHint={guessedLocation} onLocation={setLocationEdit}
             onEdit={(patch) => setEdits((prev) => ({ ...prev, ...patch }))}
+            onRemoveLink={(key) => setEdits((prev) => removeLink(prev, key))}
+            onAddSkills={(names) => setEdits((prev) => addSkills(prev, names))}
+            onRemoveSkill={(name) => setEdits((prev) => removeSkill(prev, name))}
             excluded={excluded} onToggleExcluded={toggleExcluded}
             calendly={calendly} googleCalendar={googleCalendar} onCalendly={setCalendly} onGoogleCalendar={setGoogleCalendar}
           />

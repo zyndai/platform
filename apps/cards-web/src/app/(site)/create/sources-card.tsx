@@ -7,23 +7,18 @@ import { PersonAvatar } from "@/components/discover/person-avatar";
 import { imgProxyUrl } from "@/lib/avatar";
 import type { SourceStatus } from "@/lib/cards";
 import { KIND_LABEL, KIND_READING, KindIcon } from "./kind-icon";
-import { detectKind, shortenUrl, statusLine, type UrlKind } from "./model";
+import { QUICK_ADD, detectKind, isBarePrefix, shortenUrl, statusLine } from "./model";
 import type { BuildState } from "./use-build";
-
-/** One tap to start a link; newsletters and portfolios are pasted whole, since each lives on its own address. */
-const QUICK_ADD: { kind: UrlKind; prefix: string }[] = [
-  { kind: "linkedin", prefix: "linkedin.com/in/" },
-  { kind: "github", prefix: "github.com/" },
-  { kind: "x", prefix: "x.com/" },
-];
 
 type Row = Pick<SourceStatus, "state" | "preview"> | { state: "queued"; preview: SourceStatus["preview"] };
 
 /** One pasted link and what has been read from it so far. */
-function SourceRow({ url, row, warning, onRemove, onFix }: {
+function SourceRow({ url, row, warning, stale, onRemove, onFix }: {
   url: string;
   row: Row;
   warning?: string;
+  /** A queued row is waiting for the person to rebuild, not for a build already starting. */
+  stale: boolean;
   onRemove: () => void;
   onFix: (raw: string) => string | null;
 }) {
@@ -53,7 +48,7 @@ function SourceRow({ url, row, warning, onRemove, onFix }: {
         </div>
 
         {row.state === "reading" && <div className="cr-source-line"><span className="cr-spinner" aria-hidden="true" /> {KIND_READING[kind]}</div>}
-        {row.state === "queued" && <div className="cr-source-line">Waiting to start…</div>}
+        {row.state === "queued" && <div className="cr-source-line">{stale ? "Not in your draft yet. Rebuild to read it." : "Waiting to start…"}</div>}
         {row.state === "skipped" && <div className="cr-source-line">Only one {KIND_LABEL[kind]} profile is read, so this one is skipped.</div>}
         {row.state === "failed" && (
           <div className="cr-source-line">
@@ -116,10 +111,12 @@ function SourceRow({ url, row, warning, onRemove, onFix }: {
  * Step one and the live read-out in one place: paste links or drop a résumé,
  * and each source shows what was found as soon as it finishes.
  */
-export function SourcesCard({ urls, resume, build, onAdd, onRemove, onReplace, onResume, onRetry }: {
+export function SourcesCard({ urls, resume, build, stale, onAdd, onRemove, onReplace, onResume, onRetry }: {
   urls: string[];
   resume: File | null;
   build: BuildState;
+  /** The sources changed since the draft was built; `onRetry` rebuilds it. */
+  stale: boolean;
   /** Returns what is wrong with the link, or null when it was added. */
   onAdd: (raw: string) => string | null;
   onRemove: (url: string) => void;
@@ -142,6 +139,7 @@ export function SourcesCard({ urls, resume, build, onAdd, onRemove, onReplace, o
     if (!problem) setValue("");
   };
 
+  const resumeRead = !!build.jobId && build.inputs.resume === resume;
   const busy = build.status === "running";
   const headline = build.status === "error" ? "Something went wrong"
     : build.status === "ready" && !busy ? "Draft ready"
@@ -185,7 +183,8 @@ export function SourcesCard({ urls, resume, build, onAdd, onRemove, onReplace, o
             e.preventDefault();
             pasted.split(/\s+/).forEach(add);
           }}
-          onBlur={() => { if (value.trim()) add(value); }}
+          // Leaving a box that holds only a tapped quick-add prefix is not a finished link.
+          onBlur={() => { if (value.trim() && !isBarePrefix(value)) add(value); }}
         />
         <button type="submit" className="dc-btn dc-btn-primary dc-search-submit" disabled={!value.trim()}>
           <Plus size={16} aria-hidden="true" /> Add
@@ -215,17 +214,19 @@ export function SourcesCard({ urls, resume, build, onAdd, onRemove, onReplace, o
         <ul className="cr-sources" aria-label="Sources">
           {urls.map((url) => (
             <SourceRow
-              key={url} url={url} row={rowFor(url)} warning={warningFor(url)}
+              key={url} url={url} row={rowFor(url)} warning={warningFor(url)} stale={stale}
               onRemove={() => onRemove(url)} onFix={(raw) => onReplace(url, raw)}
             />
           ))}
           {resume && (
-            <li className="cr-source cr-in" data-state={build.jobId ? "done" : "reading"}>
+            <li className="cr-source cr-in" data-state={resumeRead ? "done" : stale ? "queued" : "reading"}>
               <span className="cr-source-icon"><FileUp size={22} aria-hidden="true" style={{ color: "var(--dc-accent)" }} /></span>
               <div className="cr-source-main">
                 <div className="cr-source-url"><span>{resume.name}</span></div>
                 <div className="cr-source-line">
-                  {build.jobId ? <><Check size={14} aria-hidden="true" style={{ color: "#14663A" }} /> Included in your card.</> : <><span className="cr-spinner" aria-hidden="true" /> Uploading…</>}
+                  {resumeRead ? <><Check size={14} aria-hidden="true" style={{ color: "#14663A" }} /> Included in your card.</>
+                    : stale ? "Not in your draft yet. Rebuild to read it."
+                    : <><span className="cr-spinner" aria-hidden="true" /> Uploading…</>}
                 </div>
               </div>
               <div className="cr-source-tools">
@@ -234,6 +235,15 @@ export function SourcesCard({ urls, resume, build, onAdd, onRemove, onReplace, o
             </li>
           )}
         </ul>
+      )}
+
+      {stale && (
+        <div className="cr-banner-row" role="status">
+          <span className="cr-note">Your sources changed since this draft.</span>
+          <button type="button" className="cr-mini is-accent" onClick={onRetry}>
+            <RotateCw size={13} aria-hidden="true" /> Rebuild with new sources
+          </button>
+        </div>
       )}
 
       {build.status === "error" && (

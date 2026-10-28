@@ -42,9 +42,14 @@ ALLOWED_EVENTS = frozenset({
 
 # Emitted only by the API itself. Kept out of ALLOWED_EVENTS so the unauthenticated POST /events
 # cannot forge them and distort the networking funnel.
+AI_READ_ALERT_EVENT = "ai_read_alert_sent"
+
 SERVER_EVENTS = frozenset({
     "search",
     "search_result_action",
+    # The AI-read email throttle (services/ai_read_alerts.py): a forged row would silence an
+    # owner's alerts for a whole cooldown window.
+    AI_READ_ALERT_EVENT,
 })
 
 # Who ran a search: the Cards website, Memory's find_people for a signed-in owner, the public
@@ -197,10 +202,13 @@ def _insert_rows(rows: list[dict]) -> bool:
         return True
     try:
         _event_store().table("card_events").insert(rows).execute()
-        return True
     except Exception:
         logger.exception("card_events insert failed (%d rows)", len(rows))
         return False
+    if config.FEATURE_AI_READ_ALERTS:
+        from services import ai_read_alerts
+        ai_read_alerts.schedule(rows)
+    return True
 
 
 def _build_row(

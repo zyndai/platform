@@ -35,9 +35,9 @@ function AccountChip() {
   );
 }
 
-export type DiscoverPage = "directory" | "network" | "create";
+export type DiscoverPage = "directory" | "feed" | "network" | "create";
 
-/** Right side of the Directory / Network / Create header: where to go, and who you are. */
+/** Right side of the Directory / Feed / Network / Create header: where to go, and who you are. */
 export function DiscoverNav({ active }: { active: DiscoverPage }) {
   const { authenticated } = useAuth();
   const { handle } = useMyCard();
@@ -47,6 +47,9 @@ export function DiscoverNav({ active }: { active: DiscoverPage }) {
     <nav className="dc-nav" aria-label="Cards">
       <div className="dc-tabs">
         <Link href="/directory" className="dc-tab" aria-current={active === "directory" ? "page" : undefined}>Directory</Link>
+        {(authenticated || active === "feed") && (
+          <Link href="/feed" className="dc-tab" aria-current={active === "feed" ? "page" : undefined}>Feed</Link>
+        )}
         {(authenticated || active === "network") && (
           <Link href="/network" className="dc-tab" aria-current={active === "network" ? "page" : undefined}>Network</Link>
         )}

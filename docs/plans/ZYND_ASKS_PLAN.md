@@ -69,3 +69,15 @@ Existing beacons carry no `id`; the optional `Beacon.id` is backward compatible 
 - Reminders beyond the one digest line, and a "thank you" message to helpers.
 - A moderation view of credits.
 - Asks for people with no card (they cannot post a beacon).
+
+## 8. Composer
+
+A floating **Post** button on `/feed` opens a composer (a dialog on a desktop, a bottom sheet on a phone) for posting an ask. The edit page's old beacon editor is now a short summary of the live ask plus a button that opens the same composer, so there is one way to post everywhere. **No migration**: everything below lives in the beacon JSON on the card and in the existing asks tables.
+
+- **Kinds.** `team` (Building a team), `cofounder` (Looking for a co-founder), `hiring`, `work` (Open to work), `feedback`, `users` (Looking for early users), `investors` (Raising money), `other` (Something else). One list, `ASK_KINDS` in `services/cards-api/models/card.py`, mirrored in `apps/cards-web/src/lib/asks.ts`. A beacon with no kind (posted before kinds) reads as `other`.
+- **Link.** An optional `url` on the beacon: http(s) only, at most 500 characters, a 422 on write. Rendered as its hostname with `rel="noopener noreferrer nofollow ugc"`. A stored bad kind or link reads back as null instead of breaking the card.
+- **One live ask per card.** Posting replaces the live one (`replaced`, as before) and the composer says so; "Take it down" ends it (`dismissed`). Both go through the existing `save_beacon`, so the compare-and-swap (409 when the card changed), the asks row and the background routing are unchanged.
+- **Limit.** `ASK_POSTS_PER_DAY` = 5 publishes per card in a rolling 24 hours, counted from the asks table (429). Skipped when the table is missing, like every other asks feature. A repost and an edit both count.
+- **Endpoints.** `POST /cards/mine/ask` `{kind, text, url?}` returns `{beacon, ask_id}`; `DELETE /cards/mine/ask` returns 204; both take the card from the session. The by-handle beacon routes still work and accept `kind` and `url`. `GET /cards/mine/asks` adds `kind`, `url`, `routed` (people it was sent to, one extra query for all asks) and `offer_count`. `kind` and `url` are known only for the live ask, since the asks table does not store them.
+- **Feed.** Ask items carry `content.kind` and `content.url`; `GET /cards/feed?filter=asks&kind=…` returns one kind. The reply button and the start of the message depend on the kind (`ASK_REPLY` in `lib/feed.ts`); replies still go through `POST /cards/feed/reply`, so offers are recorded. Ask items have a Report control that uses the existing report-a-card API (it says so when network controls are off). The morning digest labels each routed ask with its kind.
+- **Events.** `ask_published` with `kind` and `replaced`; never the text or the link.

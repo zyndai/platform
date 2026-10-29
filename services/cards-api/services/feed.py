@@ -482,8 +482,16 @@ def feed_for_user(user_id: str, *, filter: str = "all", limit: int = DEFAULT_LIM
     ctx = _context(user_id, now or datetime.now(timezone.utc))
     page = build_feed(ctx.viewer, ctx.rows, ctx.connections, ctx.blocked, ctx.github, ctx.now,
                       filter=filter, limit=limit, offset=offset, routed=ctx.routed, kind=kind)
-    page["viewer"] = {"has_card": ctx.mine is not None, "handle": ctx.viewer.handle}
+    page["viewer"] = {"has_card": ctx.mine is not None, "handle": ctx.viewer.handle, **viewer_identity(ctx.viewer.card)}
     return page
+
+
+def viewer_identity(card: AgentProfileCard | None) -> dict:
+    """The viewer's own name, headline, photo and place, so the ask composer can preview a post as it
+    will look. Their own public card data; empty without a card."""
+    identity = card.identity if card else None
+    return {"name": (identity.name if identity else "") or "", "headline": (identity.headline if identity else "") or "",
+            "avatar_url": (identity.avatar_url if identity else "") or None, "location": (identity.location if identity else "") or ""}
 
 
 # --- Replying ---------------------------------------------------------------------------------

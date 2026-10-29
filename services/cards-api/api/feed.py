@@ -44,7 +44,8 @@ def get_feed(
     authorization: str | None = Header(default=None),
     x_zynd_user: str | None = Header(default=None),
 ):
-    """{"items": [...], "next_cursor": str | null, "viewer": {"has_card", "handle"}}.
+    """{"items": [...], "next_cursor": str | null, "viewer": {"has_card", "handle", "name", "headline",
+    "avatar_url", "location"}} (the viewer's own identity, for previewing an ask).
 
     `kind` (one of models.card.ASK_KINDS) narrows the asks filter to one kind of ask; with any other
     filter it is a 422.

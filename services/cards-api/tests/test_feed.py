@@ -296,14 +296,15 @@ def test_feed_for_user_leaves_out_self_blocked_and_hidden_and_asks_the_cache_for
     result = feed.feed_for_user(UID, now=NOW)
     assert kinds(result) == [("ask", "ana")]
     assert result["items"][0]["connection"] == {"id": "c1", "status": "accepted", "incoming": False}
-    assert result["viewer"] == {"has_card": True, "handle": "me"}
+    assert result["viewer"] == {"has_card": True, "handle": "me", "name": "Me", "headline": "me headline",
+                                "avatar_url": None, "location": "Pune"}
     assert wired == [["ana-dev"]]                  # only people who can appear are looked up
 
 
 def test_a_viewer_without_a_card_still_gets_the_feed(wired, monkeypatch):
     monkeypatch.setattr(network, "_find_card_for_user", lambda uid: None)
     result = feed.feed_for_user(UID, now=NOW)
-    assert result["viewer"] == {"has_card": False, "handle": None}
+    assert result["viewer"] == {"has_card": False, "handle": None, "name": "", "headline": "", "avatar_url": None, "location": ""}
     assert ("ask", "ana") in kinds(result)
 
 

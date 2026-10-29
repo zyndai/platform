@@ -21,7 +21,12 @@ export interface Skill {
   evidence?: { label: string; url: string; kind?: string }[];
 }
 
-export interface Beacon { text: string; created_at: string; expires_at: string; }
+export interface Beacon { id?: string | null; text: string; created_at: string; expires_at: string; }
+
+/** People this card's owner helped through asks (cards-api services/asks.py). Each entry is a
+ *  credit the asker gave and the helper has not hidden; absent on older APIs. */
+export interface HelpedCredit { asker_handle: string; asker_name: string; ask: string; }
+export interface Helped { count: number; items: HelpedCredit[]; }
 
 export interface Project {
   demo_url?: string | null;
@@ -115,6 +120,8 @@ export interface AgentProfileCard {
   working_on: string[];
   /** Clipped by Zynd Companion; the API only sends the last 30 days on public reads. */
   exploring?: ExploringItem[];
+  /** "Helped N people": credits from asks; only on the public by-handle read. */
+  helped?: Helped;
   can_help_with: string[];
   connect_with: string[];
   love_talking_about: string[];

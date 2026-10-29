@@ -1078,7 +1078,7 @@ def claim_card_by_owner(handle: str, principal: dict) -> tuple[bool, str]:
 RESERVED_ALIASES = {
     "p", "find", "directory", "search", "api", "create", "for-ai", "auth",
     "profile", "tag", "edit", "onboard", "mcp", "dashboard", "settings",
-    "home", "about", "contact", "help", "login", "logout", "account", "cards",
+    "home", "feed", "about", "contact", "help", "login", "logout", "account", "cards",
     "zynd", "www", "assets", "images", "icons", "icon", "apple-icon",
     "favicon.ico", "llms.txt", "llms-full.txt", "agents.txt", "sitemap.xml",
     "robots.txt", "data.json", "opengraph-image", "_next", "web",

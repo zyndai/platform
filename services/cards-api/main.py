@@ -22,6 +22,7 @@ from api.owner_home import router as owner_home_router
 from api.intros import router as intros_router
 from api.visitors import router as visitors_router
 from api.network import router as network_router
+from api.feed import router as feed_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -78,7 +79,7 @@ app = FastAPI(title="Zynd Cards API", version="1.0.0", lifespan=lifespan)
 @app.middleware("http")
 async def owner_no_cache(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith(("/cards/mine", "/cards/notifications", "/cards/companion", "/internal/owner-status")) or "/intro" in request.url.path:
+    if request.url.path.startswith(("/cards/mine", "/cards/notifications", "/cards/companion", "/cards/feed","/internal/owner-status")) or "/intro" in request.url.path:
         response.headers["Cache-Control"] = "no-store"
         response.headers["Vary"] = "Authorization"
     return response
@@ -114,6 +115,7 @@ app.include_router(onboard_router, prefix="/onboard", tags=["Onboard"])
 app.include_router(ask_router, prefix="/ask", tags=["Ask"])
 app.include_router(visitors_router, prefix="/cards", tags=["Visitor privacy"])
 app.include_router(network_router, prefix="/cards", tags=["Cards network"])
+app.include_router(feed_router, prefix="/cards", tags=["Feed"])
 app.include_router(owner_home_router, prefix="/cards", tags=["Owner home"])
 app.include_router(intros_router,prefix="/cards",tags=["Intros"])
 app.include_router(companion_router, prefix="/cards/companion", tags=["Companion"])

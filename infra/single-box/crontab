@@ -1,0 +1,15 @@
+# Scheduled jobs for the single box's PROD environment. Installed into the `ubuntu`
+# user's crontab by cron/install.sh (which deploy.sh runs when this file changes).
+# Prod only: dev shares prod's database, so a dev run would email the same real owners.
+# These replace the GitHub Actions schedules of morning-digest and suggestions-refresh,
+# the two GitHub throttled. saved-searches and owner-notifications stay on GitHub Actions.
+# Output goes to ~/.zynd-box/cron/<job>.log.
+#
+# This box's cron ignores CRON_TZ and the box runs on Europe/Berlin, so the daily job runs
+# hourly and checks the UTC hour itself. Times below are UTC whatever the box's timezone.
+
+# Pokes cards-api to email owners their digest at 07:00 local time. cards-api decides who
+# is due (07:00-10:00 local, once per local day), so repeated and late ticks are safe.
+*/30 * * * * /home/ubuntu/zynd-platform/infra/single-box/cron/run-job.sh morning-digest /internal/morning-digest 900
+# 05:00 IST: stores each claimed card's top people to meet, before the first digests.
+30 * * * * [ "$(date -u +\%H)" = 23 ] && /home/ubuntu/zynd-platform/infra/single-box/cron/run-job.sh suggestions-refresh /internal/suggestions/refresh 1800

@@ -148,6 +148,13 @@ if ! cmp -s infra/single-box/Caddyfile /etc/caddy/Caddyfile 2>/dev/null; then
   log "NOTE: infra/single-box/Caddyfile differs from /etc/caddy/Caddyfile. As root: install -m644 it there, then 'systemctl reload caddy'."
 fi
 
+# Scheduled jobs (infra/single-box/crontab) run from the prod user's crontab. Prod only: dev
+# shares prod's database, so a second set would email the same owners twice.
+if [[ "$ZYND_ENV" == prod ]] && { [[ "$FORCE_ALL" == 1 ]] || touched '^infra/single-box/(crontab|cron/)'; }; then
+  log "cron: installing infra/single-box/crontab"
+  infra/single-box/cron/install.sh
+fi
+
 # ── actions ───────────────────────────────────────────────────────────────
 build_web() { # <dir>
   local dir=$1

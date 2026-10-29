@@ -3,7 +3,7 @@ import { createServerClient } from "@supabase/ssr";
 import type { AuthError, EmailOtpType, VerifyTokenHashParams } from "@supabase/supabase-js";
 import { safeNextPath } from "@/lib/auth/next-cookie";
 import { requestOrigin } from "@/lib/auth/origin";
-import { emailSignInEnabled } from "@/lib/auth/providers";
+import { getSignInMethods } from "@/lib/auth/sign-in-methods";
 
 /**
  * Sign-in callback. Deliberately simpler than the dashboard's: no Prisma
@@ -17,7 +17,7 @@ import { emailSignInEnabled } from "@/lib/auth/providers";
  *   browser that requested it.
  * - `?token_hash=&type=` — a magic link whose Supabase email template links
  *   here with the token hash. verifyOtp needs no verifier, so this works on any
- *   device. Only accepted while NEXT_PUBLIC_AUTH_EMAIL is on.
+ *   device. Only accepted while email sign-in is offered (lib/auth/providers.ts).
  */
 
 /**
@@ -38,8 +38,12 @@ function signInOtp(searchParams: URLSearchParams): VerifyTokenHashParams | null 
 type Credential = { kind: "code"; code: string } | { kind: "otp"; otp: VerifyTokenHashParams };
 
 /** Reason shown on /auth (`?error=`), mapped to copy in auth/page.tsx. */
-function failureReason(error: Pick<AuthError, "code"> | null, supabaseErrorCode: string | null): string {
-  if (emailSignInEnabled) {
+function failureReason(
+  error: Pick<AuthError, "code"> | null,
+  supabaseErrorCode: string | null,
+  emailSignIn: boolean,
+): string {
+  if (emailSignIn) {
     if (error?.code === "otp_expired" || supabaseErrorCode === "otp_expired") return "link_expired";
     if (error?.code === "pkce_code_verifier_not_found") return "link_other_browser";
   }
@@ -50,7 +54,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const origin = requestOrigin(request);
   const code = searchParams.get("code");
-  const otp = !code && emailSignInEnabled ? signInOtp(searchParams) : null;
+  const { email: emailSignIn } = await getSignInMethods();
+  const otp = !code && emailSignIn ? signInOtp(searchParams) : null;
   const cookieNext = safeNextPath(request.cookies.get("zynd_next")?.value);
   const queryNext = safeNextPath(searchParams.get("next"));
 
@@ -65,7 +70,7 @@ export async function GET(request: NextRequest) {
   };
 
   const credential: Credential | null = code ? { kind: "code", code } : otp ? { kind: "otp", otp } : null;
-  if (!credential) return fail(failureReason(null, searchParams.get("error_code")));
+  if (!credential) return fail(failureReason(null, searchParams.get("error_code"), emailSignIn));
 
   const pending: { name: string; value: string; options?: Record<string, unknown> }[] = [];
   const supabase = createServerClient(
@@ -86,7 +91,7 @@ export async function GET(request: NextRequest) {
   const { error } = credential.kind === "code"
     ? await supabase.auth.exchangeCodeForSession(credential.code)
     : await supabase.auth.verifyOtp(credential.otp);
-  if (error) return fail(failureReason(error, null));
+  if (error) return fail(failureReason(error, null, emailSignIn));
 
   const next = cookieNext || queryNext || "/directory";
   const response = NextResponse.redirect(`${origin}${next}`);

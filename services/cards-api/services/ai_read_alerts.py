@@ -1,4 +1,4 @@
-"""Email a card owner right after an AI agent reads their card. Flag off = no-op.
+"""Email a card owner right after an AI agent reads their card.
 
 Owners otherwise only learn about AI reads by opening /home. The trigger is a stored `view` or
 `agent_fetch` card_event that
@@ -10,9 +10,15 @@ Owners otherwise only learn about AI reads by opening /home. The trigger is a st
     something just now. Training and index crawlers (GPTBot, ClaudeBot, CCBot, OAI-SearchBot,
     PerplexityBot, ...) still count as AI reads on /home, but never email anyone; neither do
     search bots or unidentified clients;
-for a published, claimed card whose owner has not turned the morning digest off.
+  - came from an IP inside that agent's provider's published ranges (services/agent_ip_ranges.py).
+    Our servers relay the visitor's User-Agent and MCP client name as given, so the token alone
+    proves only that cards-web or memory saw the read, not who made it. The visitor IP travels in
+    X-Zynd-Client-IP next to the token (api/events.py);
+for a published, claimed card whose owner has not turned the morning digest off. Without
+EVENTS_SERVER_TOKEN nothing is attested, so nothing is ever sent; without S10_MAILER=smtp the
+mailer is a no-op.
 
-Throttle: at most one email per card per AI_READ_ALERT_COOLDOWN_HOURS. The last send is a
+Throttle: at most one email per card per COOLDOWN_HOURS. The last send is a
 server-only `ai_read_alert_sent` row in card_events, so the limit needs no migration and holds
 across restarts and workers. Two workers checking the same card in the same instant can both
 send; an in-process guard keeps one worker to one check per card at a time.
@@ -30,7 +36,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import config
-from services import digest, events, ua_class
+from services import agent_ip_ranges, digest, events, ua_class
 from services.mailer import get_mailer
 
 logger = logging.getLogger(__name__)
@@ -41,10 +47,14 @@ _TRIGGER_ACTOR = "ai_agent"
 # User-initiated fetchers only (ua_class tokens). A crawl reads every card in one pass, so a
 # crawler here would mail every owner whenever it ran. OAI-SearchBot and PerplexityBot are left
 # out: both build their provider's search index ahead of time rather than fetching for one
-# question (OpenAI's per-question fetcher is ChatGPT-User).
-ALERT_AGENTS = frozenset({
-    "ChatGPT-User", "Claude-User", "Codex", "ChatGPT-MCP", "Claude-MCP", "Perplexity-MCP", "Zynd-MCP",
-})
+# question (OpenAI's per-question fetcher is ChatGPT-User). Only agents whose provider publishes
+# egress ranges can be verified, so Codex (runs on the user's machine) and Zynd-MCP (an anonymous
+# MCP client) are counted on /home but never email.
+ALERT_AGENTS = frozenset(agent_ip_ranges.AGENT_RANGE_URLS)
+
+# One email per card per day: a card an assistant keeps citing would otherwise mail its owner
+# on every question.
+COOLDOWN_HOURS = 24
 
 # After a check that did not send (unclaimed card, opted out, already alerted, no mailer),
 # skip that card's DB lookups for this long. Crawlers hit the same card in bursts, and an
@@ -59,21 +69,17 @@ _quiet_until: dict[str, float] = {}
 _pool: ThreadPoolExecutor | None = None
 
 
-def enabled() -> bool:
-    return bool(config.FEATURE_AI_READ_ALERTS) and events.events_enabled()
-
-
-def schedule(rows: list[dict]) -> None:
+def schedule(rows: list[dict], visitor_ip: str | None) -> None:
     """Queue an alert check for each card an AI agent just read. Called after server-observed
-    rows are stored (never for a plain POST /events); never raises, never waits on the database
-    or the mailer."""
-    if not enabled():
+    rows are stored (never for a plain POST /events), with the visitor IP our server attested;
+    never raises, never waits on the database, the provider lists or the mailer."""
+    if not events.events_enabled() or agent_ip_ranges.parse_ip(visitor_ip) is None:
         return
     try:
         read_at = datetime.now(timezone.utc)
         for handle, agent in _ai_reads(rows).items():
             if _reserve(handle):
-                _submit(_run, handle, agent, read_at)
+                _submit(_run, handle, agent, read_at, visitor_ip)
     except Exception:
         logger.exception("ai read alert scheduling failed")
 
@@ -122,9 +128,13 @@ def _submit(fn, *args) -> None:
     _executor().submit(fn, *args)
 
 
-def _run(handle: str, agent: str | None, read_at: datetime) -> None:
+def _run(handle: str, agent: str | None, read_at: datetime, visitor_ip: str | None) -> None:
     quiet = 0.0
     try:
+        if not agent_ip_ranges.is_provider_ip(agent, visitor_ip):
+            # No quiet period: a spoofed read must not hold off the alert for the next real one.
+            logger.info("ai read alert skipped handle=%s agent=%s: not from the provider's ranges", handle, agent)
+            return
         outcome = deliver(handle, agent, read_at)
         quiet = cooldown().total_seconds() if outcome in ("sent", "send_failed") else _RECHECK_SECONDS
     except Exception:
@@ -136,7 +146,7 @@ def _run(handle: str, agent: str | None, read_at: datetime) -> None:
 
 
 def cooldown() -> timedelta:
-    return timedelta(hours=config.AI_READ_ALERT_COOLDOWN_HOURS)
+    return timedelta(hours=COOLDOWN_HOURS)
 
 
 def deliver(handle: str, agent: str | None, read_at: datetime | None = None) -> str:
@@ -217,7 +227,7 @@ def _when(read_at: datetime) -> str:
 
 
 def _cadence() -> str:
-    hours = config.AI_READ_ALERT_COOLDOWN_HOURS
+    hours = COOLDOWN_HOURS
     return "a day" if hours == 24 else f"every {hours} {'hour' if hours == 1 else 'hours'}"
 
 

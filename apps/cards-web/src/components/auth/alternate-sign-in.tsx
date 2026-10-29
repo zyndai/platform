@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState, type FormEvent } from "react";
-import { emailSignInEnabled, googleSignInEnabled } from "@/lib/auth/providers";
+import { useSignInMethods } from "@/hooks/useSignInMethods";
 import { MAX_EMAIL_LENGTH, isPlausibleEmail, sendMagicLink, startGoogleOAuth } from "@/lib/auth/session";
 import { shareClaimIntentAcrossTabs } from "@/lib/claim-tokens";
 import "./alternate-sign-in.css";
@@ -25,16 +25,17 @@ interface AlternateSignInProps extends SignInTarget {
 
 /**
  * Google and email magic-link sign-in, rendered under a surface's LinkedIn
- * button. LinkedIn stays the default (D12); each option here exists only
- * behind its flag in lib/auth/providers.ts and renders nothing when off.
+ * button. LinkedIn stays the default (D12); each option shows only when
+ * lib/auth/providers.ts allows it, and nothing renders when neither is.
  * Must sit inside the `.dc` canvas, whose tokens the styles use.
  */
 export function AlternateSignIn({ buttonClassName, ...target }: AlternateSignInProps) {
-  if (!googleSignInEnabled && !emailSignInEnabled) return null;
+  const { google, email } = useSignInMethods();
+  if (!google && !email) return null;
   return (
     <div className="zas">
-      {googleSignInEnabled && <GoogleSignInButton className={buttonClassName} {...target} />}
-      {emailSignInEnabled && <EmailLinkForm buttonClassName={buttonClassName} {...target} />}
+      {google && <GoogleSignInButton className={buttonClassName} {...target} />}
+      {email && <EmailLinkForm buttonClassName={buttonClassName} {...target} />}
     </div>
   );
 }

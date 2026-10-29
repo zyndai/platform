@@ -8,10 +8,6 @@ export const STALE_DAYS = 90;
 
 const DAY_MS = 86_400_000;
 
-export function featureStaleSignals(): boolean {
-  return process.env.NEXT_PUBLIC_FEATURE_STALE_SIGNALS === "true";
-}
-
 /** The stamp as epoch ms, or null when it is missing or unreadable. */
 export function parseWorkingOnStamp(stamp: unknown): number | null {
   if (typeof stamp !== "string" || !stamp.trim()) return null;

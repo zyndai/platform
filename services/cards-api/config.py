@@ -102,9 +102,10 @@ FEATURE_S08_ONBOARDING_V2: bool = os.getenv("FEATURE_S08_ONBOARDING_V2", "false"
 # SUPABASE_JWT_SECRET + UTC date.
 EVENTS_IP_SALT: str = os.getenv("EVENTS_IP_SALT", "")
 # Shared secret our own servers (cards-web's server-side agent-fetch log, Memory's MCP reads)
-# send as X-Zynd-Server-Event on POST /events. Only batches carrying it can trigger an AI-read
-# alert email: the endpoint is public and actor_class comes from a User-Agent anyone can set.
-# Empty = nothing is trusted, so no alert is ever sent from POST /events.
+# send as X-Zynd-Server-Event on POST /events, with the visitor IP they saw. Only batches carrying
+# it can trigger an AI-read alert email (services/ai_read_alerts.py): the endpoint is public and
+# actor_class comes from a User-Agent anyone can set. Empty = nothing is trusted, so no alert is
+# ever sent from POST /events.
 EVENTS_SERVER_TOKEN: str = os.getenv("EVENTS_SERVER_TOKEN", "")
 
 # S03 "Not me" takedown: when a visitor reports a scraped card isn't theirs,
@@ -128,18 +129,6 @@ OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.
 OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-pro")
 OPENROUTER_REFERER: str = os.getenv("OPENROUTER_REFERER", "https://zynd.ai")
 OPENROUTER_APP_NAME: str = os.getenv("OPENROUTER_APP_NAME", "zynd-cards")
-
-# AI visibility report (POST /cards/visibility/check): what a web-searching model says about a
-# name today. Off = the endpoint 404s. The model must search the web itself, so it is separate
-# from OPENROUTER_MODEL. perplexity/sonar on OpenRouter (checked 2026-10-28): $1/M tokens in and
-# out plus $0.005 per request for search, about $0.006 per uncached check.
-FEATURE_AI_VISIBILITY: bool = os.getenv("FEATURE_AI_VISIBILITY", "false").lower() in ("1", "true", "yes")
-AI_VISIBILITY_MODEL: str = os.getenv("AI_VISIBILITY_MODEL", "perplexity/sonar")
-# Shown to the visitor under the answer ("Answer from <label> via API").
-AI_VISIBILITY_MODEL_LABEL: str = os.getenv("AI_VISIBILITY_MODEL_LABEL", "Perplexity Sonar")
-# Paid model calls per UTC day across every visitor (services/visibility.py), so many addresses
-# cannot add up to an unbounded bill. 300 is about $1.80 a day at the price above.
-AI_VISIBILITY_DAILY_CAP: int = max(0, int(os.getenv("AI_VISIBILITY_DAILY_CAP", "300")))
 
 # ── OpenAI (embeddings) ──
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
@@ -207,19 +196,6 @@ DIGEST_DEFAULT_TIMEZONE: str = os.getenv("DIGEST_DEFAULT_TIMEZONE") or "Asia/Kol
 FEATURE_S10_HOME: bool = os.getenv("FEATURE_S10_HOME", "true").lower() in ("1", "true", "yes")
 FEATURE_S10_DIGEST: bool = os.getenv("FEATURE_S10_DIGEST", "false").lower() in ("1", "true", "yes")
 S10_MAILER: str = os.getenv("S10_MAILER", "noop")  # noop | smtp
-
-# Email a claimed card's owner as soon as an AI agent reads the card (services/ai_read_alerts.py).
-# Sends through S10_MAILER, so nothing goes out unless that is "smtp" too. Off by default.
-FEATURE_AI_READ_ALERTS: bool = os.getenv("FEATURE_AI_READ_ALERTS", "false").lower() in ("1", "true", "yes")
-# At most one alert per card in this many hours. Floored at 1: a 0 here would email the owner
-# on every crawler hit.
-AI_READ_ALERT_COOLDOWN_HOURS: int = max(1, int(os.getenv("AI_READ_ALERT_COOLDOWN_HOURS", "24")))
-
-# Dim a card's "Working on" chips, offer the owner a "Still working on this?" confirm, and add a
-# nudge line to the morning digest once Working on has not changed for STALE_DAYS
-# (services/stale_signals.py). Off by default. Needs packages/db cards migration 0033 for the
-# timestamp; without it every card reads as "unknown" (never stale) and confirm answers 503.
-FEATURE_STALE_SIGNALS: bool = os.getenv("FEATURE_STALE_SIGNALS", "false").lower() in ("1", "true", "yes")
 
 
 def _get_supabase():

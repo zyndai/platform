@@ -3,6 +3,7 @@ import { Providers } from "@/components/providers";
 import { MyCardServerSnapshot } from "@/components/MyCardServerSnapshot";
 import { GoogleTags } from "@/components/GoogleTags";
 import { getServerAuth } from "@/lib/auth/server";
+import { getSignInMethods } from "@/lib/auth/sign-in-methods";
 import "./agent-card.css";
 
 export const metadata: Metadata = {
@@ -28,7 +29,7 @@ export default async function AgentCardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user } = await getServerAuth();
+  const [{ user }, signInMethods] = await Promise.all([getServerAuth(), getSignInMethods()]);
   return (
     <html lang="en" className="scroll-smooth bg-[#080909] text-[#bfbfb9]">
       <head>
@@ -44,7 +45,7 @@ export default async function AgentCardLayout({
         />
       </head>
       <body className="bg-[#080909] text-[#d3d3cd] font-sans antialiased selection:bg-[#7b72e9] selection:text-black overflow-x-hidden tech-grid min-h-screen">
-        <Providers initialAuth={{ user }}>
+        <Providers initialAuth={{ user }} signInMethods={signInMethods}>
           <MyCardServerSnapshot>{children}</MyCardServerSnapshot>
         </Providers>
         <GoogleTags />

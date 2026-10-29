@@ -624,7 +624,7 @@ def _ago(iso: str | None, now: datetime) -> str:
 def _stale_working_on(row: dict, now: datetime) -> bool:
     """The owner's public Working on (memory facts included) has gone STALE_DAYS unchanged."""
     from services import stale_signals
-    if not stale_signals.enabled() or not isinstance(row.get("card"), dict):
+    if not isinstance(row.get("card"), dict):
         return False
     from models.card import AgentProfileCard
     from services.signals import derive_public_signals

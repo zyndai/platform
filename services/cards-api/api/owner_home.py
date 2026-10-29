@@ -167,8 +167,6 @@ async def dismiss_beacon(handle: str, authorization: str | None = Header(default
 async def confirm_working_on(handle: str, authorization: str | None = Header(default=None)):
     """"Still working on this": the owner resets their Working on freshness without editing it."""
     from services import stale_signals
-    if not stale_signals.enabled():
-        raise HTTPException(404, "Stale signals are turned off")
     email = email_for(authorization)
     confirmed = await asyncio.to_thread(stale_signals.confirm_working_on, handle, email)
     await asyncio.to_thread(ping_revalidate, handle)

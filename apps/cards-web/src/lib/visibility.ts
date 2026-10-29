@@ -1,7 +1,5 @@
-/** AI visibility report (/visibility). Pair with cards-api FEATURE_AI_VISIBILITY; NEXT_PUBLIC_*
- *  is baked at build time, so flipping it needs a rebuild. */
-export const visibilityEnabled = process.env.NEXT_PUBLIC_FEATURE_AI_VISIBILITY === "true";
-
+/** AI visibility report (/visibility). cards-api answers 503 while it has no OpenRouter key, and
+ *  the checker shows that answer's message. */
 export const MAX_NAME_CHARS = 100;
 export const MAX_LINK_CHARS = 300;
 

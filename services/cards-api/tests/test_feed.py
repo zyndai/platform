@@ -99,15 +99,16 @@ def test_unclaimed_cards_take_no_part_because_they_cannot_be_messaged():
     assert page([row("ana", claimed=False, beacon=beacon(), published_days=1)])["items"] == []
 
 
-def test_github_items_come_from_the_cache_and_respect_the_window():
+def test_github_items_come_from_the_cache_and_recent_ones_are_not_marked_earlier():
     events = [
         {"id": "1", "type": "release", "repo": "ana/lib", "title": "v1.0", "url": "https://github.com/ana/lib/releases/tag/v1.0", "at": ago(days=1)},
         {"id": "2", "type": "pull_request", "repo": "x/y", "title": "Fix bug", "url": "https://github.com/x/y/pull/3", "at": ago(days=60)},
     ]
     result = page([row("ana")], github={"ana": events})
-    (item,) = result["items"]
-    assert item["kind"] == "github"
+    item = result["items"][0]
+    assert item["kind"] == "github" and item["earlier"] is False
     assert item["content"] == {"type": "release", "repo": "ana/lib", "title": "v1.0", "url": "https://github.com/ana/lib/releases/tag/v1.0"}
+    assert [i["earlier"] for i in result["items"]] == [False, True]      # the 60-day-old one comes after
 
 
 def test_a_post_shows_a_short_preview_and_a_link_not_the_full_text():
@@ -147,6 +148,21 @@ def test_the_viewers_own_card_is_excluded():
 def test_blocked_authors_are_excluded():
     rows = [row("ana", beacon=beacon()), row("bob", beacon=beacon())]
     assert kinds(page(rows, blocked={"bob"})) == [("ask", "ana")]
+
+
+def test_declined_and_revoked_connections_hide_the_author_like_a_block():
+    inbox = [
+        {"id": "c1", "status": "declined", "incoming": True, "partner": {"handle": "ana"}},
+        {"id": "c2", "status": "revoked", "incoming": False, "partner": {"handle": "bob"}},
+        {"id": "c3", "status": "pending", "incoming": False, "partner": {"handle": "cy"}},
+        {"id": "c4", "status": "pending", "incoming": True, "partner": {"handle": "di"}},
+    ]
+    connections, blocked = feed.connection_maps(inbox)
+    assert blocked == {"ana", "bob"}
+    rows = [row(h, beacon=beacon()) for h in ("ana", "bob", "cy", "di")]
+    result = page(rows, connections=connections, blocked=blocked)
+    assert sorted(i["author"]["handle"] for i in result["items"]) == ["cy", "di"]       # pending stays
+    assert {i["author"]["handle"]: i["connection"]["incoming"] for i in result["items"]} == {"cy": False, "di": True}
 
 
 def test_connection_maps_cover_blocks_in_both_directions_and_hidden_handles():

@@ -13,7 +13,7 @@ import {
 } from "./feed.ts";
 
 const author = { handle: "ana", name: "Ana Rao", headline: "", avatar_url: null, location: "", claimed: true };
-const base = { id: "x", at: "2026-10-28T12:00:00Z", reason: "", author, connection: null };
+const base = { id: "x", at: "2026-10-28T12:00:00Z", earlier: false, reason: "", author, connection: null };
 
 test("the first name is the first word, with a fallback", () => {
   assert.equal(firstName("  Ana  Rao "), "Ana");
@@ -51,9 +51,6 @@ test("the action depends on whether the viewer has a card and how they stand wit
   assert.deepEqual(actionFor(true, conn("accepted")), { kind: "reply", via: "dm", connectionId: "c1" });
   assert.deepEqual(actionFor(true, conn("pending")), { kind: "requested" });
   assert.deepEqual(actionFor(true, conn("pending", true)), { kind: "respond", connectionId: "c1" });
-  for (const status of ["declined", "revoked", "blocked"] as const) {
-    assert.deepEqual(actionFor(true, conn(status)), { kind: "unavailable" });
-  }
 });
 
 test("relative time reads naturally and tolerates junk", () => {

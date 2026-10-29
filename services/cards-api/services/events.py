@@ -43,6 +43,8 @@ ALLOWED_EVENTS = frozenset({
 # Emitted only by the API itself. Kept out of ALLOWED_EVENTS so the unauthenticated POST /events
 # cannot forge them and distort the networking funnel.
 SERVER_EVENTS = frozenset({
+    "feed_view",
+    "feed_reply",
     "search",
     "search_result_action",
 })

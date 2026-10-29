@@ -160,6 +160,8 @@ prod's database, so a second set would email the same owners.
 
 `deploy.sh` (prod) re-installs the crontab when `crontab` or `cron/` change, as a marked
 block that leaves other entries alone; by hand: `infra/single-box/cron/install.sh [--remove]`.
+The box's cron ignores `CRON_TZ` and the box is on Europe/Berlin, so the daily jobs fire hourly
+and check the UTC hour themselves.
 Logs: `~/.zynd-box/cron/<job>.log`; `<job>.last-ok` holds the epoch of the last success.
 To get a Mattermost post when a job fails, put `MATTERMOST_WEBHOOK_URL=...` in
 `~/.zynd-box/alerts.env`. Cron does not catch up after downtime; the endpoints are built

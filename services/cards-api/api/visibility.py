@@ -1,5 +1,5 @@
-"""POST /cards/visibility/check: the public AI visibility report. Unauthenticated, off by default
-(FEATURE_AI_VISIBILITY). Mounted under /cards because api.zynd.ai only routes /cards*, /ask*,
+"""POST /cards/visibility/check: the public AI visibility report. Unauthenticated; 503 while
+OPENROUTER_API_KEY is not set. Mounted under /cards because api.zynd.ai only routes /cards*, /ask*,
 /onboard* and /v1* to cards-api (infra/single-box/Caddyfile)."""
 from __future__ import annotations
 
@@ -21,8 +21,9 @@ class VisibilityCheck(BaseModel):
 
 @router.post("/check")
 async def check_visibility(body: VisibilityCheck, request: Request):
-    if not config.FEATURE_AI_VISIBILITY:
-        raise HTTPException(status_code=404, detail="Not Found")
+    # Before validation and the rate limit, so an unconfigured server spends nobody's checks.
+    if not config.OPENROUTER_API_KEY:
+        raise HTTPException(status_code=503, detail=visibility.NOT_CONFIGURED)
     try:
         query = visibility.validate_query(body.name, body.link)
     except visibility.VisibilityInputError as exc:

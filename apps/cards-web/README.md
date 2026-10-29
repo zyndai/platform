@@ -32,9 +32,9 @@ the profile chat. Note the deploy caveat below.
   Prisma, no developer lookup.
 - Dropped GitHub as a login provider. LinkedIn is the default login (D12 in
   `ZYND_DB_UNIFY_PLAN.md`, superseding the earlier Google+LinkedIn+magic-link
-  decision in `ZYND_CARDS_MOVE_PLAN.md`). Google and the email magic link are
-  back behind `NEXT_PUBLIC_AUTH_GOOGLE` / `NEXT_PUBLIC_AUTH_EMAIL`, both off
-  by default; turning either on reverses D12 for that method.
+  decision in `ZYND_CARDS_MOVE_PLAN.md`). Google is back, shown only while the
+  Supabase project has it enabled; the email magic link is built but off in
+  code (see "Sign-in methods"). Either one reverses D12 for that method.
 - `lib/seo.ts`, `sitemap.ts`, `llms.txt`, `llms-full.txt`, `api/indexnow` are
   rewritten to be card-only and point at `cards.zynd.ai` instead of
   `www.zynd.ai` — the dashboard's versions mixed in registry/blog content
@@ -68,16 +68,22 @@ See `.env.local.example`. In short: `NEXT_PUBLIC_SUPABASE_URL` /
 Deploy target: Vercel project on `zyndai/platform`, **Root Directory =
 `apps/cards-web`** (see `ZYND_CARDS_MOVE_PLAN.md` §4 H5).
 
-## Sign-in flags
+## Sign-in methods
 
-LinkedIn is always offered first. Two build-time flags add the others; each
-is off unless set to exactly `true`, and `NEXT_PUBLIC_*` is inlined at
-`npm run build`, so flipping one needs a rebuild.
+LinkedIn is always offered first. The others follow the Supabase (aafo)
+project's own settings, read server-side from its public
+`GET /auth/v1/settings` (`external.google`, `external.email`) and cached in
+process for 5 minutes (`lib/auth/sign-in-methods.ts`). If that read fails,
+only LinkedIn is shown. No env var or rebuild is involved.
 
-| Flag | Adds | Needs on Supabase (aafo) first |
+| Adds | Shown when | Set up on Supabase first |
 |---|---|---|
-| `NEXT_PUBLIC_AUTH_GOOGLE` | "Continue with Google" | Google provider enabled with a Google OAuth client |
-| `NEXT_PUBLIC_AUTH_EMAIL` | "Email me a sign-in link" | Custom SMTP (the built-in sender is rate-limited and for testing only) |
+| "Continue with Google" | Supabase has the Google provider enabled | A Google OAuth client |
+| "Email me a sign-in link" | `EMAIL_SIGN_IN_ENABLED` in `lib/auth/providers.ts` is `true` **and** Supabase has the Email provider enabled | Custom SMTP (the built-in sender is rate-limited and for testing only) |
+
+Email is off in code because `external.email` can't say whether SMTP is set
+up: the Email provider is on by default and aafo shares it with persona. To
+turn it on: configure SMTP in Supabase, amend D12, then flip the constant.
 
 Both need the redirect URLs `https://cards.zynd.ai/auth/callback**` and
 `http://localhost:3002/auth/callback**` allowed (Auth → URL Configuration).

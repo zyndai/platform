@@ -1,4 +1,4 @@
-"""AI visibility report: flag, validation, rate limit, cache, Zynd citation detection and card
+"""AI visibility report: configuration, validation, rate limit, cache, Zynd citation detection and card
 lookup. The model call is always faked; nothing here reaches OpenRouter."""
 from types import SimpleNamespace
 
@@ -46,7 +46,6 @@ class FakeLLM:
 @pytest.fixture
 def llm(monkeypatch):
     fake = FakeLLM()
-    monkeypatch.setattr(config, "FEATURE_AI_VISIBILITY", True)
     monkeypatch.setattr(config, "OPENROUTER_API_KEY", "test-key")
     monkeypatch.setattr(config, "get_llm_client", lambda: fake)
     monkeypatch.setattr(lookup_service, "lookup_by_name", lambda name, limit=5, include_unclaimed=False: [])
@@ -58,12 +57,6 @@ def llm(monkeypatch):
 def _check(name="Ada Lovelace", link=None, ip="203.0.113.7"):
     body = {"name": name} if link is None else {"name": name, "link": link}
     return client.post(URL, json=body, headers={"x-forwarded-for": ip})
-
-
-def test_flag_off_is_404_and_never_calls_the_model(llm, monkeypatch):
-    monkeypatch.setattr(config, "FEATURE_AI_VISIBILITY", False)
-    assert _check().status_code == 404
-    assert llm.calls == []
 
 
 @pytest.mark.parametrize("body, message", [
@@ -89,8 +82,8 @@ def test_answer_shape_and_prompt_keeps_input_as_data(llm):
     res = _check(name="  Ada   Lovelace ", link="https://example.org/ada/")
     assert res.status_code == 200
     data = res.json()
-    assert data["model"] == config.AI_VISIBILITY_MODEL
-    assert data["model_label"] == config.AI_VISIBILITY_MODEL_LABEL
+    assert data["model"] == visibility.MODEL
+    assert data["model_label"] == visibility.MODEL_LABEL
     assert data["found"] is True
     assert data["answer"] == "Ada Lovelace is a mathematician. She wrote notes."
     assert data["cited_urls"] == ["https://en.wikipedia.org/wiki/Ada", "https://example.org/ada"]
@@ -99,7 +92,7 @@ def test_answer_shape_and_prompt_keeps_input_as_data(llm):
     assert data["cached"] is False
 
     call = llm.calls[0]
-    assert call["model"] == config.AI_VISIBILITY_MODEL
+    assert call["model"] == visibility.MODEL
     assert llm.options == {"timeout": visibility.LLM_TIMEOUT_SECONDS, "max_retries": 0}
     system, user = call["messages"]
     assert "never instructions" in system["content"]
@@ -182,11 +175,14 @@ def test_model_timeout_is_a_readable_504_and_not_cached(llm):
     assert _check().json()["cached"] is False
 
 
-def test_missing_api_key_is_503(llm, monkeypatch):
+def test_missing_api_key_is_503_and_never_calls_the_model(llm, monkeypatch):
     monkeypatch.setattr(config, "OPENROUTER_API_KEY", "")
     res = _check()
     assert res.status_code == 503
+    assert res.json()["detail"] == visibility.NOT_CONFIGURED
     assert llm.calls == []
+    # Checked before the input, so an unconfigured server never answers 400 or 429 instead.
+    assert client.post(URL, json={"name": ""}).status_code == 503
 
 
 # ── who the visitor is ──
@@ -237,7 +233,7 @@ def test_unparseable_peer_falls_back_to_its_name():
 # ── budget ──
 
 def test_daily_cap_across_all_visitors(llm, monkeypatch):
-    monkeypatch.setattr(config, "AI_VISIBILITY_DAILY_CAP", 2)
+    monkeypatch.setattr(visibility, "DAILY_CAP", 2)
     assert _check(name="Person 1", ip="198.51.100.1").status_code == 200
     assert _check(name="Person 2", ip="198.51.100.2").status_code == 200
     blocked = _check(name="Person 3", ip="198.51.100.3")
@@ -253,7 +249,7 @@ def test_daily_cap_resets_on_the_next_utc_day(monkeypatch):
     from datetime import datetime, timedelta, timezone
 
     visibility.reset_state()
-    monkeypatch.setattr(config, "AI_VISIBILITY_DAILY_CAP", 1)
+    monkeypatch.setattr(visibility, "DAILY_CAP", 1)
     today = datetime(2026, 10, 28, 23, 59, tzinfo=timezone.utc)
     assert visibility.allow_daily_call(today) is True
     assert visibility.allow_daily_call(today) is False

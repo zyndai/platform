@@ -1,4 +1,6 @@
-"""AI-read alert email: trigger, eligibility, opt-out, throttle, and isolation from ingest."""
+"""AI-read alert email: trigger, provenance, eligibility, opt-out, throttle, and isolation from ingest.
+The providers' IP lists are always faked; nothing here reaches the network."""
+import ipaddress
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -6,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import config
-from services import ai_read_alerts
+from services import agent_ip_ranges, ai_read_alerts
 from services import events as events_service
 from tests.fake_supabase import FakeSupabase
 
@@ -16,6 +18,19 @@ REAL_SUBMIT = ai_read_alerts._submit
 CLAUDE_UA = "Mozilla/5.0 (compatible; Claude-User/1.0; +https://anthropic.com)"
 SERVER_TOKEN = "server-token-for-tests"
 SERVER = {"X-Zynd-Server-Event": SERVER_TOKEN}
+# One fake published range per provider list, and an address inside each.
+RANGES = {
+    agent_ip_ranges.OPENAI_USER_RANGES_URL: "198.51.100.0/28",
+    agent_ip_ranges.ANTHROPIC_RANGES_URL: "203.0.113.0/28",
+    agent_ip_ranges.PERPLEXITY_USER_RANGES_URL: "192.0.2.0/28",
+}
+CLAUDE_IP = "203.0.113.5"
+OPENAI_IP = "198.51.100.5"
+NOT_A_PROVIDER = "100.64.0.9"
+
+
+def provider_ip(agent: str) -> str:
+    return str(next(ipaddress.ip_network(RANGES[agent_ip_ranges.AGENT_RANGE_URLS[agent]]).hosts()))
 
 
 class RecordingMailer:
@@ -48,8 +63,6 @@ def alerts(db: FakeSupabase) -> list[dict]:
 
 @pytest.fixture
 def world(monkeypatch):
-    monkeypatch.setattr(config, "FEATURE_AI_READ_ALERTS", True)
-    monkeypatch.setattr(config, "AI_READ_ALERT_COOLDOWN_HOURS", 24)
     monkeypatch.setattr(config, "FEATURE_S04_EVENTS", True)
     monkeypatch.setattr(config, "SUPABASE_DB_SCHEMA", "cards")
     monkeypatch.setattr(config, "MAINTENANCE_READONLY", False)
@@ -63,28 +76,31 @@ def world(monkeypatch):
     monkeypatch.setattr(ai_read_alerts, "get_mailer", lambda: mailer)
     # Run the background check inline so each test sees its result.
     monkeypatch.setattr(ai_read_alerts, "_submit", lambda fn, *args: fn(*args))
+    monkeypatch.setattr(agent_ip_ranges, "fetch_networks", lambda url: [ipaddress.ip_network(RANGES[url])])
+    agent_ip_ranges.reset_cache()
     ai_read_alerts._inflight.clear()
     ai_read_alerts._quiet_until.clear()
     events_service._hits.clear()
     yield db, mailer
+    agent_ip_ranges.reset_cache()
     ai_read_alerts._inflight.clear()
     ai_read_alerts._quiet_until.clear()
     events_service._hits.clear()
 
 
-def test_flag_off_is_a_no_op(world, monkeypatch):
+@pytest.mark.parametrize("visitor_ip", [None, "", "not-an-ip"])
+def test_no_attested_visitor_ip_is_a_no_op(world, monkeypatch, visitor_ip):
     db, mailer = world
-    monkeypatch.setattr(config, "FEATURE_AI_READ_ALERTS", False)
     submitted = []
     monkeypatch.setattr(ai_read_alerts, "_submit", lambda *args: submitted.append(args))
-    assert events_service._insert_rows([ai_read()], server_observed=True) is True
+    assert events_service._insert_rows([ai_read()], server_observed=True, visitor_ip=visitor_ip) is True
     assert submitted == [] and mailer.sent == [] and alerts(db) == []
 
 
 @pytest.mark.parametrize("actor", ["search_bot", "unknown", "human"])
 def test_non_ai_reads_do_not_alert(world, actor):
     db, mailer = world
-    ai_read_alerts.schedule([ai_read(actor=actor)])
+    ai_read_alerts.schedule([ai_read(actor=actor)], CLAUDE_IP)
     assert mailer.sent == [] and alerts(db) == []
 
 
@@ -93,27 +109,47 @@ def test_non_ai_reads_do_not_alert(world, actor):
                                      "OAI-SearchBot", "PerplexityBot"])
 def test_bulk_crawlers_do_not_alert(world, crawler):
     db, mailer = world
-    ai_read_alerts.schedule([ai_read(agent=crawler)])
+    ai_read_alerts.schedule([ai_read(agent=crawler)], CLAUDE_IP)
     assert mailer.sent == [] and alerts(db) == []
 
 
 @pytest.mark.parametrize("agent", sorted(ai_read_alerts.ALERT_AGENTS))
 def test_user_initiated_agents_alert(world, agent):
     db, mailer = world
-    ai_read_alerts.schedule([ai_read(agent=agent)])
+    ai_read_alerts.schedule([ai_read(agent=agent)], provider_ip(agent))
     assert len(mailer.sent) == 1 and alerts(db)[0]["meta"] == {"agent_name": agent}
+
+
+@pytest.mark.parametrize("agent", ["Codex", "Zynd-MCP"])
+def test_agents_without_published_ranges_never_alert(world, agent):
+    db, mailer = world
+    for ip in (CLAUDE_IP, OPENAI_IP, NOT_A_PROVIDER):
+        ai_read_alerts.schedule([ai_read(agent=agent)], ip)
+    assert mailer.sent == [] and alerts(db) == []
+
+
+def test_spoofed_agent_from_outside_its_providers_ranges_does_not_alert(world):
+    db, mailer = world
+    # #given a Claude-User read from an address no provider lists, then one from OpenAI's list
+    ai_read_alerts.schedule([ai_read(agent="Claude-User")], NOT_A_PROVIDER)
+    ai_read_alerts.schedule([ai_read(agent="Claude-User")], OPENAI_IP)
+    # #then neither emails, and neither holds off the next real read
+    assert mailer.sent == [] and alerts(db) == []
+    assert "alice" not in ai_read_alerts._quiet_until
+    ai_read_alerts.schedule([ai_read(agent="Claude-User")], CLAUDE_IP)
+    assert len(mailer.sent) == 1
 
 
 def test_read_without_an_agent_name_does_not_alert(world):
     db, mailer = world
     ai_read_alerts.schedule([ai_read(agent=None), {"event": "view", "handle": "alice", "actor_class": "ai_agent",
-                                                   "meta": {"agent_name": "Made-Up-Agent"}}])
+                                                   "meta": {"agent_name": "Made-Up-Agent"}}], CLAUDE_IP)
     assert mailer.sent == [] and alerts(db) == []
 
 
 def test_other_events_do_not_alert(world):
     db, mailer = world
-    ai_read_alerts.schedule([ai_read(event="share_click"), ai_read(event="chat_message")])
+    ai_read_alerts.schedule([ai_read(event="share_click"), ai_read(event="chat_message")], CLAUDE_IP)
     assert mailer.sent == [] and alerts(db) == []
 
 
@@ -203,16 +239,16 @@ def test_burst_of_reads_checks_the_card_once(world, monkeypatch):
     db, mailer = world
     submitted = []
     monkeypatch.setattr(ai_read_alerts, "_submit", lambda fn, *args: submitted.append(args))
-    ai_read_alerts.schedule([ai_read(), ai_read(event="view")])
-    ai_read_alerts.schedule([ai_read(agent="ChatGPT-User")])
+    ai_read_alerts.schedule([ai_read(), ai_read(event="view")], CLAUDE_IP)
+    ai_read_alerts.schedule([ai_read(agent="ChatGPT-User")], OPENAI_IP)
     assert len(submitted) == 1
 
 
 def test_after_a_send_the_card_skips_lookups_for_the_cooldown(world):
     db, mailer = world
-    ai_read_alerts.schedule([ai_read()])
+    ai_read_alerts.schedule([ai_read()], CLAUDE_IP)
     db.tables["card_events"].clear()
-    ai_read_alerts.schedule([ai_read()])
+    ai_read_alerts.schedule([ai_read()], CLAUDE_IP)
     assert len(mailer.sent) == 1 and alerts(db) == []
 
 
@@ -227,7 +263,7 @@ def test_real_background_pool_sends_off_the_calling_thread(world, monkeypatch):
     db, mailer = world
     monkeypatch.setattr(ai_read_alerts, "_submit", REAL_SUBMIT)
     monkeypatch.setattr(ai_read_alerts, "_pool", None)
-    ai_read_alerts.schedule([ai_read()])
+    ai_read_alerts.schedule([ai_read()], CLAUDE_IP)
     ai_read_alerts._pool.shutdown(wait=True)
     assert len(mailer.sent) == 1 and len(alerts(db)) == 1
 
@@ -241,11 +277,68 @@ def _post_ai_read(**headers):
 
 def test_ai_read_from_our_server_through_post_events_sends_the_alert(world):
     db, mailer = world
-    assert _post_ai_read(**SERVER).status_code == 204
+    assert _post_ai_read(**SERVER, **{"X-Zynd-Client-IP": CLAUDE_IP}).status_code == 204
     assert [m["subject"] for m in mailer.sent] == ["Claude just read your Zynd card"]
     assert len(alerts(db)) == 1
-    # The token is a credential, never stored with the event.
+    # The token is a credential and the visitor IP is personal data: neither is stored.
     assert SERVER_TOKEN not in str(db.rows("card_events"))
+    assert CLAUDE_IP not in str(db.rows("card_events"))
+
+
+def test_spoofed_user_agent_relayed_by_our_server_is_stored_but_not_emailed(world):
+    db, mailer = world
+    # #given `curl -A Claude-User cards.zynd.ai/p/alice`: cards-web relays the UA with its token
+    assert _post_ai_read(**SERVER, **{"X-Zynd-Client-IP": NOT_A_PROVIDER}).status_code == 204
+    # #then the read counts, but the visitor is not in Anthropic's ranges, so nobody is emailed
+    assert any(r["event"] == "agent_fetch" for r in db.rows("card_events"))
+    assert mailer.sent == [] and alerts(db) == []
+
+
+def test_token_without_a_visitor_ip_does_not_alert(world):
+    db, mailer = world
+    for headers in ({}, {"X-Zynd-Client-IP": ""}, {"X-Zynd-Client-IP": "203.0.113.5, 10.0.0.1"}):
+        assert _post_ai_read(**SERVER, **headers).status_code == 204
+    assert mailer.sent == [] and alerts(db) == []
+
+
+def test_visitor_ip_header_is_ignored_without_the_token(world, monkeypatch):
+    db, mailer = world
+    scheduled = []
+    monkeypatch.setattr(ai_read_alerts, "schedule", lambda rows, ip: scheduled.append(ip))
+    assert _post_ai_read(**{"X-Zynd-Client-IP": CLAUDE_IP}).status_code == 204
+    assert scheduled == [] and mailer.sent == []
+
+
+def test_range_list_failure_sends_nothing_and_never_raises(world, monkeypatch, caplog):
+    db, mailer = world
+
+    def offline(url):
+        raise agent_ip_ranges.httpx.ConnectError("offline")
+
+    monkeypatch.setattr(agent_ip_ranges, "fetch_networks", offline)
+    with caplog.at_level(logging.WARNING):
+        assert _post_ai_read(**SERVER, **{"X-Zynd-Client-IP": CLAUDE_IP}).status_code == 204
+    assert any(r["event"] == "agent_fetch" for r in db.rows("card_events"))
+    assert mailer.sent == [] and alerts(db) == []
+    assert "agent ip ranges refresh failed" in caplog.text
+    assert "alice" not in ai_read_alerts._inflight
+
+
+def test_our_servers_are_not_rate_limited_as_one_caller(world):
+    db, _ = world
+    from main import app
+
+    test_client = TestClient(app)
+    body = {"events": [{"event": "agent_fetch", "handle": "alice"}]}
+    # #given more reads than one caller's per-minute budget, all from the same server address
+    limit = events_service._MAX_PER_WINDOW
+    attested = [test_client.post("/events", json=body, headers={"User-Agent": CLAUDE_UA, **SERVER,
+                                                                 "X-Zynd-Client-IP": NOT_A_PROVIDER})
+                for _ in range(limit + 5)]
+    # #then every token-attested batch is stored, while an unattested caller is still throttled
+    assert {r.status_code for r in attested} == {204}
+    public = [test_client.post("/events", json=body, headers={"User-Agent": CLAUDE_UA}) for _ in range(limit + 1)]
+    assert public[-1].status_code == 429
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-Zynd-Server-Event": "wrong"}, {"X-Zynd-Server-Event": ""},
@@ -283,7 +376,7 @@ def test_mailer_exception_does_not_break_ingest(world, monkeypatch, caplog):
 
     with caplog.at_level(logging.INFO):
         response = TestClient(app).post("/events", json={"events": [{"event": "agent_fetch", "handle": "alice"}]},
-                                        headers={"User-Agent": CLAUDE_UA, **SERVER})
+                                        headers={"User-Agent": CLAUDE_UA, **SERVER, "X-Zynd-Client-IP": CLAUDE_IP})
     assert response.status_code == 204
     assert any(r["event"] == "agent_fetch" for r in db.rows("card_events"))
     # The window was claimed before sending, so a failed send is not retried on every read.
@@ -299,7 +392,7 @@ def test_lookup_failure_does_not_break_ingest(world, monkeypatch):
         raise RuntimeError("db down")
 
     monkeypatch.setattr(ai_read_alerts, "_owner_row", broken)
-    assert events_service._insert_rows([ai_read()], server_observed=True) is True
+    assert events_service._insert_rows([ai_read()], server_observed=True, visitor_ip=CLAUDE_IP) is True
     assert mailer.sent == []
     assert "alice" not in ai_read_alerts._inflight and "alice" not in ai_read_alerts._quiet_until
 

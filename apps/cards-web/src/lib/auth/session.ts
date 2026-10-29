@@ -31,7 +31,7 @@ export function startLinkedInOAuth(nextPath: string, intent?: "card"): Promise<s
   return startOAuth("linkedin_oidc", nextPath, intent);
 }
 
-/** Only offered when NEXT_PUBLIC_AUTH_GOOGLE is on (see lib/auth/providers.ts). */
+/** Only offered while Supabase has the Google provider enabled (see lib/auth/providers.ts). */
 export function startGoogleOAuth(nextPath: string, intent?: "card"): Promise<string | null> {
   return startOAuth("google", nextPath, intent);
 }
@@ -66,7 +66,7 @@ function magicLinkErrorMessage(error: AuthError): string {
 
 /**
  * Emails a one-time sign-in link (Supabase magic link). Only offered when
- * NEXT_PUBLIC_AUTH_EMAIL is on.
+ * lib/auth/providers.ts allows email sign-in (off until SMTP is confirmed).
  *
  * `next` rides on the redirect URL as well as in the zynd_next cookie: the
  * link is often opened in a different tab or the mail app's browser, where

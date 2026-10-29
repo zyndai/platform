@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { setAuthNext } from "@/lib/auth/next-cookie";
 import { oauthCallbackUrl } from "@/lib/auth/origin";
-import { alternateSignInEnabled } from "@/lib/auth/providers";
+import { hasAlternateSignIn } from "@/lib/auth/providers";
+import { useSignInMethods } from "@/hooks/useSignInMethods";
 import { getMyCard, updateCard, type AgentProfileCard } from "@/lib/cards";
 import { hasClaimToken, markClaimIntent, subscribeClaimTokens, takeClaimIntent } from "@/lib/claim-tokens";
 import { useAuth } from "@/hooks/useAuth";
@@ -28,11 +29,12 @@ function useCanClaim(handle: string): boolean {
 }
 
 /** Signed-out header action: "Claim this card" for its creator, "Sign In" for everyone else.
- *  The pill is LinkedIn (the default, D12). With Google/email flags on, a link
+ *  The pill is LinkedIn (the default, D12). When Google or email is enabled, a link
  *  next to it opens /auth for those; the claim itself uses the claim token, so
  *  any sign-in method can complete it. */
 export function ProfileSignIn({ handle }: { handle: string }) {
   const canClaim = useCanClaim(handle);
+  const signInMethods = useSignInMethods();
 
   function signIn() {
     if (canClaim) markClaimIntent(handle);
@@ -48,7 +50,7 @@ export function ProfileSignIn({ handle }: { handle: string }) {
       {canClaim ? "Claim this card" : "Sign In"}
     </button>
   );
-  if (!alternateSignInEnabled) return linkedInButton;
+  if (!hasAlternateSignIn(signInMethods)) return linkedInButton;
 
   return (
     <>

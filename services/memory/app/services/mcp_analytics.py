@@ -3,7 +3,7 @@ import logging
 import re
 
 import httpx
-from fastmcp.server.dependencies import get_context, get_http_headers
+from fastmcp.server.dependencies import get_context, get_http_headers, get_http_request
 
 from app.config import settings
 
@@ -12,6 +12,9 @@ EVENT_BATCH_SIZE = 20
 EVENT_TIMEOUT_SECONDS = 5
 MCP_CLIENT_INFO_KEY = "io.modelcontextprotocol/clientInfo"
 SERVER_EVENT_HEADER = "X-Zynd-Server-Event"
+# cards-api emails an owner about an AI read only when this address is in the claimed provider's
+# published ranges (cards-api services/agent_ip_ranges.py); it trusts it only next to the token.
+CLIENT_IP_HEADER = "X-Zynd-Client-IP"
 CLIENT_LABELS = {
     "codex": "Codex", "chatgpt": "ChatGPT-MCP", "claude": "Claude-MCP",
     "perplexity": "Perplexity-MCP",
@@ -42,6 +45,30 @@ def advertised_user_agent() -> str:
     return f"{ua} {label}".strip()
 
 
+def caller_ip() -> str | None:
+    """The MCP caller's address. Host Caddy replaces X-Forwarded-For with the peer it saw, so the
+    last entry is the one Caddy wrote; anything before it came from the caller. Without the header
+    (direct local calls) it is the socket peer."""
+    try:
+        request = get_http_request()
+    except RuntimeError:
+        return None
+    forwarded = [part.strip() for part in (request.headers.get("x-forwarded-for") or "").split(",") if part.strip()]
+    if forwarded:
+        return forwarded[-1]
+    return request.client.host if request.client else None
+
+
+def delivery_headers() -> dict[str, str]:
+    headers = {"User-Agent": advertised_user_agent()}
+    if settings.events_server_token:
+        headers[SERVER_EVENT_HEADER] = settings.events_server_token
+        ip = caller_ip()
+        if ip:
+            headers[CLIENT_IP_HEADER] = ip
+    return headers
+
+
 async def record_fetches(handles: list[str | None], *, endpoint: str, tool: str, category: str = "card") -> None:
     """Count returned cards, including cached reads; never log queries or caller IDs."""
     if not settings.cards_api_base_url:
@@ -49,9 +76,7 @@ async def record_fetches(handles: list[str | None], *, endpoint: str, tool: str,
         return
     unique = list(dict.fromkeys(handles))
     try:
-        headers = {"User-Agent": advertised_user_agent()}
-        if settings.events_server_token:
-            headers[SERVER_EVENT_HEADER] = settings.events_server_token
+        headers = delivery_headers()
         async with httpx.AsyncClient(timeout=EVENT_TIMEOUT_SECONDS) as client:
             for start in range(0, len(unique), EVENT_BATCH_SIZE):
                 response = await client.post(

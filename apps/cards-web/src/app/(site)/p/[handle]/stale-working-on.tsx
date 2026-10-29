@@ -37,8 +37,8 @@ export function StaleWorkingOnPrompt({ handle, stale, className }: { handle: str
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { detail?: unknown };
         setStatus("error");
-        // 404: cards-api has stale signals turned off ("Stale signals are turned off") or
-        // doesn't know the card; neither detail means anything to the owner.
+        // 404: cards-api doesn't know the card (renamed or merged since the page loaded);
+        // its detail means nothing to the owner.
         if (res.status === 404) setError("Confirm isn't available right now. Use Update instead.");
         else setError(typeof body.detail === "string" ? body.detail : "Couldn't confirm. Try again.");
         return;

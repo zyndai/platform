@@ -8,13 +8,14 @@ import {
 } from "@/lib/cards";
 import { featureS11PublicMcp, PUBLIC_CARDS_MCP_URL } from "@/lib/s11";
 import { logAgentFetch } from "@/lib/track";
+import { visitorFrom } from "@/lib/visitor";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://cards.zynd.ai";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  logAgentFetch("llms.txt", req.headers.get("user-agent"));
+  logAgentFetch("llms.txt", visitorFrom(req.headers));
   // S03: unclaimed (scraped) cards are excluded from agent-facing surfaces.
   const cards = (await listCards()).filter((c) => cardIsClaimed(c));
   const useView = featureS06CardView();

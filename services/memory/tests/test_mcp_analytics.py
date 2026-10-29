@@ -61,6 +61,35 @@ async def test_server_token_is_sent_only_when_configured(monkeypatch):
     assert second == {"User-Agent": "Codex", "X-Zynd-Server-Event": "shared-secret"}
 
 
+@pytest.mark.parametrize("forwarded, peer, expected", [
+    ("203.0.113.5", "127.0.0.1", "203.0.113.5"),
+    # A caller-supplied entry comes first; Caddy's own is last.
+    ("160.79.104.10, 203.0.113.5", "127.0.0.1", "203.0.113.5"),
+    ("", "198.51.100.7", "198.51.100.7"),
+])
+def test_caller_ip_is_the_entry_caddy_wrote(monkeypatch, forwarded, peer, expected):
+    monkeypatch.setattr(analytics, "get_http_request", lambda: SimpleNamespace(
+        headers={"x-forwarded-for": forwarded}, client=SimpleNamespace(host=peer)))
+    assert analytics.caller_ip() == expected
+
+
+def test_caller_ip_outside_a_request_is_none(monkeypatch):
+    def missing():
+        raise RuntimeError("No active HTTP request found.")
+    monkeypatch.setattr(analytics, "get_http_request", missing)
+    assert analytics.caller_ip() is None
+
+
+def test_caller_ip_travels_only_with_the_server_token(monkeypatch):
+    monkeypatch.setattr(analytics, "advertised_user_agent", lambda: "Claude-MCP")
+    monkeypatch.setattr(analytics, "caller_ip", lambda: "203.0.113.5")
+    monkeypatch.setattr(analytics.settings, "events_server_token", "")
+    assert analytics.delivery_headers() == {"User-Agent": "Claude-MCP"}
+    monkeypatch.setattr(analytics.settings, "events_server_token", "shared-secret")
+    assert analytics.delivery_headers() == {"User-Agent": "Claude-MCP", "X-Zynd-Server-Event": "shared-secret",
+                                            "X-Zynd-Client-IP": "203.0.113.5"}
+
+
 async def test_authenticated_find_people_records_only_returned_public_cards(monkeypatch):
     from app import mcp_http as m
     result = {"people": [

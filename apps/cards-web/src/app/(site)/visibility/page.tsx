@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
 
 import { DiscoverShell } from "@/components/discover/discover-shell";
 import { pageMetadata } from "@/lib/seo";
-import { visibilityEnabled } from "@/lib/visibility";
 import { VisibilityChecker } from "./visibility-checker";
 import "./visibility.css";
 
@@ -15,7 +13,6 @@ export const metadata: Metadata = pageMetadata({
 });
 
 export default function VisibilityPage() {
-  if (!visibilityEnabled) notFound();
   return (
     <DiscoverShell active="visibility">
       <VisibilityChecker />

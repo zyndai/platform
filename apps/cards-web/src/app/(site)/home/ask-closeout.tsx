@@ -104,7 +104,7 @@ export function AskCloseout({ token, profile }: { token: string; profile: string
   }
 
   return (
-    <div className="oh-intro-section">
+    <div className="oh-intro-section" id="ask-closeout">
       <div className="ac-wrap">
         {answerable.length > 0 && (
           <section className="ac-panel" aria-labelledby="ac-heading">

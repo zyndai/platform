@@ -1,6 +1,8 @@
 // Types, fetch helper and pure helpers for the action feed (cards-api GET /cards/feed).
 // No runtime imports here, so `node --test` can load this file without the "@/" alias.
 
+import type { AskKind } from "./asks";
+
 export type FeedKind = "ask" | "working_on" | "exploring" | "joined" | "github" | "post";
 export type FeedFilter = "all" | "asks" | "network";
 
@@ -44,7 +46,7 @@ interface FeedItemBase {
 }
 
 export type FeedItem =
-  | (FeedItemBase & { kind: "ask"; content: { text: string } })
+  | (FeedItemBase & { kind: "ask"; content: { text: string; kind: AskKind; url: string | null } })
   | (FeedItemBase & { kind: "working_on"; content: { text: string } })
   | (FeedItemBase & { kind: "exploring"; content: { title: string; url: string; note: string; kind: string } })
   | (FeedItemBase & { kind: "joined"; content: { headline: string; can_help_with: string[] } })
@@ -55,7 +57,15 @@ export interface FeedPage {
   items: FeedItem[];
   next_cursor: string | null;
   /** has_card is false for someone who has not created a Card yet: replying needs one. */
-  viewer: { has_card: boolean; handle: string | null };
+  viewer: {
+    has_card: boolean;
+    handle: string | null;
+    /** The viewer's own identity, so the ask composer can preview a post as it will look. */
+    name?: string;
+    headline?: string;
+    avatar_url?: string | null;
+    location?: string;
+  };
 }
 
 const API = (process.env.NEXT_PUBLIC_API_URL || "https://api.zynd.ai").replace(/\/$/, "");
@@ -63,10 +73,11 @@ const API = (process.env.NEXT_PUBLIC_API_URL || "https://api.zynd.ai").replace(/
 /** One page of the feed. Works on the server (first page) and in the browser (load more). */
 export async function fetchFeed(
   token: string,
-  options: { filter?: FeedFilter; cursor?: string | null; signal?: AbortSignal } = {},
+  options: { filter?: FeedFilter; kind?: AskKind | null; cursor?: string | null; signal?: AbortSignal } = {},
 ): Promise<FeedPage> {
   const params = new URLSearchParams();
   if (options.filter && options.filter !== "all") params.set("filter", options.filter);
+  if (options.kind && options.filter === "asks") params.set("kind", options.kind);
   if (options.cursor) params.set("cursor", options.cursor);
   const query = params.toString();
   const response = await fetch(`${API}/cards/feed${query ? `?${query}` : ""}`, {
@@ -119,6 +130,12 @@ export function parseFilter(raw: string | string[] | null | undefined): FeedFilt
   return value === "asks" || value === "network" ? value : "all";
 }
 
+/** The asks tab's kind chip from the URL (?kind=team); anything else is "all kinds". */
+export function parseKind(raw: string | string[] | null | undefined): AskKind | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value && Object.hasOwn(ASK_REPLY, value) ? (value as AskKind) : null;
+}
+
 export const KIND_LABEL: Record<FeedKind, string> = {
   ask: "Ask",
   working_on: "Working on",
@@ -156,12 +173,29 @@ export const MAX_REPLY_LENGTH = 2000;
 
 const PLATFORM_NAME = { linkedin: "LinkedIn", x: "X" } as const;
 
+/** The reply button and the start of the message for each kind of ask (`hi` is "Hi Ana, "). An ask with
+ *  no kind, or "other", gets the general offer of help. The reply still goes through the same endpoint,
+ *  so the offer is recorded whichever words start it. */
+export const ASK_REPLY: Record<AskKind, { label: string; prefill: (hi: string, text: string) => string }> = {
+  team: { label: "I'm in", prefill: (hi) => `${hi}I'd like to join your team: ` },
+  cofounder: { label: "Let's talk", prefill: (hi) => `${hi}I'd like to talk about co-founding: ` },
+  hiring: { label: "I'm interested", prefill: (hi) => `${hi}I'm interested in the role: ` },
+  work: { label: "I might have something", prefill: (hi) => `${hi}I might have something for you: ` },
+  feedback: { label: "Give feedback", prefill: (hi) => `${hi}happy to give feedback: ` },
+  users: { label: "I'll try it", prefill: (hi) => `${hi}I'd like to try it: ` },
+  investors: { label: "Let's talk", prefill: (hi) => `${hi}I'd like to hear more: ` },
+  other: { label: "I can help", prefill: (hi, text) => `${hi}I can help with "${text}": ` },
+};
+
 export function replyFor(item: FeedItem): FeedReply {
   const hi = `Hi ${firstName(item.author.name)}, `;
   let reply: FeedReply;
   switch (item.kind) {
     case "ask":
-      reply = { label: "I can help", prefill: `${hi}I can help with "${item.content.text}": ` };
+      {
+        const ask = Object.hasOwn(ASK_REPLY, item.content.kind) ? ASK_REPLY[item.content.kind] : ASK_REPLY.other;
+        reply = { label: ask.label, prefill: ask.prefill(hi, item.content.text) };
+      }
       break;
     case "working_on":
       reply = { label: "Me too", prefill: `${hi}"${item.content.text}" caught my eye, I'm into this too. ` };
@@ -205,4 +239,40 @@ export function actionFor(hasCard: boolean, connection: FeedConnection | null): 
 /** Only http(s) links are drawn: they come from other people's cards. */
 export function safeHref(url: string): string {
   return /^https?:\/\//i.test(url) ? url : "";
+}
+
+/** Why someone can report a person's card, as cards-api accepts them. */
+export const REPORT_REASONS = [
+  { id: "spam", label: "Spam or an ad" },
+  { id: "impersonation", label: "Pretending to be someone" },
+  { id: "harassment", label: "Harassment" },
+  { id: "inaccurate", label: "Misleading or false" },
+  { id: "other", label: "Something else" },
+] as const;
+
+export type ReportReason = (typeof REPORT_REASONS)[number]["id"];
+
+/** Report a person's card (cards-api POST /cards/network/cards/{handle}/report, behind network controls:
+ *  a 404 there means reporting is switched off, which is worded as "not available" rather than an error
+ *  with the person). */
+export async function reportCard(token: string, handle: string, reason: ReportReason): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${API}/cards/network/cards/${encodeURIComponent(handle)}/report`, {
+      method: "POST",
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    });
+  } catch {
+    throw new Error("Couldn't reach Zynd. Check your connection and try again.");
+  }
+  if (response.ok) return;
+  if (response.status === 404) throw new Error("Reporting isn't available right now.");
+  let detail = "Could not send your report. Please try again.";
+  try {
+    const body = await response.json();
+    if (typeof body.detail === "string") detail = body.detail;
+  } catch { /* keep the fallback */ }
+  throw new Error(detail);
 }

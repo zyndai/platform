@@ -5,6 +5,8 @@ import {
   actionFor,
   firstName,
   parseFilter,
+  parseKind,
+  ASK_REPLY,
   relativeTime,
   replyFor,
   safeHref,
@@ -22,7 +24,7 @@ test("the first name is the first word, with a fallback", () => {
 
 test("each kind gets its own action label and a message that starts the conversation", () => {
   const items: [FeedItem, string, string][] = [
-    [{ ...base, kind: "ask", content: { text: "a React dev" } }, "I can help", 'Hi Ana, I can help with "a React dev": '],
+    [{ ...base, kind: "ask", content: { text: "a React dev", kind: "other", url: null } }, "I can help", 'Hi Ana, I can help with "a React dev": '],
     [{ ...base, kind: "working_on", content: { text: "voice agents" } }, "Me too", 'Hi Ana, "voice agents" caught my eye, I\'m into this too. '],
     [{ ...base, kind: "joined", content: { headline: "", can_help_with: [] } }, "Welcome", "Hi Ana, welcome to Zynd! "],
     [{ ...base, kind: "github", content: { type: "release", repo: "ana/lib", title: "v1.2", url: "" } }, "Congratulate", "Hi Ana, congrats on the v1.2 release! "],
@@ -40,7 +42,7 @@ test("each kind gets its own action label and a message that starts the conversa
 
 test("a prefilled message never exceeds the length the API accepts", () => {
   const long = "x".repeat(5000);
-  assert.ok(replyFor({ ...base, kind: "ask", content: { text: long } }).prefill.length <= 2000);
+  assert.ok(replyFor({ ...base, kind: "ask", content: { text: long, kind: "other", url: null } }).prefill.length <= 2000);
 });
 
 test("the action depends on whether the viewer has a card and how they stand with the author", () => {
@@ -70,4 +72,38 @@ test("the filter param falls back to all and only http links are followed", () =
   assert.equal(parseFilter(undefined), "all");
   assert.equal(safeHref("https://example.com/a"), "https://example.com/a");
   assert.equal(safeHref("javascript:alert(1)"), "");
+});
+
+const ask = (kind: string | undefined, text = "a Solidity dev") =>
+  ({ ...base, kind: "ask", content: { text, kind, url: null } }) as unknown as FeedItem;
+
+test("each kind of ask has its own reply label and the right start of a message", () => {
+  const table: [string, string, string][] = [
+    ["team", "I'm in", "Hi Ana, I'd like to join your team: "],
+    ["cofounder", "Let's talk", "Hi Ana, I'd like to talk about co-founding: "],
+    ["hiring", "I'm interested", "Hi Ana, I'm interested in the role: "],
+    ["work", "I might have something", "Hi Ana, I might have something for you: "],
+    ["feedback", "Give feedback", "Hi Ana, happy to give feedback: "],
+    ["users", "I'll try it", "Hi Ana, I'd like to try it: "],
+    ["investors", "Let's talk", "Hi Ana, I'd like to hear more: "],
+    ["other", "I can help", 'Hi Ana, I can help with "a Solidity dev": '],
+  ];
+  assert.deepEqual(Object.keys(ASK_REPLY), table.map((row) => row[0]));
+  for (const [kind, label, prefill] of table) {
+    assert.deepEqual(replyFor(ask(kind)), { label, prefill });
+  }
+});
+
+test("an ask with no kind, or one this build does not know, gets the general offer of help", () => {
+  for (const kind of [undefined, "crypto"]) {
+    assert.deepEqual(replyFor(ask(kind)), { label: "I can help", prefill: 'Hi Ana, I can help with "a Solidity dev": ' });
+  }
+});
+
+test("the kind param is one of the known kinds, else all kinds", () => {
+  assert.equal(parseKind("team"), "team");
+  assert.equal(parseKind(["hiring", "team"]), "hiring");
+  assert.equal(parseKind("bogus"), null);
+  assert.equal(parseKind("constructor"), null);
+  assert.equal(parseKind(undefined), null);
 });

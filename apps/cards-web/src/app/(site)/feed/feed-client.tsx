@@ -1,25 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, Check, Clock3, Send } from "lucide-react";
+import { Check, Clock3, Send } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
   FEED_FILTERS,
-  KIND_LABEL,
   MAX_REPLY_LENGTH,
   actionFor,
   fetchFeed,
-  relativeTime,
   replyFor,
   replyToFeedItem,
-  safeHref,
   type FeedConnection,
   type FeedFilter,
   type FeedItem,
   type FeedPage,
 } from "@/lib/feed";
-import { PersonAvatar } from "@/components/discover/person-avatar";
+import { ASK_KINDS, type AskKind, type LiveAsk } from "@/lib/asks";
+import { FeedItemView } from "@/components/feed/FeedItemView";
+import { ReportControl } from "@/components/feed/ReportControl";
+import { AskComposer } from "@/components/asks/AskComposer";
+import { AskFab } from "@/components/asks/AskFab";
+import { LiveAskCard } from "@/components/asks/LiveAskCard";
 
 /** A fresh access token (the session renews itself), falling back to the one the page rendered with. */
 async function currentToken(fallback: string): Promise<string> {
@@ -31,7 +33,8 @@ async function currentToken(fallback: string): Promise<string> {
   }
 }
 
-const PLATFORM_NAME = { linkedin: "LinkedIn", x: "X" } as const;
+/** How long a "your ask is live" note stays on screen. */
+const TOAST_MS = 6000;
 
 /**
  * The action feed. Every item ends in one real action: a message to the author if you are connected,
@@ -42,11 +45,17 @@ const PLATFORM_NAME = { linkedin: "LinkedIn", x: "X" } as const;
 export function FeedClient({
   initial,
   filter,
+  kind,
+  live: initialLive,
   token,
   nowMs,
 }: {
   initial: FeedPage;
   filter: FeedFilter;
+  /** The asks tab's type filter; null for all types. */
+  kind: AskKind | null;
+  /** The viewer's own live ask, if they have one. */
+  live: LiveAsk | null;
   token: string;
   nowMs: number;
 }) {
@@ -61,6 +70,17 @@ export function FeedClient({
   const [error, setError] = useState("");
   const [sent, setSent] = useState<Record<string, string>>({});
   const { has_card: hasCard, handle: myHandle } = initial.viewer;
+  const [live, setLive] = useState(initialLive);
+  const [composerMode, setComposer] = useState<null | "new" | "edit">(null);
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+
+  function say(message: string) {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(""), TOAST_MS);
+  }
 
   const connectionFor = (item: FeedItem): FeedConnection | null =>
     connections[item.author.handle.toLowerCase()] ?? item.connection;
@@ -70,7 +90,7 @@ export function FeedClient({
     setLoadingMore(true);
     setLoadError("");
     try {
-      const next = await fetchFeed(await currentToken(token), { filter, cursor });
+      const next = await fetchFeed(await currentToken(token), { filter, kind, cursor });
       setItems((current) => {
         const known = new Set(current.map((i) => i.id));
         return [...current, ...next.items.filter((i) => !known.has(i.id))];
@@ -195,68 +215,7 @@ export function FeedClient({
     );
   }
 
-  function body(item: FeedItem) {
-    switch (item.kind) {
-      case "ask":
-        return <p className="fd-text is-ask">{item.content.text}</p>;
-      case "working_on":
-        return <p className="fd-text">{item.content.text}</p>;
-      case "exploring": {
-        const href = safeHref(item.content.url);
-        return (
-          <>
-            <p className="fd-text">
-              {href ? (
-                <a href={href} target="_blank" rel="noopener noreferrer">
-                  {item.content.title} <ArrowUpRight size={13} aria-hidden="true" />
-                </a>
-              ) : item.content.title}
-            </p>
-            {item.content.note && <p className="fd-note">{item.content.note}</p>}
-          </>
-        );
-      }
-      case "joined":
-        return (
-          <p className="fd-text">
-            {item.author.name} joined Zynd
-            {item.content.headline ? `: ${item.content.headline}` : ""}
-            {item.content.can_help_with.length > 0 && (
-              <span className="fd-note"> Can help with {item.content.can_help_with.join(", ")}.</span>
-            )}
-          </p>
-        );
-      case "github": {
-        const href = safeHref(item.content.url);
-        const what =
-          item.content.type === "release" ? "Released" : item.content.type === "pull_request" ? "Merged a pull request in" : "Created";
-        return (
-          <p className="fd-text">
-            {what} <strong>{item.content.repo}</strong>
-            {item.content.title && <>: {item.content.title}</>}{" "}
-            {href && (
-              <a href={href} target="_blank" rel="noopener noreferrer">
-                View on GitHub <ArrowUpRight size={13} aria-hidden="true" />
-              </a>
-            )}
-          </p>
-        );
-      }
-      case "post": {
-        const href = safeHref(item.content.url);
-        return (
-          <>
-            <p className="fd-text is-quote">{item.content.preview}</p>
-            {href && (
-              <a className="fd-out" href={href} target="_blank" rel="noopener noreferrer">
-                Read the original on {PLATFORM_NAME[item.content.platform] ?? "the web"} <ArrowUpRight size={13} aria-hidden="true" />
-              </a>
-            )}
-          </>
-        );
-      }
-    }
-  }
+  const viewer = initial.viewer;
 
   return (
     <div className="fd-page">
@@ -264,6 +223,10 @@ export function FeedClient({
         <h1>Feed</h1>
         <p>What people on Zynd are working on and asking for. Every item is a way to start a conversation.</p>
       </header>
+
+      {live && (
+        <LiveAskCard ask={live} nowMs={nowMs} onEdit={() => setComposer("edit")} />
+      )}
 
       <nav className="fd-tabs" aria-label="Feed filter">
         {FEED_FILTERS.map((f) => (
@@ -278,6 +241,22 @@ export function FeedClient({
         ))}
       </nav>
 
+      {filter === "asks" && (
+        <nav className="fd-kinds" aria-label="Type of ask">
+          <Link className="fd-chip" href="/feed?filter=asks" aria-current={kind === null ? "true" : undefined}>All</Link>
+          {ASK_KINDS.map((k) => (
+            <Link
+              key={k.id}
+              className="fd-chip"
+              href={`/feed?filter=asks&kind=${k.id}`}
+              aria-current={kind === k.id ? "true" : undefined}
+            >
+              {k.label}
+            </Link>
+          ))}
+        </nav>
+      )}
+
       {!hasCard && (
         <p className="fd-banner">
           You don&apos;t have a card yet. <Link href="/create">Create your card</Link> to reply to anyone here.
@@ -288,12 +267,14 @@ export function FeedClient({
         <section className="fd-panel fd-empty">
           {filter === "asks" ? (
             <>
-              <h2>No asks right now</h2>
+              <h2>{kind ? "No asks of this type right now" : "No asks right now"}</h2>
               <p>
                 When someone asks for help it shows up here for a week.{" "}
-                <Link href={myHandle ? `/p/${encodeURIComponent(myHandle)}/edit` : "/create"}>
-                  {myHandle ? "Post one from your card" : "Create your card to post one"}
-                </Link>
+                {hasCard ? (
+                  <button type="button" className="fd-linkbutton fd-inline" onClick={() => setComposer("new")}>Post an ask</button>
+                ) : (
+                  <Link href="/create">Create your card to post one</Link>
+                )}
               </p>
             </>
           ) : filter === "network" ? (
@@ -316,8 +297,6 @@ export function FeedClient({
       ) : (
         <ul className="fd-list">
           {items.map((item, index) => {
-            const who = item.author;
-            const when = relativeTime(item.at, nowMs);
             const startsEarlier = item.earlier && !items[index - 1]?.earlier;
             return (
               <li key={item.id}>
@@ -326,27 +305,19 @@ export function FeedClient({
                     <span>Earlier</span>
                   </div>
                 )}
-                <article className="fd-item" aria-labelledby={`fd-who-${item.id}`}>
-                  <div className="fd-item-head">
-                    <PersonAvatar name={who.name} src={who.avatar_url ?? undefined} size={44} />
-                    <div className="fd-who">
-                      <Link id={`fd-who-${item.id}`} className="fd-name" href={`/p/${encodeURIComponent(who.handle)}`}>
-                        {who.name}
-                      </Link>
-                      {(who.headline || who.location) && (
-                        <span className="fd-sub">{[who.headline, who.location].filter(Boolean).join(" · ")}</span>
-                      )}
-                    </div>
-                    <div className="fd-meta">
-                      <span className={`fd-kind is-${item.kind}`}>{KIND_LABEL[item.kind]}</span>
-                      <time dateTime={item.at}>{when}</time>
-                    </div>
-                  </div>
-                  <div className="fd-body">{body(item)}</div>
-                  {item.reason && <p className="fd-reason">{item.reason}</p>}
-                  <div className="fd-actions">{actions(item)}</div>
-                  {openId === item.id && composer(item)}
-                </article>
+                <FeedItemView
+                  item={item}
+                  nowMs={nowMs}
+                  footer={
+                    <>
+                      <div className="fd-actions">
+                        {actions(item)}
+                        {item.kind === "ask" && <ReportControl token={token} handle={item.author.handle} name={item.author.name} />}
+                      </div>
+                      {openId === item.id && composer(item)}
+                    </>
+                  }
+                />
               </li>
             );
           })}
@@ -361,6 +332,34 @@ export function FeedClient({
           {loadError && <p className="fd-error" role="alert">{loadError}</p>}
         </div>
       )}
+
+      {toast && <p className="fd-toast" role="status">{toast}</p>}
+      <AskFab onClick={() => setComposer("new")} />
+      <AskComposer
+        open={composerMode !== null}
+        edit={composerMode === "edit"}
+        onClose={() => setComposer(null)}
+        getToken={() => currentToken(token)}
+        hasCard={hasCard}
+        author={{
+          handle: myHandle ?? "",
+          name: viewer.name ?? "",
+          headline: viewer.headline ?? "",
+          avatar_url: viewer.avatar_url ?? null,
+          location: viewer.location ?? "",
+        }}
+        live={live}
+        onPosted={(ask) => {
+          setLive(ask);
+          setComposer(null);
+          say("Your ask is live for 7 days.");
+        }}
+        onTakenDown={() => {
+          setLive(null);
+          setComposer(null);
+          say("Your ask is down.");
+        }}
+      />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { claimHeaders, forgetClaimToken } from "./claim-tokens";
+import type { AskKind } from "./asks";
 import type { CardEdition } from "./editions";
 import type { MatchReason } from "./match-reason";
 import { ownerHomeEnabled } from "./owner-home";
@@ -21,7 +22,16 @@ export interface Skill {
   evidence?: { label: string; url: string; kind?: string }[];
 }
 
-export interface Beacon { id?: string | null; text: string; created_at: string; expires_at: string; }
+export interface Beacon {
+  id?: string | null;
+  text: string;
+  /** Absent on beacons posted before ask types existed: shown as "Something else". */
+  kind?: AskKind | null;
+  /** An http(s) link the owner attached; absent when there is none. */
+  url?: string | null;
+  created_at: string;
+  expires_at: string;
+}
 
 /** People this card's owner helped through asks (cards-api services/asks.py). Each entry is a
  *  credit the asker gave and the helper has not hidden; absent on older APIs. */

@@ -210,6 +210,8 @@ class Review(BaseModel):
 
 
 class Beacon(BaseModel):
+    # The ask this beacon is (services/asks.py). Beacons posted before asks existed have none.
+    id: str | None = None
     text: str = Field(min_length=1, max_length=280)
     created_at: datetime
     expires_at: datetime

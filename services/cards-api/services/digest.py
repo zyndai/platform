@@ -149,6 +149,7 @@ def build_digest(handle: str, posts: dict | None, people: dict | None, name: str
     outside = list(people.get("outside") or [])
     activity = extras.get("activity") if isinstance(extras.get("activity"), dict) else {}
     network = extras.get("network") or {}
+    asks = extras.get("asks") if isinstance(extras.get("asks"), dict) else {}
     stats = []
     if activity.get("available"):
         if activity.get("views") is not None:
@@ -170,6 +171,9 @@ def build_digest(handle: str, posts: dict | None, people: dict | None, name: str
         "outside": outside,
         "updates": list(network.get("connection_updates") or []),
         "search_hits": list(network.get("saved_search_hits") or []),
+        "asks": list(asks.get("routed") or []),
+        "ask_prompts": list(asks.get("prompts") or []),
+        "ask_credits": list(asks.get("credits") or []),
         "unsubscribe_url": extras.get("unsubscribe_url") or "",
         "feedback_base": extras.get("feedback_base") or "",
     }
@@ -298,6 +302,19 @@ def render_digest(handle: str, posts: dict | None, people: dict | None, name: st
                 lines.append(f"  {p['linkedin_url']}")
         if d["people"]:
             lines.append("Review Zynd matches and draft an intro: https://cards.zynd.ai/home#zynd-matches")
+    if d["asks"]:
+        lines += ["", "ASKS YOU COULD HELP WITH"]
+        for a in d["asks"]:
+            lines.append(f"- {a.get('asker_name') or a.get('asker_handle')}: {clip_summary(a.get('text') or '', EXCERPT_WORDS)}")
+        lines.append(f"  {_base()}/feed?filter=asks")
+    if d["ask_prompts"] or d["ask_credits"]:
+        lines += ["", "ABOUT YOUR ASKS"]
+        for _ in d["ask_prompts"]:
+            lines += ["- Your ask ended. Did you find help?", f"  {_base()}/home"]
+        for c in d["ask_credits"]:
+            quoted = clip_summary(c.get("ask") or "", EXCERPT_WORDS)
+            lines += [f"- {c.get('asker_name') or 'Someone'} credited you for helping with \"{quoted}\"",
+                      f"  {_card_url(handle)}"]
     if d["updates"] or d["search_hits"]:
         lines += ["", "FROM YOUR NETWORK"]
         lines += [f"- {u.get('name') or u.get('handle')}: {u.get('change')}" for u in d["updates"]]
@@ -494,6 +511,26 @@ def _network_html(d: dict) -> str:
     return _label("From your network") + _box("".join(rows)) if rows else ""
 
 
+def _asks_html(d: dict) -> str:
+    """Asks routed to this owner, then the owner's own ask follow-ups. Everything is escaped."""
+    rows = []
+    for a in d["asks"]:
+        who = a.get("asker_name") or a.get("asker_handle") or ""
+        rows.append(_row(len(rows), _avatar(who), _esc(who), _esc(clip_summary(a.get("text") or "", EXCERPT_WORDS)),
+                         f"{_base()}/feed?filter=asks", "I can help"))
+    out = _label("Asks you could help with") + _box("".join(rows)) if rows else ""
+    own = []
+    for _ in d["ask_prompts"]:
+        own.append(_row(len(own), _tile("&#10003;", _GREEN, _GREEN_INK, 15), "Your ask ended", "Did you find help?",
+                        f"{_base()}/home", "Answer"))
+    for c in d["ask_credits"]:
+        who = c.get("asker_name") or "Someone"
+        quoted = clip_summary(c.get("ask") or "", EXCERPT_WORDS)
+        own.append(_row(len(own), _tile("&#9733;", _STAR, _STAR_INK, 15), _esc(f"{who} credited you"),
+                        _esc(f'for helping with "{quoted}"'), _card_url(d["handle"]), "View"))
+    return out + (_label("About your asks") + _box("".join(own)) if own else "")
+
+
 def render_digest_html(handle: str, posts: dict | None, people: dict | None, name: str | None = None,
                        extras: dict | None = None) -> str:
     d = build_digest(handle, posts, people, name, extras)
@@ -520,7 +557,7 @@ def render_digest_html(handle: str, posts: dict | None, people: dict | None, nam
         f'<tr><td class="i" style="padding:24px">{header}'
         f'<div style="font:600 20px/28px {_FONT};color:{_INK};padding-top:24px">Good morning, {_esc(d["first"])}</div>'
         f'<div style="font:400 14px/22px {_FONT};color:{_BODY};padding-top:4px">{_intro(d)[1]}</div>'
-        f"{_card_week_html(d)}{_topics_html(d)}{_people_html(d)}{_network_html(d)}{cta}</td></tr>",
+        f"{_card_week_html(d)}{_topics_html(d)}{_people_html(d)}{_asks_html(d)}{_network_html(d)}{cta}</td></tr>",
         f"max-width:600px;background:{_WHITE};border-radius:12px", cls="s")
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
@@ -636,6 +673,10 @@ def _owner_extras(row: dict, rows: list[dict], now: datetime, local: datetime) -
         except Exception as exc:  # noqa: BLE001 — unknown is not zero: the tile is left out
             logger.info("digest review count failed handle=%s err=%s", handle, exc)
     try:
+        extras["asks"] = _asks_section(row, now)
+    except Exception as exc:  # noqa: BLE001 — a failure drops the block, never the email
+        logger.info("digest asks failed handle=%s err=%s", handle, type(exc).__name__)
+    try:
         from services.owner_notifications import _network_section
         network = _network_section(email.lower(), row, rows)
         if network:
@@ -645,6 +686,18 @@ def _owner_extras(row: dict, rows: list[dict], now: datetime, local: datetime) -
     except Exception as exc:  # noqa: BLE001
         logger.info("digest network failed handle=%s err=%s", handle, exc)
     return extras
+
+
+def _asks_section(row: dict, now: datetime) -> dict:
+    """Asks for this owner's digest (services/asks.py). People they blocked, hid, declined or revoked
+    never show up, so the owner's connections are read first: if that fails there is no section."""
+    from services import asks, feed, match_prefs, network
+
+    blocked: set[str] = set()
+    user_id = row.get("owner_user_id")
+    if user_id:
+        _, blocked = feed.connection_maps(network.get_inbox(user_id).get("connections", []), feed._hidden(user_id, match_prefs))
+    return asks.digest_items(row, blocked, now)
 
 
 def digest_people(row: dict) -> dict:
@@ -670,6 +723,15 @@ def _mark_people(row: dict, people: dict, rows: list[dict]) -> None:
     verified = trust.verified_by_card_ids([by_handle[p["handle"]].get("id") for p in found])
     for p in found:
         p["verified"] = "linkedin" in verified.get(by_handle[p["handle"]].get("id"), [])
+
+
+def _mark_asks(row: dict, extras: dict, now: datetime) -> None:
+    """The email went out: the asks it mentioned are not mentioned again."""
+    from services import asks
+
+    marks = (extras.get("asks") or {}).get("marks")
+    if marks:
+        asks.mark_digest_sent(row, marks, now)
 
 
 def _mark_sent(handle: str, day: str, snap: dict | None) -> None:
@@ -776,6 +838,7 @@ def run_digest(
                     unsubscribe_url=extras.get("unsubscribe_url"),
                 )
                 _record_shown(row, people)
+                _mark_asks(row, extras, now)
             stats["sent"] += 1
         except Exception as exc:
             logger.warning("digest failed handle=%s err=%s", handle, exc)

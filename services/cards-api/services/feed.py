@@ -69,6 +69,7 @@ RELEVANCE_WEIGHT = 0.35             # times how far the cards' cosine is above R
 RELEVANCE_FLOOR = 0.3               # a cosine below this says nothing about similar work
 SIMILAR_COSINE = 0.5                # from here the reason reads "Similar work to yours"
 ASK_HELP_BOOST = 0.5                # an ask whose words overlap what the viewer can help with
+ASK_ROUTED_BOOST = 0.6              # an ask the people search routed to the viewer (services/asks.py)
 
 PER_AUTHOR_CAP = 2                  # most items one person gets in a page (see _diversify)
 DEFAULT_LIMIT = 20
@@ -80,6 +81,7 @@ FILTERS = ("all", "asks", "network")
 FINAL_STATUSES = frozenset({"blocked", "declined", "revoked"})
 
 REASON_CONNECTED = "You're connected"
+REASON_ROUTED = "Asked people like you"
 REASON_CAN_HELP = "Matches what you can help with"
 REASON_SIMILAR = "Similar work to yours"
 REASON_NEW = "New on Zynd"
@@ -141,7 +143,8 @@ def _items_for(row: dict, now: datetime, github_items: list[dict], earlier: bool
 
     beacon = active_beacon(card, now)
     if beacon and (at := _when(beacon.created_at, now)):
-        out.append({"kind": "ask", "at": at, "key": beacon.created_at.isoformat(), "content": {"text": beacon.text.strip()}})
+        out.append({"kind": "ask", "at": at, "key": beacon.id or beacon.created_at.isoformat(), "ask_id": beacon.id,
+                    "content": {"text": beacon.text.strip()}})
 
     seen: set[str] = set()
     for fact in live_facts(card.zynd_memory, now):
@@ -197,15 +200,20 @@ def _overlaps(ask: str, can_help: list[str]) -> bool:
     return bool(wanted) and any(wanted & set(query_terms(topic)) for topic in can_help)
 
 
-def _score_and_reason(item: dict, viewer: Viewer, row: dict, connection: dict | None, now: datetime) -> tuple[float, str]:
+def _score_and_reason(item: dict, viewer: Viewer, row: dict, connection: dict | None, now: datetime,
+                      routed: frozenset | set = frozenset()) -> tuple[float, str]:
     score = _recency(item, now)
     cosine = card_cache.dot(viewer.unit, row.get("unit") or []) or 0.0
     relevance = max(0.0, (cosine - RELEVANCE_FLOOR) / (1 - RELEVANCE_FLOOR))
     connected = bool(connection and connection["status"] == "accepted")
     helps = item["kind"] == "ask" and viewer.card is not None and _overlaps(item["content"]["text"], viewer.card.can_help_with)
 
+    sent = item["kind"] == "ask" and item.get("ask_id") in routed
     score += (CONNECTION_BOOST if connected else 0.0) + RELEVANCE_WEIGHT * relevance + (ASK_HELP_BOOST if helps else 0.0)
-    if helps:
+    score += ASK_ROUTED_BOOST if sent else 0.0
+    if sent:
+        reason = REASON_ROUTED
+    elif helps:
         reason = REASON_CAN_HELP
     elif connected:
         reason = REASON_CONNECTED
@@ -293,6 +301,7 @@ def rank_feed(
     *,
     filter: str = "all",
     limit: int = DEFAULT_LIMIT,
+    routed: frozenset | set = frozenset(),
 ) -> list[dict]:
     """The whole feed in display order: every recent item (ranked by score), then, for the "all" and
     "network" filters, the earlier items (newest first). Earlier items never outrank recent ones, and
@@ -300,7 +309,8 @@ def rank_feed(
 
     `rows` are published-card rows ({"id", "handle", "model", "unit", "claimed", "published_at"});
     only claimed cards take part, since only a claimed card can be messaged. `connections` is
-    handle -> {"id", "status", "incoming"}; `github` is handle -> items from feed_github.get()."""
+    handle -> {"id", "status", "incoming"}; `github` is handle -> items from feed_github.get();
+    `routed` is the ids of asks the people search routed to the viewer."""
     limit = max(1, min(limit, MAX_LIMIT))
     own = (viewer.handle or "").lower()
     recent: list[dict] = []
@@ -316,7 +326,7 @@ def rank_feed(
         for item in _items_for(row, now, github.get(row["handle"]) or [], earlier=filter != "asks"):
             if filter == "asks" and item["kind"] != "ask":
                 continue
-            score, reason = _score_and_reason(item, viewer, row, connection, now)
+            score, reason = _score_and_reason(item, viewer, row, connection, now, routed)
             built = {
                 "id": f"{item['kind']}:{row['handle']}:{item['key']}",
                 "kind": item["kind"],
@@ -330,6 +340,7 @@ def rank_feed(
                 },
                 "content": item["content"],
                 "connection": connection,
+                "_ask_id": item.get("ask_id"),          # internal: the reply records an offer against it
             }
             if item["earlier"]:
                 built["_sort"] = (-item["at"].timestamp(), item["kind"], item["key"])
@@ -358,12 +369,16 @@ def build_feed(
     filter: str = "all",
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
+    routed: frozenset | set = frozenset(),
 ) -> dict:
     """One page of the feed: {"items": [...], "next_cursor": str | None}. See rank_feed for the order;
     paging is an offset into that one list, so it is consistent across the recent / earlier boundary."""
     limit = max(1, min(limit, MAX_LIMIT))
-    ordered = rank_feed(viewer, rows, connections, blocked, github, now, filter=filter, limit=limit)
-    return {"items": ordered[offset:offset + limit],
+    ordered = rank_feed(viewer, rows, connections, blocked, github, now, filter=filter, limit=limit, routed=routed)
+    page = ordered[offset:offset + limit]
+    for item in page:
+        item.pop("_ask_id", None)
+    return {"items": page,
             "next_cursor": encode_cursor(offset + limit) if offset + limit < len(ordered) else None}
 
 
@@ -422,6 +437,7 @@ class Context:
     connections: dict[str, dict]
     blocked: set[str]
     github: dict[str, list[dict]]
+    routed: set[str]
 
 
 def _context(user_id: str, now: datetime) -> Context:
@@ -451,7 +467,9 @@ def _context(user_id: str, now: datetime) -> Context:
                 wanted[row["handle"]] = login
     cached = feed_github.get(list(wanted.values()))
     github = {handle: cached[login] for handle, login in wanted.items() if login in cached}
-    return Context(now, rows, mine, viewer, connections, blocked, github)
+    from services import asks
+
+    return Context(now, rows, mine, viewer, connections, blocked, github, asks.routed_ask_ids(viewer.card_id))
 
 
 def feed_for_user(user_id: str, *, filter: str = "all", limit: int = DEFAULT_LIMIT, offset: int = 0,
@@ -460,7 +478,7 @@ def feed_for_user(user_id: str, *, filter: str = "all", limit: int = DEFAULT_LIM
     threadpool, as the other network routes do."""
     ctx = _context(user_id, now or datetime.now(timezone.utc))
     page = build_feed(ctx.viewer, ctx.rows, ctx.connections, ctx.blocked, ctx.github, ctx.now,
-                      filter=filter, limit=limit, offset=offset)
+                      filter=filter, limit=limit, offset=offset, routed=ctx.routed)
     page["viewer"] = {"has_card": ctx.mine is not None, "handle": ctx.viewer.handle}
     return page
 
@@ -506,7 +524,7 @@ def reply_to_item(user_id: str, item_id: str, message: str, client_id: str | Non
     if author["owner_user_id"] == user_id:
         raise HTTPException(422, "You cannot reply to your own item")
     item = next((i for i in rank_feed(ctx.viewer, ctx.rows, ctx.connections, ctx.blocked, ctx.github, ctx.now,
-                                      limit=MAX_LIMIT) if i["id"] == item_id), None)
+                                      limit=MAX_LIMIT, routed=ctx.routed) if i["id"] == item_id), None)
     if item is None or item["kind"] != kind:
         raise HTTPException(404, "That item is no longer in your feed")
 
@@ -515,12 +533,12 @@ def reply_to_item(user_id: str, item_id: str, message: str, client_id: str | Non
         result = network.request_connection(user_id, handle, message)
         found = result["connection"]
         if not result["existing"]:
-            return _replied("request", found, item, ctx)
+            return _replied("request", found, item, ctx, author, user_id)
         # Someone else's request landed between loading the inbox and now.
         connection = {"id": found["id"], "status": found["status"], "incoming": found["incoming"]}
     if connection["status"] == "accepted":
         network.send_message(user_id, connection["id"], message, client_id)
-        return _replied("dm", connection, item, ctx)
+        return _replied("dm", connection, item, ctx, author, user_id)
     if connection["status"] == "pending":
         if connection["incoming"]:
             raise HTTPException(409, "They already sent you a request. Accept it in your Network.")
@@ -528,9 +546,15 @@ def reply_to_item(user_id: str, item_id: str, message: str, client_id: str | Non
     raise HTTPException(403, "Replying to this person is not available")
 
 
-def _replied(channel: str, connection: dict, item: dict, ctx: Context) -> dict:
+def _replied(channel: str, connection: dict, item: dict, ctx: Context, author: dict, user_id: str) -> dict:
     out = {"id": connection.get("id"), "status": connection.get("status"), "incoming": bool(connection.get("incoming"))}
     record_reply(item, channel, ctx.now)
+    if item["kind"] == "ask" and item.get("_ask_id"):
+        from services import asks
+
+        # The message is already sent: recording the offer is best effort and idempotent.
+        asks.record_offer(item["_ask_id"], asker_card_id=author["id"], helper_user_id=user_id,
+                          helper_card_id=ctx.mine["id"], connection_id=out["id"], channel=channel, now=ctx.now)
     return {"channel": channel, "connection": out}
 
 

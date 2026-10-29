@@ -94,14 +94,20 @@ export function startFixtureServer(): Promise<void> {
   let namedVisits = 0;
   const namedVisitIds = new Set<string>();
   let prefs = { weekly_digest: true, email_nudges: false, morning_digest: true };
+  let showWarmMatches = false;
   const ownerStatus = () => ({
     handle: "owner", card_id: "id-owner", name: "Alice Chen", visibility: ownerCard.status === "private" ? "private" : "public",
     completeness: { score: 75, actions: [{ section: "projects", title: "Add a project", href: "/p/owner/edit#projects" }] },
     inbox_count: 3, connection: { memory_connected: true, assistants_available: false },
     sources: [{ platform: "github", scraped_at: "2026-10-10T00:00:00Z", state: "fresh" }],
-    activity: { available: true, views: humanViews, agent_hits: 4, unidentified_clients: [{ name: "Node.js", count: 3, last_seen: "2026-10-28T05:34:18Z" }], agent_clients: [{ name: "Claude-User", provider: "Claude", count: 2 }, { name: "GPTBot", provider: "ChatGPT / OpenAI", count: 1 }, { name: "Unknown", provider: "Unknown", count: 1 }], intro_requests: null, queries: [], query_capture_available: false, chat_topics: [], chat_questions: [{ question: "What projects is Alice building?", category: "work", asked_at: "2026-10-15T10:00:00Z", truncated: false }, { question: '<img src=x onerror="window.questionHistoryXss=1">', category: "other", asked_at: "2026-10-15T09:00:00Z", truncated: false }] },
+    activity: { available: true, views: humanViews, agent_hits: 7, unidentified_clients: [{ name: "Node.js", count: 3, last_seen: "2026-10-28T05:34:18Z" }], agent_clients: [{ name: "Zynd-MCP", provider: "Unidentified MCP client", count: 3 }, { name: "Claude-User", provider: "Claude", count: 2 }, { name: "GPTBot", provider: "ChatGPT / OpenAI", count: 1 }, { name: "Unknown", provider: "Unknown", count: 1 }], intro_requests: null, queries: [], query_capture_available: false, chat_topics: [], chat_questions: [{ question: "What projects is Alice building?", category: "work", asked_at: "2026-10-15T10:00:00Z", truncated: false }, { question: '<img src=x onerror="window.questionHistoryXss=1">', category: "other", asked_at: "2026-10-15T09:00:00Z", truncated: false }] },
     visitors: { available: true, items: !anonymousMode && namedVisits ? [{ name: "Alice Chen", handle: "owner", visited_at: "2026-10-15T10:00:00Z", visits: namedVisits }] : [] },
     notification_prefs: prefs,
+    ...(showWarmMatches ? { suggestions: { people: [{
+      handle: "sarah", name: "Sarah", headline: "Founder building AI tools", location: "Singapore", avatar_url: "",
+      url: "http://127.0.0.1:3010/p/sarah", two_way: true,
+      why: ["Looking for go-to-market help", "Building AI developer tools"],
+    }], outside: [] } } : {}),
     duplicates: hasDuplicate ? [{ id: "id-old-owner", handle: "old-owner", name: "Alice Chen", status: "published" }] : [],
     nudges: [{ id: "n1", kind: "expiring", title: "What you are looking for expires within 3 days", href: "/p/owner/edit#memory" }],
   });
@@ -116,6 +122,7 @@ export function startFixtureServer(): Promise<void> {
     };
 
     if (req.method === "OPTIONS") return json(200, {});
+    if (path === "/__s10/warm-matches") { showWarmMatches = true; return json(200, {}); }
     // The directory list (/directory): two claimed people and one unclaimed.
     if (req.method === "GET" && path === "/cards") {
       return json(200, [cardFixture("alice"), cardFixture("bob", { name: "Bob Okafor" }), cardFixture("unclaimed", { claimed: false })]);
@@ -183,6 +190,7 @@ export function startFixtureServer(): Promise<void> {
       return;
     }
     if (path === "/__s10/reset") {
+      showWarmMatches = false;
       capturedEvents = [];
       namedVisitIds.clear();
       ownerCard = cardFixture("owner"); hasDuplicate = true; anonymousMode = true; humanViews = 12; namedVisits = 0; prefs = { weekly_digest: true, email_nudges: false, morning_digest: true };

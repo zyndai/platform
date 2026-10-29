@@ -188,6 +188,8 @@ DIGEST_DEFAULT_TIMEZONE: str = os.getenv("DIGEST_DEFAULT_TIMEZONE") or "Asia/Kol
 # S10: enabled by default; requires migrations 0010/0011 on the cards schema.
 # Set FEATURE_S10_HOME=false to disable owner-home operations explicitly.
 FEATURE_S10_HOME: bool = os.getenv("FEATURE_S10_HOME", "true").lower() in ("1", "true", "yes")
+# Legacy gate for optional nudge emails. Weekly digests are enabled by default
+# and controlled by the owner's weekly_digest preference and SMTP availability.
 FEATURE_S10_DIGEST: bool = os.getenv("FEATURE_S10_DIGEST", "false").lower() in ("1", "true", "yes")
 S10_MAILER: str = os.getenv("S10_MAILER", "noop")  # noop | smtp
 

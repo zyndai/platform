@@ -97,6 +97,17 @@ a.oh-person-name:hover {
 .oh-people-error:empty {
   display: none;
 }
+.oh-warm-intro { margin-top: 10px; }
+.oh-intro-draft { padding: 16px; background: var(--oh-lavender); border: 1px solid var(--oh-border); border-radius: 12px; }
+.oh-intro-draft h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; font-size: 14px; }
+.oh-intro-draft ul { padding-left: 18px; font-size: 12px; line-height: 1.6; }
+.oh-intro-draft label { display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
+.oh-intro-draft textarea { box-sizing: border-box; width: 100%; min-height: 150px; resize: vertical; padding: 12px; border: 1px solid var(--oh-border); border-radius: 8px; background: white; color: var(--oh-ink); font: 400 14px/1.6 var(--oh-sans); }
+.oh-intro-draft p, .oh-warm-intro > [role="status"] p { margin: 10px 0; font-size: 12px; line-height: 1.6; }
+.oh-intro-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.oh-intro-actions .oh-text-link { border: 0; background: none; cursor: pointer; }
+.oh-intro-draft > .oh-text-link { margin-top: 10px; border: 0; background: none; cursor: pointer; }
+.oh-intro-draft .oh-intro-error { padding: 10px 12px; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; color: #9f1239; overflow-wrap: anywhere; }
 @media (max-width: 760px) {
   .oh-person {
     flex-wrap: wrap;

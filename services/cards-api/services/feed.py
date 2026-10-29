@@ -144,7 +144,7 @@ def _items_for(row: dict, now: datetime, github_items: list[dict], earlier: bool
     beacon = active_beacon(card, now)
     if beacon and (at := _when(beacon.created_at, now)):
         out.append({"kind": "ask", "at": at, "key": beacon.id or beacon.created_at.isoformat(), "ask_id": beacon.id,
-                    "content": {"text": beacon.text.strip()}})
+                    "content": {"text": beacon.text.strip(), "kind": beacon.kind or "other", "url": beacon.url}})
 
     seen: set[str] = set()
     for fact in live_facts(card.zynd_memory, now):
@@ -302,6 +302,7 @@ def rank_feed(
     filter: str = "all",
     limit: int = DEFAULT_LIMIT,
     routed: frozenset | set = frozenset(),
+    kind: str | None = None,
 ) -> list[dict]:
     """The whole feed in display order: every recent item (ranked by score), then, for the "all" and
     "network" filters, the earlier items (newest first). Earlier items never outrank recent ones, and
@@ -310,7 +311,8 @@ def rank_feed(
     `rows` are published-card rows ({"id", "handle", "model", "unit", "claimed", "published_at"});
     only claimed cards take part, since only a claimed card can be messaged. `connections` is
     handle -> {"id", "status", "incoming"}; `github` is handle -> items from feed_github.get();
-    `routed` is the ids of asks the people search routed to the viewer."""
+    `routed` is the ids of asks the people search routed to the viewer; `kind` (with the "asks" filter)
+    keeps only asks of that kind."""
     limit = max(1, min(limit, MAX_LIMIT))
     own = (viewer.handle or "").lower()
     recent: list[dict] = []
@@ -324,7 +326,7 @@ def rank_feed(
             continue
         card: AgentProfileCard = row["model"]
         for item in _items_for(row, now, github.get(row["handle"]) or [], earlier=filter != "asks"):
-            if filter == "asks" and item["kind"] != "ask":
+            if filter == "asks" and (item["kind"] != "ask" or (kind and item["content"]["kind"] != kind)):
                 continue
             score, reason = _score_and_reason(item, viewer, row, connection, now, routed)
             built = {
@@ -370,11 +372,12 @@ def build_feed(
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
     routed: frozenset | set = frozenset(),
+    kind: str | None = None,
 ) -> dict:
     """One page of the feed: {"items": [...], "next_cursor": str | None}. See rank_feed for the order;
     paging is an offset into that one list, so it is consistent across the recent / earlier boundary."""
     limit = max(1, min(limit, MAX_LIMIT))
-    ordered = rank_feed(viewer, rows, connections, blocked, github, now, filter=filter, limit=limit, routed=routed)
+    ordered = rank_feed(viewer, rows, connections, blocked, github, now, filter=filter, limit=limit, routed=routed, kind=kind)
     page = ordered[offset:offset + limit]
     for item in page:
         item.pop("_ask_id", None)
@@ -473,14 +476,22 @@ def _context(user_id: str, now: datetime) -> Context:
 
 
 def feed_for_user(user_id: str, *, filter: str = "all", limit: int = DEFAULT_LIMIT, offset: int = 0,
-                  now: datetime | None = None) -> dict:
+                  now: datetime | None = None, kind: str | None = None) -> dict:
     """The feed for a signed-in person. Blocking (database and snapshot reads): call it from a
     threadpool, as the other network routes do."""
     ctx = _context(user_id, now or datetime.now(timezone.utc))
     page = build_feed(ctx.viewer, ctx.rows, ctx.connections, ctx.blocked, ctx.github, ctx.now,
-                      filter=filter, limit=limit, offset=offset, routed=ctx.routed)
-    page["viewer"] = {"has_card": ctx.mine is not None, "handle": ctx.viewer.handle}
+                      filter=filter, limit=limit, offset=offset, routed=ctx.routed, kind=kind)
+    page["viewer"] = {"has_card": ctx.mine is not None, "handle": ctx.viewer.handle, **viewer_identity(ctx.viewer.card)}
     return page
+
+
+def viewer_identity(card: AgentProfileCard | None) -> dict:
+    """The viewer's own name, headline, photo and place, so the ask composer can preview a post as it
+    will look. Their own public card data; empty without a card."""
+    identity = card.identity if card else None
+    return {"name": (identity.name if identity else "") or "", "headline": (identity.headline if identity else "") or "",
+            "avatar_url": (identity.avatar_url if identity else "") or None, "location": (identity.location if identity else "") or ""}
 
 
 # --- Replying ---------------------------------------------------------------------------------

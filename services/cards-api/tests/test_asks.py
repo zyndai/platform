@@ -94,7 +94,7 @@ def test_the_card_write_comes_first_a_failed_swap_stores_no_ask(use_db, schedule
 
 # --- The tables are missing (migration not applied) --------------------------------------------
 
-def test_publish_dismiss_and_the_rest_work_without_the_tables_and_log_once(use_db, scheduled, caplog):
+def test_publish_dismiss_and_the_rest_work_without_the_tables_and_log_once(use_db, scheduled, emitted, caplog):
     db = use_db(cards_db(MissingTablesDb))
     caplog.set_level(logging.INFO, logger="services.asks")
     value = beacons.save_beacon("ana", "ana@x.test", "Looking for a designer")
@@ -443,7 +443,7 @@ def test_outcome_without_the_tables_is_a_404_not_a_crash(use_db):
 
 # --- The owner's list ---------------------------------------------------------------------------
 
-def test_the_owners_list_has_the_live_ask_and_unanswered_recent_ones_with_offers_in_three_queries(use_db):
+def test_the_owners_list_has_the_live_ask_and_unanswered_recent_ones_with_offers_in_four_queries(use_db):
     db = use_db(cards_db(
         asks=[ask_row(ASK_1, created_days=1, text="Live ask"),
               ask_row(ASK_2, created_days=12, lives_days=7, text="Expired five days ago"),
@@ -457,7 +457,7 @@ def test_the_owners_list_has_the_live_ask_and_unanswered_recent_ones_with_offers
     live, ended = listed
     assert [o["handle"] for o in live["offers"]] == ["bob"] and live["offers"][0]["name"] == "Bob Lee"
     assert [o["handle"] for o in ended["offers"]] == ["cy"]
-    assert db.asked == ["asks", "ask_offers", "agent_profile_cards"]
+    assert db.asked == ["asks", "ask_offers", "agent_profile_cards", "ask_routes"]
 
 
 # --- Credits ------------------------------------------------------------------------------------

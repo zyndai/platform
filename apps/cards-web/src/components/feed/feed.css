@@ -1,6 +1,7 @@
 /* The action feed, in the look of the messenger and Directory: lavender canvas (from DiscoverShell),
  * white rounded panels, the edition accent. Tokens mirror network/network-v2.css. */
-.fd-page {
+.fd-page,
+.fd-scope {
   --fd-ink: #1E1B4B;
   --fd-soft: #5B5B7E;
   --fd-faint: #6B6A8C;
@@ -13,16 +14,24 @@
   --fd-danger: #B91C1C;
   --fd-danger-bg: #FEF2F2;
   --fd-danger-line: #FECACA;
-  --fd-ui: var(--dc-ui, "Plus Jakarta Sans", system-ui, sans-serif);
-  --fd-mono: var(--dc-mono, "Space Mono", ui-monospace, monospace);
-  max-width: 720px;
-  margin: 8px auto 0;
+  --fd-ui: var(--dc-ui, var(--ed-ui), "Plus Jakarta Sans", system-ui, sans-serif);
+  --fd-mono: var(--dc-mono, var(--ed-mono), "Space Mono", ui-monospace, monospace);
   color: var(--fd-ink);
   font-family: var(--fd-ui);
+  /* The site body is tightly tracked and one line high; the composer lives outside .dc, so say it here. */
+  letter-spacing: normal;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+.fd-page {
+  max-width: 720px;
+  margin: 8px auto 0;
+  /* Room for the floating Post button, so it never covers the last item or "Load more". */
+  padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
 }
 
 /* globals.css styles bare headings as uppercase gradient display text (with !important). */
-.fd-page :is(h1, h2) {
+.fd-page :is(h1, h2), .fd-scope :is(h1, h2) {
   background: none;
   -webkit-text-fill-color: currentColor;
   font-family: var(--fd-ui) !important;
@@ -63,7 +72,7 @@
 .fd-empty p, .fd-fallback p { margin: 8px 0 0; color: var(--fd-soft); font-size: 14px; line-height: 1.6; }
 .fd-fallback .fd-button { margin-top: 16px; }
 
-.fd-page a:not(.fd-button):not(.fd-tab):not(.fd-name) { color: var(--fd-accent-hi); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+:is(.fd-page, .fd-scope) a:not(.fd-button):not(.fd-tab):not(.fd-name):not(.fd-chip) { color: var(--fd-accent-hi); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 
 .fd-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
 .fd-item { padding: 18px; min-width: 0; }
@@ -152,7 +161,68 @@ span.fd-note { margin: 0; }
 
 .fd-more { display: grid; justify-items: center; gap: 10px; margin: 20px 0 8px; }
 
-.fd-page :is(a, button, textarea):focus-visible { outline: 3px solid var(--fd-accent); outline-offset: 2px; }
+:is(.fd-page, .fd-scope) :is(a, button, textarea, input):focus-visible { outline: 3px solid var(--fd-accent); outline-offset: 2px; }
+
+/* Ask items: the kind chip, the link, and the small Report control. */
+.fd-chip {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--fd-edge);
+  background: var(--fd-tint);
+  color: var(--fd-chip-ink);
+  font: 700 12px/1.3 var(--fd-ui);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.fd-ask-kind { margin: 0 0 8px; }
+.fd-ask-link, .fd-preview-link { display: inline-flex; align-items: center; gap: 3px; margin-top: 8px; font-size: 13px; overflow-wrap: anywhere; }
+.fd-preview-link { color: var(--fd-accent-hi); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.fd-actions .fd-report-open { margin-left: auto; }
+.fd-linkbutton {
+  padding: 6px 4px;
+  border: 0;
+  background: none;
+  color: var(--fd-faint);
+  font: 600 12px/1 var(--fd-ui);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.fd-linkbutton:hover { color: var(--fd-ink); }
+.fd-report { margin: 14px 0 0; padding: 14px 0 0; border: 0; border-top: 1px solid var(--fd-line); display: grid; gap: 8px; min-width: 0; }
+.fd-report legend { padding: 0; font-size: 13px; font-weight: 700; }
+.fd-report label { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.fd-report input { accent-color: var(--fd-accent); }
+
+/* The asks tab's kind filter. */
+.fd-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin: -6px 0 16px; }
+.fd-kinds .fd-chip { padding: 6px 12px; background: rgba(255, 255, 255, .7); color: var(--fd-soft); }
+.fd-kinds .fd-chip:hover { color: var(--fd-ink); }
+.fd-kinds .fd-chip[aria-current="true"] { background: #fff; color: var(--fd-accent-hi); border-color: var(--fd-accent); }
+
+/* "Your live ask", pinned at the top. */
+.fd-live { padding: 18px; margin: 0 0 16px; border-color: var(--fd-edge); background: linear-gradient(180deg, #FBFAFF, #fff); }
+.fd-live-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.fd-live-title { margin: 0; color: var(--fd-faint); font: 700 11px/1 var(--fd-mono); letter-spacing: .08em; text-transform: uppercase; }
+.fd-live .fd-text { margin-top: 10px; }
+.fd-live-stats { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 10px 0 0; padding: 0; list-style: none; color: var(--fd-soft); font-size: 13px; }
+.fd-live .fd-actions { margin-top: 14px; }
+
+.fd-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  z-index: 40;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--fd-ink);
+  color: #fff;
+  font: 600 13px/1.3 var(--fd-ui);
+  box-shadow: 0 12px 30px -12px rgba(30, 27, 75, .6);
+}
 
 @media (max-width: 640px) {
   .fd-head h1 { font-size: 24px !important; }
@@ -161,3 +231,6 @@ span.fd-note { margin: 0; }
   .fd-meta { order: 3; flex-basis: 100%; display: flex; justify-content: flex-start; align-items: center; gap: 10px; }
   .fd-actions .fd-button, .fd-composer-actions .fd-button { flex: 1 1 auto; }
 }
+
+.fd-actions .fd-report { flex: 1 0 100%; }
+.fd-linkbutton.fd-inline { padding: 0; color: var(--fd-accent-hi); font-size: inherit; font-weight: 600; }

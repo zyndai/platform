@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
@@ -30,7 +31,7 @@ from uuid import UUID
 from fastapi import HTTPException
 
 import config
-from models.card import AgentProfileCard
+from models.card import AgentProfileCard, Beacon
 from services.saved_searches import STRONG_MATCH
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 ASK_ROUTE_MAX = 5                       # people an ask is routed to
 ASK_ROUTE_CANDIDATES = 20               # search results read to find them
 ASK_ROUTE_MIN_SCORE = STRONG_MATCH      # search.py's scale: 0.6+ is a good match (what saved-search alerts wait for)
+ASK_POSTS_PER_DAY = 5                   # publishes one card may make in a rolling 24 hours
 ASKS_PER_DIGEST = 2                     # "Asks you could help with" entries in one digest
 ASK_CLOSEOUT_DAYS = 14                  # how long an ended ask still asks "did you find help?"
 CREDITS_SHOWN = 3                       # latest credits listed on a helper's card
@@ -136,6 +138,21 @@ def record_publish(card_row: dict, ask_id: str, text: str, created_at: datetime,
             .eq("card_id", card_row["id"]).is_("ended_at", "null").neq("id", ask_id).execute()
         return True
     return bool(guarded("record_publish", run, False))
+
+
+def enforce_post_limit(card_id: str, now: datetime) -> None:
+    """429 when the card already published ASK_POSTS_PER_DAY asks in the last 24 hours, counted from the
+    asks table (a replace and a repost each count, so editing cannot be used to spam). Skipped when the
+    table is missing or cannot be read: a limit that cannot be checked must not stop anyone posting."""
+    posted = guarded("post_limit", lambda: _sb().table("asks").select("id", count="exact").eq("card_id", card_id)
+                     .gte("created_at", _iso(now - timedelta(hours=24))).execute().count, None)
+    if isinstance(posted, int) and posted >= ASK_POSTS_PER_DAY:
+        raise HTTPException(429, f"You can post at most {ASK_POSTS_PER_DAY} asks a day. Try again tomorrow.")
+
+
+def emit_published(kind: str | None, *, replaced: bool) -> None:
+    """Count a publish. The kind and whether it replaced a live ask: never the text or the link."""
+    _emit("ask_published", meta={"kind": kind or "other", "replaced": replaced})
 
 
 def record_dismiss(card_id: str, now: datetime) -> None:
@@ -296,9 +313,24 @@ def _cards_by_id(ids: list[str]) -> dict[str, dict]:
     return {r["id"]: r for r in rows}
 
 
+def beacon_details(card: dict | None, ask_id: str) -> dict:
+    """{"kind", "url"} of the ask `ask_id` as the card's beacon still holds it. The asks table keeps
+    neither (no migration), so an ask that is no longer the card's beacon has none. Read through the
+    Beacon model, so a stored bad value comes back as None."""
+    raw = (card or {}).get("beacon")
+    if isinstance(raw, dict) and raw.get("id") == ask_id:
+        try:
+            beacon = Beacon.model_validate(raw)
+            return {"kind": beacon.kind, "url": beacon.url}
+        except Exception:  # noqa: BLE001 — a beacon that cannot be read has no kind
+            pass
+    return {"kind": None, "url": None}
+
+
 def list_for_owner(card_row: dict, now: datetime) -> dict:
     """The owner's current ask plus asks that ended in the last ASK_CLOSEOUT_DAYS without an outcome,
-    each with who offered. Three queries however many asks: asks, offers, the offerers' cards."""
+    each with who offered and how many people it was routed to. Four queries however many asks: asks,
+    offers, the offerers' cards, routes."""
     def run() -> list[dict]:
         since = _iso(now - timedelta(days=ASK_CLOSEOUT_DAYS + 8))     # an ask lives 7 days before it expires
         asks = (_sb().table("asks").select("*").eq("card_id", card_row["id"]).gte("created_at", since)
@@ -315,6 +347,8 @@ def list_for_owner(card_row: dict, now: datetime) -> dict:
         offers = (_sb().table("ask_offers").select("id,ask_id,helper_card_id,created_at,credited_at")
                   .in_("ask_id", [a["id"] for a, _ in shown]).order("created_at").execute().data or [])
         people = _cards_by_id([o["helper_card_id"] for o in offers])
+        routes = (_sb().table("ask_routes").select("ask_id").in_("ask_id", [a["id"] for a, _ in shown]).execute().data or [])
+        routed = Counter(r["ask_id"] for r in routes)
         out = []
         for ask, status in shown:
             mine = [{**_person(o["helper_card_id"], people[o["helper_card_id"]]), "offered_at": o["created_at"],
@@ -324,7 +358,8 @@ def list_for_owner(card_row: dict, now: datetime) -> dict:
                 continue            # the owner posted a new ask and nobody had offered: nothing to close
             out.append({"id": ask["id"], "text": ask["text"], "status": status, "created_at": ask["created_at"],
                         "expires_at": ask["expires_at"], "ended_at": ask.get("ended_at"), "outcome": ask.get("outcome"),
-                        "offers": mine})
+                        **beacon_details(card_row.get("card"), ask["id"]), "routed": routed[ask["id"]],
+                        "offer_count": len(mine), "offers": mine})
         return out
     return {"asks": guarded("list_for_owner", run, []) or []}
 
@@ -519,7 +554,8 @@ def digest_items(card_row: dict, blocked: set[str], now: datetime) -> dict:
                     continue
                 if len(out["routed"]) < ASKS_PER_DIGEST:
                     out["routed"].append({"ask_id": ask["id"], "text": ask["text"], "asker_handle": asker["handle"],
-                                          "asker_name": _first_name(asker.get("card"))})
+                                          "asker_name": _first_name(asker.get("card")),
+                                          "kind": beacon_details(asker.get("card"), ask["id"])["kind"]})
                     out["marks"]["routes"].append(ask["id"])
         since = _iso(now - timedelta(days=ASK_CLOSEOUT_DAYS + 8))
         mine = (_sb().table("asks").select("id,text,ended_at,expires_at,end_reason,outcome,outcome_prompted_at")

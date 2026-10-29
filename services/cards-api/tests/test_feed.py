@@ -54,7 +54,7 @@ def test_a_live_beacon_becomes_an_ask_stamped_with_its_creation_time():
     result = page([row("ana", beacon=beacon("Looking for a designer", days_old=2))])
     (item,) = result["items"]
     assert item["kind"] == "ask"
-    assert item["content"] == {"text": "Looking for a designer"}
+    assert item["content"] == {"text": "Looking for a designer", "kind": "other", "url": None}
     assert item["at"] == ago(days=2)
     assert item["author"]["handle"] == "ana"
     assert item["author"]["name"] == "Ana"
@@ -296,14 +296,15 @@ def test_feed_for_user_leaves_out_self_blocked_and_hidden_and_asks_the_cache_for
     result = feed.feed_for_user(UID, now=NOW)
     assert kinds(result) == [("ask", "ana")]
     assert result["items"][0]["connection"] == {"id": "c1", "status": "accepted", "incoming": False}
-    assert result["viewer"] == {"has_card": True, "handle": "me"}
+    assert result["viewer"] == {"has_card": True, "handle": "me", "name": "Me", "headline": "me headline",
+                                "avatar_url": None, "location": "Pune"}
     assert wired == [["ana-dev"]]                  # only people who can appear are looked up
 
 
 def test_a_viewer_without_a_card_still_gets_the_feed(wired, monkeypatch):
     monkeypatch.setattr(network, "_find_card_for_user", lambda uid: None)
     result = feed.feed_for_user(UID, now=NOW)
-    assert result["viewer"] == {"has_card": False, "handle": None}
+    assert result["viewer"] == {"has_card": False, "handle": None, "name": "", "headline": "", "avatar_url": None, "location": ""}
     assert ("ask", "ana") in kinds(result)
 
 
@@ -342,7 +343,7 @@ def test_the_feed_route_passes_filter_limit_and_cursor_for_the_bound_user(monkey
                        headers={"Authorization": "Bearer memory-feed-test", "X-Zynd-User": UID})
     assert response.status_code == 200
     assert response.json() == {"items": [], "next_cursor": None, "viewer": {"has_card": False, "handle": None}}
-    assert seen == {"uid": UID, "filter": "asks", "limit": 5, "offset": 10}
+    assert seen == {"uid": UID, "filter": "asks", "limit": 5, "offset": 10, "kind": None}
 
 
 def test_the_feed_route_rejects_bad_parameters(monkeypatch):

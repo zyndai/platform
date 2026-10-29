@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from postgrest.exceptions import APIError
 
 import config
+from models.card import ASK_KINDS
 from services import cards as cards_service
 from services.suggested_posts import get_suggested_posts
 
@@ -305,7 +306,8 @@ def render_digest(handle: str, posts: dict | None, people: dict | None, name: st
     if d["asks"]:
         lines += ["", "ASKS YOU COULD HELP WITH"]
         for a in d["asks"]:
-            lines.append(f"- {a.get('asker_name') or a.get('asker_handle')}: {clip_summary(a.get('text') or '', EXCERPT_WORDS)}")
+            lines.append(f"- {_ask_kind_prefix(a, ' · ')}{a.get('asker_name') or a.get('asker_handle')}: "
+                         f"{clip_summary(a.get('text') or '', EXCERPT_WORDS)}")
         lines.append(f"  {_base()}/feed?filter=asks")
     if d["ask_prompts"] or d["ask_credits"]:
         lines += ["", "ABOUT YOUR ASKS"]
@@ -511,13 +513,18 @@ def _network_html(d: dict) -> str:
     return _label("From your network") + _box("".join(rows)) if rows else ""
 
 
+def _ask_kind_prefix(ask: dict, sep: str) -> str:
+    """"Building a team · " for an ask that has a kind, else nothing. The caller escapes the result."""
+    return f"{ASK_KINDS[ask['kind']]}{sep}" if ask.get("kind") in ASK_KINDS else ""
+
+
 def _asks_html(d: dict) -> str:
     """Asks routed to this owner, then the owner's own ask follow-ups. Everything is escaped."""
     rows = []
     for a in d["asks"]:
         who = a.get("asker_name") or a.get("asker_handle") or ""
-        rows.append(_row(len(rows), _avatar(who), _esc(who), _esc(clip_summary(a.get("text") or "", EXCERPT_WORDS)),
-                         f"{_base()}/feed?filter=asks", "I can help"))
+        text = _ask_kind_prefix(a, ": ") + clip_summary(a.get("text") or "", EXCERPT_WORDS)
+        rows.append(_row(len(rows), _avatar(who), _esc(who), _esc(text), f"{_base()}/feed?filter=asks", "I can help"))
     out = _label("Asks you could help with") + _box("".join(rows)) if rows else ""
     own = []
     for _ in d["ask_prompts"]:

@@ -142,6 +142,29 @@ Anyone who can push to `main` can run code as `ubuntu` on the box through this
 pipeline, same as a normal CD setup. The workflow never runs for pull requests,
 so forks can't reach the secrets.
 
+## Scheduled jobs (cron)
+
+Prod's recurring jobs run from the `ubuntu` user's crontab on the box, not from GitHub
+Actions (GitHub throttles scheduled workflows: morning-digest got about 10% of its runs).
+[`crontab`](crontab) lists them; [`cron/run-job.sh`](cron/run-job.sh) calls cards-api's
+`/internal/*` endpoint on `127.0.0.1:8002` with `CRON_SECRET` read from
+`services/cards-api/.env.prod`, so there is nothing new to configure. Prod only: dev shares
+prod's database, so a second set would email the same owners.
+
+| Job | Schedule (UTC) | Endpoint |
+|---|---|---|
+| morning-digest | every 30 min | `/internal/morning-digest` |
+| saved-searches | `:15` every 6 h | `/internal/saved-searches/run` |
+| suggestions-refresh | 23:30 daily | `/internal/suggestions/refresh` |
+| owner-notifications | 02:30 daily | `/internal/owner-notifications` |
+
+`deploy.sh` (prod) re-installs the crontab when `crontab` or `cron/` change, as a marked
+block that leaves other entries alone; by hand: `infra/single-box/cron/install.sh [--remove]`.
+Logs: `~/.zynd-box/cron/<job>.log`; `<job>.last-ok` holds the epoch of the last success.
+To get a Mattermost post when a job fails, put `MATTERMOST_WEBHOOK_URL=...` in
+`~/.zynd-box/alerts.env`. Cron does not catch up after downtime; the endpoints are built
+for that (the digest has a 3 h window, suggestions recompute live when stale).
+
 ## Update
 
 ```bash

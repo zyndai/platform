@@ -1,0 +1,16 @@
+# Scheduled jobs for the single box's PROD environment. Installed into the `ubuntu`
+# user's crontab by cron/install.sh (which deploy.sh runs when this file changes).
+# Prod only: dev shares prod's database, so a dev run would email the same real owners.
+# These replace the GitHub Actions schedules (morning-digest, saved-searches,
+# suggestions-refresh, owner-notifications). Output goes to ~/.zynd-box/cron/<job>.log.
+CRON_TZ=UTC
+
+# Pokes cards-api to email owners their digest at 07:00 local time. cards-api decides who
+# is due (07:00-10:00 local, once per local day), so repeated and late ticks are safe.
+*/30 * * * * /home/ubuntu/zynd-platform/infra/single-box/cron/run-job.sh morning-digest /internal/morning-digest 900
+# Re-runs saved people searches and nudges owners about new matches (no-op unless FEATURE_NETWORK_CONTROLS).
+15 */6 * * * /home/ubuntu/zynd-platform/infra/single-box/cron/run-job.sh saved-searches /internal/saved-searches/run 600
+# 05:00 IST: stores each claimed card's top people to meet, before the first digests.
+30 23 * * * /home/ubuntu/zynd-platform/infra/single-box/cron/run-job.sh suggestions-refresh /internal/suggestions/refresh 1800
+# 08:00 IST: scans owner notifications; sends the weekly digest at most once per ISO week.
+30 2 * * * /home/ubuntu/zynd-platform/infra/single-box/cron/run-job.sh owner-notifications /internal/owner-notifications 900

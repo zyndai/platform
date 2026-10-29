@@ -5,11 +5,6 @@ import Link from "next/link";
 import { ArrowUpRight, Check, Clock3, Send } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
-  cardsNetworkRequest,
-  connectionRequestNotice,
-  type CardConnection,
-} from "@/lib/cards-network";
-import {
   FEED_FILTERS,
   KIND_LABEL,
   MAX_REPLY_LENGTH,
@@ -17,6 +12,7 @@ import {
   fetchFeed,
   relativeTime,
   replyFor,
+  replyToFeedItem,
   safeHref,
   type FeedConnection,
   type FeedFilter,
@@ -108,29 +104,11 @@ export function FeedClient({
     setBusy(true);
     setError("");
     try {
-      const accessToken = await currentToken(token);
-      const handleKey = item.author.handle.toLowerCase();
-      const action = actionFor(hasCard, connectionFor(item));
-      let connectionId = action.kind === "reply" && action.via === "dm" ? action.connectionId : undefined;
-      if (!connectionId) {
-        const result = await cardsNetworkRequest<{ connection: CardConnection; existing: boolean }>(
-          "/connections", accessToken, "POST", { target_handle: item.author.handle, message: text },
-        );
-        const { id, status, incoming } = result.connection;
-        setConnections((current) => ({ ...current, [handleKey]: { id, status, incoming } }));
-        if (result.existing) {
-          // The page was out of date: a request already exists, and no message went with this call.
-          if (status !== "accepted") throw new Error(connectionRequestNotice(result));
-          connectionId = id;
-        }
-      }
-      if (connectionId) {
-        await cardsNetworkRequest(`/connections/${connectionId}/messages`, accessToken, "POST", {
-          content: text,
-          client_id: crypto.randomUUID(),
-        });
-      }
-      setSent((current) => ({ ...current, [item.id]: connectionId ? `/network?c=${connectionId}` : "/network" }));
+      // One call: the server picks a message or a connection request from the real connection state.
+      const result = await replyToFeedItem(await currentToken(token), item.id, text, crypto.randomUUID());
+      const { id, status, incoming } = result.connection;
+      setConnections((current) => ({ ...current, [item.author.handle.toLowerCase()]: { id, status, incoming } }));
+      setSent((current) => ({ ...current, [item.id]: result.channel === "dm" ? `/network?c=${id}` : "/network" }));
       setOpenId(null);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Could not send. Please try again.");
@@ -164,8 +142,6 @@ export function FeedClient({
             {item.author.name.split(/\s+/)[0]} wants to connect · Respond
           </Link>
         );
-      case "unavailable":
-        return <span className="fd-status">Not available</span>;
       case "reply":
         return (
           <button
@@ -339,11 +315,17 @@ export function FeedClient({
         </section>
       ) : (
         <ul className="fd-list">
-          {items.map((item) => {
+          {items.map((item, index) => {
             const who = item.author;
             const when = relativeTime(item.at, nowMs);
+            const startsEarlier = item.earlier && !items[index - 1]?.earlier;
             return (
               <li key={item.id}>
+                {startsEarlier && (
+                  <div className="fd-divider" role="separator" aria-label="Earlier items">
+                    <span>Earlier</span>
+                  </div>
+                )}
                 <article className="fd-item" aria-labelledby={`fd-who-${item.id}`}>
                   <div className="fd-item-head">
                     <PersonAvatar name={who.name} src={who.avatar_url ?? undefined} size={44} />

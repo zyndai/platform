@@ -1,6 +1,5 @@
 // Types, fetch helper and pure helpers for the action feed (cards-api GET /cards/feed).
-// Only type-only imports here, so `node --test` can load this file without the "@/" alias.
-import type { ConnectionStatus } from "@/lib/cards-network";
+// No runtime imports here, so `node --test` can load this file without the "@/" alias.
 
 export type FeedKind = "ask" | "working_on" | "exploring" | "joined" | "github" | "post";
 export type FeedFilter = "all" | "asks" | "network";
@@ -12,10 +11,11 @@ export const FEED_FILTERS: { id: FeedFilter; label: string }[] = [
 ];
 
 /** How the viewer stands with the author; null when there is no connection row. `incoming` is true
- *  when the author asked and the viewer is the one who can answer. */
+ *  when the author asked and the viewer is the one who can answer. The server leaves out anyone the
+ *  viewer is blocked from, declined or revoked, so only these two states reach the page. */
 export interface FeedConnection {
   id: string;
-  status: ConnectionStatus;
+  status: "pending" | "accepted";
   incoming: boolean;
 }
 
@@ -35,6 +35,8 @@ interface FeedItemBase {
   id: string;
   /** When the thing happened (ISO 8601). */
   at: string;
+  /** Older than the recent window: shown after every recent item, under an "Earlier" divider. */
+  earlier: boolean;
   /** Why the viewer is seeing it ("You're connected", ...); empty when nothing specific applies. */
   reason: string;
   author: FeedAuthor;
@@ -78,6 +80,38 @@ export async function fetchFeed(
     throw new Error(detail);
   }
   return response.json() as Promise<FeedPage>;
+}
+
+/** The server's answer to a reply: it picked the channel from the real connection state. */
+export interface FeedReplyResult {
+  channel: "dm" | "request";
+  connection: FeedConnection;
+}
+
+/** Reply to a feed item. The server decides between a message and a connection request, applies the
+ *  request limits and refuses blocked or hidden people; its own message (a 409, a 429...) is the error. */
+export async function replyToFeedItem(
+  token: string,
+  itemId: string,
+  message: string,
+  clientId: string,
+): Promise<FeedReplyResult> {
+  const response = await fetch(`${API}/cards/feed/reply`, {
+    method: "POST",
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ item_id: itemId, message, client_id: clientId }),
+  });
+  if (!response.ok) {
+    let detail = "Could not send. Please try again.";
+    try {
+      const body = await response.json();
+      // Validation errors arrive as a list; a plain string is the server's own message.
+      if (typeof body.detail === "string") detail = body.detail;
+    } catch { /* keep the fallback */ }
+    throw new Error(detail);
+  }
+  return response.json() as Promise<FeedReplyResult>;
 }
 
 export function parseFilter(raw: string | string[] | null | undefined): FeedFilter {
@@ -159,18 +193,13 @@ export type FeedAction =
   | { kind: "create-card" }
   | { kind: "reply"; via: "dm" | "request"; connectionId?: string }
   | { kind: "requested" }
-  | { kind: "respond"; connectionId: string }
-  | { kind: "unavailable" };
+  | { kind: "respond"; connectionId: string };
 
 export function actionFor(hasCard: boolean, connection: FeedConnection | null): FeedAction {
   if (!hasCard) return { kind: "create-card" };
   if (!connection) return { kind: "reply", via: "request" };
   if (connection.status === "accepted") return { kind: "reply", via: "dm", connectionId: connection.id };
-  if (connection.status === "pending") {
-    return connection.incoming ? { kind: "respond", connectionId: connection.id } : { kind: "requested" };
-  }
-  // declined, revoked, blocked: the server keeps one final row per pair, so no new request can work.
-  return { kind: "unavailable" };
+  return connection.incoming ? { kind: "respond", connectionId: connection.id } : { kind: "requested" };
 }
 
 /** Only http(s) links are drawn: they come from other people's cards. */

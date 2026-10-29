@@ -23,6 +23,7 @@ every service listed as a reader.
 | `cards.group_memory`, `cards.group_memory_state`, `cards.group_message_memory` | cards | cards-api only; rolling group summary/facts, never raw messages |
 | `cards.group_agent_jobs`, `cards.group_agent_preferences` | cards | cards-api only; durable mention queue and per-user agent opt-out |
 | `cards.card_suggestions`, `cards.card_suggestion_impressions` | cards | cards-api only (`services/suggestions.py`); nightly people-to-meet list, and what the digest/owner home showed and the owner did |
+| `cards.asks`, `cards.ask_offers`, `cards.ask_routes` | cards | cards-api only (`services/asks.py`); a posted beacon as an ask, who it was routed to, who offered help and the asker's credit; service role only |
 | `identity.*` (empty today; Zynd Account tables in Stage 2) | shared | persona, cards |
 | `persona_intro_requests`, `persona_intro_rules`, `persona_intro_audit` | persona | cards-api via Persona HTTP; persona-web (requests only, participant RLS) |
 | `cards.intro_requests` | cards | cards-api; minimal Persona status projection and activity events |

@@ -7,9 +7,10 @@ import {
   type CardFact,
 } from "@/lib/cards";
 import { logAgentFetch } from "@/lib/track";
+import { visitorFrom } from "@/lib/visitor";
 import { ownerHomeEnabled } from "@/lib/owner-home";
 import { cleanTopic, publicTopics } from "@/lib/profile-quality";
-import { featureStaleSignals, parseWorkingOnStamp } from "@/lib/stale-signals";
+import { parseWorkingOnStamp } from "@/lib/stale-signals";
 
 export const revalidate = 60;
 
@@ -55,7 +56,7 @@ function liveFactsFromMemory(raw: Array<Record<string, unknown>> | null | undefi
 
 export async function GET(req: Request, { params }: Params) {
   const { handle } = await params;
-  logAgentFetch("data.json", req.headers.get("user-agent"), handle);
+  logAgentFetch("data.json", visitorFrom(req.headers), handle);
   const card = await fetchCardByHandle(handle);
 
   if (card?.handle && card.handle !== handle) {
@@ -130,7 +131,7 @@ export async function GET(req: Request, { params }: Params) {
   // When the Working on list last changed or its owner confirmed it, so agents can judge how far
   // to trust it. Left out when unknown (cards from before cards migration 0033).
   const workingOnStamp = view?.working_on_updated_at ?? card.working_on_updated_at;
-  const workingOnUpdatedAt = featureStaleSignals() && parseWorkingOnStamp(workingOnStamp) !== null ? workingOnStamp : null;
+  const workingOnUpdatedAt = parseWorkingOnStamp(workingOnStamp) !== null ? workingOnStamp : null;
 
   const jobFromFacts = facts.find((f) => f.type === "is_affiliated_with")?.text;
   const jobTitle = identity.headline || jobFromFacts || undefined;

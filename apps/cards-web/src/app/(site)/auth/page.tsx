@@ -2,10 +2,10 @@
 
 /**
  * Cards login. LinkedIn is the default and always first (D12: persona's
- * login). Google and the email magic link exist behind NEXT_PUBLIC_AUTH_GOOGLE
- * / NEXT_PUBLIC_AUTH_EMAIL (lib/auth/providers.ts), both off by default;
- * turning either on reverses D12 for that method. With both off this page is
- * LinkedIn-only, exactly as before.
+ * login). Google and the email magic link show only when lib/auth/providers.ts
+ * allows them (Google: enabled on Supabase; email: also off in code until SMTP
+ * is confirmed); either one reverses D12 for that method. With both off this
+ * page is LinkedIn-only, exactly as before.
  *
  * Drawn in the product's look (the directory's `.dc` canvas) because that is
  * where the "Sign in" buttons that lead here live.
@@ -16,7 +16,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { EDITION_FONT_VARS } from "@/components/editions/fonts";
 import { startLinkedInOAuth } from "@/lib/auth/session";
-import { alternateSignInEnabled, emailSignInEnabled, googleSignInEnabled } from "@/lib/auth/providers";
+import { hasAlternateSignIn, type SignInMethods } from "@/lib/auth/providers";
+import { useSignInMethods } from "@/hooks/useSignInMethods";
 import { AlternateSignIn } from "@/components/auth/alternate-sign-in";
 import "@/components/discover/discover.css";
 import "./auth.css";
@@ -34,12 +35,12 @@ function LinkedInIcon() {
 }
 
 /** Copy for the `?error=` codes the callback sends back (auth/callback/route.ts). */
-function callbackErrorCopy(code: string): string {
+function callbackErrorCopy(code: string, methods: SignInMethods): string {
   if (code === "auth_callback_failed") return "Sign-in failed — please try again.";
-  if (emailSignInEnabled && code === "link_expired") {
+  if (methods.email && code === "link_expired") {
     return "That sign-in link has expired or was already used. Request a new one below.";
   }
-  if (emailSignInEnabled && code === "link_other_browser") {
+  if (methods.email && code === "link_other_browser") {
     return "Sign-in couldn't finish in this browser. If you used an emailed link, open it in the browser you requested it from, or request a new one below.";
   }
   return code;
@@ -47,6 +48,7 @@ function callbackErrorCopy(code: string): string {
 
 function AuthPageContent() {
   const searchParams = useSearchParams();
+  const signInMethods = useSignInMethods();
   const next = searchParams.get("next") || "";
   const [oauthError, setOauthError] = useState<string | null>(searchParams.get("error"));
 
@@ -75,7 +77,7 @@ function AuthPageContent() {
 
             {oauthError && (
               <p role="alert" className="da-error">
-                {callbackErrorCopy(oauthError)}
+                {callbackErrorCopy(oauthError, signInMethods)}
               </p>
             )}
 
@@ -96,8 +98,8 @@ function AuthPageContent() {
 
             <p className="da-note">Secure authentication powered by Supabase</p>
             <p className="da-fine">
-              {alternateSignInEnabled ? (
-                <>Zynd never sees or stores your {googleSignInEnabled ? "LinkedIn or Google" : "LinkedIn"} password.</>
+              {hasAlternateSignIn(signInMethods) ? (
+                <>Zynd never sees or stores your {signInMethods.google ? "LinkedIn or Google" : "LinkedIn"} password.</>
               ) : (
                 <>
                   You&apos;ll be redirected to LinkedIn to sign in. Zynd never sees or stores

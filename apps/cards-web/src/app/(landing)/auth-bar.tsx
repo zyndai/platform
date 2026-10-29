@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { startLinkedInOAuth, signOutAndLeave } from "@/lib/auth/session";
-import { alternateSignInEnabled } from "@/lib/auth/providers";
+import { hasAlternateSignIn } from "@/lib/auth/providers";
+import { useSignInMethods } from "@/hooks/useSignInMethods";
 import { useMyCard } from "@/hooks/useMyCard";
 import { useAuth } from "@/hooks/useAuth";
 import { displayUserName, initialsOf, pickUserAvatar } from "@/lib/identity";
@@ -131,6 +132,7 @@ function AccountPill({ name, avatar, hasCard, published, handle }: {
 export function AgentCardAuthBar() {
   const { ready, authenticated, handle, card } = useMyCard();
   const { user } = useAuth();
+  const signInMethods = useSignInMethods();
 
   function signIn() {
     void startLinkedInOAuth("/", "card");
@@ -162,8 +164,8 @@ export function AgentCardAuthBar() {
       ) : (
         <span className="w-[7.5rem] hidden sm:block" aria-hidden />
       )}
-      {ready && !authenticated && alternateSignInEnabled && (
-        // Google / email (behind flags) live on /auth; the button above stays LinkedIn (D12 default).
+      {ready && !authenticated && hasAlternateSignIn(signInMethods) && (
+        // Google / email (when Supabase has them on) live on /auth; the button above stays LinkedIn (D12 default).
         <Link
           href="/auth?next=%2F"
           className="text-[11px] font-mono font-medium text-white/50 hover:text-white px-1 py-2 leading-tight underline underline-offset-2"

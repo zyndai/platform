@@ -23,11 +23,6 @@ def card(**kwargs):
     return AgentProfileCard(id="c1", handle="alice", **{"working_on": ["Zynd Cards"], **kwargs})
 
 
-@pytest.fixture
-def stale_on(monkeypatch):
-    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", True)
-
-
 # ── freshness rules ──
 
 def test_legacy_card_without_a_stamp_is_never_stale():
@@ -48,7 +43,7 @@ def test_empty_working_on_has_nothing_to_go_stale():
     assert stale_signals.working_on_is_stale(c, NOW) is False
 
 
-def test_live_memory_fact_makes_the_public_list_fresh(stale_on):
+def test_live_memory_fact_makes_the_public_list_fresh():
     # #given an old stored stamp, but memory approved a new "is_working_on" two days ago
     approved = NOW - timedelta(days=2)
     c = card(working_on_updated_at=NOW - timedelta(days=200),
@@ -60,26 +55,25 @@ def test_live_memory_fact_makes_the_public_list_fresh(stale_on):
     assert stale_signals.working_on_is_stale(public, NOW) is False
 
 
-def test_memory_fact_from_the_future_cannot_pin_the_list_fresh(stale_on):
+def test_memory_fact_from_the_future_cannot_pin_the_list_fresh():
     c = card(zynd_memory=[{"predicate": "is_working_on", "object": "X", "approved_at": (NOW + timedelta(days=1)).isoformat()}])
     assert derive_public_signals(c, NOW).working_on_updated_at == NOW
 
 
-def test_stamp_reaches_the_card_view(stale_on):
+def test_stamp_reaches_the_card_view():
     stamp = NOW - timedelta(days=100)
     assert build_card_view(card(working_on_updated_at=stamp), claimed=True).working_on_updated_at == stamp
 
 
-# ── flag off: public reads exactly as before the feature ──
+# ── public reads: the stamp when known, no key when unknown ──
 
 def _public_routes(monkeypatch, stored: AgentProfileCard) -> TestClient:
     """GET /cards/{id}, /cards/by-handle/{h}, /cards/by-handle/{h}/view and /cards?q= over one stored
-    row whose card JSON carries the 0033 mirror."""
+    row."""
     from api import cards as card_routes
     from services import cards as cards_service
 
     row = {"card": stored.model_dump(mode="json"), "handle": "alice", "claimed": True}
-    assert "working_on_updated_at" in row["card"]
     monkeypatch.setattr(cards_service, "_select_public", lambda sb, finish: SimpleNamespace(data=[row]))
     monkeypatch.setattr(cards_service, "get_card", lambda _id: stored)
     monkeypatch.setattr(cards_service, "get_card_by_handle", lambda _h: stored)
@@ -100,32 +94,33 @@ def _public_reads(client: TestClient) -> dict[str, dict]:
     return {path: (r.json()[0] if isinstance(r.json(), list) else r.json()) for path, r in reads.items()}
 
 
-def test_flag_off_public_reads_carry_no_stamp(monkeypatch):
-    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", False)
-    # #given a stored card whose JSON already has the trigger's mirror, plus a live memory fact
-    stored = card(working_on_updated_at=NOW - timedelta(days=200),
-                  zynd_memory=[{"predicate": "is_working_on", "object": "Agent search",
-                                "approved_at": datetime.now(timezone.utc).isoformat()}])
+def test_unknown_stamp_public_reads_carry_no_key(monkeypatch):
+    # #given a card from before migration 0033 (or with it not applied): no stamp, no memory facts
+    stored = card()
     # #when it is read through every public route
     for path, body in _public_reads(_public_routes(monkeypatch, stored)).items():
-        # #then the field is absent, not just null
+        # #then the field is absent, not just null: the read is what it was before the feature
         assert "working_on_updated_at" not in body, path
         assert body["working_on"], path
 
 
-def test_flag_off_card_view_and_derived_card_have_no_stamp(monkeypatch):
-    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", False)
-    stored = card(working_on_updated_at=NOW - timedelta(days=200),
-                  zynd_memory=[{"predicate": "is_working_on", "object": "X", "approved_at": NOW.isoformat()}])
+def test_unknown_stamp_card_view_and_derived_card_have_no_key():
+    stored = card()
     assert derive_public_signals(stored, NOW).working_on_updated_at is None
     view = build_card_view(stored, claimed=True)
     assert view.working_on_updated_at is None
     assert "working_on_updated_at" not in view.model_dump(mode="json")
-    # The stored card itself is untouched: the mirror belongs to the 0033 trigger.
+
+
+def test_derived_stamp_leaves_the_stored_card_alone():
+    # The mirror in the stored card belongs to the 0033 trigger; deriving never rewrites it.
+    stored = card(working_on_updated_at=NOW - timedelta(days=200),
+                  zynd_memory=[{"predicate": "is_working_on", "object": "X", "approved_at": NOW.isoformat()}])
+    assert derive_public_signals(stored, NOW).working_on_updated_at == NOW
     assert stored.working_on_updated_at == NOW - timedelta(days=200)
 
 
-def test_flag_on_public_reads_carry_the_stamp(monkeypatch, stale_on):
+def test_known_stamp_public_reads_carry_it(monkeypatch):
     stored = card(working_on_updated_at=NOW - timedelta(days=200))
     for path, body in _public_reads(_public_routes(monkeypatch, stored)).items():
         assert body["working_on_updated_at"].startswith("2026-04-11"), path
@@ -206,7 +201,6 @@ class _Table:
 @pytest.fixture
 def api(monkeypatch):
     monkeypatch.setattr(config, "FEATURE_S10_HOME", True)
-    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", True)
     monkeypatch.setattr(routes, "ping_revalidate", lambda *a, **k: None)
     principals = {"Bearer owner": "alice@example.com", "Bearer other": "mallory@example.com"}
 
@@ -262,14 +256,6 @@ def test_confirm_other_database_errors_are_not_hidden(api):
         api.client.post(URL, headers={"Authorization": "Bearer owner"})
 
 
-def test_confirm_is_hidden_while_the_flag_is_off(api, monkeypatch):
-    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", False)
-    res = api.client.post(URL, headers={"Authorization": "Bearer owner"})
-    assert res.status_code == 404
-    assert res.json()["detail"] == "Stale signals are turned off"
-    assert api.table.updates == []
-
-
 # ── digest ──
 
 def _row(stamp_days_ago: int | None) -> dict:
@@ -277,8 +263,7 @@ def _row(stamp_days_ago: int | None) -> dict:
     return {"handle": "alice", "owner_email": "alice@example.com", "card": data.model_dump(mode="json")}
 
 
-def _digest(monkeypatch, row: dict, flag: bool) -> tuple[str, str]:
-    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", flag)
+def _digest(monkeypatch, row: dict) -> tuple[str, str]:
     monkeypatch.setattr(config, "FEATURE_S10_HOME", False)    # owner_home blocks are out of scope here
     extras = digest_service._owner_extras(row, [row], NOW, NOW)
     return (digest_service.render_digest("alice", None, None, name="Alice", extras=extras),
@@ -286,24 +271,23 @@ def _digest(monkeypatch, row: dict, flag: bool) -> tuple[str, str]:
 
 
 def test_digest_nudges_a_stale_working_on(monkeypatch):
-    text, html = _digest(monkeypatch, _row(120), flag=True)
+    text, html = _digest(monkeypatch, _row(120))
     assert "WORKING ON" in text and "Unchanged for 3+ months." in text
     assert "/p/alice#working-on" in text and "/p/alice/edit#signals" in text
     assert "Still working on this?" in html and ">Confirm<" in html and ">Update it<" in html
     assert "/p/alice#working-on" in html and "/p/alice/edit#signals" in html
 
 
-@pytest.mark.parametrize("stamp_days_ago, flag", [(120, False), (10, True), (None, True)])
-def test_digest_line_only_when_stale_and_flag_on(monkeypatch, stamp_days_ago, flag):
-    text, html = _digest(monkeypatch, _row(stamp_days_ago), flag=flag)
+@pytest.mark.parametrize("stamp_days_ago", [10, None])
+def test_digest_line_only_when_stale(monkeypatch, stamp_days_ago):
+    text, html = _digest(monkeypatch, _row(stamp_days_ago))
     assert "WORKING ON" not in text
     assert "Still working on this?" not in html
 
 
-def test_digest_with_flag_off_is_unchanged(monkeypatch):
-    row = _row(120)
-    on_text, on_html = _digest(monkeypatch, row, flag=False)
-    monkeypatch.setattr(config, "FEATURE_STALE_SIGNALS", False)
+def test_digest_for_a_fresh_working_on_is_unchanged(monkeypatch):
+    row = _row(10)
+    on_text, on_html = _digest(monkeypatch, row)
     extras = {"date": "Wed, 28 Oct"}
     assert on_text == digest_service.render_digest("alice", None, None, name="Alice", extras=extras)
     assert on_html == digest_service.render_digest_html("alice", None, None, name="Alice", extras=extras)
@@ -311,5 +295,5 @@ def test_digest_with_flag_off_is_unchanged(monkeypatch):
 
 def test_digest_survives_an_unreadable_card(monkeypatch):
     row = {"handle": "alice", "owner_email": "alice@example.com", "card": {"skills": "not a list"}}
-    text, _html = _digest(monkeypatch, row, flag=True)
+    text, _html = _digest(monkeypatch, row)
     assert "WORKING ON" not in text

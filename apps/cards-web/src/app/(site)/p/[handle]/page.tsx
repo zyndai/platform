@@ -11,7 +11,6 @@ import {
   fetchGithubExtras,
   cardCanonicalUrl,
   featureS06CardView,
-  featureVisitorCta,
   getMyCard,
   lookupMyCardHandle,
   type AgentProfileCard,
@@ -34,6 +33,7 @@ import { AutoScroll } from "./auto-scroll";
 import { ContributionHeatmap } from "./contribution-heatmap";
 import { ProfileView } from "@/components/ProfileView";
 import { logAgentFetch } from "@/lib/track";
+import { isAiAgent, visitorFrom } from "@/lib/visitor";
 import { parseSearchRef } from "@/lib/search-link";
 import { ProfileChatWidget } from "@/components/ProfileChatWidget";
 import { FallbackAvatar } from "@/components/FallbackAvatar";
@@ -50,7 +50,7 @@ import { readEdition } from "@/lib/editions";
 import { EditionHero } from "./edition-banner";
 import { EditionSignals } from "./edition-signals";
 import { StaleWorkingOnPrompt } from "./stale-working-on";
-import { featureStaleSignals, isWorkingOnStale } from "@/lib/stale-signals";
+import { isWorkingOnStale } from "@/lib/stale-signals";
 import { ExploringCard } from "./exploring-card";
 import { cleanTopic, publicTopics } from "@/lib/profile-quality";
 import { BeaconCard } from "@/components/BeaconCard";
@@ -422,13 +422,15 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
     redirect(`/p/${encodeURIComponent(card.handle)}`);
   }
 
-  // Crawlers may read HTML without mounting ProfileView. Preserve their header
-  // at this boundary; our backend fetches otherwise identify only the web server.
-  // Human view counts still come from ProfileView (agent_fetch is separate).
+  // AI agents read the HTML without mounting ProfileView, so count them here,
+  // with their header; our backend fetches otherwise identify only the web
+  // server. Browsers are counted by ProfileView's view beacon, so a human
+  // render posts nothing here.
   const requestHeaders = await headers();
-  if (!requestHeaders.has("next-router-prefetch") && requestHeaders.get("purpose") !== "prefetch") {
-    const userAgent = requestHeaders.get("user-agent");
-    after(() => logAgentFetch("profile-page", userAgent, handle));
+  const visitor = visitorFrom(requestHeaders);
+  if (isAiAgent(visitor.userAgent)
+    && !requestHeaders.has("next-router-prefetch") && requestHeaders.get("purpose") !== "prefetch") {
+    after(() => logAgentFetch("profile-page", visitor, handle));
   }
 
   const { identity } = card;
@@ -644,13 +646,13 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
   // The Connect / Message button: for visitors to a claimed Card (never the owner, never an unclaimed one).
   const showConnect = claimed && !isOwner;
-  const showVisitorCta = featureVisitorCta() && !isOwner && !viewerMayHaveCard;
+  const showVisitorCta = !isOwner && !viewerMayHaveCard;
 
   // Everyone sees stale Working on chips dimmed; only the owner gets Confirm / Update.
-  const workingOnStale = featureStaleSignals() && isWorkingOnStale(card.working_on_updated_at, card.working_on, nowMs);
+  const workingOnStale = isWorkingOnStale(card.working_on_updated_at, card.working_on, nowMs);
   // The prompt stays mounted on the owner's Working on card even when it isn't stale, so its
   // "Thanks" survives the refresh that un-dims the chips; it renders nothing otherwise.
-  const ownerConfirmsWorkingOn = featureStaleSignals() && isOwner;
+  const ownerConfirmsWorkingOn = isOwner;
 
   const showLinkedin = !!(linkedinHandle || linkedinUrl || liJobs.length > 0);
   const showX = !!(v.x.handle || v.x.followers != null);

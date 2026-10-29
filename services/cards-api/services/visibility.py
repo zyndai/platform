@@ -32,6 +32,16 @@ MAX_CITED_URLS = 10
 LLM_TIMEOUT_SECONDS = 30.0
 LLM_MAX_TOKENS = 400
 
+# The model must search the web itself, so it is separate from OPENROUTER_MODEL. perplexity/sonar
+# on OpenRouter (checked 2026-10-28): $1/M tokens in and out plus $0.005 per request for search,
+# about $0.006 per uncached check.
+MODEL = "perplexity/sonar"
+# Shown to the visitor under the answer ("Answer from <label> via API").
+MODEL_LABEL = "Perplexity Sonar"
+# Paid model calls per UTC day across every visitor, so many addresses cannot add up to an
+# unbounded bill. 300 is about $1.80 a day at the price above.
+DAILY_CAP = 300
+
 # Every uncached check is a paid search call (~$0.006 on perplexity/sonar), so a visitor gets a
 # handful per hour. In-process, so the budget is per worker, which is enough to stop a script.
 RATE_LIMIT = 5
@@ -40,6 +50,8 @@ _MAX_TRACKED_CLIENTS = 5000
 
 CACHE_TTL_SECONDS = 24 * 3600.0
 _MAX_CACHE_ENTRIES = 2000
+
+NOT_CONFIGURED = "The AI check is not available right now."
 
 # The model replies with exactly this when it finds no reliable information about the person,
 # so "AI found nothing" is a fact the API reports rather than a guess from the answer's wording.
@@ -131,7 +143,7 @@ _hits: dict[str, deque[float]] = defaultdict(deque)
 _hits_lock = threading.Lock()
 
 # Paid calls so far on the current UTC day, across every visitor. Per process like _hits, so
-# the real ceiling is AI_VISIBILITY_DAILY_CAP times the worker count.
+# the real ceiling is DAILY_CAP times the worker count.
 _daily_day: str | None = None
 _daily_count = 0
 _daily_lock = threading.Lock()
@@ -202,7 +214,7 @@ def allow_daily_call(now: datetime | None = None) -> bool:
     with _daily_lock:
         if day != _daily_day:
             _daily_day, _daily_count = day, 0
-        if _daily_count >= config.AI_VISIBILITY_DAILY_CAP:
+        if _daily_count >= DAILY_CAP:
             return False
         _daily_count += 1
         return True
@@ -297,13 +309,13 @@ def shape_answer(completion: dict) -> ModelAnswer:
 def ask_model(query: VisibilityQuery, client=None) -> ModelAnswer:
     """Blocking: run it in a thread. Raises VisibilityUnavailable with a visitor-facing message."""
     if not config.OPENROUTER_API_KEY and client is None:
-        raise VisibilityUnavailable("The AI check is not configured right now.", 503)
+        raise VisibilityUnavailable(NOT_CONFIGURED, 503)
     from openai import APIError, APITimeoutError
 
     client = (client or config.get_llm_client()).with_options(timeout=LLM_TIMEOUT_SECONDS, max_retries=0)
     try:
         completion = client.chat.completions.create(
-            model=config.AI_VISIBILITY_MODEL,
+            model=MODEL,
             messages=build_messages(query),
             temperature=0.1,
             max_tokens=LLM_MAX_TOKENS,
@@ -373,8 +385,8 @@ async def run_check(query: VisibilityQuery, client: str) -> dict:
     else:
         card = await _card_or_none(query.name)
     return {
-        "model": config.AI_VISIBILITY_MODEL,
-        "model_label": config.AI_VISIBILITY_MODEL_LABEL,
+        "model": MODEL,
+        "model_label": MODEL_LABEL,
         "found": answer.found,
         "answer": answer.answer,
         "cited_urls": list(answer.cited_urls),

@@ -21,6 +21,15 @@ RECENCY_HALF_LIFE_DAYS, weighted by kind) plus boosts for a connected author, fo
 (cosine of the two card embeddings), and for an ask that overlaps what the viewer can help with.
 The reason shown to the viewer is whichever of those applies.
 
+When the recent feed is thin, older posts and GitHub activity (up to EARLIER_MAX_DAYS) follow every
+recent item, newest first and marked `earlier`; they never outrank a recent one. People the viewer
+is blocked from, or has declined or revoked a connection with, never appear.
+
+reply_to_item() is the one way to answer an item: the server picks the channel from the real
+connection state (a message if connected, otherwise a connection request carrying the message) and
+re-checks the author, the blocks and the item itself, so the client decides nothing. Feed events
+(feed_view, feed_reply) carry counts and kinds only, never what anyone typed.
+
 build_feed() is pure (viewer, rows, connections, blocks, GitHub items, now in; a page out) so it is
 tested without a database. feed_for_user() gathers those inputs: the published-cards snapshot, one
 inbox call for connections and blocks, and the cached GitHub items (never waiting on GitHub).
@@ -37,6 +46,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
+from fastapi import HTTPException
+
 from models.card import AgentProfileCard
 from scraping.github import github_handle_from_url
 from services import card_cache
@@ -46,7 +57,8 @@ from services.search_text import query_terms
 
 logger = logging.getLogger(__name__)
 
-WINDOW_DAYS = 30                    # nothing older than this is shown (asks are live beacons, so 7 at most)
+WINDOW_DAYS = 30                    # recent items: ranked, and always ahead of earlier ones
+EARLIER_MAX_DAYS = 365              # posts and GitHub activity older than the window still fill a thin feed up to this age
 RECENCY_HALF_LIFE_DAYS = 3.0        # an item loses half its recency score every 3 days
 CLOCK_SKEW = timedelta(minutes=5)   # a stamp this far ahead of now is a clock difference, not the future
 
@@ -65,6 +77,7 @@ POST_PREVIEW_CHARS = 200
 JOINED_TOPICS = 3
 POST_PLATFORMS = ("linkedin", "x")
 FILTERS = ("all", "asks", "network")
+FINAL_STATUSES = frozenset({"blocked", "declined", "revoked"})
 
 REASON_CONNECTED = "You're connected"
 REASON_CAN_HELP = "Matches what you can help with"
@@ -84,13 +97,13 @@ class Viewer:
 
 # --- Small helpers ----------------------------------------------------------------------------
 
-def _when(value, now: datetime) -> datetime | None:
-    """A stored timestamp or date as an aware datetime inside the window, else None."""
+def _when(value, now: datetime, max_days: int = WINDOW_DAYS) -> datetime | None:
+    """A stored timestamp or date as an aware datetime no older than `max_days`, else None."""
     if isinstance(value, datetime):
         stamp = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     else:
         stamp = _parse_ts(value if isinstance(value, str) else None)
-    if stamp is None or now - stamp > timedelta(days=WINDOW_DAYS) or stamp - now > CLOCK_SKEW:
+    if stamp is None or now - stamp > timedelta(days=max_days) or stamp - now > CLOCK_SKEW:
         return None
     return min(stamp, now)
 
@@ -118,9 +131,11 @@ def _http_url(value) -> str:
 
 # --- Items from one card ----------------------------------------------------------------------
 
-def _items_for(row: dict, now: datetime, github_items: list[dict]) -> list[dict]:
-    """Every feed item this card produces: {"kind", "at", "key", "content"}, each stamped with the
-    time the thing happened and inside the window."""
+def _items_for(row: dict, now: datetime, github_items: list[dict], earlier: bool = True) -> list[dict]:
+    """Every feed item this card produces: {"kind", "at", "key", "content", "earlier"}, each stamped
+    with the time the thing happened. Asks, working-on facts, clips and joins must be inside the
+    window; posts and GitHub activity may also be "earlier" (older than the window, up to
+    EARLIER_MAX_DAYS) when `earlier` is true. Earlier items are shown after every recent one."""
     card: AgentProfileCard = row["model"]
     out: list[dict] = []
 
@@ -147,8 +162,9 @@ def _items_for(row: dict, now: datetime, github_items: list[dict]) -> list[dict]
         out.append({"kind": "joined", "at": at, "key": "joined", "content": {
             "headline": card.identity.headline.strip(), "can_help_with": list(card.can_help_with[:JOINED_TOPICS])}})
 
+    reach = EARLIER_MAX_DAYS if earlier else WINDOW_DAYS
     for event in github_items:
-        if at := _when(event.get("at"), now):
+        if at := _when(event.get("at"), now, reach):
             out.append({"kind": "github", "at": at, "key": str(event.get("id") or ""), "content": {
                 "type": event.get("type"), "repo": event.get("repo"), "title": event.get("title") or "",
                 "url": event.get("url")}})
@@ -157,9 +173,11 @@ def _items_for(row: dict, now: datetime, github_items: list[dict]) -> list[dict]
         url = _http_url(sample.url)
         platform = (sample.platform or "").lower()
         # No parseable posted_at, no item: the sample could be years old.
-        if platform in POST_PLATFORMS and url and sample.excerpt.strip() and (at := _when(sample.posted_at, now)):
+        if platform in POST_PLATFORMS and url and sample.excerpt.strip() and (at := _when(sample.posted_at, now, reach)):
             out.append({"kind": "post", "at": at, "key": _short_hash(url), "content": {
                 "platform": platform, "preview": preview(sample.excerpt), "url": url}})
+    for item in out:
+        item["earlier"] = now - item["at"] > timedelta(days=WINDOW_DAYS)
     return out
 
 
@@ -200,23 +218,26 @@ def _score_and_reason(item: dict, viewer: Viewer, row: dict, connection: dict | 
     return score, reason
 
 
-def _diversify(ranked: list[dict], block: int, cap: int = PER_AUTHOR_CAP) -> list[dict]:
+def _diversify(ranked: list[dict], block: int, cap: int = PER_AUTHOR_CAP, first: int | None = None) -> list[dict]:
     """Reorder so no author has more than `cap` items in any block of `block` positions, keeping rank
     order otherwise. What a block cannot take is pushed to a later block rather than dropped, so the
-    feed still ends with everything in it. A block always takes at least the best remaining item."""
+    feed still ends with everything in it. A block always takes at least the best remaining item.
+    `first` is the size of the first block when the list starts part-way through a page."""
     remaining, out = list(ranked), []
+    size = first or block
     while remaining:
         taken: dict[str, int] = {}
         page, rest = [], []
         for item in remaining:
             handle = item["author"]["handle"]
-            if len(page) < block and taken.get(handle, 0) < cap:
+            if len(page) < size and taken.get(handle, 0) < cap:
                 taken[handle] = taken.get(handle, 0) + 1
                 page.append(item)
             else:
                 rest.append(item)
         out.extend(page)
         remaining = rest
+        size = block
     return out
 
 
@@ -246,18 +267,84 @@ def connection_maps(inbox_connections: list[dict], hidden_handles: list[str] | N
     """(handle -> {"id", "status", "incoming"}, handles to leave out) from the inbox's connection rows.
 
     A block is stored as a connection row with status "blocked" for the pair, whoever blocked, and
-    the inbox returns it to both people; so one list covers "blocked" and "blocked me". Handles the
-    viewer chose to hide (match preferences) are left out too."""
+    the inbox returns it to both people; so one list covers "blocked" and "blocked me". A declined or
+    revoked connection is final too (the pair can never connect again), so those people are left out
+    as well: only pending and accepted ones stay. Handles the viewer chose to hide (match
+    preferences) are left out too."""
     by_handle: dict[str, dict] = {}
     blocked = {h.lower() for h in hidden_handles or [] if h}
     for c in inbox_connections or []:
         handle = ((c.get("partner") or {}).get("handle") or "").lower()
         if not handle:
             continue
-        if c.get("status") == "blocked":
+        if c.get("status") in FINAL_STATUSES:
             blocked.add(handle)
         by_handle[handle] = {"id": c.get("id"), "status": c.get("status"), "incoming": bool(c.get("incoming"))}
     return by_handle, blocked
+
+
+def rank_feed(
+    viewer: Viewer,
+    rows: list[dict],
+    connections: dict[str, dict],
+    blocked: set[str],
+    github: dict[str, list[dict]],
+    now: datetime,
+    *,
+    filter: str = "all",
+    limit: int = DEFAULT_LIMIT,
+) -> list[dict]:
+    """The whole feed in display order: every recent item (ranked by score), then, for the "all" and
+    "network" filters, the earlier items (newest first). Earlier items never outrank recent ones, and
+    each block is diversified separately so the per-author cap holds on every page.
+
+    `rows` are published-card rows ({"id", "handle", "model", "unit", "claimed", "published_at"});
+    only claimed cards take part, since only a claimed card can be messaged. `connections` is
+    handle -> {"id", "status", "incoming"}; `github` is handle -> items from feed_github.get()."""
+    limit = max(1, min(limit, MAX_LIMIT))
+    own = (viewer.handle or "").lower()
+    recent: list[dict] = []
+    earlier: list[dict] = []
+    for row in rows:
+        handle = (row.get("handle") or "").lower()
+        if not handle or not row.get("claimed") or handle in blocked or handle == own or row.get("id") == viewer.card_id:
+            continue
+        connection = connections.get(handle)
+        if filter == "network" and not (connection and connection["status"] == "accepted"):
+            continue
+        card: AgentProfileCard = row["model"]
+        for item in _items_for(row, now, github.get(row["handle"]) or [], earlier=filter != "asks"):
+            if filter == "asks" and item["kind"] != "ask":
+                continue
+            score, reason = _score_and_reason(item, viewer, row, connection, now)
+            built = {
+                "id": f"{item['kind']}:{row['handle']}:{item['key']}",
+                "kind": item["kind"],
+                "at": item["at"].isoformat(),
+                "earlier": item["earlier"],
+                "reason": reason,
+                "author": {
+                    "handle": row["handle"], "name": card.identity.name or "Zynd member",
+                    "headline": card.identity.headline, "avatar_url": card.identity.avatar_url or None,
+                    "location": card.identity.location, "claimed": True,
+                },
+                "content": item["content"],
+                "connection": connection,
+            }
+            if item["earlier"]:
+                built["_sort"] = (-item["at"].timestamp(), item["kind"], item["key"])
+                earlier.append(built)
+            else:
+                built["_sort"] = (-score, -item["at"].timestamp(), item["kind"], item["key"])
+                recent.append(built)
+    recent.sort(key=lambda i: i["_sort"])
+    earlier.sort(key=lambda i: i["_sort"])
+    ordered = _diversify(recent, limit)
+    lead = len(ordered) % limit          # the earlier block starts part-way through a page
+    ordered += _diversify(earlier, limit, first=limit - lead if lead else None)
+    for item in ordered:
+        del item["_sort"]
+    return ordered
 
 
 def build_feed(
@@ -272,46 +359,12 @@ def build_feed(
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
 ) -> dict:
-    """One page of the feed: {"items": [...], "next_cursor": str | None}.
-
-    `rows` are published-card rows ({"id", "handle", "model", "unit", "claimed", "published_at"});
-    only claimed cards take part, since only a claimed card can be messaged. `connections` is
-    handle -> {"id", "status", "incoming"}; `github` is handle -> items from feed_github.get()."""
+    """One page of the feed: {"items": [...], "next_cursor": str | None}. See rank_feed for the order;
+    paging is an offset into that one list, so it is consistent across the recent / earlier boundary."""
     limit = max(1, min(limit, MAX_LIMIT))
-    own = (viewer.handle or "").lower()
-    ranked: list[dict] = []
-    for row in rows:
-        handle = (row.get("handle") or "").lower()
-        if not handle or not row.get("claimed") or handle in blocked or handle == own or row.get("id") == viewer.card_id:
-            continue
-        connection = connections.get(handle)
-        if filter == "network" and not (connection and connection["status"] == "accepted"):
-            continue
-        card: AgentProfileCard = row["model"]
-        for item in _items_for(row, now, github.get(row["handle"]) or []):
-            if filter == "asks" and item["kind"] != "ask":
-                continue
-            score, reason = _score_and_reason(item, viewer, row, connection, now)
-            ranked.append({
-                "id": f"{item['kind']}:{row['handle']}:{item['key']}",
-                "kind": item["kind"],
-                "at": item["at"].isoformat(),
-                "reason": reason,
-                "author": {
-                    "handle": row["handle"], "name": card.identity.name or "Zynd member",
-                    "headline": card.identity.headline, "avatar_url": card.identity.avatar_url or None,
-                    "location": card.identity.location, "claimed": True,
-                },
-                "content": item["content"],
-                "connection": connection,
-                "_sort": (-score, -item["at"].timestamp(), item["kind"], item["key"]),
-            })
-    ranked.sort(key=lambda i: i["_sort"])
-    ordered = _diversify(ranked, limit)
-    page = ordered[offset:offset + limit]
-    for item in page:
-        del item["_sort"]
-    return {"items": page, "next_cursor": encode_cursor(offset + limit) if offset + limit < len(ordered) else None}
+    ordered = rank_feed(viewer, rows, connections, blocked, github, now, filter=filter, limit=limit)
+    return {"items": ordered[offset:offset + limit],
+            "next_cursor": encode_cursor(offset + limit) if offset + limit < len(ordered) else None}
 
 
 # --- Gathering the inputs ---------------------------------------------------------------------
@@ -350,13 +403,30 @@ def published_rows() -> list[dict]:
     return snap.rows if snap is not None else _rows_from_database()
 
 
-def feed_for_user(user_id: str, *, filter: str = "all", limit: int = DEFAULT_LIMIT, offset: int = 0,
-                  now: datetime | None = None) -> dict:
-    """The feed for a signed-in person. Blocking (database and snapshot reads): call it from a
-    threadpool, as the other network routes do."""
+def _hidden(user_id: str, match_prefs) -> list[str]:
+    """Handles the viewer chose to hide; best effort, since the table only exists with network controls."""
+    try:
+        return list(match_prefs.get(user_id).get("hide_person") or [])
+    except Exception as exc:  # noqa: BLE001
+        logger.info("feed: match preferences unavailable (%s)", exc)
+        return []
+
+
+@dataclass
+class Context:
+    """Everything the feed needs about one viewer, gathered once per request."""
+    now: datetime
+    rows: list[dict]
+    mine: dict | None
+    viewer: Viewer
+    connections: dict[str, dict]
+    blocked: set[str]
+    github: dict[str, list[dict]]
+
+
+def _context(user_id: str, now: datetime) -> Context:
     from services import feed_github, match_prefs, network
 
-    now = now or datetime.now(timezone.utc)
     rows = published_rows()
     mine = network._find_card_for_user(user_id)
     viewer = Viewer()
@@ -381,16 +451,110 @@ def feed_for_user(user_id: str, *, filter: str = "all", limit: int = DEFAULT_LIM
                 wanted[row["handle"]] = login
     cached = feed_github.get(list(wanted.values()))
     github = {handle: cached[login] for handle, login in wanted.items() if login in cached}
+    return Context(now, rows, mine, viewer, connections, blocked, github)
 
-    page = build_feed(viewer, rows, connections, blocked, github, now, filter=filter, limit=limit, offset=offset)
-    page["viewer"] = {"has_card": mine is not None, "handle": viewer.handle}
+
+def feed_for_user(user_id: str, *, filter: str = "all", limit: int = DEFAULT_LIMIT, offset: int = 0,
+                  now: datetime | None = None) -> dict:
+    """The feed for a signed-in person. Blocking (database and snapshot reads): call it from a
+    threadpool, as the other network routes do."""
+    ctx = _context(user_id, now or datetime.now(timezone.utc))
+    page = build_feed(ctx.viewer, ctx.rows, ctx.connections, ctx.blocked, ctx.github, ctx.now,
+                      filter=filter, limit=limit, offset=offset)
+    page["viewer"] = {"has_card": ctx.mine is not None, "handle": ctx.viewer.handle}
     return page
 
 
-def _hidden(user_id: str, match_prefs) -> list[str]:
-    """Handles the viewer chose to hide; best effort, since the table only exists with network controls."""
+# --- Replying ---------------------------------------------------------------------------------
+
+REPLY_MAX_CHARS = 2000              # the connection request note limit (a DM allows more)
+ITEM_ID_MAX_CHARS = 200
+
+
+def parse_item_id(item_id: str) -> tuple[str, str]:
+    """(kind, handle) from "kind:handle:key"; ValueError when it is not an id this module issues."""
+    parts = (item_id or "").split(":", 2)
+    if len(parts) != 3 or parts[0] not in KIND_WEIGHT or not parts[1] or not parts[2]:
+        raise ValueError("Invalid item")
+    return parts[0], parts[1]
+
+
+def reply_to_item(user_id: str, item_id: str, message: str, client_id: str | None = None,
+                  now: datetime | None = None) -> dict:
+    """Reply to a feed item: a message when the two are connected, a connection request carrying the
+    message when they are not. The server decides the channel from the real connection state and
+    re-checks everything itself (the author, the blocks, the item), so a client can neither pick
+    the channel nor reach someone the feed would not show. Returns
+    {"channel": "dm" | "request", "connection": {id, status, incoming}}; request limits (429) and
+    state conflicts (409) come from the network service and pass through."""
+    from services import network
+
     try:
-        return list(match_prefs.get(user_id).get("hide_person") or [])
-    except Exception as exc:  # noqa: BLE001
-        logger.info("feed: match preferences unavailable (%s)", exc)
-        return []
+        kind, handle = parse_item_id(item_id)
+    except ValueError as exc:
+        raise HTTPException(422, "That is not a feed item") from exc
+    ctx = _context(user_id, now or datetime.now(timezone.utc))
+    if ctx.mine is None:
+        raise HTTPException(422, "Create your Card before replying to people")
+    key = handle.lower()
+    if key == (ctx.viewer.handle or "").lower():
+        raise HTTPException(422, "You cannot reply to your own item")
+    if key in ctx.blocked:
+        # Blocked, declined, revoked or hidden: worded neutrally, as everywhere else.
+        raise HTTPException(403, "Replying to this person is not available")
+    author = network._card_for_handle(handle)       # 404 unless published and claimed
+    if author["owner_user_id"] == user_id:
+        raise HTTPException(422, "You cannot reply to your own item")
+    item = next((i for i in rank_feed(ctx.viewer, ctx.rows, ctx.connections, ctx.blocked, ctx.github, ctx.now,
+                                      limit=MAX_LIMIT) if i["id"] == item_id), None)
+    if item is None or item["kind"] != kind:
+        raise HTTPException(404, "That item is no longer in your feed")
+
+    connection = ctx.connections.get(key)
+    if connection is None:
+        result = network.request_connection(user_id, handle, message)
+        found = result["connection"]
+        if not result["existing"]:
+            return _replied("request", found, item, ctx)
+        # Someone else's request landed between loading the inbox and now.
+        connection = {"id": found["id"], "status": found["status"], "incoming": found["incoming"]}
+    if connection["status"] == "accepted":
+        network.send_message(user_id, connection["id"], message, client_id)
+        return _replied("dm", connection, item, ctx)
+    if connection["status"] == "pending":
+        if connection["incoming"]:
+            raise HTTPException(409, "They already sent you a request. Accept it in your Network.")
+        raise HTTPException(409, "Already requested")
+    raise HTTPException(403, "Replying to this person is not available")
+
+
+def _replied(channel: str, connection: dict, item: dict, ctx: Context) -> dict:
+    out = {"id": connection.get("id"), "status": connection.get("status"), "incoming": bool(connection.get("incoming"))}
+    record_reply(item, channel, ctx.now)
+    return {"channel": channel, "connection": out}
+
+
+# --- Events -----------------------------------------------------------------------------------
+# Counts and kinds only: never the message, the viewer, or anything they typed. Best effort.
+
+def record_view(request, page: dict, *, filter: str, offset: int) -> None:
+    from services import events
+
+    kinds: dict[str, int] = {}
+    for item in page["items"]:
+        kinds[item["kind"]] = kinds.get(item["kind"], 0) + 1
+    try:
+        events.emit("feed_view", request=request, meta={"filter": filter, "offset": offset, "n": len(page["items"]), "kinds": kinds})
+    except Exception:  # noqa: BLE001 — an event must never fail the request
+        logger.info("feed: could not record feed_view")
+
+
+def record_reply(item: dict, channel: str, now: datetime) -> None:
+    from services import events
+
+    age_hours = int(max((now - datetime.fromisoformat(item["at"])).total_seconds(), 0) // 3600)
+    try:
+        events.emit("feed_reply", handle=item["author"]["handle"], meta={
+            "kind": item["kind"], "channel": channel, "earlier": bool(item["earlier"]), "age_hours": age_hours})
+    except Exception:  # noqa: BLE001
+        logger.info("feed: could not record feed_reply")

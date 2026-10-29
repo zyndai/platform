@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ArrowLeftRight, ArrowUpRight, UsersRound } from "lucide-react";
+import { WarmIntro } from "@/components/network/WarmIntro";
 import {
   ownerRequest,
   type OutsidePerson,
@@ -47,12 +48,13 @@ export function PeopleToMeet({
   }
 
   return (
-    <section className="oh-panel oh-wide oh-people" aria-labelledby="people-heading">
-      <p className="oh-eyebrow">PEOPLE TO MEET</p>
+    <section className="oh-panel oh-wide oh-people" id="zynd-matches" aria-labelledby="people-heading">
+      <p className="oh-eyebrow">ZYND MATCHES · PEOPLE TO MEET</p>
       <h2 id="people-heading" className="oh-heading-icon">
         <UsersRound size={20} aria-hidden="true" />
         Who fits what you&apos;re looking for
       </h2>
+      <p>See a good fit? Let DearAgent draft an introduction. You review it, and they choose whether to connect.</p>
       {!shown.length && !outside.length ? (
         <p>
           No suggestions yet. Say who you want to meet on your card and we&apos;ll look every day.{" "}
@@ -77,7 +79,7 @@ export function PeopleToMeet({
                 )}
                 {p.two_way && (
                   <span className="oh-person-chip">
-                    <ArrowLeftRight size={12} aria-hidden="true" /> Wants to meet you too
+                    <ArrowLeftRight size={12} aria-hidden="true" /> Profile interests align
                   </span>
                 )}
                 {!!p.why.length && (
@@ -85,6 +87,7 @@ export function PeopleToMeet({
                     {p.why.filter((w) => !(p.two_way && w.startsWith("Wants to meet"))).slice(0, 2).join(" · ")}
                   </span>
                 )}
+                <WarmIntro handle={p.handle} name={p.name || p.handle} token={token} />
               </div>
               <div className="oh-person-actions">
                 <Link className="oh-button oh-outline" href={`/p/${encodeURIComponent(p.handle)}`}>

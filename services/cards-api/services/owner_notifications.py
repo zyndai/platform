@@ -14,6 +14,34 @@ from fastapi import HTTPException
 import config
 from services import owner_home
 from services.mailer import get_mailer
+from services.weekly_email import DASHBOARD_URL, render_weekly_html, visitor_profile_url
+
+WEEKLY_VISITOR_LIMIT = 10
+
+
+def _weekly_visitor_details(data: dict) -> tuple[list[str], list[str]]:
+    """Use saved client labels and the consent-filtered visitor view only."""
+    clients = data["activity"].get("agent_clients")
+    agents = [f"{a['provider']} — {a['name']}: {a['count']} {'request' if a['count'] == 1 else 'requests'}"
+              for a in (clients or [])]
+    if not agents:
+        agents = ["Agent client identities are unavailable." if clients is None
+                  else "No AI client requests recorded this week."]
+    visitors = data.get("visitors") or {}
+    people = []
+    if visitors.get("available"):
+        for visitor in (visitors.get("items") or [])[:WEEKLY_VISITOR_LIMIT]:
+            name = (visitor.get("name") or "").strip()
+            if not name:
+                continue
+            visits = visitor.get("visits")
+            suffix = f" ({visits} {'visit' if visits == 1 else 'visits'})" if isinstance(visits, int) and visits > 0 else ""
+            profile = visitor_profile_url(visitor)
+            people.append(name + suffix + (" — " + profile if profile else ""))
+    if not people:
+        people = ["No visitors chose to share their name this week." if visitors.get("available")
+                  else "Visitor names are unavailable."]
+    return agents, people
 
 
 def week_key(now: datetime) -> str:
@@ -25,15 +53,32 @@ def render_weekly(data: dict, unsubscribe_url: str | None, *, preview_label: str
     base = config.SITE_BASE_URL.rstrip("/")
     inbox = base + "/p/" + quote(data["handle"], safe="") + "/edit#inbox"
     metrics = data["activity"]
+    from services.read_receipt_topics import question_insights
+    insights = question_insights(metrics, data.get("name") or "")
     counts = (f"{metrics['views']} human views · {metrics['agent_hits']} agent hits in the last 7 days"
               if metrics["available"] else "Activity measurement is unavailable this week.")
     pending = data["inbox_count"]
     waiting = f"{pending} facts waiting for review" if pending is not None else "Review queue is temporarily unavailable"
-    questions = [str(q.get("query", ""))[:160] for q in metrics.get("queries", []) if q.get("query")]
-    lines = [f"Your week on Zynd, {data['name'] or data['handle']}", counts, waiting,
-             f"Card completeness: {data['completeness']['score']}%", "", "Questions that found your card:",
-             *(questions or ["Matching queries are not recorded yet."]), "", f"Review your inbox: {inbox}",
-             f"Owner home: {base}/home"]
+    questions = insights["questions"]
+    agents, visitors = _weekly_visitor_details(data)
+    matches = (data.get("suggestions") or {}).get("people") or []
+    lines = [f"Your week on Zynd, {data['name'] or data['handle']}"]
+    if matches:
+        lines += ["", "Zynd matches — review before sending an intro"]
+        for person in matches[:3]:
+            lines.append(f"- {person.get('name') or person.get('handle')}: " + "; ".join(person.get("why") or []))
+        lines.append(f"Review matches and draft an intro: {DASHBOARD_URL}#zynd-matches")
+    lines += ["", counts, waiting,
+             f"Card completeness: {data['completeness']['score']}%", "",
+             "People who visited (last 7 days):", *visitors,
+             "Names appear only for visitors who chose to share them; anonymous visits remain anonymous.", "",
+             "AI clients that accessed your profile (last 7 days):", *agents,
+             "Reported client identities, not verified model names. Breakdown covers the latest 1,000 AI requests.", "",
+             *( ["Topics asked about in your profile assistant: " + ", ".join(insights["topics"])] if insights["topics"] else []),
+             "Recent profile-assistant questions (last 7 days):",
+             *(questions or ["No profile-assistant questions recorded this week."]),
+             "AI requests and assistant questions are separate measurements; crawler requests may not include a question.", "", f"Review your inbox: {inbox}",
+             f"Owner home: {DASHBOARD_URL}"]
     from services import digest_network
     lines += digest_network.lines(data.get("network"))
     body = "\n".join(lines)
@@ -43,15 +88,8 @@ def render_weekly(data: dict, unsubscribe_url: str | None, *, preview_label: str
     if unsubscribe_url:
         body += "\n\nUnsubscribe: " + unsubscribe_url
     esc = lambda value: html.escape(str(value), quote=True)
-    content = "".join(f"<p>{esc(line)}</p>" for line in lines[:4])
-    markup = (f'<!doctype html><html><body style="background:#faf8ff;color:#131b2e;font:16px/1.6 Arial,sans-serif;padding:24px">'
-              f'<main style="max-width:600px;margin:auto;background:white;padding:24px;border-radius:16px"><h1>Your week on Zynd</h1>{content}'
-              '<h2>Questions that found your card</h2><ul>' + "".join(f"<li>{esc(q)}</li>" for q in (questions or ["Matching queries are not recorded yet."])) + '</ul>'
-              f'<p><a href="{esc(inbox)}">Review your inbox</a> · <a href="{esc(base + "/home")}">Owner home</a></p>'
-              + _network_html(data.get("network"), esc)
-              + (f'<p>{intro_waiting} intro requests waiting. <a href="{esc(base + "/intros")}">Review introductions</a></p>' if intro_waiting is not None else '')
-              + (f'<footer>You receive this because you own a Zynd card. <a href="{esc(unsubscribe_url)}">Unsubscribe</a></footer>' if unsubscribe_url else f'<footer>{esc(preview_label)}</footer>')
-              + '</main></body></html>')
+    markup = render_weekly_html(data, insights, agents, visitors, unsubscribe_url, preview_label,
+                                _network_html(data.get("network"), esc))
     return body, markup
 
 
@@ -91,8 +129,8 @@ async def send_test_notification(*, email: str, kind: str = "weekly") -> dict:
     email = email.strip().lower()
     if not re.fullmatch(r"[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+", email):
         raise HTTPException(422, "email must be a single card-owner email address")
-    if kind not in {"weekly", "reminder"}:
-        raise HTTPException(422, "Choose weekly or reminder")
+    if kind not in {"weekly", "reminder", "feedback"}:
+        raise HTTPException(422, "Choose weekly, reminder or feedback")
     adapter = _test_mailer()
     try:
         data = await owner_home.status(email, persist=False)
@@ -102,8 +140,13 @@ async def send_test_notification(*, email: str, kind: str = "weekly") -> dict:
         raise HTTPException(404, "email must match an existing card owner")
     notice = "Test email requested manually; email preferences and delivery limits were bypassed."
     if kind == "weekly":
-        body, markup = render_weekly(data, None, preview_label=notice)
+        body, markup = await asyncio.to_thread(render_weekly, data, None, preview_label=notice)
         subject = "[TEST] Your week on Zynd"
+    elif kind == "feedback":
+        from services.profile_feedback import render_feedback, SUBJECT
+        body, markup = render_feedback(data.get("name") or "", None,
+                                       handle=data.get("handle"), preview_label=notice)
+        subject = "[TEST] " + SUBJECT
     else:
         nudges = data.get("nudges") or [{"title": "Sample reminder: there are no current reminders for this card."}]
         body, markup = render_reminder(nudges, None)
@@ -194,7 +237,25 @@ def _network_section(email: str, row: dict, all_rows: list[dict]) -> dict | None
         return None
 
 
-async def run_notifications(*, dry_run: bool = False, now: datetime | None = None) -> dict:
+def notification_rows() -> list[dict]:
+    """Page through owners in the same canonical order used by owner home."""
+    sb = config.get_supabase()
+    rows, offset = [], 0
+    while True:
+        page = (sb.table("agent_profile_cards").select("*").neq("status", "merged")
+                .not_.is_("owner_email", "null").order("created_at", desc=True).order("id")
+                .range(offset, offset + 499).execute().data or [])
+        rows.extend(page)
+        if len(page) < 500:
+            return rows
+        offset += 500
+
+
+async def run_notifications(*, dry_run: bool = False, now: datetime | None = None,
+                            weekly_only: bool = False, email: str | None = None) -> dict:
+    recipient = email.strip().lower() if email is not None else None
+    if recipient is not None and not re.fullmatch(r"[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+", recipient):
+        raise HTTPException(422, "email must be a single card-owner email address")
     stats = {"sent": 0, "skipped": 0, "failed": 0, "previews": []}
     if not owner_home.enabled():
         return stats
@@ -202,23 +263,16 @@ async def run_notifications(*, dry_run: bool = False, now: datetime | None = Non
     adapter = get_mailer()
     # One canonical row per normalized owner, including private cards for
     # in-app nudges. Emails are only sent for published cards.
-    def all_rows():
-        sb = config.get_supabase()
-        rows, offset = [], 0
-        while True:
-            page = (sb.table("agent_profile_cards").select("*").neq("status", "merged")
-                    .not_.is_("owner_email", "null").order("created_at", desc=True).order("id")
-                    .range(offset, offset + 499).execute().data or [])
-            rows.extend(page)
-            if len(page) < 500:
-                return rows
-            offset += 500
-    rows = await asyncio.to_thread(all_rows)
+    rows = await asyncio.to_thread(notification_rows)
     by_owner = {}
     for row in rows:
         email = (row.get("owner_email") or "").strip().lower()
+        if recipient is not None and email != recipient:
+            continue
         if email and (email not in by_owner or (by_owner[email]["status"] != "published" and row["status"] == "published")):
             by_owner[email] = row
+    if recipient is not None and not by_owner:
+        raise HTTPException(404, "email must match an existing card owner")
     for email, row in by_owner.items():
         try:
             data = await owner_home.status(email, persist=not dry_run)
@@ -226,18 +280,20 @@ async def run_notifications(*, dry_run: bool = False, now: datetime | None = Non
                 continue
             data["network"] = await asyncio.to_thread(_network_section, email, row, rows)
             if dry_run:
-                stats["previews"].append({"handle": data["handle"], "body": render_weekly(data, None)[0]})
+                body, _ = await asyncio.to_thread(render_weekly, data, None)
+                stats["previews"].append({"handle": data["handle"], "body": body})
                 continue
-            if not config.FEATURE_S10_DIGEST or not adapter.enabled or row["status"] != "published":
+            if not adapter.enabled or row["status"] != "published":
                 stats["skipped"] += 1
                 continue
             prefs = data["notification_prefs"]
             unsubscribe = config.API_BASE_URL.rstrip("/") + "/cards/notifications/unsubscribe/" + str(row["unsubscribe_token"])
             messages = []
             if prefs["weekly_digest"]:
-                body, markup = render_weekly(data, unsubscribe)
-                messages.append(("weekly", week_key(now), "Your week on Zynd", body, markup))
-            if prefs["email_nudges"] and data["nudges"]:
+                # Claim first: repeated scheduler ticks must not regenerate an
+                # LLM topic summary for an email already sent this week.
+                messages.append(("weekly", week_key(now), "Your week on Zynd", None, None))
+            if not weekly_only and config.FEATURE_S10_DIGEST and prefs["email_nudges"] and data["nudges"]:
                 # Only send newly created nudges, once daily. Older reminders
                 # remain in-app without generating another email each day.
                 fresh = [n for n in data["nudges"] if str(n.get("created_at", ""))[:10] == now.date().isoformat()]
@@ -250,6 +306,8 @@ async def run_notifications(*, dry_run: bool = False, now: datetime | None = Non
                     stats["skipped"] += 1
                     continue
                 try:
+                    if kind == "weekly":
+                        body, markup = await asyncio.to_thread(render_weekly, data, unsubscribe)
                     # Re-read consent after claiming, immediately before send.
                     latest = await asyncio.to_thread(owner_home.current_row, email)
                     latest_prefs = {**owner_home.DEFAULT_PREFS, **(latest or {}).get("notification_prefs", {})}

@@ -296,6 +296,8 @@ def render_digest(handle: str, posts: dict | None, people: dict | None, name: st
             lines.append(f"- {p.get('name') or ''}" + (f", {role}" if role else "") + " (not on Zynd yet, LinkedIn)")
             if p.get("linkedin_url"):
                 lines.append(f"  {p['linkedin_url']}")
+        if d["people"]:
+            lines.append("Review Zynd matches and draft an intro: https://cards.zynd.ai/home#zynd-matches")
     if d["updates"] or d["search_hits"]:
         lines += ["", "FROM YOUR NETWORK"]
         lines += [f"- {u.get('name') or u.get('handle')}: {u.get('change')}" for u in d["updates"]]
@@ -462,6 +464,8 @@ def _people_html(d: dict) -> str:
         reason = _reason_line(p)
         extra = (f"<div>{chips}</div>" if chips else "") + (
             f'<div style="font:400 12px/18px {_FONT};color:{_BODY};padding-top:4px">{_esc(reason)}</div>' if reason else "")
+        extra += (f'<div style="padding-top:6px"><a href="https://cards.zynd.ai/home#zynd-matches" '
+                  f'style="font:600 12px/18px {_FONT};color:{_ACCENT}">Review match and draft an intro</a></div>')
         links = _feedback_links(d, p)
         if links:
             link = f"font:400 11px/18px {_FONT};color:{_MUTED};text-decoration:underline"

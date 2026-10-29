@@ -54,7 +54,7 @@ def test_a_live_beacon_becomes_an_ask_stamped_with_its_creation_time():
     result = page([row("ana", beacon=beacon("Looking for a designer", days_old=2))])
     (item,) = result["items"]
     assert item["kind"] == "ask"
-    assert item["content"] == {"text": "Looking for a designer"}
+    assert item["content"] == {"text": "Looking for a designer", "kind": "other", "url": None}
     assert item["at"] == ago(days=2)
     assert item["author"]["handle"] == "ana"
     assert item["author"]["name"] == "Ana"
@@ -342,7 +342,7 @@ def test_the_feed_route_passes_filter_limit_and_cursor_for_the_bound_user(monkey
                        headers={"Authorization": "Bearer memory-feed-test", "X-Zynd-User": UID})
     assert response.status_code == 200
     assert response.json() == {"items": [], "next_cursor": None, "viewer": {"has_card": False, "handle": None}}
-    assert seen == {"uid": UID, "filter": "asks", "limit": 5, "offset": 10}
+    assert seen == {"uid": UID, "filter": "asks", "limit": 5, "offset": 10, "kind": None}
 
 
 def test_the_feed_route_rejects_bad_parameters(monkeypatch):

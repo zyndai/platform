@@ -45,6 +45,7 @@ ALLOWED_EVENTS = frozenset({
 SERVER_EVENTS = frozenset({
     "feed_view",
     "feed_reply",
+    "ask_published",
     "search",
     "search_result_action",
 })

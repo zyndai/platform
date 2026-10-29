@@ -12,6 +12,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from api.network import _uid
+from models.card import AskKind
 from services import feed
 
 router = APIRouter()
@@ -37,6 +38,7 @@ def _session_user(authorization: str | None, x_zynd_user: str | None) -> str:
 def get_feed(
     request: Request,
     filter: Literal["all", "asks", "network"] = Query("all"),
+    kind: AskKind | None = Query(None),
     limit: int = Query(feed.DEFAULT_LIMIT, ge=1, le=feed.MAX_LIMIT),
     cursor: str | None = Query(None, max_length=64),
     authorization: str | None = Header(default=None),
@@ -44,14 +46,19 @@ def get_feed(
 ):
     """{"items": [...], "next_cursor": str | null, "viewer": {"has_card", "handle"}}.
 
+    `kind` (one of models.card.ASK_KINDS) narrows the asks filter to one kind of ask; with any other
+    filter it is a 422.
+
     A caller without a Card still gets the feed (has_card=false) so the page can invite them to
     create one; replying needs a Card."""
     user_id = _session_user(authorization, x_zynd_user)
+    if kind and filter != "asks":
+        raise HTTPException(422, "A kind only narrows the asks")
     try:
         offset = feed.decode_cursor(cursor)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    page = feed.feed_for_user(user_id, filter=filter, limit=limit, offset=offset)
+    page = feed.feed_for_user(user_id, filter=filter, limit=limit, offset=offset, kind=kind)
     feed.record_view(request, page, filter=filter, offset=offset)
     return page
 

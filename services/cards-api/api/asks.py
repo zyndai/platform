@@ -8,10 +8,11 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from api.owner_home import email_for
+from models.card import AskKind, AskUrl
 from services import asks, owner_home
 
 router = APIRouter()
@@ -26,6 +27,15 @@ class Outcome(BaseModel):
         default_factory=list, max_length=MAX_HELPERS)
 
 
+class AskPost(BaseModel):
+    """The whole ask. Nothing else is read from the body: the card is the session's own, the dates and
+    the id are made by the server."""
+    model_config = ConfigDict(extra="forbid")
+    kind: AskKind
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=280)]
+    url: AskUrl = None
+
+
 def _owner_card(authorization: str | None) -> tuple[str, dict]:
     email = email_for(authorization)
     row = owner_home.current_row(email)
@@ -34,10 +44,50 @@ def _owner_card(authorization: str | None) -> tuple[str, dict]:
     return email, row
 
 
+def _published_card(authorization: str | None) -> tuple[str, dict]:
+    email, row = _owner_card(authorization)
+    if row.get("status") != "published" or not row.get("handle"):
+        raise HTTPException(409, "Publish your card before posting an ask")
+    return email, row
+
+
+def _refresh_public_card(handle: str) -> None:
+    from services.zynd_memory import ping_revalidate
+
+    ping_revalidate(handle)
+
+
+@router.post("/mine/ask")
+async def post_ask(body: AskPost, authorization: str | None = Header(default=None)):
+    """Post the owner's ask: {"beacon": {...}, "ask_id": str}. The same path as the beacon on the edit
+    page (services/beacons.save_beacon), so the previous ask is ended as replaced, routing starts in the
+    background and the card is saved with a compare-and-swap (409 if it changed under you). At most
+    ASK_POSTS_PER_DAY a day (429)."""
+    from services.beacons import save_beacon
+
+    email, row = await asyncio.to_thread(_published_card, authorization)
+    beacon = await asyncio.to_thread(save_beacon, row["handle"], email, body.text, body.kind, body.url)
+    await asyncio.to_thread(_refresh_public_card, row["handle"])
+    return {"beacon": beacon, "ask_id": beacon["id"]}
+
+
+@router.delete("/mine/ask")
+async def take_down_ask(authorization: str | None = Header(default=None)):
+    """Take the live ask down (it ends as dismissed). Nothing to take down is not an error."""
+    from services.beacons import save_beacon
+
+    email, row = await asyncio.to_thread(_published_card, authorization)
+    await asyncio.to_thread(save_beacon, row["handle"], email, None)
+    await asyncio.to_thread(_refresh_public_card, row["handle"])
+    return Response(status_code=204)
+
+
 @router.get("/mine/asks")
 async def my_asks(authorization: str | None = Header(default=None)):
-    """{"asks": [{id, text, status: active|ended, created_at, expires_at, ended_at, outcome, offers: [...]}]}:
-    the current ask and asks that ended in the last 14 days without an answer, with who offered."""
+    """{"asks": [{id, text, kind, url, status: active|ended, created_at, expires_at, ended_at, outcome,
+    routed, offer_count, offers: [...]}]}: the current ask and asks that ended in the last 14 days
+    without an answer, with who offered. `kind` and `url` are only known for the live ask (they live in
+    the card's beacon, not the asks table); `routed` is how many people it was sent to."""
     _, row = await asyncio.to_thread(_owner_card, authorization)
     return await asyncio.to_thread(asks.list_for_owner, row, datetime.now(timezone.utc))
 

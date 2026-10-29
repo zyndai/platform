@@ -39,14 +39,17 @@ Everything keeps working with the three tables missing. A single module (`servic
 
 ## 5. Rollout and rollback
 
-1. Merge #146, then this PR (rebased onto `dev`). Cards-api and cards-web deploy by hand.
-2. A human applies `0033` (any time before or after the deploy; the code degrades without it).
-3. Rollback (after reverting cards-api, which then stops using them):
+1. Merge #146, the feed fixes (#150), then this PR (rebased onto `dev`). A merge to `dev` deploys dev.cards.zynd.ai and a merge to `main` deploys prod (`.github/workflows/deploy-single-box.yml`). Neither applies migrations, and the digest and other scheduled jobs call prod only.
+2. A human applies `0033` with `packages/db/README.md` step 6: drift check, then a dry run that must list `0033_asks` as the only pending cards migration, then `--yes`. It can go before or after the deploy because the code degrades without the tables. Pending migrations run in one transaction, so a failed apply changes nothing. If asks stay off more than a minute after a successful apply, reload PostgREST's schema cache (`NOTIFY pgrst, 'reload schema';`).
+3. Rollback, in one transaction. cards-api need not be reverted first: with the tables gone it switches the asks features off again. Deleting the tracking row lets a later `db:migrate` apply 0033 again; `1793285560055` is 0033's `when` in `meta/_journal.json`.
 
 ```sql
-DROP TABLE cards.ask_routes;
-DROP TABLE cards.ask_offers;
-DROP TABLE cards.asks;
+BEGIN;
+DROP TABLE IF EXISTS cards.ask_routes;
+DROP TABLE IF EXISTS cards.ask_offers;
+DROP TABLE IF EXISTS cards.asks;
+DELETE FROM drizzle.__cards_migrations WHERE created_at = 1793285560055;
+COMMIT;
 ```
 
 Existing beacons carry no `id`; the optional `Beacon.id` is backward compatible and an ask without a row simply has no offers, routes or credit.

@@ -6,10 +6,15 @@
 -- tables, nothing existing changes. Service-role only (RLS on, like card_events). Until they exist
 -- cards-api quietly switches the asks features off (it detects the missing relation once and logs it), so
 -- this can be applied before or after the deploy. Needs a human (AGENTS.md §6).
--- Rollback (after reverting cards-api, which stops reading and writing them):
---   DROP TABLE cards.ask_routes;
---   DROP TABLE cards.ask_offers;
---   DROP TABLE cards.asks;
+-- Rollback, in one transaction (cards-api need not be reverted first: with the tables gone it switches
+-- the asks features off again). Deleting the tracking row lets a later db:migrate apply 0033 again;
+-- 1793285560055 is 0033's "when" in meta/_journal.json, which drizzle records as created_at:
+--   BEGIN;
+--   DROP TABLE IF EXISTS cards.ask_routes;
+--   DROP TABLE IF EXISTS cards.ask_offers;
+--   DROP TABLE IF EXISTS cards.asks;
+--   DELETE FROM drizzle.__cards_migrations WHERE created_at = 1793285560055;
+--   COMMIT;
 CREATE TABLE "cards"."ask_offers" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"ask_id" uuid NOT NULL,

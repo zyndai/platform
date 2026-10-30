@@ -548,24 +548,3 @@ def test_site_posts_without_social_all_land():
     site_posts = [{"platform": "medium", "excerpt": "A long read about shipping slower", "url": "https://medium.com/@a/x-1234567890ab", "posted_at": ""}]
     merged = cards_service.merge_scraped_posts([], None, None, site_posts=site_posts)
     assert [(w.platform, w.url) for w in merged] == [("medium", "https://medium.com/@a/x-1234567890ab")]
-
-
-def test_producthunt_launches_lead_the_projects_and_replace_the_llms_copy():
-    from models.card import Project
-
-    llm = [
-        Project(name="orbit", description="An LLM guess", url="https://orbit.example", source="website"),
-        Project(name="compiler", url="https://github.com/ada/compiler", stars=40),
-    ]
-    launches = [
-        {"name": "Orbit", "tagline": "Calendar for remote teams", "url": "https://www.producthunt.com/products/orbit", "upvotes": 1200},
-        {"name": "Paperplane", "tagline": "", "url": "https://www.producthunt.com/posts/paperplane", "upvotes": None},
-        {"name": "", "url": "https://www.producthunt.com/products/nameless"},
-        {"name": "Sneaky", "url": "javascript:alert(1)"},
-    ]
-    projects = cards_service.merge_launches(llm, launches)
-    assert [(p.name, p.source) for p in projects] == [("Orbit", "producthunt"), ("Paperplane", "producthunt"), ("compiler", "github")]
-    assert projects[0].description == "Calendar for remote teams · 1,200 upvotes"
-    assert projects[0].stars is None and projects[0].tech == ["Product Hunt"]
-    assert projects[1].description == ""
-    assert cards_service.merge_launches(llm, None) == llm

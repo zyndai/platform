@@ -45,9 +45,3 @@ def test_unlabelled_website_text_becomes_a_clipped_bio():
 
 def test_empty_values_are_dropped():
     assert build_preview("x", "", {"followers": "—", "posts": "—"}) == {}
-
-
-def test_producthunt_preview_counts_launches_or_says_the_link_is_kept():
-    launches = [{"name": "Orbit", "url": "https://www.producthunt.com/products/orbit"}]
-    assert build_preview("producthunt", "Ada's launches", {"launches": launches})["facts"] == ["1 launch"]
-    assert build_preview("producthunt", "", None) == {"facts": ["Link added to your card"]}

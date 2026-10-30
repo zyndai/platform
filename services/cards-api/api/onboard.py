@@ -72,8 +72,8 @@ async def _fetch_source(job_id: str, url: str) -> tuple[str, str, dict | None]:
         set_source(job_id, url, kind, "failed")
         return kind, "", None
     kind, text, stats = result
-    # A Product Hunt profile that couldn't be read is still the person's link on the card.
-    if text or kind == "producthunt":
+    # A page behind a bot check gave us nothing to read, but it is still the person's link.
+    if text or (stats or {}).get("link_only"):
         set_source(job_id, url, kind, "done", build_preview(kind, text, stats))
     else:
         _source_warning(job_id, url)
@@ -119,6 +119,18 @@ def _profile_link(url: str) -> str:
     return urlparse(url)._replace(query="", fragment="").geturl()
 
 
+def _link_key(url: str) -> str:
+    """The identity.links key for a pasted page the card can only link to."""
+    if website_scraper.is_linktree(url):
+        return "linktree"
+    if site_scraper.producthunt_maker(url):
+        return "producthunt"
+    return (
+        site_scraper.writing_platform(url) or ("blog" if site_scraper.is_writing_url(url) else None)
+        or site_scraper.portfolio_platform(url) or "website"
+    )
+
+
 def _handle_from_url(url: str) -> str | None:
     from urllib.parse import urlparse
     parts = urlparse(url).path.strip("/").split("/")
@@ -128,9 +140,9 @@ def _handle_from_url(url: str) -> str | None:
 async def _safe_fetch_url(url: str) -> tuple[str, str, dict | None]:
     """Returns (kind, text, stats_or_None). kind ∈ {'x', 'linkedin', 'producthunt', 'writing', 'portfolio', 'website'}.
 
-    For a newsletter / blog / design portfolio / Product Hunt profile, stats holds what
-    scraping/sites.py found on the page: `posts_raw` (post links), `gallery` (project
-    tiles) and/or `launches` (products the maker launched)."""
+    For a newsletter / blog / design portfolio, stats holds what scraping/sites.py
+    found on the page: `posts_raw` (post links) and/or `gallery` (project tiles).
+    A page that showed Jina a bot check gives no text and `{"link_only": True}`."""
     kind = _classify_url(url)
     try:
         if kind == "x":
@@ -139,19 +151,16 @@ async def _safe_fetch_url(url: str) -> tuple[str, str, dict | None]:
             text, stats = await linkedin_scraper.fetch_linkedin_profile(url)
         else:
             text, markdown = await website_scraper.fetch_page(url)
-            if kind == "producthunt" and website_scraper.is_bot_challenge(markdown):
-                # Product Hunt usually shows the reader its bot check: no launches to read,
-                # and its boilerplate must not reach the model as if it were the person.
-                logger.info("producthunt bot check instead of profile url=%s", url)
-                return kind, "", None
             found = {
                 "posts_raw": site_scraper.extract_posts(markdown, url),
                 "gallery": site_scraper.extract_gallery(markdown, url),
-                "launches": site_scraper.extract_launches(markdown, url),
             }
             stats = {k: v for k, v in found.items() if v} or None
         logger.info("scraped %s url=%s chars=%d", kind, url, len(text))
         return kind, text, stats
+    except website_scraper.BotChallengeError:
+        logger.info("bot check instead of page kind=%s url=%s", kind, url)
+        return kind, "", {"link_only": True}
     except Exception as exc:
         logger.warning("scrape failed kind=%s url=%s err=%s", kind, url, exc)
         return kind, "", None
@@ -213,6 +222,9 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
         if x_urls:
             x_handle = _handle_from_url(x_urls[0])
 
+        # Pages behind a bot check: nothing to read, so the card links to them instead.
+        link_only_urls: list[str] = []
+
         # Expand Linktree / link-in-bio pages before scraping
         expanded: list[str] = []
         for u in other_urls:
@@ -224,6 +236,10 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
                     set_source(job_id, u, "website", "done")
                     for link in links:
                         set_source(job_id, link, _classify_url(link), "reading")
+                except website_scraper.BotChallengeError:
+                    link_only_urls.append(u)
+                    set_source(job_id, u, "website", "done", build_preview("website", "", {"link_only": True}))
+                    logger.info("bot check instead of linktree url=%s", u)
                 except Exception as exc:
                     _source_warning(job_id, u, "timeout" if isinstance(exc, TimeoutError) else "failed")
                     set_source(job_id, u, "website", "failed")
@@ -234,7 +250,6 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
         website_texts: list[str] = []
         site_posts: list[dict] = []
         work_gallery: list[dict] = []
-        launches: list[dict] = []
         producthunt_user = next(filter(None, map(site_scraper.producthunt_maker, expanded)), None)
         x_texts: list[str] = []
         linkedin_texts: list[str] = []
@@ -247,6 +262,8 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
             results = await asyncio.gather(*[_fetch_source(job_id, u) for u in expanded])
             for (orig_url, (kind, text, stats)) in zip(expanded, results):
                 if not text:
+                    if (stats or {}).get("link_only"):
+                        link_only_urls.append(orig_url)
                     continue
                 if kind == "x":
                     x_texts.append(text)
@@ -264,7 +281,6 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
                     website_texts.append(text)
                     site_posts += (stats or {}).get("posts_raw") or []
                     work_gallery += (stats or {}).get("gallery") or []
-                    launches += (stats or {}).get("launches") or []
 
         # Exclude resume — user-uploaded private document; public scrapes only
         scrape_raw: dict = {
@@ -301,10 +317,12 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
             synth.identity.links["linkedin"] = _profile_link(linkedin_url_used)
         if x_url_used:
             synth.identity.links["x"] = _profile_link(x_url_used)
-        # Whether or not the profile could be read, the person linked it: it goes on the card.
+        # Nothing is read from a Product Hunt profile yet (launches are a follow-up), so the
+        # link is what the person gets from it, whether or not the page could be read.
         if producthunt_user:
             synth.identity.links["producthunt"] = f"https://www.producthunt.com/@{producthunt_user}"
-        synth.projects = cards_service.merge_launches(synth.projects, launches[: site_scraper.LAUNCHES_PER_PROFILE])
+        for u in link_only_urls:
+            synth.identity.links.setdefault(_link_key(u), _profile_link(u))
 
         # Deterministic avatar priority: LinkedIn > X > GitHub. The LLM's guess
         # (if any) is overridden by real scraped photo URLs.

@@ -34,6 +34,7 @@ import { ProfileView } from "@/components/ProfileView";
 import { logAgentFetch } from "@/lib/track";
 import { parseSearchRef } from "@/lib/search-link";
 import { ProfileChatWidget } from "@/components/ProfileChatWidget";
+import { PitchToBookButton } from "@/components/PitchToBookButton";
 import { FallbackAvatar } from "@/components/FallbackAvatar";
 import { WorkExperienceCard } from "./work-experience-card";
 import { HeroAskPanel } from "./hero-agent-bar";
@@ -502,6 +503,8 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
     { label: "Calendly", url: safeUrl(card.calendly_url) },
     { label: "Google Calendar", url: safeUrl(card.google_calendar_url) },
   ].filter((l): l is { label: string; url: string } => !!l.url);
+  // The API withholds the links when this is set; the chat widget's pitch step is the only way to them.
+  const pitchToBook = identity.pitch_to_book === true;
 
   const MEMORY_GROUPS: Record<string, { label: string; icon: string }> = {
     is_founder_of: { label: "Founded", icon: "🏢" },
@@ -655,7 +658,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
   const xAvatarSrc = imgProxyUrl(safeUrl(card.x_stats?.avatar) ?? rawAvatar, ghAvatar, card.handle || handle);
   const xImpressions = v.x.impressions != null && String(v.x.impressions).trim() !== "—" ? v.x.impressions : null;
   const showMemory = claimed && memoryTotal > 0;
-  const showBooking = claimed && bookingLinks.length > 0;
+  const showBooking = claimed && (bookingLinks.length > 0 || pitchToBook);
   const socialSlots = [showLinkedin, showX, showMemory, showBooking].filter(Boolean).length;
 
   /* ── shared card style ─────────────────────────────────── */
@@ -1251,7 +1254,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
               >
                 <div className="pf-mono flex justify-between items-center" style={{ fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.08em", position: "relative", minHeight: 18 }}>
                   <span className="flex items-center gap-1.5"><Calendar size={12} /> BOOK A CALL</span>
-                  <span style={{ background: "rgba(255,255,255,0.16)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 99, padding: "3px 8px", fontSize: "0.58rem" }}>OPEN</span>
+                  <span style={{ background: "rgba(255,255,255,0.16)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 99, padding: "3px 8px", fontSize: "0.58rem" }}>{pitchToBook ? "PITCH FIRST" : "OPEN"}</span>
                 </div>
 
                 <div className="pf-social-id" style={{ position: "relative" }}>
@@ -1275,11 +1278,20 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                   <span className="pf-mono" style={{ background: "rgba(255,255,255,0.12)", borderRadius: 8, padding: "5px 8px", fontSize: "0.6rem", fontWeight: 700 }}>1:1</span>
                 </div>
 
-                <BookingAvailability url={bookingLinks[0].url} name={firstName} />
+                {bookingLinks[0] && <BookingAvailability url={bookingLinks[0].url} name={firstName} />}
                 </div>
 
                 {/* One link: the usual CTA. Both: one button per provider. */}
                 <div style={{ display: "flex", gap: 8, marginTop: "auto" }}>
+                  {pitchToBook && (
+                    <PitchToBookButton
+                      className="pf-book-cta pf-mono pf-social-cta"
+                      style={{ flex: 1, gap: 8, background: "#fff", color: "#1e3a8a", cursor: "pointer", letterSpacing: "0.04em", border: "none" }}
+                    >
+                      Pitch to book a call
+                      <span aria-hidden>→</span>
+                    </PitchToBookButton>
+                  )}
                   {bookingLinks.map((l) => (
                     <a
                       key={l.label}
@@ -1533,6 +1545,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
           personName={identity.name}
           prompts={chatPrompts}
           bookingLinks={bookingLinks}
+          pitchToBook={pitchToBook}
           showCreateCta={!isOwner && !viewerHasCard}
         />
       )}

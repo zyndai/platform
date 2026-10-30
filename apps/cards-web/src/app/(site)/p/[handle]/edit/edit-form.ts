@@ -18,6 +18,8 @@ export interface EditForm {
   skills: AgentProfileCard["skills"];
   calendly: string;
   gcal: string;
+  /** Visitors pitch before the booking links are shown. Saved in identity, like the edition. */
+  pitchToBook: boolean;
   /** Limited-edition look; null is the classic card. */
   edition: CardEdition | null;
 }
@@ -79,6 +81,7 @@ export function formFromCard(card: AgentProfileCard): EditForm {
     skills: card.skills,
     calendly: card.calendly_url ?? "",
     gcal: card.google_calendar_url ?? "",
+    pitchToBook: card.identity.pitch_to_book === true,
     edition: readEdition(card.identity.edition),
   };
 }
@@ -88,15 +91,19 @@ export function formLinks(form: EditForm): Record<string, string> {
 }
 
 export function cardFromForm(base: AgentProfileCard, form: EditForm): AgentProfileCard {
+  const identity: AgentProfileCard["identity"] = {
+    ...base.identity,
+    name: form.name, headline: form.headline, location: form.location,
+    links: formLinks(form),
+    // Classic cards that never had an edition keep sending the identity they always did.
+    ...(form.edition || "edition" in base.identity ? { edition: form.edition } : {}),
+    pitch_to_book: true,
+  };
+  // Off is an absent key, the way cards-api stores it; sending `false` would read as a changed identity.
+  if (!form.pitchToBook) delete identity.pitch_to_book;
   return {
     ...base,
-    identity: {
-      ...base.identity,
-      name: form.name, headline: form.headline, location: form.location,
-      links: formLinks(form),
-      // Classic cards that never had an edition keep sending the identity they always did.
-      ...(form.edition || "edition" in base.identity ? { edition: form.edition } : {}),
-    },
+    identity,
     summary: form.summary,
     availability: form.availability,
     industries: form.industries,

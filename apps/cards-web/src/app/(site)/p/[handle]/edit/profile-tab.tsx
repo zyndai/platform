@@ -149,6 +149,15 @@ export function ProfileTab({ form, set, handle, token }: {
             <input id="pe-gcal" className="pe-input" value={form.gcal} onChange={(e) => set("gcal", e.target.value)} placeholder="https://calendar.app.google/…" inputMode="url" />
           </Field>
         </div>
+        <label className="pe-check" htmlFor="pe-pitch">
+          <input id="pe-pitch" type="checkbox" checked={form.pitchToBook} onChange={(e) => set("pitchToBook", e.target.checked)} aria-describedby="pe-pitch-hint" />
+          <span>
+            <span className="pe-check-label">Ask visitors to pitch before booking</span>
+            <span className="pe-check-hint" id="pe-pitch-hint">
+              Your booking link stays hidden until a visitor&apos;s short note on why they want to meet passes your card&apos;s AI, which checks it against who you want to connect with, what you can help with and what you&apos;re working on.
+            </span>
+          </span>
+        </label>
       </Card>
     </>
   );

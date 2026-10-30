@@ -75,7 +75,8 @@ const OWNER_FACTS: Array<{ predicate: string; object: string; provenance: string
   { predicate: "uses_tool", object: "Claude in Chrome", provenance: "agent", evidence: "The user has a tool: Claude in Chrome" },
 ];
 
-export function startFixtureServer(): Promise<void> {
+/** `port` lets a run sit beside another suite that already holds the default port. */
+export function startFixtureServer(port = PORT): Promise<void> {
   const initialIntro = () => ({
     id: "33333333-3333-4333-8333-333333333333", handle: "owner",
     owner_uid: "11111111-1111-4111-8111-111111111111", requester_uid: "22222222-2222-4222-8222-222222222222",
@@ -411,6 +412,24 @@ export function startFixtureServer(): Promise<void> {
         ],
       });
     }
+    if (path === "/cards/by-handle/pitchcard") {
+      // The owner asks for a pitch first, so (like cards-api) the public card carries no booking URL.
+      const base = cardFixture("pitchcard");
+      return json(200, { ...base, identity: { ...(base.identity as object), pitch_to_book: true }, calendly_url: null, google_calendar_url: null });
+    }
+    if (req.method === "POST" && path === "/v1/chat/pitchcard/pitch") {
+      let raw = "";
+      req.on("data", chunk => { raw += chunk; });
+      req.on("end", () => {
+        const { pitch = "" } = JSON.parse(raw || "{}") as { pitch?: string };
+        if (pitch.includes("again")) return json(429, { detail: "You've sent a pitch recently. Try again in a few minutes." });
+        if (pitch.includes("devtools")) {
+          return json(200, { verdict: "pass", reason: "Alice wants to meet devtools founders.", links: [{ label: "Calendly", url: "https://calendly.com/alice/pitched" }] });
+        }
+        return json(200, { verdict: "decline", reason: "Alice is looking for devtools founders right now." });
+      });
+      return;
+    }
     if (path === "/cards/by-handle/draft-card") {
       return json(200, { ...cardFixture("draft-card"), status: "draft", claimed: undefined });
     }
@@ -430,6 +449,6 @@ export function startFixtureServer(): Promise<void> {
   });
 
   return new Promise((resolve) => {
-    server.listen(PORT, "127.0.0.1", () => resolve());
+    server.listen(port, "127.0.0.1", () => resolve());
   });
 }

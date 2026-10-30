@@ -238,6 +238,8 @@ def test_get_card_view():
     assert out["fresh_as_of"]
     assert out["cite_as"].endswith("/p/alice")
     assert out["cache_control"] == "no-store"  # fixture sets ttl=0
+    # Memory's own fetch of the card is labelled so cards-api can tell it from the agent's read.
+    assert mock_client.get.await_args.kwargs["headers"]["User-Agent"] == "Zynd-Memory/1.0"
 
 
 def test_get_card_cache_control_and_hit(monkeypatch):

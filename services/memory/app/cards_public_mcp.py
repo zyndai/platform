@@ -182,7 +182,8 @@ def _map_person(person: dict) -> dict:
 async def _http_get(path: str, params: dict | None = None) -> Any:
     url = f"{_base()}{path}"
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-        r = await client.get(url, params=params or {})
+        # This read only fetches the card; the agent's read is counted once by record_fetches.
+        r = await client.get(url, params=params or {}, headers=mcp_analytics.internal_read_headers())
         r.raise_for_status()
         if len(r.content) > settings.s11_max_response_bytes:
             raise RuntimeError("cards-api response exceeded size cap")

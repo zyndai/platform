@@ -26,6 +26,10 @@ export function track(event: string, meta?: Record<string, unknown>, handle?: st
   }
 }
 
+/** Sent when the visitor sent no User-Agent: Node's fetch would otherwise send its own "node",
+ *  which cards-api (services/ua_class.py) labels "Node.js" as if a script had read the card. */
+const UNIDENTIFIED_VISITOR_UA = "Zynd-Unidentified-Visitor";
+
 /** Awaitable so server callers can keep delivery alive with Next's after(). */
 export async function logAgentFetch(
   endpoint: string,
@@ -44,14 +48,14 @@ export async function logAgentFetch(
   // and emails an owner only when it is inside the claimed AI provider's
   // published ranges (a User-Agent alone is anyone's to set).
   const serverToken = process.env.EVENTS_SERVER_TOKEN;
-  const userAgent = visitor?.userAgent;
+  const userAgent = visitor?.userAgent || UNIDENTIFIED_VISITOR_UA;
   try {
     const response = await fetch(`${CARDS_API}/events`, {
       method: "POST",
       signal: AbortSignal.timeout(5000),
       headers: {
         "Content-Type": "application/json",
-        ...(userAgent ? { "User-Agent": userAgent } : {}),
+        "User-Agent": userAgent,
         ...(serverToken ? { "X-Zynd-Server-Event": serverToken } : {}),
         ...(serverToken && visitor?.ip ? { "X-Zynd-Client-IP": visitor.ip } : {}),
       },

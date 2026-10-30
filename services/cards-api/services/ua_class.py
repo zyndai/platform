@@ -1,7 +1,10 @@
 """User-Agent → actor_class for S04 card_events."""
 
-# Website data reads are followed by a separate event with the visitor's header.
+# Labels only: the User-Agents our own servers send when they read a card to render it (cards-web,
+# memory's public MCP). Whether such a read is skipped is decided by EVENTS_SERVER_TOKEN
+# (services/events.py emit), never by these strings, which anyone can send.
 INTERNAL_CARDS_CLIENT = "Zynd-Cards-Web/1.0"
+INTERNAL_MEMORY_CLIENT = "Zynd-Memory/1.0"
 UNIDENTIFIED_CLIENTS = ("Node.js", "curl", "Python HTTP client", "Unidentified")
 
 

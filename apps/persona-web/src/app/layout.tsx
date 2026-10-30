@@ -52,6 +52,10 @@ const playfairDisplay = localFont({
   adjustFontFallback: "Times New Roman",
   variable: "--font-playfair",
   display: "swap",
+  // next/font preloads per call, not per face, and this layout wraps every page. Both TTFs
+  // (~580KB) would be preloaded everywhere for one italic phrase in the landing hero
+  // (.zhero-title-em), competing with the hero image. Without a preload it loads where it's used.
+  preload: false,
 });
 
 const spaceGrotesk = Space_Grotesk({

@@ -2,19 +2,17 @@
 from __future__ import annotations
 
 import asyncio
-import hmac
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-import config
 from services import agent_ip_ranges
 from services import events as events_service
 
 router = APIRouter()
 
-SERVER_EVENT_HEADER = "X-Zynd-Server-Event"
+SERVER_EVENT_HEADER = events_service.SERVER_EVENT_HEADER
 # The visitor IP cards-web or memory saw. Read only next to a valid SERVER_EVENT_HEADER: from
 # anyone else it is a claim the caller makes about itself.
 CLIENT_IP_HEADER = "X-Zynd-Client-IP"
@@ -29,15 +27,6 @@ class EventItem(BaseModel):
 
 class EventsBody(BaseModel):
     events: list[EventItem] = Field(default_factory=list)
-
-
-def _from_our_server(request: Request) -> bool:
-    """The caller holds EVENTS_SERVER_TOKEN. Empty token = nobody does."""
-    expected = config.EVENTS_SERVER_TOKEN
-    supplied = request.headers.get(SERVER_EVENT_HEADER)
-    if not expected or supplied is None:
-        return False
-    return hmac.compare_digest(supplied.encode(), expected.encode())
 
 
 def _attested_visitor_ip(request: Request) -> str | None:
@@ -60,7 +49,7 @@ async def post_events(body: EventsBody, request: Request):
             raise HTTPException(status_code=400, detail=f"unknown event: {item.event}")
 
     ip = events_service.client_ip(request)
-    attested = _from_our_server(request)
+    attested = events_service.from_our_server(request)
     # Our servers report every visitor's reads from one address, so a per-caller limit would
     # throttle cards-web's page renders and memory's MCP reads together. Holding the token is
     # what earns the exemption.

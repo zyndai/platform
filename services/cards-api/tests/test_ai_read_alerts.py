@@ -347,8 +347,8 @@ def test_public_post_events_cannot_trigger_the_alert(world, headers):
     db, mailer = world
     # #given anyone posting an AI read with a Claude User-Agent and no (or a wrong) server token
     assert _post_ai_read(**headers).status_code == 204
-    # #then the read is still counted, but no owner is emailed
-    assert any(r["event"] == "agent_fetch" for r in db.rows("card_events"))
+    # #then it is dropped: neither counted nor emailed
+    assert db.rows("card_events") == []
     assert mailer.sent == [] and alerts(db) == []
 
 

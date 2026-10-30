@@ -943,6 +943,8 @@ if settings.feature_s11_public_mcp:
     @asynccontextmanager
     async def _combined_lifespan(app):
         async with AsyncExitStack() as stack:
+            # Runs last on shutdown, after both MCP apps stop handing it new card reads.
+            stack.push_async_callback(mcp_analytics.aclose)
             await stack.enter_async_context(_auth_app.lifespan(app))
             await stack.enter_async_context(_public_app.lifespan(app))
             yield

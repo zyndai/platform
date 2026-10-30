@@ -8,6 +8,15 @@ import pytest
 from app.services import mcp_analytics as analytics
 
 
+@pytest.fixture(autouse=True)
+def fresh_delivery_client(monkeypatch):
+    """Each test builds its own shared client from whatever AsyncClient it patched in."""
+    monkeypatch.setattr(analytics, "_client", None)
+    monkeypatch.setattr(analytics, "_client_loop", None)
+    yield
+    analytics._pending.clear()
+
+
 @pytest.mark.parametrize("name,label", [
     ("codex-mcp-client", "Codex"), ("codex_cli_rs", "Codex"),
     ("ChatGPT", "ChatGPT-MCP"), ("claude-ai", "Claude-MCP"),
@@ -37,11 +46,13 @@ async def test_batching_deduplication_and_delivery_failure(monkeypatch):
     client.post = AsyncMock(return_value=MagicMock())
     monkeypatch.setattr(analytics.httpx, "AsyncClient", lambda **kw: client)
     await analytics.record_fetches([f"h{i}" for i in range(25)] + ["h0"], endpoint="memory-mcp", tool="find_people")
+    await analytics.drain()
     calls = client.post.await_args_list
     assert [len(c.kwargs["json"]["events"]) for c in calls] == [20, 5]
     assert calls[0].kwargs["headers"] == {"User-Agent": "Codex"}
     client.post.side_effect = httpx.ConnectError("offline")
     await analytics.record_fetches(["alice"], endpoint="memory-mcp", tool="find_people")
+    await analytics.drain()
 
 
 async def test_server_token_is_sent_only_when_configured(monkeypatch):
@@ -56,6 +67,7 @@ async def test_server_token_is_sent_only_when_configured(monkeypatch):
     await analytics.record_fetches(["alice"], endpoint="memory-mcp", tool="get_card")
     monkeypatch.setattr(analytics.settings, "events_server_token", "shared-secret")
     await analytics.record_fetches(["alice"], endpoint="memory-mcp", tool="get_card")
+    await analytics.drain()
     first, second = (c.kwargs["headers"] for c in client.post.await_args_list)
     assert first == {"User-Agent": "Codex"}
     assert second == {"User-Agent": "Codex", "X-Zynd-Server-Event": "shared-secret"}
@@ -157,6 +169,7 @@ async def test_authenticated_mcp_http_call_delivers_returned_profile_events(monk
                 assert not payload["result"].get("isError"), payload
 
     # Repeat calls each count, but a profile duplicated within one result counts once.
+    await analytics.drain()
     assert len(delivered) == 2
     for request in delivered:
         assert str(request.url) == "http://cards.test/events"
@@ -167,3 +180,74 @@ async def test_authenticated_mcp_http_call_delivers_returned_profile_events(monk
         assert all(event["event"] == "agent_fetch" and event["meta"]["tool"] == "find_people"
                    for event in body["events"])
         assert "private search text" not in request.content.decode()
+
+
+async def test_tool_answer_does_not_wait_for_delivery(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(analytics.settings, "cards_api_base_url", "http://cards.test")
+    monkeypatch.setattr(analytics, "advertised_user_agent", lambda: "Codex")
+    release = asyncio.Event()
+    delivered = []
+
+    async def slow_post(url, **kwargs):
+        await release.wait()
+        delivered.append(kwargs["json"])
+        return MagicMock()
+
+    client = MagicMock()
+    client.post = slow_post
+    monkeypatch.setattr(analytics.httpx, "AsyncClient", lambda **kw: client)
+    # #when a tool records a read while cards-api is slow
+    await asyncio.wait_for(analytics.record_fetches(["alice"], endpoint="memory-mcp", tool="get_card"), timeout=1)
+    # #then the call returned first, and the POST still happens afterwards
+    assert delivered == [] and len(analytics._pending) == 1
+    release.set()
+    await analytics.drain()
+    assert [e["handle"] for e in delivered[0]["events"]] == ["alice"] and not analytics._pending
+
+
+async def test_one_client_is_shared_and_closed_on_shutdown(monkeypatch):
+    monkeypatch.setattr(analytics.settings, "cards_api_base_url", "http://cards.test")
+    monkeypatch.setattr(analytics, "advertised_user_agent", lambda: "Codex")
+    made = []
+
+    def make(**kw):
+        client = MagicMock()
+        client.post = AsyncMock(return_value=MagicMock())
+        client.aclose = AsyncMock()
+        made.append(client)
+        return client
+
+    monkeypatch.setattr(analytics.httpx, "AsyncClient", make)
+    for handle in ("alice", "bob"):
+        await analytics.record_fetches([handle], endpoint="memory-mcp", tool="get_card")
+    await analytics.drain()
+    assert len(made) == 1 and made[0].post.await_count == 2
+    await analytics.aclose()
+    made[0].aclose.assert_awaited_once()
+    assert analytics._client is None
+
+
+async def test_unexpected_task_failure_is_logged_not_raised(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setattr(analytics.settings, "cards_api_base_url", "http://cards.test")
+    monkeypatch.setattr(analytics, "advertised_user_agent", lambda: "Codex")
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(analytics, "_deliver", broken)
+    with caplog.at_level(logging.WARNING):
+        await analytics.record_fetches(["alice"], endpoint="memory-mcp", tool="get_card")
+        await analytics.drain()
+    assert "MCP card analytics task failed: RuntimeError" in caplog.text
+    assert not analytics._pending
+
+
+def test_internal_card_reads_carry_the_token_and_an_internal_label(monkeypatch):
+    monkeypatch.setattr(analytics.settings, "events_server_token", "")
+    assert analytics.internal_read_headers() == {"User-Agent": "Zynd-Memory/1.0"}
+    monkeypatch.setattr(analytics.settings, "events_server_token", "shared-secret")
+    assert analytics.internal_read_headers() == {"User-Agent": "Zynd-Memory/1.0", "X-Zynd-Server-Event": "shared-secret"}

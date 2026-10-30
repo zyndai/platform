@@ -56,10 +56,12 @@ import { HelpedCard } from "./helped-card";
 import { cleanTopic, publicTopics } from "@/lib/profile-quality";
 import { BeaconCard } from "@/components/BeaconCard";
 import { BookingAvailability } from "@/components/BookingAvailability";
+import { parseLens } from "@/lib/lenses";
+import { LensBar } from "./lens-bar";
 
 interface PageProps {
   params: Promise<{ handle: string }>;
-  searchParams: Promise<{ preview?: string; sid?: string; r?: string }>;
+  searchParams: Promise<{ preview?: string; sid?: string; r?: string; lens?: string | string[] }>;
 }
 
 /* ─── utils ─────────────────────────────────────────────────────────────── */
@@ -392,6 +394,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
   const query = await searchParams;
   const visitorPreview = query.preview === "visitor";
   const fromSearch = parseSearchRef(query.sid, query.r);
+  const lens = parseLens(query.lens);
   const card = await fetchCardByHandle(handle);
   const cardView = featureS06CardView() && card ? await fetchCardView(handle) : null;
   if (!card) {
@@ -906,6 +909,8 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             </div>
           </header>
 
+          {lens && <LensBar lens={lens} card={{ ...card, name: identity.name || "" }} fullCardHref={`/p/${encodeURIComponent(card.handle ?? handle)}`} />}
+
           {edition && (
             <EditionHero
               edition={edition}
@@ -1103,7 +1108,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
             {/* ── AI FACT + WORK EXP: equal height, fact card fills ── */}
             {claimed && card.beacon && Date.parse(card.beacon.created_at) <= nowMs && Date.parse(card.beacon.expires_at) > nowMs && <BeaconCard key={card.beacon.expires_at} beacon={card.beacon} />}
-            <div className="pf-span-12 pf-ai-work">
+            <div className="pf-span-12 pf-ai-work" data-section="experience">
             {claimed && (() => {
               const q = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
               const arr = (items: string[]) => `[${items.map(q).join(", ")}]`;
@@ -1168,7 +1173,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
             {/* ── SOCIAL ROW: equal columns, always fills the 12-col track ── */}
             {socialSlots > 0 && (
-            <div className="pf-span-12 pf-social-row" style={{ "--social-cols": `repeat(${Math.max(socialSlots, 2)}, minmax(0, 1fr))` } as React.CSSProperties}>
+            <div className="pf-span-12 pf-social-row" data-section="social" style={{ "--social-cols": `repeat(${Math.max(socialSlots, 2)}, minmax(0, 1fr))` } as React.CSSProperties}>
 
             {/* ── SOCIAL: LINKEDIN ── */}
             {showLinkedin && (
@@ -1351,6 +1356,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             {showGithub && (
               <div
                 className="pf-span-12 pf-gh-row"
+                data-section="github"
                 style={{ "--gh-cols": hasContributions ? "minmax(240px, 4fr) minmax(0, 8fr)" : "minmax(0, 1fr) minmax(0, 1fr)" } as React.CSSProperties}
               >
                 <div className={`${card_} tc`}>
@@ -1443,7 +1449,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
             {/* ── POSTS & WRITING ── */}
             {v.writing.length > 0 && (
-              <div className="pf-span-12 pf-posts" style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 20, padding: "20px 24px" }}>
+              <div className="pf-span-12 pf-posts" data-section="writing" style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 20, padding: "20px 24px" }}>
                 <div className="pf-mono flex justify-between items-center mb-4" style={{ fontSize: "0.65rem" }}>
                   <span style={{ color: "#6b63ff", fontWeight: 700 }}>┌ {v.writing.every((w) => ["x", "twitter", "linkedin"].includes(w.platform.toLowerCase())) ? "POSTS & WRITING" : "RECENT WRITING"}</span>
                   <span style={{ background: "#e0e7ff", color: "#4f46e5", padding: "3px 10px", borderRadius: 99, fontWeight: 700 }}>
@@ -1488,7 +1494,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
             {/* ── PROJECTS + SKILLS ── */}
             {(v.projects.length > 0 || skills.length > 0) && (
-              <div className="pf-span-12 pf-proj-row">
+              <div className="pf-span-12 pf-proj-row" data-section="projects">
 
                   {v.projects.length > 0 && (
                     <ProjectsCard
@@ -1513,7 +1519,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             )}
 
             {/* ── EXPLORE FOOTER ── */}
-            <div className="pf-span-12 pf-cta" style={{ position: "relative", overflow: "hidden", background: "linear-gradient(120deg, #1e1b4b 0%, #312e81 45%, #4f46e5 100%)", borderRadius: 20, padding: "28px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24, flexWrap: "wrap" }}>
+            <div className="pf-span-12 pf-cta" data-section="explore" style={{ position: "relative", overflow: "hidden", background: "linear-gradient(120deg, #1e1b4b 0%, #312e81 45%, #4f46e5 100%)", borderRadius: 20, padding: "28px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24, flexWrap: "wrap" }}>
               <div style={{ position: "absolute", right: -40, top: -50, width: 180, height: 180, borderRadius: "50%", background: "rgba(255,255,255,0.08)", pointerEvents: "none" }} />
               <div style={{ position: "relative", display: "flex", gap: 16, alignItems: "center", minWidth: 0 }}>
                 <div style={{ width: 48, height: 48, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: "#fff" }}>

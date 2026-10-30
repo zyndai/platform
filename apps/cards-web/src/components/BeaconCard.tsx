@@ -14,7 +14,7 @@ export function BeaconCard({ beacon }: { beacon: Beacon }) {
   if (expired) return null;
   const link = safeAskUrl(beacon.url);
   return (
-    <aside aria-label="Current broadcast beacon" className="pf-span-12" style={{ background: "#ecfdf5", border: "1px solid #6ee7b7", borderRadius: 20, padding: "20px 24px" }}>
+    <aside aria-label="Current broadcast beacon" data-section="beacon" className="pf-span-12" style={{ background: "#ecfdf5", border: "1px solid #6ee7b7", borderRadius: 20, padding: "20px 24px" }}>
       <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".08em", color: "#047857", margin: "0 0 8px" }}>{beacon.kind ? kindLabel(beacon.kind).toUpperCase() : "LOOKING FOR"} · 7-DAY BEACON</p>
       <p style={{ color: "#064e3b", fontWeight: 600, margin: "0 0 8px", overflowWrap: "anywhere" }}>{beacon.text}</p>
       {link && (

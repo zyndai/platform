@@ -18,6 +18,7 @@ import { VisitorPrivacy } from "@/components/VisitorPrivacy";
 import { DiscoveryAnalytics } from "./discovery-analytics";
 import { PeopleToMeet } from "./people-to-meet";
 import { CompletionRing } from "./completion-ring";
+import { ShareFor } from "./share-for";
 
 export function OwnerHome({
   initial,
@@ -397,6 +398,7 @@ export function OwnerHome({
               )}
             </div>
           </section>
+          {data.visibility === "public" && <ShareFor handle={data.handle} />}
           {!!data.duplicates.length && (
             <section className="oh-panel oh-wide">
               <p className="oh-eyebrow">ONE STORY, ONE CARD</p>

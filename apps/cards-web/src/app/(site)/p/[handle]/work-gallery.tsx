@@ -9,7 +9,7 @@ export function WorkGallery({ items, safeUrl }: { items: WorkItem[]; safeUrl: (u
   if (shown.length === 0) return null;
   const source = shown[0].source ? shown[0].source.toUpperCase() : "PORTFOLIO";
   return (
-    <div className="pf-span-12 pf-gallery" style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 20, padding: "20px 24px" }}>
+    <div className="pf-span-12 pf-gallery" data-section="gallery" style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 20, padding: "20px 24px" }}>
       <div className="pf-mono flex justify-between items-center mb-4" style={{ fontSize: "0.65rem" }}>
         <span style={{ color: "#6b63ff", fontWeight: 700 }}>┌ WORK</span>
         <span style={{ background: "#e0e7ff", color: "#4f46e5", padding: "3px 10px", borderRadius: 99, fontWeight: 700 }}>

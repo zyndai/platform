@@ -1,0 +1,78 @@
+/* "Share for…" lens picker, in the owner home's light look (tokens from owner-home.css). */
+.sf-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.sf-options legend {
+  padding: 0;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--oh-ink);
+}
+.sf-option {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid #d4d8e1;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--oh-ink);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sf-option:hover { border-color: var(--oh-muted); }
+.sf-option.is-picked {
+  background: var(--oh-lavender);
+  border-color: #a5b4fc;
+  color: #1e1b4b;
+}
+/* The native radio stays in the tab order and drives the group; the pill is its label. */
+.sf-option input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.sf-option:has(input:focus-visible) { outline: 3px solid var(--oh-accent); outline-offset: 3px; }
+.oh .sf-leads { margin: 12px 0 0; }
+.sf-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+.sf-url {
+  flex: 1 1 280px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--oh-border);
+  border-radius: 12px;
+  background: #f8f9fb;
+  color: var(--oh-ink);
+  font: 13px var(--oh-mono);
+}
+.sf :is(.sf-url, .oh-button):focus-visible { outline: 3px solid var(--oh-accent); outline-offset: 3px; }
+.sf-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.oh .sf-status { min-height: 1.7em; margin: 8px 0 0; color: var(--oh-accent); }
+@media (forced-colors: active) {
+  .sf-option.is-picked { outline: 2px solid Highlight; }
+}

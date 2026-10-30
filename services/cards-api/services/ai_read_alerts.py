@@ -221,6 +221,13 @@ def client_label(agent: str | None) -> str:
     return provider
 
 
+def _source(agent: str | None) -> str:
+    """Why the client name is believable: _run only delivers once the visitor IP is inside the
+    publisher's list. The fallback covers direct deliver() calls for agents with no list."""
+    publisher = agent_ip_ranges.range_publisher(agent)
+    return f"from {publisher}'s published IP range" if publisher else "as reported by the client"
+
+
 def _when(read_at: datetime) -> str:
     at = read_at.astimezone(timezone.utc)
     return f"{at.day} {at:%b %Y, %H:%M} UTC"
@@ -231,6 +238,11 @@ def _cadence() -> str:
     return "a day" if hours == 24 else f"every {hours} {'hour' if hours == 1 else 'hours'}"
 
 
+# The IP check proves which provider's network fetched the card, nothing more: not which person,
+# if any, asked the agent to, and not what the agent did with it.
+NOTE = "This shows that an AI agent read your card, not who (if anyone) asked it to or why."
+
+
 def render(row: dict, agent: str | None, read_at: datetime, unsubscribe_url: str) -> tuple[str, str, str]:
     """(subject, plain text, html)."""
     handle = row["handle"]
@@ -238,6 +250,7 @@ def render(row: dict, agent: str | None, read_at: datetime, unsubscribe_url: str
     client = ua_class.AGENT_PROVIDERS.get(agent or "", "Unknown AI client")
     if agent:
         client += f" ({agent})"
+    source = _source(agent)
     first = digest._first_name(digest._identity_name(row.get("card")), handle)
     card_url = digest._card_url(handle)
     home_url = f"{digest._base()}/home"
@@ -248,18 +261,18 @@ def render(row: dict, agent: str | None, read_at: datetime, unsubscribe_url: str
         "",
         f"{label} just read your Zynd card.",
         "",
-        f"Client: {client}, as reported by the client",
+        f"Client: {client}, {source}",
         f"When: {when}",
         f"Your card: {card_url}",
         "",
-        f"See who found you: {home_url}",
+        f"See your AI reads: {home_url}",
         "",
-        "Client names are self-reported, not verified.",
+        NOTE,
         f"You get at most one of these {_cadence()} for each card.",
         "",
         f"Unsubscribe: {unsubscribe_url}",
     ])
-    return subject, body, _html(first, label, client, when, card_url, home_url, unsubscribe_url)
+    return subject, body, _html(first, label, client, source, when, card_url, home_url, unsubscribe_url)
 
 
 def _detail(i: int, name: str, value_html: str) -> str:
@@ -270,7 +283,7 @@ def _detail(i: int, name: str, value_html: str) -> str:
             f'color:{digest._INK}">{value_html}</td></tr>')
 
 
-def _html(first: str, label: str, client: str, when: str, card_url: str, home_url: str,
+def _html(first: str, label: str, client: str, source: str, when: str, card_url: str, home_url: str,
           unsubscribe_url: str) -> str:
     d, esc = digest, digest._esc
     base = d._base()
@@ -281,21 +294,21 @@ def _html(first: str, label: str, client: str, when: str, card_url: str, home_ur
         f'<td valign="middle" style="padding-left:8px;font:700 16px/20px {d._WORDMARK_FONT};letter-spacing:.02em;'
         f'text-transform:uppercase;color:{d._INK}">Zynd<span style="color:{d._WORDMARK_ACCENT}">Cards</span></td></tr>')
     details = d._box(
-        _detail(0, "Client", f'{esc(client)}<div style="color:{d._MUTED}">as reported by the client</div>')
+        _detail(0, "Client", f'{esc(client)}<div style="color:{d._MUTED}">{esc(source)}</div>')
         + _detail(1, "When", esc(when))
         + _detail(2, "Your card", f'<a href="{esc(card_url)}" style="color:{d._ACCENT};text-decoration:none">{esc(card_text)}</a>'))
     cta = d._table(
         f'<tr><td style="padding-top:24px"><a href="{esc(home_url)}" style="display:block;padding:0 16px;border-radius:8px;'
         f'background:{d._ACCENT};color:{d._WHITE};text-decoration:none;text-align:center;font:600 14px/44px {d._FONT}">'
-        f"See who found you</a></td></tr>")
+        f"See your AI reads</a></td></tr>")
     main = d._table(
         f'<tr><td class="i" style="padding:24px">{header}'
         f'<div style="font:600 20px/28px {d._FONT};color:{d._INK};padding-top:24px">{esc(label)} just read your Zynd card</div>'
         f'<div style="font:400 14px/22px {d._FONT};color:{d._BODY};padding:4px 0 16px">Hi {esc(first)}, an AI agent '
-        f"just looked you up through your card.</div>"
+        f"just read your card.</div>"
         f"{details}{cta}"
         f'<div style="font:400 12px/18px {d._FONT};color:{d._MUTED};padding-top:16px">'
-        f"Client names are self-reported, not verified.</div></td></tr>",
+        f"{esc(NOTE)}</div></td></tr>",
         f"max-width:600px;background:{d._WHITE};border-radius:12px", cls="s")
     footer = d._table(
         f'<tr><td align="center" style="padding:16px 8px 0;font:400 12px/18px {d._FONT};color:{d._MUTED}">'

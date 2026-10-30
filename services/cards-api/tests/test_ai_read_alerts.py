@@ -206,13 +206,15 @@ def test_sends_once_then_throttled_within_cooldown(world):
     assert message["to"] == OWNER
     assert message["subject"] == "Claude just read your Zynd card"
     assert message["unsubscribe_url"] == unsubscribe
-    for text in ("Hi Alice,", "Claude (Claude-User), as reported by the client", "28 Oct 2026, 14:05 UTC",
-                 "https://zynd.ai/p/alice", "See who found you: https://zynd.ai/home",
-                 "Client names are self-reported, not verified.", unsubscribe):
+    for text in ("Hi Alice,", "Claude (Claude-User), from Anthropic's published IP range", "28 Oct 2026, 14:05 UTC",
+                 "https://zynd.ai/p/alice", "See your AI reads: https://zynd.ai/home",
+                 "not who (if anyone) asked it to or why.", unsubscribe):
         assert text in message["body"]
-    for text in ("Claude just read your Zynd card", "as reported by the client", 'href="https://zynd.ai/home"',
-                 "Client names are self-reported, not verified.", f'href="{unsubscribe}"'):
+    for text in ("Claude just read your Zynd card", "from Anthropic&#x27;s published IP range",
+                 'href="https://zynd.ai/home"', "not who (if anyone) asked it to or why.", f'href="{unsubscribe}"'):
         assert text in message["html"]
+    for text in ("self-reported", "not verified", "looked you up", "who found you"):
+        assert text not in message["body"] and text not in message["html"]
     marker = alerts(db)[0]
     assert marker["handle"] == "alice" and marker["meta"] == {"agent_name": "Claude-User"}
 
@@ -257,6 +259,16 @@ def test_unattributed_agent_gets_a_generic_subject(world):
     assert ai_read_alerts.deliver("alice", "Zynd-MCP") == "sent"
     assert mailer.sent[0]["subject"] == "An AI agent just read your Zynd card"
     assert "Unidentified MCP client (Zynd-MCP), as reported by the client" in mailer.sent[0]["body"]
+
+
+@pytest.mark.parametrize("agent,source", [
+    ("ChatGPT-User", "ChatGPT / OpenAI (ChatGPT-User), from OpenAI's published IP range"),
+    ("Perplexity-MCP", "Perplexity (Perplexity-MCP), from Perplexity's published IP range"),
+])
+def test_alert_names_the_list_that_verified_the_read(world, agent, source):
+    db, mailer = world
+    assert ai_read_alerts.deliver("alice", agent) == "sent"
+    assert source in mailer.sent[0]["body"]
 
 
 def test_real_background_pool_sends_off_the_calling_thread(world, monkeypatch):

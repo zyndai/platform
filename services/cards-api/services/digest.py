@@ -177,7 +177,14 @@ def build_digest(handle: str, posts: dict | None, people: dict | None, name: str
         "ask_credits": list(asks.get("credits") or []),
         "unsubscribe_url": extras.get("unsubscribe_url") or "",
         "feedback_base": extras.get("feedback_base") or "",
+        "stale_working_on": bool(extras.get("stale_working_on")),
     }
+
+
+def _stale_links(handle: str) -> tuple[str, str]:
+    """(confirm, update). Confirming needs the owner's session, so it is the button on their own
+    card page (cards-web shows it to the signed-in owner), not a one-click link in the email."""
+    return f"{_card_url(handle)}#working-on", f"{_base()}/p/{handle}/edit#signals"
 
 
 def _reason_line(p: dict) -> str:
@@ -267,6 +274,9 @@ def render_digest(handle: str, posts: dict | None, people: dict | None, name: st
             lines.append("Searches that found you: " + ", ".join(f"\"{q['query']}\" ({q.get('count', 1)})" for q in d["queries"]))
         if d["visitors"]:
             lines.append(_visitors_line(d["visitors"]))
+    if d["stale_working_on"]:
+        confirm, update = _stale_links(handle)
+        lines += ["", "WORKING ON", f"Unchanged for 3+ months. Still true? Confirm: {confirm}  Update: {update}"]
     if d["topics"]:
         lines += ["", "TODAY IN YOUR FIELD"]
         for t in d["topics"]:
@@ -440,6 +450,17 @@ def _card_week_html(d: dict) -> str:
     return _label("Your card this week") + _box(rows)
 
 
+def _stale_working_on_html(d: dict) -> str:
+    if not d["stale_working_on"]:
+        return ""
+    confirm, update = _stale_links(d["handle"])
+    link = f"font:400 11px/18px {_FONT};color:{_MUTED};text-decoration:underline"
+    extra = f'<div style="padding-top:4px"><a href="{_esc(update)}" style="{link}">Update it</a></div>'
+    row = _row(0, _tile("&#8635;", _GRAY, _MUTED, 15), _esc("Still working on this?"),
+               _esc("Your card's Working on hasn't changed in 3+ months."), confirm, "Confirm", extra)
+    return _label("Working on") + _box(row)
+
+
 def _topics_html(d: dict) -> str:
     if not d["topics"]:
         return ""
@@ -564,7 +585,7 @@ def render_digest_html(handle: str, posts: dict | None, people: dict | None, nam
         f'<tr><td class="i" style="padding:24px">{header}'
         f'<div style="font:600 20px/28px {_FONT};color:{_INK};padding-top:24px">Good morning, {_esc(d["first"])}</div>'
         f'<div style="font:400 14px/22px {_FONT};color:{_BODY};padding-top:4px">{_intro(d)[1]}</div>'
-        f"{_card_week_html(d)}{_topics_html(d)}{_people_html(d)}{_asks_html(d)}{_network_html(d)}{cta}</td></tr>",
+        f"{_card_week_html(d)}{_stale_working_on_html(d)}{_topics_html(d)}{_people_html(d)}{_asks_html(d)}{_network_html(d)}{cta}</td></tr>",
         f"max-width:600px;background:{_WHITE};border-radius:12px", cls="s")
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
@@ -648,6 +669,21 @@ def _ago(iso: str | None, now: datetime) -> str:
     return "today" if days <= 0 else f"{days}d"
 
 
+def _stale_working_on(row: dict, now: datetime) -> bool:
+    """The owner's public Working on (memory facts included) has gone STALE_DAYS unchanged."""
+    from services import stale_signals
+    if not isinstance(row.get("card"), dict):
+        return False
+    from models.card import AgentProfileCard
+    from services.signals import derive_public_signals
+    try:
+        card = derive_public_signals(AgentProfileCard.model_validate(row["card"]), now)
+    except Exception as exc:  # noqa: BLE001 — one optional line: a bad card drops it, never the email
+        logger.info("digest stale check failed handle=%s err=%s", row.get("handle"), exc)
+        return False
+    return stale_signals.working_on_is_stale(card, now)
+
+
 def _owner_extras(row: dict, rows: list[dict], now: datetime, local: datetime) -> dict:
     """The owner-only parts: card activity, visitors, facts to review, network news, and the
     two-way and verified marks on suggested people. Each part is best effort: a failure drops
@@ -660,6 +696,8 @@ def _owner_extras(row: dict, rows: list[dict], now: datetime, local: datetime) -
                                      f"{row['unsubscribe_token']}")
         extras["feedback_base"] = (f"{config.API_BASE_URL.rstrip('/')}/cards/suggestions/feedback/"
                                    f"{row['unsubscribe_token']}")
+    if _stale_working_on(row, now):
+        extras["stale_working_on"] = True
     from services import owner_home
     if not owner_home.enabled():
         return extras

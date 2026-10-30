@@ -201,6 +201,13 @@
 .ed-signal-chip > svg { flex-shrink: 0; color: var(--tone, var(--ed-accent)); }
 .ed-signal-chip > span { min-width: 0; overflow-wrap: anywhere; }
 .ed-signal-more { background: transparent; border-style: dashed; box-shadow: none; color: var(--tone-ink, var(--ed-soft)); }
+/* Working on unchanged for STALE_DAYS (lib/stale-signals.ts): still readable, visibly older. */
+.ed-signal.is-stale .ed-signal-chip { opacity: .55; box-shadow: none; }
+.ed-signal-stale, .ed-signal-stale-prompt { margin: 12px 0 0; color: var(--tone-ink, var(--ed-soft)); font: 600 12px/1.4 var(--ed-ui), system-ui, sans-serif; }
+.ed-signal-stale-prompt { margin-top: 4px; font-weight: 500; }
+.ed-signal-stale-prompt .stale-wo-action { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.ed-signal-stale-prompt .stale-wo-action:disabled { opacity: .6; cursor: default; }
+.ed-signal-stale-prompt .stale-wo-error { color: #b91c1c; }
 .ed-tone-mint { background: linear-gradient(160deg, #F0FCF7 0%, #E2F8EE 100%); border-color: #C5EEDC; --tone: #10A37F; --tone-ink: #0B6E58; --chip-line: #D3F2E5; }
 .ed-tone-peach { background: linear-gradient(160deg, #FFF7EF 0%, #FFEDDD 100%); border-color: #FFDBC0; --tone: #EA7A35; --tone-ink: #A84B14; --chip-line: #FFE3CD; }
 .ed-tone-lavender { background: linear-gradient(160deg, #F6F4FF 0%, #ECE9FF 100%); border-color: #DCD6FF; --tone: #6C5CE7; --tone-ink: #4C3FC9; --chip-line: #E3DEFF; }

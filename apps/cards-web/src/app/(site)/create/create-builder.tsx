@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { useMyCard } from "@/hooks/useMyCard";
 import { CARDS_API } from "@/lib/cards";
+import type { AlternateSignInMethod } from "@/components/auth/alternate-sign-in";
 import { setClaimHandle } from "@/lib/auth/next-cookie";
 import { startLinkedInOAuth } from "@/lib/auth/session";
 import { CardEditor } from "./card-editor";
@@ -14,7 +15,7 @@ import {
   CHIP_GROUPS, DEFAULT_PERSONA, addCustomValues, emptySelections, hasLabel, isPersona, optionsFor, sameLabel,
   type ChipGroupId, type PersonaId, type Selections,
 } from "./chips";
-import { saveDraft, takeDraft, type Draft } from "./draft";
+import { discardDraft, saveDraft, takeDraft, type Draft } from "./draft";
 import {
   applyEdits, buildUserAnswers, cleanHandle, detectKind, finalizeCard, liveIdentity, normalizeUrl, statusLine,
   type DraftEdits, type TopicAnswers,
@@ -75,7 +76,7 @@ export function CreateBuilder() {
     const saved = takeDraft();
     const fromLink = (seededUrl ?? "").split(/\s+/).map(normalizeUrl).flatMap((r) => (r && "url" in r ? [r.url] : []));
     const all = [...new Set([...(saved?.urls ?? []), ...fromLink])];
-    // sessionStorage has no value while rendering on the server, so the saved draft
+    // Browser storage has no value while rendering on the server, so the saved draft
     // can only be applied after mount; reading it during render would mismatch hydration.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (all.length) setUrls(all);
@@ -167,8 +168,14 @@ export function CreateBuilder() {
     return next;
   });
 
+  const persistDraft = (method?: AlternateSignInMethod) => {
+    saveDraft(
+      { urls, picks, persona: personaPick, location: locationEdit, calendly, googleCalendar, handle: customHandle },
+      { acrossTabs: method === "email" },
+    );
+  };
   const signIn = () => {
-    saveDraft({ urls, picks, persona: personaPick, location: locationEdit, calendly, googleCalendar, handle: customHandle });
+    persistDraft();
     void startLinkedInOAuth("/create", "card");
   };
   const claim = () => {
@@ -198,7 +205,7 @@ export function CreateBuilder() {
       }
       rememberPublished(result.handle, result.claimToken);
       setClaimHandle(result.handle);
-      takeDraft();
+      discardDraft();
       // A signed-in creator goes straight to the "ask your own card" welcome:
       // no login wall after publishing.
       if (authenticated) {
@@ -292,7 +299,7 @@ export function CreateBuilder() {
           <PublishCard
             ready={canPublish} building={build.status === "running"} hasSource={hasSource} statusText={statusText}
             handle={customHandle} onHandle={setCustomHandle}
-            authenticated={authenticated} onSignIn={signIn}
+            authenticated={authenticated} onSignIn={signIn} onBeforeAlternateSignIn={persistDraft}
             onPublish={() => void publish()} publishing={publishing} error={publishError}
           />
         </div>

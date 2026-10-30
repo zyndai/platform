@@ -1,4 +1,5 @@
 import { CARDS_API } from "@/lib/cards";
+import type { Visitor } from "@/lib/visitor";
 
 export const eventsEnabled = (process.env.NEXT_PUBLIC_S04_EVENTS ?? "true") === "true";
 
@@ -28,13 +29,22 @@ export function track(event: string, meta?: Record<string, unknown>, handle?: st
 /** Awaitable so server callers can keep delivery alive with Next's after(). */
 export async function logAgentFetch(
   endpoint: string,
-  userAgent: string | null | undefined,
+  visitor: Visitor | null,
   handle?: string,
 ): Promise<void> {
   if (!eventsEnabled) return;
   const body = JSON.stringify({
     events: [{ event: "agent_fetch", handle, meta: { endpoint } }],
   });
+  // Shared secret with cards-api: only events carrying it count as real AI
+  // reads (AI-read alerts), since anyone can POST a crawler User-Agent to the
+  // public /events endpoint. Not NEXT_PUBLIC_, so client bundles never get it;
+  // every caller of this function is a server route or server component.
+  // The visitor IP rides only with the token: cards-api ignores it otherwise,
+  // and emails an owner only when it is inside the claimed AI provider's
+  // published ranges (a User-Agent alone is anyone's to set).
+  const serverToken = process.env.EVENTS_SERVER_TOKEN;
+  const userAgent = visitor?.userAgent;
   try {
     const response = await fetch(`${CARDS_API}/events`, {
       method: "POST",
@@ -42,6 +52,8 @@ export async function logAgentFetch(
       headers: {
         "Content-Type": "application/json",
         ...(userAgent ? { "User-Agent": userAgent } : {}),
+        ...(serverToken ? { "X-Zynd-Server-Event": serverToken } : {}),
+        ...(serverToken && visitor?.ip ? { "X-Zynd-Client-IP": visitor.ip } : {}),
       },
       body,
       keepalive: true,

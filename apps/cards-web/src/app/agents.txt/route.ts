@@ -1,13 +1,14 @@
 import { CARDS_API } from "@/lib/cards";
 import { featureS11PublicMcp, PUBLIC_CARDS_MCP_URL } from "@/lib/s11";
 import { logAgentFetch } from "@/lib/track";
+import { visitorFrom } from "@/lib/visitor";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://cards.zynd.ai";
 
 export const revalidate = 60;
 
 export async function GET(req: Request) {
-  logAgentFetch("agents.txt", req.headers.get("user-agent"));
+  logAgentFetch("agents.txt", visitorFrom(req.headers));
   const mcpLine = featureS11PublicMcp()
     ? `- Public MCP (no auth): ${PUBLIC_CARDS_MCP_URL} — search_people, get_card, ask_card; zynd://card/{handle}; prompt find-people`
     : null;

@@ -38,10 +38,14 @@ ALLOWED_EVENTS = frozenset({
     "fact_approved",
     "fact_dismissed",
     "chat_message",
+    # Click on the public card's "Get your own" bar; create_start still fires only when a build starts.
+    "visitor_cta_click",
 })
 
 # Emitted only by the API itself. Kept out of ALLOWED_EVENTS so the unauthenticated POST /events
 # cannot forge them and distort the networking funnel.
+AI_READ_ALERT_EVENT = "ai_read_alert_sent"
+
 SERVER_EVENTS = frozenset({
     "feed_view",
     "feed_reply",
@@ -50,6 +54,9 @@ SERVER_EVENTS = frozenset({
     "ask_outcome",
     "search",
     "search_result_action",
+    # The AI-read email throttle (services/ai_read_alerts.py): a forged row would silence an
+    # owner's alerts for a whole cooldown window.
+    AI_READ_ALERT_EVENT,
 })
 
 # Who ran a search: the Cards website, Memory's find_people for a signed-in owner, the public
@@ -197,15 +204,23 @@ def _event_store():
                                                httpx_client=transport))
 
 
-def _insert_rows(rows: list[dict]) -> bool:
+def _insert_rows(rows: list[dict], *, server_observed: bool = False, visitor_ip: str | None = None) -> bool:
+    """server_observed: the rows came from one of our servers (cards-web, memory) carrying
+    EVENTS_SERVER_TOKEN, and visitor_ip is the IP that server saw. Only those can email an owner
+    (services/ai_read_alerts.py). Reads that cards-api serves itself (emit) do not count: their
+    actor_class comes from the caller's User-Agent, so anyone could GET a card as "Claude-User"
+    and trigger an email."""
     if not rows or not events_enabled():
         return True
     try:
         _event_store().table("card_events").insert(rows).execute()
-        return True
     except Exception:
         logger.exception("card_events insert failed (%d rows)", len(rows))
         return False
+    if server_observed:
+        from services import ai_read_alerts
+        ai_read_alerts.schedule(rows, visitor_ip)
+    return True
 
 
 def _build_row(
@@ -232,6 +247,8 @@ def insert_batch(
     *,
     user_agent: str | None,
     ip: str | None,
+    server_observed: bool = False,
+    visitor_ip: str | None = None,
 ) -> bool:
     if not events_enabled() or not events:
         return True
@@ -251,7 +268,7 @@ def insert_batch(
         )
         for e in events
     ]
-    return _insert_rows(rows)
+    return _insert_rows(rows, server_observed=server_observed, visitor_ip=visitor_ip)
 
 
 def emit(

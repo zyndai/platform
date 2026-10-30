@@ -35,7 +35,7 @@ function AccountChip() {
   );
 }
 
-export type DiscoverPage = "directory" | "feed" | "network" | "create";
+export type DiscoverPage = "directory" | "feed" | "network" | "create" | "visibility";
 
 /** Right side of the Directory / Feed / Network / Create header: where to go, and who you are. */
 export function DiscoverNav({ active }: { active: DiscoverPage }) {

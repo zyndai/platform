@@ -246,6 +246,13 @@
       "when": 1793347345679,
       "tag": "0034_builder_recaps",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1793350815310,
+      "tag": "0035_stale_working_on",
+      "breakpoints": true
     }
   ]
 }

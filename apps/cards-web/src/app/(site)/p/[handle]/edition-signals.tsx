@@ -8,6 +8,11 @@ interface Signal {
   key: SignalKey;
   label: string;
   items: string[];
+  /** Unchanged for lib/stale-signals STALE_DAYS: chips dim, with a hint. */
+  stale?: boolean;
+  /** Under the hint, e.g. the owner's confirm prompt. Rendered even when not
+   *  stale so the prompt's state (its "Thanks") survives the card turning fresh. */
+  staleFooter?: ReactNode;
 }
 
 const TONE: Record<SignalKey, { tone: string; head: ReactNode; chip: ReactNode }> = {
@@ -31,7 +36,12 @@ export function EditionSignals({ signals }: { signals: Signal[] }) {
         const shown = signal.items.slice(0, MAX_CHIPS);
         const more = signal.items.length - shown.length;
         return (
-          <section key={signal.key} className={`ed-card ed-signal ed-tone-${tone}`} aria-label={signal.label}>
+          <section
+            key={signal.key}
+            id={signal.stale ? "working-on" : undefined}
+            className={`ed-card ed-signal ed-tone-${tone}${signal.stale ? " is-stale" : ""}`}
+            aria-label={signal.label}
+          >
             <div className="ed-card-head">
               {head}
               <span className="ed-card-label">{signal.label}</span>
@@ -43,6 +53,8 @@ export function EditionSignals({ signals }: { signals: Signal[] }) {
               ))}
               {more > 0 && <li className="ed-signal-chip ed-signal-more">+{more} more</li>}
             </ul>
+            {signal.stale && <p className="ed-signal-stale">Not updated in 3+ months</p>}
+            {signal.staleFooter}
           </section>
         );
       })}

@@ -150,8 +150,9 @@ of its runs, suggestions-refresh 3 of 7). [`crontab`](crontab) lists them;
 [`cron/run-job.sh`](cron/run-job.sh) calls cards-api's `/internal/*` endpoint on
 `127.0.0.1:8002` with `CRON_SECRET` read from `services/cards-api/.env.prod`, so there is
 nothing new to configure. Prod only: dev shares prod's database, so a second set would
-email the same owners. `saved-searches` and `owner-notifications` still run from GitHub
-Actions; they were not failing.
+email the same owners. The `morning-digest` and `suggestions-refresh` workflows are gone;
+`saved-searches` and `owner-notifications` still run from GitHub Actions, which ran them on
+schedule. Verified over the first 21 h: 42 of 42 digest ticks from cron (GitHub managed 4).
 
 | Job | Schedule (UTC) | Endpoint |
 |---|---|---|

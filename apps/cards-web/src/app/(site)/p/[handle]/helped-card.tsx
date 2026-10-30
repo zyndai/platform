@@ -8,6 +8,7 @@ export function HelpedCard({ helped }: { helped?: Helped }) {
   return (
     <section
       aria-label="Helped"
+      data-section="helped"
       className="pf-span-12 bg-white border border-[#e2e8f0] rounded-[20px] p-5"
     >
       <div className="flex justify-between items-center text-[0.65rem] font-mono font-bold uppercase tracking-widest text-slate-400 mb-3">

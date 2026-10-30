@@ -591,8 +591,8 @@ How it works:
   open reports, `hide_person`, and impressions marked hide / not relevant; `less_like_this` ranks down.
   Diversity: ≤ 2 per target, ≤ 1 per company (`work_experience[0].company`, now on each search result with
   `avatar_url` and the `two_way` kinds).
-- Stored: `cards.card_suggestions` (top 20 per claimed card, `POST /internal/suggestions/refresh`, workflow
-  `suggestions-refresh.yml` at 23:30 UTC) and `cards.card_suggestion_impressions` (digest, owner home, api;
+- Stored: `cards.card_suggestions` (top 20 per claimed card, `POST /internal/suggestions/refresh`, cron job
+  on the box at 23:30 UTC, `infra/single-box/crontab`) and `cards.card_suggestion_impressions` (digest, owner home, api;
   actions viewed / connect / hide / not_relevant). A list older than 36 h, or a missing table, means a live
   compute and nothing recorded, so **cards-api can deploy before `cards/0031` is applied**.
 - Feedback: owner home `POST /cards/mine/suggestions/{handle}/feedback`; digest links
@@ -961,7 +961,7 @@ in this order.
 | E1 | Push `feature/people-search` and merge to `dev` | PR to `dev` (never `main` directly). Phases 1 and 2 are on the branch, not pushed | open |
 | E2 | Deploy cards-api, then memory, then cards-web | Cards and memory still run from their old checkouts (AGENTS.md §3, §7): deploy on the box by hand; cards-web: build, then `pm2 restart cards-web` | open |
 | E3 | First suggestions refresh | `curl -X POST "$CARDS_API/internal/suggestions/refresh" -H "Authorization: Bearer $CRON_SECRET"`; expect `written > 0`, `errors: 0`. If it times out behind the proxy, run it per handle or move it to a background job | open |
-| E4 | Nightly schedule | `.github/workflows/suggestions-refresh.yml` only runs on a schedule once it is on `main` (GitHub runs schedules from the default branch). Until then, E3 by hand or the workflow's manual run | open |
+| E4 | Nightly schedule | Runs from cron on the box (`infra/single-box/crontab`, 23:30 UTC), no longer a GitHub workflow: GitHub dropped most scheduled runs. Until the crontab is installed, E3 by hand | done |
 | E5 | V11 and V12 | `scripts/check_suggestions.py` on live data; owner home and a digest dry run on dev | open |
 | E6 | V2–V9 | Phase 0–1 checks above (speed, `SEM_*` fit, saved-search threshold, live Chandan/investor checks, 20 real queries, `FEATURE_FACT_MATCHING`, cards-web scores, QuickEnrich Q1/Q2) | open |
 | E7 | Q7 | Persona is discarded (2026-10-26); nothing to ask | ✅ closed |

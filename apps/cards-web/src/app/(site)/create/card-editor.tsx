@@ -18,15 +18,20 @@ import { GalleryBlock, GithubBlock, ProjectsBlock, WritingBlock } from "./proof-
 
 const LEVEL_LABEL: Record<string, string> = { expert: "Expert", advanced: "Advanced", intermediate: "Intermediate", beginner: "Beginner" };
 
-function SkillsField({ skills, onChange }: { skills: AgentProfileCard["skills"]; onChange: (skills: AgentProfileCard["skills"]) => void }) {
+function SkillsField({ skills, onAdd, onRemove }: {
+  skills: AgentProfileCard["skills"];
+  onAdd: (names: string[]) => void;
+  onRemove: (name: string) => void;
+}) {
   const [draft, setDraft] = useState("");
 
   const add = (raw: string) => {
-    const next = [...skills];
+    const have = new Set(skills.map((s) => s.name.toLowerCase()));
+    const names: string[] = [];
     for (const name of raw.split(",").map((p) => p.trim()).filter(Boolean)) {
-      if (!next.some((s) => s.name.toLowerCase() === name.toLowerCase())) next.push({ name, level: "intermediate", evidence_count: 0 });
+      if (!have.has(name.toLowerCase())) { have.add(name.toLowerCase()); names.push(name); }
     }
-    if (next.length !== skills.length) onChange(next);
+    if (names.length) onAdd(names);
     setDraft("");
   };
 
@@ -36,7 +41,7 @@ function SkillsField({ skills, onChange }: { skills: AgentProfileCard["skills"];
         <span key={s.name} className="cr-pick">
           {s.name}
           <em>{LEVEL_LABEL[s.level] ?? "Intermediate"}</em>
-          <button type="button" aria-label={`Remove ${s.name}`} onClick={() => onChange(skills.filter((x) => x.name !== s.name))}>
+          <button type="button" aria-label={`Remove ${s.name}`} onClick={() => onRemove(s.name)}>
             <X size={13} aria-hidden="true" />
           </button>
         </span>
@@ -82,7 +87,11 @@ export interface CardEditorProps {
   location: string;
   locationHint: string;
   onLocation: (value: string) => void;
-  onEdit: (patch: DraftEdits) => void;
+  /** Name, headline, summary, citation and card style. Links and skills have their own, below. */
+  onEdit: (patch: Pick<DraftEdits, "name" | "headline" | "summary" | "citation" | "edition">) => void;
+  onRemoveLink: (key: string) => void;
+  onAddSkills: (names: string[]) => void;
+  onRemoveSkill: (name: string) => void;
   excluded: ReadonlySet<string>;
   onToggleExcluded: (key: string) => void;
   calendly: string;
@@ -167,7 +176,7 @@ export function CardEditor(p: CardEditorProps) {
                 <span key={key} className="dc-chip">
                   <KindIcon kind={detectKind(url)} size={14} />
                   {shortenUrl(url)}
-                  <button type="button" aria-label={`Remove ${key} link`} onClick={() => p.onEdit({ links: { ...card!.identity.links, [key]: "" } })}>
+                  <button type="button" aria-label={`Remove ${key} link`} onClick={() => p.onRemoveLink(key)}>
                     <X size={12} aria-hidden="true" />
                   </button>
                 </span>
@@ -232,7 +241,7 @@ export function CardEditor(p: CardEditorProps) {
                   <span className="dc-label">Skills</span>
                   <span className="cr-note">{card.skills.length} {card.skills.length === 1 ? "skill" : "skills"}</span>
                 </div>
-                <SkillsField skills={card.skills} onChange={(skills) => p.onEdit({ skills })} />
+                <SkillsField skills={card.skills} onAdd={p.onAddSkills} onRemove={p.onRemoveSkill} />
               </div>
 
               {card.github_stats && <GithubBlock stats={card.github_stats} />}

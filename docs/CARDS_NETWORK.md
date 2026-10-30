@@ -231,8 +231,7 @@ message. Streaming itself needs no migration.
 
 **Web.** `ConversationPane` subscribes to `agent_stream` and keeps one stream
 per job (`src/lib/agent-stream.ts`, pure; its `node:test` file runs with
-`npx tsx --test src/lib/agent-stream.test.ts` from `apps/cards-web`, like
-`profile-quality.test.ts`). A streaming bubble
+the rest under `npm test` in `apps/cards-web`, like `profile-quality.test.ts`). A streaming bubble
 sits at the bottom on the owner's side like a finished reply, with a caret and
 "Writing…", replacing that user's "is thinking" row once there is text (a tool
 step shows "Looking things up…"). It is dropped as soon as a message with the

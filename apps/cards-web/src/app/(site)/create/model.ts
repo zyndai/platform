@@ -1,6 +1,6 @@
 /** Pure helpers for the create page: no React, no fetching, so node's test
  *  runner can load this file as it is (it imports types only). */
-import type { AgentProfileCard, BuildStage, SourceStatus } from "@/lib/cards";
+import type { AgentProfileCard, BuildStage, Project, SourceStatus, WorkItem, WritingSample } from "@/lib/cards";
 
 export type UrlKind = "github" | "x" | "linkedin" | "writing" | "portfolio" | "website";
 
@@ -31,6 +31,23 @@ export function shortenUrl(url: string): string {
   }
 }
 
+/** One tap to start a link; newsletters and portfolios are pasted whole, since each lives on its own address. */
+export const QUICK_ADD: { kind: UrlKind; prefix: string }[] = [
+  { kind: "linkedin", prefix: "linkedin.com/in/" },
+  { kind: "github", prefix: "github.com/" },
+  { kind: "x", prefix: "x.com/" },
+];
+
+/** The box holds only a quick-add prefix: the person tapped it and has not typed their name yet. */
+export function isBarePrefix(raw: string): boolean {
+  const value = raw.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "");
+  return QUICK_ADD.some(({ prefix }) => value === prefix || `${value}/` === prefix);
+}
+
+const HANDLE_HOSTS = ["github.com", "x.com", "twitter.com", "linkedin.com", "behance.net", "dribbble.com"];
+/** LinkedIn puts the name one level down: /in/<name>, /company/<name>. */
+const LINKEDIN_SECTIONS = ["in", "company", "school", "pub"];
+
 /** A pasted link as the URL we send, or what is wrong with it. */
 export function normalizeUrl(raw: string): { url: string } | { error: string } | null {
   const trimmed = raw.trim();
@@ -39,9 +56,10 @@ export function normalizeUrl(raw: string): { url: string } | { error: string } |
   try {
     const u = new URL(url);
     const host = u.hostname.toLowerCase().replace(/^www\./, "");
-    const needsHandle = ["github.com", "x.com", "twitter.com", "linkedin.com", "behance.net", "dribbble.com"].includes(host);
-    if (needsHandle && !u.pathname.replace(/^\//, "").split("/")[0]) {
-      return { error: `Include your username, e.g. ${host}/yourusername` };
+    const [first = "", second = ""] = u.pathname.split("/").filter(Boolean);
+    const section = host === "linkedin.com" && LINKEDIN_SECTIONS.includes(first.toLowerCase()) ? first : "";
+    if (HANDLE_HOSTS.includes(host) && !(section ? second : first)) {
+      return { error: `Include your username, e.g. ${host}/${section ? `${section}/` : ""}yourusername` };
     }
     if (!host.includes(".")) return { error: "That doesn't look like a link." };
   } catch {
@@ -111,6 +129,12 @@ export function liveIdentity(sources: SourceStatus[]): LiveIdentity {
   };
 }
 
+/** Whether two builds read the same links, in any order. */
+export function sameUrls(a: readonly string[], b: readonly string[]): boolean {
+  const set = new Set(a);
+  return set.size === new Set(b).size && b.every((u) => set.has(u));
+}
+
 /** One line for where the build is. */
 export function statusLine(sources: SourceStatus[], stage: BuildStage): string {
   if (stage === "ready") return "Draft ready. Check it over and publish.";
@@ -123,30 +147,66 @@ export function statusLine(sources: SourceStatus[], stage: BuildStage): string {
 
 // ─── the draft card ──────────────────────────────────────────────────────────
 
-/** What the person has changed by hand. Layered over the newest build, so a rebuild never undoes it. */
+/**
+ * What the person has changed by hand. Layered over the newest build, so a rebuild never undoes it.
+ * Links and skills are kept as changes, not copies: a copy of the old build's list would hide
+ * whatever a rebuild adds (a new X link, the skills a new GitHub brings).
+ */
 export interface DraftEdits {
   name?: string;
   headline?: string;
   summary?: string;
   citation?: string;
-  skills?: AgentProfileCard["skills"];
   /** `null` is a choice too: the classic look. */
   edition?: AgentProfileCard["identity"]["edition"];
+  /** Only the links the person changed, by key; "" removes that link. */
   links?: Record<string, string>;
+  skillsAdded?: AgentProfileCard["skills"];
+  /** Lower-cased names of the skills the person removed. */
+  skillsRemoved?: string[];
+}
+
+export function removeLink(edits: DraftEdits, key: string): DraftEdits {
+  return { ...edits, links: { ...edits.links, [key]: "" } };
+}
+
+export function addSkills(edits: DraftEdits, names: string[]): DraftEdits {
+  const added = [...(edits.skillsAdded ?? [])];
+  let removed = edits.skillsRemoved ?? [];
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    removed = removed.filter((r) => r !== lower);
+    if (!added.some((s) => s.name.toLowerCase() === lower)) added.push({ name, level: "intermediate", evidence_count: 0 });
+  }
+  return { ...edits, skillsAdded: added, skillsRemoved: removed };
+}
+
+export function removeSkill(edits: DraftEdits, name: string): DraftEdits {
+  const lower = name.toLowerCase();
+  const removed = edits.skillsRemoved ?? [];
+  return {
+    ...edits,
+    skillsAdded: (edits.skillsAdded ?? []).filter((s) => s.name.toLowerCase() !== lower),
+    skillsRemoved: removed.includes(lower) ? removed : [...removed, lower],
+  };
 }
 
 export function applyEdits(card: AgentProfileCard, edits: DraftEdits): AgentProfileCard {
-  const identity = { ...card.identity };
+  const identity = { ...card.identity, links: { ...card.identity.links, ...edits.links } };
   if (edits.name !== undefined) identity.name = edits.name;
   if (edits.headline !== undefined) identity.headline = edits.headline;
   if (edits.edition !== undefined) identity.edition = edits.edition;
-  if (edits.links !== undefined) identity.links = edits.links;
+
+  const removed = new Set(edits.skillsRemoved);
+  const kept = card.skills.filter((s) => !removed.has(s.name.toLowerCase()));
+  const have = new Set(kept.map((s) => s.name.toLowerCase()));
+  const added = (edits.skillsAdded ?? []).filter((s) => !have.has(s.name.toLowerCase()));
   return {
     ...card,
     identity,
     summary: edits.summary ?? card.summary,
     citation_snippet: edits.citation ?? card.citation_snippet,
-    skills: edits.skills ?? card.skills,
+    skills: [...kept, ...added],
   };
 }
 
@@ -158,9 +218,11 @@ export interface TopicAnswers {
   love_talking_about: string[];
 }
 
-export const projectKey = (p: { url?: string }, i: number) => `project:${p.url || i}`;
-export const sampleKey = (i: number) => `sample:${i}`;
-export const workKey = (i: number) => `work:${i}`;
+// What a removed row is remembered by. Content, not list position: a rebuild can reorder,
+// add or drop rows, and a position would then hide a different one and publish the removed one.
+export const projectKey = (p: Pick<Project, "url" | "name">) => `project:${p.url || p.name}`;
+export const sampleKey = (w: Pick<WritingSample, "url" | "excerpt">) => `sample:${w.url || w.excerpt}`;
+export const workKey = (w: Pick<WorkItem, "url" | "image_url">) => `work:${w.url || w.image_url}`;
 
 /** The card as it will be published: the person's answers applied, removed rows dropped. */
 export function finalizeCard(
@@ -196,9 +258,9 @@ export function finalizeCard(
     love_talking_about: answers.love_talking_about,
     searchable_facts: facts,
     skills,
-    projects: card.projects.filter((p, i) => !excluded.has(projectKey(p, i))),
-    writing_samples: card.writing_samples.filter((_, i) => !excluded.has(sampleKey(i))),
-    work_gallery: (card.work_gallery ?? []).filter((_, i) => !excluded.has(workKey(i))),
+    projects: card.projects.filter((p) => !excluded.has(projectKey(p))),
+    writing_samples: card.writing_samples.filter((w) => !excluded.has(sampleKey(w))),
+    work_gallery: (card.work_gallery ?? []).filter((w) => !excluded.has(workKey(w))),
   };
 }
 

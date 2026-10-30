@@ -11,7 +11,7 @@ import {
   visibleStreams,
   type AgentStreamSnapshot,
   type AgentStreams,
-} from "./agent-stream";
+} from "./agent-stream.ts";
 
 const JOB = "30000000-0000-4000-8000-000000000030";
 const OTHER_JOB = "30000000-0000-4000-8000-000000000031";

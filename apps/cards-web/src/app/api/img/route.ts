@@ -18,8 +18,17 @@ const ALLOWED_HOSTS = new Set([
   "github.com",
   "lh3.googleusercontent.com",
   // Project covers from a design portfolio, shown in the card's work grid.
+  // Behance is its one image CDN, not all of *.behance.net: same host as
+  // cards-api's scraping/sites.py accepts covers from.
   "cdn.dribbble.com",
+  "mir-s3-cdn-cf.behance.net",
 ]);
+
+// github.com/<user>.png answers with a redirect to avatars.githubusercontent.com.
+// Each hop is followed by hand and checked against the allowlist, so an allowed
+// host can't bounce the proxy to an arbitrary one.
+const MAX_REDIRECTS = 3;
+const NOT_AN_IMAGE = "not-an-image";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api.zynd.ai";
 const AVATAR_REFRESH_TOKEN = process.env.AVATAR_REFRESH_TOKEN || "";
@@ -39,7 +48,6 @@ function validImageUrl(raw: string): string | null {
     // the whole suffix so a host rotation can't break already-stored URLs.
     if (ALLOWED_HOSTS.has(host)) return u.toString();
     if (host.endsWith(".googleusercontent.com")) return u.toString();
-    if (host.endsWith(".behance.net")) return u.toString();
     // Photos uploaded through the old card editor live in our public avatars bucket and are
     // still shown when a card has no linked-account photo. Match the bucket path, not just the
     // host, so this isn't a proxy for arbitrary Supabase storage.
@@ -52,17 +60,28 @@ function validImageUrl(raw: string): string | null {
   }
 }
 
-async function fetchImage(raw: string): Promise<Response | null> {
-  const url = validImageUrl(raw);
-  if (!url) return null;
+/** The image, NOT_AN_IMAGE when the upstream answered with something else, or null when it couldn't be fetched. */
+async function fetchImage(raw: string): Promise<Response | typeof NOT_AN_IMAGE | null> {
+  let url = validImageUrl(raw);
+  const signal = AbortSignal.timeout(15000);
   try {
-    const res = await fetch(url, {
-      headers: FETCH_HEADERS,
-      redirect: "follow",
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!res.ok || !res.body) return null;
-    return res;
+    for (let hop = 0; url && hop <= MAX_REDIRECTS; hop++) {
+      const res = await fetch(url, { headers: FETCH_HEADERS, redirect: "manual", signal });
+      if (res.status >= 300 && res.status < 400) {
+        void res.body?.cancel();
+        const location = res.headers.get("location");
+        url = location ? validImageUrl(new URL(location, url).toString()) : null;
+        continue;
+      }
+      if (!res.ok || !res.body) return null;
+      // Passing any content type through would let an allowed host serve HTML or script from our origin.
+      if (!(res.headers.get("content-type") ?? "").toLowerCase().startsWith("image/")) {
+        void res.body.cancel();
+        return NOT_AN_IMAGE;
+      }
+      return res;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -96,19 +115,22 @@ export async function GET(req: NextRequest) {
   const fallback = searchParams.get("fallback") || "";
   const handle = searchParams.get("handle");
 
-  const primaryRes = url ? await fetchImage(url) : null;
-  let res = primaryRes;
-  if (!res && fallback) res = await fetchImage(fallback);
+  const primary = url ? await fetchImage(url) : null;
+  const backup = primary instanceof Response || !fallback ? null : await fetchImage(fallback);
+  const res = primary instanceof Response ? primary : backup instanceof Response ? backup : null;
 
   if (!res) {
     triggerAvatarRefresh(handle, url);
+    if (primary === NOT_AN_IMAGE || backup === NOT_AN_IMAGE) {
+      return NextResponse.json({ error: "upstream did not return an image" }, { status: 502 });
+    }
     return NextResponse.json({ error: "image unavailable" }, { status: 404 });
   }
-  if (!primaryRes) triggerAvatarRefresh(handle, url);
+  if (res !== primary) triggerAvatarRefresh(handle, url);
 
   return new Response(res.body, {
     headers: {
-      "Content-Type": res.headers.get("content-type") || "image/jpeg",
+      "Content-Type": res.headers.get("content-type") ?? "image/jpeg",
       "Cache-Control": "public, max-age=86400, s-maxage=604800",
     },
   });

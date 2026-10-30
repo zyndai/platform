@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CARDS_API } from "@/lib/cards";
 import type { AgentProfileCard, BuildStage, OnboardStatus, ScrapeWarning, SourceStatus } from "@/lib/cards";
 import { appendAttrToForm } from "@/lib/attr";
+import { track } from "@/lib/track";
+import { sameUrls } from "./model";
 
 /** How long after the last pasted link or dropped résumé the build starts. */
 const START_DELAY_MS = 1200;
@@ -23,18 +25,26 @@ export interface BuildState {
   /** Which kind of professional the synthesis decided this is: picks the chip vocabulary. "" until a draft exists. */
   persona: string;
   error: string | null;
+  /** What the newest build was started from. */
+  inputs: { urls: string[]; resume: File | null };
 }
 
-const IDLE: BuildState = { status: "idle", jobId: null, stage: "reading", sources: [], warnings: [], card: null, persona: "", error: null };
+const IDLE: BuildState = {
+  status: "idle", jobId: null, stage: "reading", sources: [], warnings: [], card: null, persona: "", error: null,
+  inputs: { urls: [], resume: null },
+};
 
 function stopJob(id: string): void {
   void fetch(`${CARDS_API}/onboard/${id}/cancel`, { method: "POST", keepalive: true }).catch(() => { /* already finished or gone */ });
 }
 
 /**
- * Builds the card from the links and résumé as they are added: no button.
- * Every change restarts the build (after a short pause, so pasting three
- * links is one build) and stops the one it replaces.
+ * Builds the card from the links and résumé as they are added: no button for
+ * the first draft. Until it is ready every change restarts the build (after a
+ * short pause, so pasting three links is one build) and stops the one it
+ * replaces. Once a draft exists a change only marks it `stale`, and `retry`
+ * rebuilds: each build re-reads every source and pays for a model call, and
+ * the person may be adding a link they are not finished with.
  */
 export function useBuild({ urls, resume, enabled }: { urls: string[]; resume: File | null; enabled: boolean }) {
   const [build, setBuild] = useState<BuildState>(IDLE);
@@ -60,7 +70,11 @@ export function useBuild({ urls, resume, enabled }: { urls: string[]; resume: Fi
       return;
     }
     const mine = generation.current;
-    setBuild((s) => ({ ...s, status: "running", stage: "reading", jobId: null, sources: [], warnings: [], error: null }));
+    setBuild((s) => ({
+      ...s, status: "running", stage: "reading", jobId: null, sources: [], warnings: [], error: null,
+      inputs: { urls: sourceUrls, resume: file },
+    }));
+    track("create_build_started", { sources: sourceUrls.length, resume: !!file });
 
     const fail = (error: string) => {
       if (generation.current !== mine) return;
@@ -75,6 +89,7 @@ export function useBuild({ urls, resume, enabled }: { urls: string[]; resume: Fi
       if (file) form.append("resume", file);
       appendAttrToForm(form);
       const res = await fetch(`${CARDS_API}/onboard/start`, { method: "POST", body: form, signal: AbortSignal.timeout(15_000) });
+      if (res.status === 429) throw new Error("Too many card builds from this network. Wait a few minutes, then retry.");
       if (!res.ok) throw new Error((await res.text()) || `Status ${res.status}`);
       id = (await res.json()).job_id as string;
     } catch (err) {
@@ -107,7 +122,10 @@ export function useBuild({ urls, resume, enabled }: { urls: string[]; resume: Fi
           return;
         }
         const ready = status.status === "ready" && status.card;
-        if (ready && job.current) { clearInterval(job.current.timer); job.current = null; }
+        if (ready) {
+          if (job.current) { clearInterval(job.current.timer); job.current = null; }
+          track("create_draft_ready", { persona: status.persona ?? "" });
+        }
         setBuild((s) => ({
           ...s,
           status: ready ? "ready" : "running",
@@ -125,11 +143,12 @@ export function useBuild({ urls, resume, enabled }: { urls: string[]; resume: Fi
     void poll();
   }, [halt]);
 
+  const hasDraft = build.card !== null;
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || hasDraft) return;
     const t = setTimeout(() => void start(urls, resume), urls.length || resume ? START_DELAY_MS : 0);
     return () => clearTimeout(t);
-  }, [urls, resume, enabled, start]);
+  }, [urls, resume, enabled, hasDraft, start]);
 
   // Leaving the page, or finishing (published), ends any build still running.
   useEffect(() => { if (!enabled) halt(); }, [enabled, halt]);
@@ -137,5 +156,9 @@ export function useBuild({ urls, resume, enabled }: { urls: string[]; resume: Fi
 
   const retry = useCallback(() => void start(latest.current.urls, latest.current.resume), [start]);
 
-  return { build, retry };
+  /** The draft was built from other sources than the ones listed now. */
+  const stale = build.status === "ready" && hasDraft
+    && (!sameUrls(urls, build.inputs.urls) || resume !== build.inputs.resume);
+
+  return { build, retry, stale };
 }

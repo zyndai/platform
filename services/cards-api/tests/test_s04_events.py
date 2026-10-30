@@ -108,6 +108,16 @@ def test_s08_funnel_events_allowlisted(client):
     assert sb.table.call_count >= 5
 
 
+def test_create_page_funnel_events_allowlisted(client):
+    """The create page's build started / draft ready / publish clicked steps (cards-web create/)."""
+    c, sb = client
+    names = ["create_build_started", "create_draft_ready", "create_publish_click"]
+    r = c.post("/events", json={"events": [{"event": name, "meta": {"sources": 1}} for name in names]})
+    assert r.status_code == 204
+    rows = sb.table.return_value.insert.call_args.args[0]
+    assert [row["event"] for row in rows] == names
+
+
 def test_visitor_cta_click_allowlisted_and_stored_with_card_handle(client):
     c, sb = client
     r = c.post("/events", json={"events": [

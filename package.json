@@ -20,7 +20,7 @@
     "test:persona-api": "cd services/persona-api && .venv/bin/python -m pytest -q",
     "test:cards-api": "cd services/cards-api && .venv/bin/python -m pytest -q",
     "test:memory": "cd services/memory && .venv/bin/python -m pytest -q -m 'not integration'",
-    "check:web": "npm --prefix apps/persona-web run lint && (cd apps/persona-web && npx tsc --noEmit) && npm --prefix apps/cards-web run lint && (cd apps/cards-web && npx tsc --noEmit)",
+    "check:web": "npm --prefix apps/persona-web run lint && (cd apps/persona-web && npx tsc --noEmit) && npm --prefix apps/cards-web run lint && (cd apps/cards-web && npx tsc --noEmit) && npm --prefix apps/cards-web test",
     "build:plugin": "python3 services/chatgpt-plugin/package/build.py --output dist/zynd-plugin.zip",
     "build:claude-plugin": "python3 services/claude-plugin/bundle.py --output dist/zynd-claude-plugin.zip",
     "validate:claude-plugin": "claude plugin validate --profile directory --strict services/claude-plugin/package",

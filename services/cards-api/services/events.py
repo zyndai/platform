@@ -40,6 +40,11 @@ ALLOWED_EVENTS = frozenset({
     "chat_message",
     # Click on the public card's "Get your own" bar; create_start still fires only when a build starts.
     "visitor_cta_click",
+    # The create page's funnel, sent by the browser: each build it starts (create_start is the API's
+    # count of accepted builds), the draft reaching the page, and the Publish click before the API answers.
+    "create_build_started",
+    "create_draft_ready",
+    "create_publish_click",
 })
 
 # Emitted only by the API itself. Kept out of ALLOWED_EVENTS so the unauthenticated POST /events

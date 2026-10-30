@@ -995,7 +995,11 @@ def get_card_by_handle_public(handle: str) -> dict | None:
     if not rows:
         target = merged_target(handle)
         return get_card_by_handle_public(target) if target else None
-    return _public_card_payload(rows[0])
+    payload = _public_card_payload(rows[0])
+    # "Helped": credits from asks (services/asks.py), one query; empty until migration 0033 is applied.
+    from services import asks
+    payload["helped"] = asks.credits_for_card(payload.get("id"))
+    return payload
 
 
 def list_published_public(limit: int = 1000) -> list[dict]:
@@ -1078,7 +1082,7 @@ def claim_card_by_owner(handle: str, principal: dict) -> tuple[bool, str]:
 RESERVED_ALIASES = {
     "p", "find", "directory", "search", "api", "create", "for-ai", "auth",
     "profile", "tag", "edit", "onboard", "mcp", "dashboard", "settings",
-    "home", "about", "contact", "help", "login", "logout", "account", "cards",
+    "home", "feed", "about", "contact", "help", "login", "logout", "account", "cards",
     "zynd", "www", "assets", "images", "icons", "icon", "apple-icon",
     "favicon.ico", "llms.txt", "llms-full.txt", "agents.txt", "sitemap.xml",
     "robots.txt", "data.json", "opengraph-image", "_next", "web",

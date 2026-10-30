@@ -92,7 +92,7 @@ class BundleTests(unittest.TestCase):
                 validate(root)
 
     def test_listing_urls_stay_on_the_review_origin(self):
-        for key in ("homepage", "documentationUrl", "supportUrl", "privacyPolicyUrl", "termsOfServiceUrl"):
+        for key in ("homepage",):
             with self.subTest(key=key), self.fixture() as root:
                 self.edit_json(root, ".claude-plugin/plugin.json", lambda d: d.update({key: "https://example.com/page"}))
                 with self.assertRaisesRegex(ValueError, key):
@@ -121,7 +121,7 @@ class BundleTests(unittest.TestCase):
                     text = (out / name).read_text()
                     self.assertNotIn(MCP_URL, text)
                     self.assertNotIn(REVIEW_ORIGIN, text)
-            self.assertEqual((out / "assets/zynd-logo.png").read_bytes(), before["assets/zynd-logo.png"])
+            self.assertEqual((out / ".claude-plugin/icon.png").read_bytes(), before[".claude-plugin/icon.png"])
         self.assertEqual(before, {name: (ROOT / name).read_bytes() for name in validate()})
 
     def test_stage_refuses_unsafe_targets_and_locations(self):

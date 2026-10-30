@@ -4,6 +4,7 @@
  * pointed at this instead (NEXT_PUBLIC_API_URL=http://127.0.0.1:3030).
  */
 import http from "node:http";
+import { recapFixtureApi } from "./recaps";
 
 const PORT = 3030;
 
@@ -94,19 +95,46 @@ export function startFixtureServer(): Promise<void> {
   let namedVisits = 0;
   const namedVisitIds = new Set<string>();
   let prefs = { weekly_digest: true, email_nudges: false, morning_digest: true };
+  let showWarmMatches = false;
   const ownerStatus = () => ({
     handle: "owner", card_id: "id-owner", name: "Alice Chen", visibility: ownerCard.status === "private" ? "private" : "public",
     completeness: { score: 75, actions: [{ section: "projects", title: "Add a project", href: "/p/owner/edit#projects" }] },
     inbox_count: 3, connection: { memory_connected: true, assistants_available: false },
     sources: [{ platform: "github", scraped_at: "2026-10-10T00:00:00Z", state: "fresh" }],
-    activity: { available: true, views: humanViews, agent_hits: 4, unidentified_clients: [{ name: "Node.js", count: 3, last_seen: "2026-10-28T05:34:18Z" }], agent_clients: [{ name: "Claude-User", provider: "Claude", count: 2 }, { name: "GPTBot", provider: "ChatGPT / OpenAI", count: 1 }, { name: "Unknown", provider: "Unknown", count: 1 }], intro_requests: null, queries: [], query_capture_available: false, chat_topics: [], chat_questions: [{ question: "What projects is Alice building?", category: "work", asked_at: "2026-10-15T10:00:00Z", truncated: false }, { question: '<img src=x onerror="window.questionHistoryXss=1">', category: "other", asked_at: "2026-10-15T09:00:00Z", truncated: false }] },
+    activity: { available: true, views: humanViews, agent_hits: 7, unidentified_clients: [{ name: "Node.js", count: 3, last_seen: "2026-10-28T05:34:18Z" }], agent_clients: [{ name: "Zynd-MCP", provider: "Unidentified MCP client", count: 3 }, { name: "Claude-User", provider: "Claude", count: 2 }, { name: "GPTBot", provider: "ChatGPT / OpenAI", count: 1 }, { name: "Unknown", provider: "Unknown", count: 1 }], intro_requests: null, queries: [], query_capture_available: false, chat_topics: [], chat_questions: [{ question: "What projects is Alice building?", category: "work", asked_at: "2026-10-15T10:00:00Z", truncated: false }, { question: '<img src=x onerror="window.questionHistoryXss=1">', category: "other", asked_at: "2026-10-15T09:00:00Z", truncated: false }] },
     visitors: { available: true, items: !anonymousMode && namedVisits ? [{ name: "Alice Chen", handle: "owner", visited_at: "2026-10-15T10:00:00Z", visits: namedVisits }] : [] },
     notification_prefs: prefs,
+    ...(showWarmMatches ? { suggestions: { people: [{
+      handle: "sarah", name: "Sarah", headline: "Founder building AI tools", location: "Singapore", avatar_url: "",
+      url: "http://127.0.0.1:3010/p/sarah", two_way: true,
+      why: ["Looking for go-to-market help", "Building AI developer tools"],
+    }], outside: [] } } : {}),
     duplicates: hasDuplicate ? [{ id: "id-old-owner", handle: "old-owner", name: "Alice Chen", status: "published" }] : [],
     nudges: [{ id: "n1", kind: "expiring", title: "What you are looking for expires within 3 days", href: "/p/owner/edit#memory" }],
   });
+  // The feed and the owner's asks (/feed fetches them from the Next server, which page.route cannot reach).
+  const feedAsk = (n: number, handle: string, name: string, kind: string | undefined, text: string, url: string | null = null) => ({
+    id: `ask:${handle}:k${n}`, kind: "ask", at: new Date(Date.now() - n * 3_600_000).toISOString(), earlier: false, reason: "",
+    author: { handle, name, headline: "Founder", avatar_url: null, location: "Pune", claimed: true },
+    content: { text, kind: kind ?? "other", url }, connection: null,
+  });
+  const feedItems = () => [
+    feedAsk(1, "sarah", "Sarah Iyer", "team", "Building a team for ETHGlobal Bangkok, need a Solidity dev", "https://ethglobal.com/events/bangkok"),
+    feedAsk(2, "dan", "Dan Wu", "hiring", "Hiring two backend engineers (Go, Postgres), remote in India"),
+    feedAsk(3, "meera", "Meera Rao", "cofounder", "Looking for a technical co-founder for a B2B payments idea"),
+    feedAsk(4, "ravi", "Ravi Das", undefined, "Anyone who knows Stripe Connect well?"),
+    feedAsk(5, "kim", "Kim Lee", "feedback", "Want feedback on my pitch deck"),
+    feedAsk(6, "omar", "Omar Haddad", "team", "Need a designer for a weekend hackathon team"),
+    feedAsk(7, "lena", "Lena Fox", "users", "Looking for 20 early users for my invoicing tool"),
+  ];
+  const FEED_PAGE = 5;
+  const feedDefaults = () => ({ hasCard: true, live: null as Record<string, unknown> | null, postStatus: 0, postDetail: "" });
+  let feedCfg = feedDefaults();
+  let askPosts: unknown[] = [];
+  let reports: unknown[] = [];
   let onboardUrls: string[] = [];
   let onboardPolls = 0;
+  const handleRecaps = recapFixtureApi();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
     const path = url.pathname;
@@ -116,6 +144,8 @@ export function startFixtureServer(): Promise<void> {
     };
 
     if (req.method === "OPTIONS") return json(200, {});
+    if (handleRecaps(req, res, path)) return;
+    if (path === "/__s10/warm-matches") { showWarmMatches = true; return json(200, {}); }
     // The directory list (/directory): two claimed people and one unclaimed.
     if (req.method === "GET" && path === "/cards") {
       return json(200, [cardFixture("alice"), cardFixture("bob", { name: "Bob Okafor" }), cardFixture("unclaimed", { claimed: false })]);
@@ -133,6 +163,55 @@ export function startFixtureServer(): Promise<void> {
         hit("bob", "Bob Okafor", 0.61),
       ];
       return json(200, { query: q, results, numberOfItems: results.length });
+    }
+    if (path === "/__feed/reset") { feedCfg = feedDefaults(); askPosts = []; reports = []; return json(200, {}); }
+    if (path === "/__feed/posts") return json(200, { posts: askPosts, reports });
+    if (req.method === "POST" && path === "/__feed/config") {
+      let raw = "";
+      req.on("data", chunk => { raw += chunk; });
+      req.on("end", () => { feedCfg = { ...feedCfg, ...JSON.parse(raw || "{}") }; return json(200, feedCfg); });
+      return;
+    }
+    if (req.method === "GET" && path === "/cards/feed") {
+      const kind = url.searchParams.get("kind");
+      const cursor = url.searchParams.get("cursor");
+      let items = feedItems();
+      if (url.searchParams.get("filter") === "asks" && kind) items = items.filter(i => i.content.kind === kind);
+      const start = cursor ? Number(cursor.replace("p", "")) : 0;
+      const page = items.slice(start, start + FEED_PAGE);
+      const viewer = feedCfg.hasCard
+        ? { has_card: true, handle: "owner", name: "Alice Chen", headline: "Engineer", avatar_url: null, location: "Bangalore" }
+        : { has_card: false, handle: null, name: "", headline: "", avatar_url: null, location: "" };
+      return json(200, { items: page, next_cursor: start + FEED_PAGE < items.length ? `p${start + FEED_PAGE}` : null, viewer });
+    }
+    if (req.method === "GET" && path === "/cards/mine/asks") {
+      if (!feedCfg.hasCard) return json(404, { detail: "Create your card first" });
+      return json(200, { asks: feedCfg.live ? [{ ...feedCfg.live, status: "active", offers: [] }] : [] });
+    }
+    if (path === "/cards/mine/ask") {
+      if (!req.headers.authorization) return json(401, { detail: "Unauthorized" });
+      if (req.method === "DELETE") { feedCfg.live = null; ownerCard = { ...ownerCard, beacon: null }; return json(204, {}); }
+      if (req.method === "POST") {
+        let raw = "";
+        req.on("data", chunk => { raw += chunk; });
+        req.on("end", () => {
+          const body = JSON.parse(raw || "{}");
+          askPosts.push(body);
+          if (feedCfg.postStatus) return json(feedCfg.postStatus, { detail: feedCfg.postDetail });
+          const created_at = new Date().toISOString();
+          const beacon = { id: "ask-live-1", text: body.text, kind: body.kind, url: body.url ?? null, created_at, expires_at: new Date(Date.now() + 7 * 86400000).toISOString() };
+          feedCfg.live = { ...beacon, routed: 0, offer_count: 0 };
+          ownerCard = { ...ownerCard, beacon };
+          return json(200, { beacon, ask_id: beacon.id });
+        });
+        return;
+      }
+    }
+    if (req.method === "POST" && /^\/cards\/network\/cards\/[^/]+\/report$/.test(path)) {
+      let raw = "";
+      req.on("data", chunk => { raw += chunk; });
+      req.on("end", () => { reports.push({ handle: path.split("/")[4], ...JSON.parse(raw || "{}") }); return json(200, { reported: true }); });
+      return;
     }
     if (path === "/cards/by-handle/owner/beacon") {
       if (!req.headers.authorization) return json(401, { detail: "Unauthorized" });
@@ -183,6 +262,7 @@ export function startFixtureServer(): Promise<void> {
       return;
     }
     if (path === "/__s10/reset") {
+      showWarmMatches = false;
       capturedEvents = [];
       namedVisitIds.clear();
       ownerCard = cardFixture("owner"); hasDuplicate = true; anonymousMode = true; humanViews = 12; namedVisits = 0; prefs = { weekly_digest: true, email_nudges: false, morning_digest: true };

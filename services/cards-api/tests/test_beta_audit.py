@@ -105,9 +105,10 @@ def test_beacon_compare_and_swap_preserves_concurrent_edits(monkeypatch):
     import config
     sb, q = MagicMock(), MagicMock()
     sb.table.return_value = q
-    for name in ("select", "eq", "ilike", "neq", "limit", "update"):
+    for name in ("select", "eq", "gte", "ilike", "neq", "limit", "update"):
         getattr(q, name).return_value = q
-    q.execute.side_effect = [MagicMock(data=[{"id": "a", "card": {"summary": "existing biography"}, "updated_at": "previous-version"}]), MagicMock(data=[])]
+    # The row, the asks-per-day count, then the (lost) compare-and-swap.
+    q.execute.side_effect = [MagicMock(data=[{"id": "a", "card": {"summary": "existing biography"}, "updated_at": "previous-version"}]), MagicMock(count=0), MagicMock(data=[])]
     monkeypatch.setattr(config, "get_supabase", lambda: sb)
     with pytest.raises(HTTPException) as error:
         beacons.save_beacon("alice", "alice@example.test", "Looking for reviewers")
@@ -135,7 +136,7 @@ def test_beacon_write_uses_existing_owner_authority(monkeypatch):
         save.assert_not_called()
         assert client.put("/cards/by-handle/alice/beacon", json={"text": " "}, headers={"Authorization": "Bearer owner"}).status_code == 422
         assert client.put("/cards/by-handle/alice/beacon", json={"text": "Looking for reviewers", "email": "spoof@example.test"}, headers={"Authorization": "Bearer owner"}).status_code == 200
-    save.assert_called_once_with("alice", "alice@example.test", "Looking for reviewers")
+    save.assert_called_once_with("alice", "alice@example.test", "Looking for reviewers", None, None)
 
 
 def test_skill_proof_and_demo_come_from_real_repository_metadata():

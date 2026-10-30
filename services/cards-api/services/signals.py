@@ -13,7 +13,7 @@ removes it; forgetting the memory fact removes that one; neither resurrects the 
 Precedence, memory first, then stored, case-insensitive dedupe:
   working_on     <- live `is_working_on` facts, newest approved first (they expire ~14 days
                     after approval, after which the stored list is all that is left)
-  working_on_updated_at <- the stored stamp (cards migration 0033), moved up to the newest live
+  working_on_updated_at <- the stored stamp (cards migration 0035), moved up to the newest live
                     `is_working_on` approval: the list is as fresh as its freshest source
   can_help_with  <- live `has_expertise_in` facts, highest confidence first
   exploring      <- the owner's browser clips (services/companion.py) from the last

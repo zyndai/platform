@@ -190,6 +190,30 @@ def test_bulk_missing_credentials_does_not_scan_or_send(test_send):
     adapter.send.assert_not_called()
 
 
+def test_bulk_feedback_resends_to_all_owners_without_consuming_deliveries(test_send, monkeypatch):
+    client, status, adapter, claim, db = test_send
+    owners = MagicMock(return_value=["alice@example.com", "bob@example.com"])
+    monkeypatch.setattr(notifications, "_test_owner_emails", owners)
+    path = "/internal/profile-feedback/test"
+    assert client.post(path).status_code == 401
+    owners.assert_not_called()
+    for _ in range(2):
+        adapter.send.side_effect = [smtplib.SMTPRecipientsRefused({}), None]
+        response = client.post(path, headers=AUTH)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["sent"] == 1 and result["failed"] == 1
+        assert result["kind"] == "feedback" and result["test"] is True
+        assert result["errors"][0]["email"] == "alice@example.com"
+    assert status.await_count == 4
+    assert [c.kwargs["to"] for c in adapter.send.call_args_list] == [
+        "alice@example.com", "bob@example.com", "alice@example.com", "bob@example.com"]
+    assert all(c.kwargs["subject"].startswith("[TEST] How’s your Zynd profile")
+               for c in adapter.send.call_args_list)
+    claim.assert_not_called()
+    db.assert_not_called()
+
+
 def test_bulk_owner_list_deduplicates_normalized_emails_and_pages(monkeypatch):
     sb = MagicMock()
     q = sb.table.return_value

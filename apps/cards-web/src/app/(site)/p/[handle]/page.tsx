@@ -52,6 +52,7 @@ import { EditionSignals } from "./edition-signals";
 import { StaleWorkingOnPrompt } from "./stale-working-on";
 import { isWorkingOnStale } from "@/lib/stale-signals";
 import { ExploringCard } from "./exploring-card";
+import { HelpedCard } from "./helped-card";
 import { cleanTopic, publicTopics } from "@/lib/profile-quality";
 import { BeaconCard } from "@/components/BeaconCard";
 import { BookingAvailability } from "@/components/BookingAvailability";
@@ -1098,6 +1099,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             </div>
             )}
             <ExploringCard items={card.exploring ?? []} nowMs={nowMs} />
+            <HelpedCard helped={card.helped} />
 
             {/* ── AI FACT + WORK EXP: equal height, fact card fills ── */}
             {claimed && card.beacon && Date.parse(card.beacon.created_at) <= nowMs && Date.parse(card.beacon.expires_at) > nowMs && <BeaconCard key={card.beacon.expires_at} beacon={card.beacon} />}

@@ -33,11 +33,13 @@ MCP_URL = "https://api.zynd.ai/claude/mcp"
 REVIEW_ORIGIN = "https://cards.zynd.ai"
 REPOSITORY = "https://github.com/zyndai/platform"
 MANIFEST_KEYS = {
-    "name", "displayName", "version", "description", "author", "homepage", "repository", "license",
-    "keywords", "icon", "documentationUrl", "supportUrl", "privacyPolicyUrl", "termsOfServiceUrl",
+    "name", "displayName", "version", "description", "author", "homepage", "repository", "license", "keywords",
 }
-LISTING_URLS = ("homepage", "documentationUrl", "supportUrl", "privacyPolicyUrl", "termsOfServiceUrl")
-FILES = {".claude-plugin/plugin.json", ".mcp.json", "LICENSE", "README.md", "assets/zynd-logo.png",
+# Keys only the directory reads (icon, privacy/support/terms URLs) are left out of plugin.json: the
+# validator flags each as unknown. The icon is found by convention at .claude-plugin/icon.png and the
+# URLs are read from the README.
+LISTING_URLS = ("homepage",)
+FILES = {".claude-plugin/plugin.json", ".mcp.json", "LICENSE", "README.md", ".claude-plugin/icon.png",
          *(f"skills/{skill}/SKILL.md" for skill in SKILLS)}
 TEXT_SUFFIXES = (".json", ".md")
 # Anthropic's checklist: non-image files under 256 KiB, at most 512 files.
@@ -111,11 +113,10 @@ def validate(root=ROOT):
     # because Claude registers itself with the authorization server.
     require(mcp == {"mcpServers": {"zynd": {"type": "http", "url": MCP_URL}}}, "invalid MCP configuration")
 
-    require(plugin["icon"] == "./assets/zynd-logo.png", "missing icon reference")
-    image = (root / "assets/zynd-logo.png").read_bytes()
+    image = (root / ".claude-plugin/icon.png").read_bytes()
     width, height = int.from_bytes(image[16:20], "big"), int.from_bytes(image[20:24], "big")
     require(image[:8] == b"\x89PNG\r\n\x1a\n" and len(image) <= 5 * 1024 * 1024 and
-            width == height and 48 <= width <= 4096, "icon must be a valid-size square PNG")
+            width == height and 512 <= width <= 2048, "icon must be a square PNG of 512 to 2048 px")
     require(len((root / "README.md").read_text().split()) >= 40, "README needs at least 40 words")
 
     for skill in SKILLS:

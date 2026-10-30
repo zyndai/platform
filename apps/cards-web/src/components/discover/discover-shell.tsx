@@ -6,6 +6,7 @@ import "./discover.css";
 
 const CRUMBS: Record<DiscoverPage, string> = {
   directory: "Directory",
+  feed: "Feed",
   network: "Network",
   create: "Create",
   visibility: "AI visibility",

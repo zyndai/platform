@@ -166,6 +166,7 @@ export function OwnerHome({
             <p>Keep your story current. See where it takes you.</p>
           </div>
           <div className="oh-header-actions">
+            <Link className="oh-button oh-outline" href="/home/recaps">Your recaps ↗</Link>
             <span className={`oh-visibility-badge ${data.visibility === "public" ? "is-public" : ""}`}>
               {data.visibility === "public"
                 ? <Globe2 size={13} aria-hidden="true" />

@@ -15,14 +15,14 @@
 -- unchanged until the next write that touches `card`. cards-api tolerates this migration being
 -- absent (the confirm endpoint answers 503, nothing is ever shown as stale), so it can be applied
 -- before or after the deploy. Do not apply to prod without a human (AGENTS.md §6).
--- Rollback: first set FEATURE_STALE_SIGNALS=false on cards-api (a request that read the card
--- before the UPDATE below can write the mirror key back; with the flag off it is never shown),
--- then run:
+-- Rollback: run the following, then the UPDATE line once more a minute later (a cards-api request
+-- that read the card before the first UPDATE can write the mirror key back, and cards-api would keep
+-- showing that copy's stamp):
 --   DROP TRIGGER IF EXISTS agent_profile_cards_working_on_stamp ON cards.agent_profile_cards;
 --   DROP FUNCTION IF EXISTS cards.stamp_working_on_updated_at();
 --   UPDATE cards.agent_profile_cards SET card = card - 'working_on_updated_at' WHERE card ? 'working_on_updated_at';
 --   ALTER TABLE cards.agent_profile_cards DROP COLUMN IF EXISTS working_on_updated_at;
---   DELETE FROM drizzle.__cards_migrations WHERE created_at = 1793183055198;  -- this file's journal "when", so it can be re-applied later
+--   DELETE FROM drizzle.__cards_migrations WHERE created_at = 1793350815310;  -- this file's journal "when", so it can be re-applied later
 -- ADD COLUMN takes an ACCESS EXCLUSIVE lock on the busiest cards table. Fail fast instead of
 -- queueing every card read and write behind a long-running query; retry in a quieter moment.
 SET LOCAL lock_timeout = '5s';

@@ -206,8 +206,8 @@ def assemble_card(
         status="pending_review",
         created_at=now,
         updated_at=now,
-        # Only the owner picks an edition; never take one from scraped/LLM text.
-        identity=synth.identity.model_copy(update={"edition": None}),
+        # Only the owner picks an edition or the pitch step; never take either from scraped/LLM text.
+        identity=synth.identity.model_copy(update={"edition": None, "pitch_to_book": False}),
         citation_snippet=synth.citation_snippet,
         summary=synth.summary,
         affiliations=synth.affiliations,
@@ -960,7 +960,9 @@ def _public_card_payload(row: dict) -> dict:
     """
     from services.signals import derive_public_signals
 
-    card = derive_public_signals(_row_to_card(row))
+    from services.booking_gate import public_booking
+
+    card = public_booking(derive_public_signals(_row_to_card(row)))
     from services.beacons import active_beacon
     card.beacon = active_beacon(card)
     return {

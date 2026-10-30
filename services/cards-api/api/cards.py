@@ -15,6 +15,7 @@ from models.card import AgentProfileCard
 from services import card_cache
 from services import cards as cards_service
 from services import events as events_service
+from services.booking_gate import public_booking
 from services.jobs import utcnow
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ async def search_cards(q: str = Query("", max_length=200)):
         cards = cards_service.search_cards(q)
         claimed = cards_service.claimed_by_handles([c.handle for c in cards if c.handle])
         return [
-            {**c.model_dump(mode="json"), "claimed": claimed.get(c.handle, False)}
+            {**public_booking(c).model_dump(mode="json"), "claimed": claimed.get(c.handle, False)}
             for c in cards
         ]
     return cards_service.list_published_public()
@@ -551,4 +552,4 @@ async def get_card(card_id: str):
     claimed = cards_service.card_is_claimed(card.handle) if card.handle else True
     from services.signals import derive_public_signals
 
-    return {**derive_public_signals(card).model_dump(mode="json"), "claimed": bool(claimed)}
+    return {**public_booking(derive_public_signals(card)).model_dump(mode="json"), "claimed": bool(claimed)}

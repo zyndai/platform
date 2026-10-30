@@ -93,6 +93,15 @@ class Identity(BaseModel):
     # Lives in identity so the editor's existing identity section saves it:
     # cards.s10_save_section only accepts a fixed list of top-level keys.
     edition: Edition | None = None
+    # Owner opt-in: booking links stay off every public read until the visitor's
+    # pitch passes the card's screening (services/booking_gate.py). Kept here for
+    # the same reason as `edition`.
+    pitch_to_book: bool = False
+
+    @field_validator("pitch_to_book", mode="before")
+    @classmethod
+    def _only_literal_true(cls, v):
+        return v is True
 
     @field_validator("edition", mode="before")
     @classmethod
@@ -107,12 +116,15 @@ class Identity(BaseModel):
             return None
 
     @model_serializer(mode="wrap")
-    def _omit_missing_edition(self, handler):
+    def _omit_unset_owner_choices(self, handler):
         # Classic cards serialize (and are stored) exactly as before the edition
-        # existed. Clearing an edition drops the key, since identity is saved whole.
+        # and the pitch step existed. Clearing either drops the key, since identity
+        # is saved whole; a stored `false` would read as drift against an absent key.
         data = handler(self)
         if data.get("edition") is None:
             data.pop("edition", None)
+        if data.get("pitch_to_book") is not True:
+            data.pop("pitch_to_book", None)
         return data
 
 

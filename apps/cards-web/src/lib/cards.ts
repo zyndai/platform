@@ -13,6 +13,9 @@ export interface Identity {
   links: Record<string, string>;
   /** Limited-edition look; read it through `readEdition` from lib/editions. */
   edition?: CardEdition | null;
+  /** Owner opt-in: visitors pitch before booking. On a public read it means the API withheld the
+   *  booking links (only POST /v1/chat/{handle}/pitch returns them, on a pass). */
+  pitch_to_book?: boolean;
 }
 
 export interface Skill {

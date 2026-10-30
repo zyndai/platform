@@ -162,6 +162,10 @@
 /* ── Fields ────────────────────────────────────────────────────────────── */
 .pe-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .pe-grid .full { grid-column: 1 / -1; }
+.pe-check { display: flex; align-items: flex-start; gap: 10px; margin-top: 16px; cursor: pointer; }
+.pe-check input { width: 18px; height: 18px; margin: 1px 0 0; flex-shrink: 0; accent-color: var(--pe-accent); cursor: pointer; }
+.pe-check-label { display: block; font-size: 14px; font-weight: 600; color: var(--pe-ink); }
+.pe-check-hint { display: block; margin-top: 2px; font-size: 13px; color: var(--pe-soft); max-width: 62ch; }
 .pe-label { font-size: 13px; font-weight: 600; color: var(--pe-soft); margin-bottom: 6px !important; }
 .pe-input, .pe-select {
   width: 100%; height: 44px; padding: 0 14px;

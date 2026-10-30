@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 import { useState, useRef } from "react";
 
 const CARDS_API = process.env.NEXT_PUBLIC_API_URL ?? "https://api.zynd.ai";
+// proxy.ts stamps ?ref= into the attribution cookie on every request it sees,
+// prefetches included, so these links opt out of prefetch: otherwise merely
+// scrolling past the demo would overwrite a visitor's real campaign ref.
+const DEMO_CREATE_HREF = "/create?ref=landing_demo";
 
 import { Typewriter } from "./typewriter";
 import { AgentCardAuthBar } from "./auth-bar";
@@ -27,6 +31,8 @@ export default function AgentCardPage() {
   const showMyCardCtas = signedIn && Boolean(myHandle);
   const signedInNoCard = signedIn && !myHandle;
   const myCardPublished = myCard?.status === "published";
+  // #ingestion only renders for signed-out visitors; signed-in ones get their card panel instead.
+  const createAnchor = signedIn ? "#your-card" : "#ingestion";
 
   // Hand the pasted link off to /create rather than synthesizing here — the
   // create page owns auth, validation and the job polling.
@@ -77,7 +83,7 @@ export default function AgentCardPage() {
 </Link>
 {/* Navigation links */}
 <nav className="hidden md:flex items-center gap-7 text-xs font-mono text-[#8a8a84]">
-<a className="hover:text-white transition-colors" href="#ingestion">Synthesize</a>
+<a className="hover:text-white transition-colors" href={createAnchor}>Synthesize</a>
 <a className="hover:text-white transition-colors" href="#paradigm">Shift</a>
 <a className="hover:text-white transition-colors" href="#signals">Signals</a>
 <a className="hover:text-white transition-colors" href="#discovery">Agent Query</a>
@@ -495,7 +501,7 @@ export default function AgentCardPage() {
 </div>
 <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between">
 <span className="text-[10px] font-mono text-[#7d7d77]">From GitHub</span>
-<span className="text-xs font-mono text-[#7b72e9] hover:underline cursor-pointer">📅 Book 20m Intro →</span>
+<Link className="text-xs font-mono text-[#7b72e9] hover:underline" href={DEMO_CREATE_HREF} prefetch={false} title="Create your card to book intros">📅 Book 20m Intro →</Link>
 </div>
 </div>
 {/* Candidate 2 */}
@@ -513,7 +519,7 @@ export default function AgentCardPage() {
 </div>
 <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between">
 <span className="text-[10px] font-mono text-[#7d7d77]">From GitHub</span>
-<span className="text-xs font-mono text-[#7b72e9] hover:underline cursor-pointer">📅 Book 20m Intro →</span>
+<Link className="text-xs font-mono text-[#7b72e9] hover:underline" href={DEMO_CREATE_HREF} prefetch={false} title="Create your card to book intros">📅 Book 20m Intro →</Link>
 </div>
 </div>
 </div>
@@ -521,7 +527,7 @@ export default function AgentCardPage() {
 {/* Transition caption */}
 <div className="pt-3 border-t border-white/[0.08] flex items-center justify-between text-xs font-mono text-[#a0a09a]">
 <span className="">Oh. Zynd isn&apos;t just your profile. <span className="text-white font-bold">It&apos;s a network.</span></span>
-<a className="text-[#7b72e9] hover:underline" href="#network">View the Network Layer ↓</a>
+<Link className="text-[#7b72e9] hover:underline" href="/directory">View the Network Layer →</Link>
 </div>
 </div>
 </div>
@@ -639,7 +645,7 @@ export default function AgentCardPage() {
 <h4 className="font-bold text-white text-base">Chandan Kumar</h4>
 <div className="text-xs text-[#a0a09a]">Founding Engineer &amp; Distributed Systems</div>
 </div>
-<span className="text-xs font-mono bg-[#7b72e9] text-black font-semibold px-3 py-1 rounded-full cursor-pointer">Book Intro</span>
+<Link className="text-xs font-mono bg-[#7b72e9] text-black font-semibold px-3 py-1 rounded-full" href={DEMO_CREATE_HREF} prefetch={false} title="Create your card to book intros">Book Intro</Link>
 </div>
 <div className="space-y-2 text-xs">
 <div className="text-[#d7d7d1]">
@@ -766,7 +772,7 @@ export default function AgentCardPage() {
 </div>
 </section>
 {/* ========================================================================= */}
-{/* SECTION 10 — FOUNDING 25 (EARLY NETWORK FORMATION) */}
+{/* SECTION 10 — FOUNDING NETWORK (EARLY NETWORK FORMATION) */}
 {/* ========================================================================= */}
 <section className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8" data-purpose="founding-network">
 <div className="p-8 sm:p-12 lg:p-14 rounded-3xl bg-[#0e1010] border border-[#7b72e9]/40 space-y-8 text-center relative overflow-hidden shadow-[0_0_40px_rgba(123,114,233,0.08)]">
@@ -775,31 +781,15 @@ export default function AgentCardPage() {
 </div>
 <div className="space-y-4 max-w-2xl mx-auto">
 <h2 className="font-display uppercase text-3xl sm:text-5xl font-normal text-white leading-tight">
-          We&apos;re building the first layer of the network with 25 people.
+          We&apos;re building the first layer of the network with people who ship.
         </h2>
 <p className="text-sm sm:text-base text-[#a0a09a] leading-relaxed">
           We&apos;re not trying to create another directory with 10 million empty profiles. We&apos;re starting with people who are actually building.
         </p>
 </div>
-{/* Scarcity indicator & Member initials */}
-<div className="max-w-md mx-auto space-y-4">
-<div className="p-4 rounded-xl bg-black/60 border border-white/10 flex items-center justify-between text-xs font-mono">
-<span className="text-[#a0a09a]">Founding Network Status:</span>
-<span className="text-[#7b72e9] font-bold">17 / 25 spots claimed</span>
-</div>
-{/* Micro avatars of claimed spots */}
-<div className="flex items-center justify-center -space-x-2 pt-1">
-<span className="w-8 h-8 rounded-full bg-zinc-800 border-2 border-[#080909] text-white flex items-center justify-center text-[10px] font-mono font-bold">CK</span>
-<span className="w-8 h-8 rounded-full bg-zinc-800 border-2 border-[#080909] text-white flex items-center justify-center text-[10px] font-mono font-bold">AR</span>
-<span className="w-8 h-8 rounded-full bg-zinc-800 border-2 border-[#080909] text-white flex items-center justify-center text-[10px] font-mono font-bold">KD</span>
-<span className="w-8 h-8 rounded-full bg-zinc-800 border-2 border-[#080909] text-white flex items-center justify-center text-[10px] font-mono font-bold">SB</span>
-<span className="w-8 h-8 rounded-full bg-zinc-800 border-2 border-[#080909] text-white flex items-center justify-center text-[10px] font-mono font-bold">LN</span>
-<span className="w-8 h-8 rounded-full bg-[#1c2214] border-2 border-[#080909] text-[#7b72e9] flex items-center justify-center text-[10px] font-mono font-bold">+12</span>
-</div>
-</div>
 <div>
-<a className="inline-flex items-center gap-2 bg-[#7b72e9] hover:bg-[#a78bfa] text-black font-mono font-bold text-sm py-4 px-8 rounded-xl active:scale-95 transition-all shadow-[0_0_25px_rgba(123,114,233,0.35)]" href="#ingestion">
-<span className="">Apply for Founding Network</span>
+<a className="inline-flex items-center gap-2 bg-[#7b72e9] hover:bg-[#a78bfa] text-black font-mono font-bold text-sm py-4 px-8 rounded-xl active:scale-95 transition-all shadow-[0_0_25px_rgba(123,114,233,0.35)]" href={createAnchor}>
+<span className="">Join the Founding Network</span>
 <span className="text-base leading-none">→</span>
 </a>
 </div>
@@ -958,7 +948,6 @@ export default function AgentCardPage() {
 </div>
 {/* Footer navigation links */}
 <div className="flex flex-wrap gap-7 text-xs font-mono text-[#8E8E88]">
-<a className="hover:text-white transition-colors" href="#">Manifesto</a>
 <Link className="hover:text-white transition-colors" href="/directory">Discovery Index</Link>
 <Link className="hover:text-white transition-colors" href="/for-ai">Agent Specs</Link>
 <a className="hover:text-white transition-colors" href="https://persona.zynd.ai/privacy">Privacy</a>

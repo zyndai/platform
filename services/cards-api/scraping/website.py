@@ -48,6 +48,18 @@ _SKIP_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".ico",
                     ".css", ".js", ".woff", ".woff2", ".ttf"}
 
 
+# Cloudflare's interstitial, which Jina Reader returns in place of a page that
+# checks for bots: its "Just a moment..." title, or the text of the check itself.
+_BOT_CHALLENGE = re.compile(
+    r"^Title: Just a moment\.\.\.$|^## Performing security verification$|^Verify you are human", re.M,
+)
+
+
+def is_bot_challenge(markdown: str) -> bool:
+    """The reader got the site's bot check, not the page: there is nothing of the person in it."""
+    return _BOT_CHALLENGE.search(markdown) is not None
+
+
 def _is_skip_host(host: str) -> bool:
     host = host.lower()
     return any(host == d or host.endswith("." + d) for d in _SKIP_DOMAINS)

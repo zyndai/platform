@@ -2,7 +2,7 @@
  *  runner can load this file as it is (it imports types only). */
 import type { AgentProfileCard, BuildStage, Project, SourceStatus, WorkItem, WritingSample } from "@/lib/cards";
 
-export type UrlKind = "github" | "x" | "linkedin" | "writing" | "portfolio" | "website";
+export type UrlKind = "github" | "x" | "linkedin" | "producthunt" | "writing" | "portfolio" | "website";
 
 /** Newsletter / blog hosts and design-portfolio hosts: the same lists as scraping/sites.py in cards-api. */
 const WRITING_HOSTS = ["substack.com", "medium.com", "dev.to", "hashnode.dev", "beehiiv.com", "ghost.io", "wordpress.com", "blogspot.com", "bearblog.dev", "mirror.xyz"];
@@ -10,12 +10,16 @@ const PORTFOLIO_HOSTS = ["behance.net", "dribbble.com"];
 
 const onHost = (host: string, domain: string) => host === domain || host.endsWith(`.${domain}`);
 
+/** A Product Hunt profile is /@<username>; its product and launch pages are ordinary pages (scraping/sites.py). */
+const PRODUCTHUNT_PROFILE = /^\/@[A-Za-z0-9_]{1,40}(\/|$)/;
+
 export function detectKind(url: string): UrlKind {
   try {
     const host = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
     if (onHost(host, "github.com")) return "github";
     if (host === "x.com" || onHost(host, "twitter.com")) return "x";
     if (onHost(host, "linkedin.com")) return "linkedin";
+    if (host === "producthunt.com" && PRODUCTHUNT_PROFILE.test(new URL(url).pathname)) return "producthunt";
     if (WRITING_HOSTS.some((d) => onHost(host, d))) return "writing";
     if (PORTFOLIO_HOSTS.some((d) => onHost(host, d))) return "portfolio";
   } catch { /* not a URL: treat as a website */ }
@@ -36,6 +40,7 @@ export const QUICK_ADD: { kind: UrlKind; prefix: string }[] = [
   { kind: "linkedin", prefix: "linkedin.com/in/" },
   { kind: "github", prefix: "github.com/" },
   { kind: "x", prefix: "x.com/" },
+  { kind: "producthunt", prefix: "producthunt.com/@" },
 ];
 
 /** The box holds only a quick-add prefix: the person tapped it and has not typed their name yet. */
@@ -60,6 +65,9 @@ export function normalizeUrl(raw: string): { url: string } | { error: string } |
     const section = host === "linkedin.com" && LINKEDIN_SECTIONS.includes(first.toLowerCase()) ? first : "";
     if (HANDLE_HOSTS.includes(host) && !(section ? second : first)) {
       return { error: `Include your username, e.g. ${host}/${section ? `${section}/` : ""}yourusername` };
+    }
+    if (host === "producthunt.com" && (!first || first === "@")) {
+      return { error: "Include your username, e.g. producthunt.com/@yourusername" };
     }
     if (!host.includes(".")) return { error: "That doesn't look like a link." };
   } catch {

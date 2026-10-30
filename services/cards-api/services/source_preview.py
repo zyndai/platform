@@ -89,6 +89,10 @@ def text_preview(kind: str, text: str, stats: dict | None) -> dict:
         facts.append(f"{len(stats['posts_raw'])} recent posts")
     if gallery:
         facts.append(f"{len(gallery)} projects")
+    if kind == "producthunt":
+        launches = stats.get("launches") or []
+        # Product Hunt often shows the reader a bot check instead: the link still goes on the card.
+        facts.append(f"{len(launches)} launch{'' if len(launches) == 1 else 'es'}" if launches else "Link added to your card")
     preview = {
         "name": _labelled(text, _LABELLED["name"]),
         "headline": _labelled(text, _LABELLED["headline"]),

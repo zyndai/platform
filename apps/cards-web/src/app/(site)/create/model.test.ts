@@ -184,3 +184,17 @@ test("the same links in another order are the same sources", () => {
   assert.ok(!sameUrls(["https://a", "https://a"], ["https://a", "https://b"]));
   assert.ok(sameUrls([], []));
 });
+
+test("a Product Hunt profile is its own source; its product pages are plain websites", () => {
+  assert.equal(detectKind("https://www.producthunt.com/@ada"), "producthunt");
+  assert.equal(detectKind("https://producthunt.com/@ada_l/made"), "producthunt");
+  assert.equal(detectKind("https://www.producthunt.com/products/orbit"), "website");
+  assert.equal(detectKind("https://www.producthunt.com/posts/orbit"), "website");
+  assert.deepEqual(normalizeUrl("producthunt.com/@ada"), { url: "https://producthunt.com/@ada" });
+  assert.deepEqual(normalizeUrl("https://www.producthunt.com/products/orbit"), { url: "https://www.producthunt.com/products/orbit" });
+  assert.match((normalizeUrl("https://www.producthunt.com/") as { error: string }).error, /producthunt\.com\/@yourusername/);
+  assert.ok("error" in normalizeUrl("producthunt.com/@")!);
+  assert.ok(QUICK_ADD.some((q) => q.kind === "producthunt"));
+  assert.ok(isBarePrefix("https://www.producthunt.com/@"));
+  assert.ok(!isBarePrefix("producthunt.com/@ada"));
+});

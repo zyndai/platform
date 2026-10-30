@@ -10,7 +10,7 @@ from uuid import UUID
 import httpx
 
 import config
-from models.card import AgentProfileCard, CardSynthesis, Source, WorkItem, WritingSample
+from models.card import AgentProfileCard, CardSynthesis, Project, Source, WorkItem, WritingSample
 from services import card_cache, embed
 from services.jobs import new_card_id, utcnow
 
@@ -378,6 +378,30 @@ def merge_scraped_posts(
             break
         add(w)
     return result
+
+
+def _launch_project(launch: dict) -> Project | None:
+    name = clean_excerpt(str(launch.get("name") or ""), 80)
+    url = str(launch.get("url") or "")
+    if not name or not url.startswith("https://"):
+        return None
+    tagline = clean_excerpt(str(launch.get("tagline") or ""), 160)
+    upvotes = launch.get("upvotes")
+    votes = f"{upvotes:,} upvotes" if isinstance(upvotes, int) and upvotes > 0 else ""
+    # Upvotes go in the text, not `stars`: the card shows stars as GitHub's ★.
+    description = " · ".join(part for part in (tagline, votes) if part)
+    # The card's project row takes its icon and chip from tech[0]; without one it shows a GitHub mark.
+    return Project(name=name, description=description, url=url, source="producthunt", tech=["Product Hunt"])
+
+
+def merge_launches(projects: list[Project], launches: list[dict] | None) -> list[Project]:
+    """Products the person launched on Product Hunt go on the card as projects,
+    read off their profile rather than left to the LLM. They come first and replace
+    the LLM's version of the same product (same link or name)."""
+    scraped = [p for launch in launches or [] if isinstance(launch, dict) and (p := _launch_project(launch))]
+    taken = {p.url.rstrip("/") for p in scraped} | {p.name.lower() for p in scraped}
+    rest = [p for p in projects if (p.url or "").rstrip("/") not in taken and p.name.lower() not in taken]
+    return scraped + rest
 
 
 def dedupe_memory_facts(facts: list[dict] | None) -> list[dict] | None:

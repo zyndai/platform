@@ -72,7 +72,8 @@ async def _fetch_source(job_id: str, url: str) -> tuple[str, str, dict | None]:
         set_source(job_id, url, kind, "failed")
         return kind, "", None
     kind, text, stats = result
-    if text:
+    # A Product Hunt profile that couldn't be read is still the person's link on the card.
+    if text or kind == "producthunt":
         set_source(job_id, url, kind, "done", build_preview(kind, text, stats))
     else:
         _source_warning(job_id, url)
@@ -103,6 +104,8 @@ def _classify_url(url: str) -> str:
         return "x"
     if host == "linkedin.com" or host.endswith(".linkedin.com"):
         return "linkedin"
+    if site_scraper.producthunt_maker(url):
+        return "producthunt"
     if site_scraper.is_writing_url(url):
         return "writing"
     if site_scraper.portfolio_platform(url):
@@ -123,10 +126,11 @@ def _handle_from_url(url: str) -> str | None:
 
 
 async def _safe_fetch_url(url: str) -> tuple[str, str, dict | None]:
-    """Returns (kind, text, stats_or_None). kind ∈ {'x', 'linkedin', 'writing', 'portfolio', 'website'}.
+    """Returns (kind, text, stats_or_None). kind ∈ {'x', 'linkedin', 'producthunt', 'writing', 'portfolio', 'website'}.
 
-    For a newsletter / blog / design portfolio, stats holds what scraping/sites.py
-    found on the page: `posts_raw` (post links) and/or `gallery` (project tiles)."""
+    For a newsletter / blog / design portfolio / Product Hunt profile, stats holds what
+    scraping/sites.py found on the page: `posts_raw` (post links), `gallery` (project
+    tiles) and/or `launches` (products the maker launched)."""
     kind = _classify_url(url)
     try:
         if kind == "x":
@@ -135,9 +139,15 @@ async def _safe_fetch_url(url: str) -> tuple[str, str, dict | None]:
             text, stats = await linkedin_scraper.fetch_linkedin_profile(url)
         else:
             text, markdown = await website_scraper.fetch_page(url)
+            if kind == "producthunt" and website_scraper.is_bot_challenge(markdown):
+                # Product Hunt usually shows the reader its bot check: no launches to read,
+                # and its boilerplate must not reach the model as if it were the person.
+                logger.info("producthunt bot check instead of profile url=%s", url)
+                return kind, "", None
             found = {
                 "posts_raw": site_scraper.extract_posts(markdown, url),
                 "gallery": site_scraper.extract_gallery(markdown, url),
+                "launches": site_scraper.extract_launches(markdown, url),
             }
             stats = {k: v for k, v in found.items() if v} or None
         logger.info("scraped %s url=%s chars=%d", kind, url, len(text))
@@ -224,6 +234,8 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
         website_texts: list[str] = []
         site_posts: list[dict] = []
         work_gallery: list[dict] = []
+        launches: list[dict] = []
+        producthunt_user = next(filter(None, map(site_scraper.producthunt_maker, expanded)), None)
         x_texts: list[str] = []
         linkedin_texts: list[str] = []
         x_stats_data: dict | None = None
@@ -252,6 +264,7 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
                     website_texts.append(text)
                     site_posts += (stats or {}).get("posts_raw") or []
                     work_gallery += (stats or {}).get("gallery") or []
+                    launches += (stats or {}).get("launches") or []
 
         # Exclude resume — user-uploaded private document; public scrapes only
         scrape_raw: dict = {
@@ -288,6 +301,10 @@ async def _build_pipeline(job_id: str, urls: list[str], resume_text: str | None)
             synth.identity.links["linkedin"] = _profile_link(linkedin_url_used)
         if x_url_used:
             synth.identity.links["x"] = _profile_link(x_url_used)
+        # Whether or not the profile could be read, the person linked it: it goes on the card.
+        if producthunt_user:
+            synth.identity.links["producthunt"] = f"https://www.producthunt.com/@{producthunt_user}"
+        synth.projects = cards_service.merge_launches(synth.projects, launches[: site_scraper.LAUNCHES_PER_PROFILE])
 
         # Deterministic avatar priority: LinkedIn > X > GitHub. The LLM's guess
         # (if any) is overridden by real scraped photo URLs.

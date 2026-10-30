@@ -4,6 +4,7 @@ export const KIND_LABEL: Record<UrlKind, string> = {
   github: "GitHub",
   linkedin: "LinkedIn",
   x: "X",
+  producthunt: "Product Hunt",
   writing: "Newsletter",
   portfolio: "Portfolio",
   website: "Website",
@@ -14,6 +15,7 @@ export const KIND_READING: Record<UrlKind, string> = {
   github: "Reading GitHub…",
   linkedin: "Reading LinkedIn…",
   x: "Reading X…",
+  producthunt: "Reading Product Hunt…",
   writing: "Reading your writing…",
   portfolio: "Reading your portfolio…",
   website: "Reading the website…",
@@ -23,6 +25,7 @@ const SWATCH: Record<UrlKind, string> = {
   github: "#0B0B0B",
   linkedin: "#0A66C2",
   x: "#1C1C1C",
+  producthunt: "#DA552F",
   writing: "#FF6719",
   portfolio: "#1769FF",
   website: "#6C5CE7",
@@ -48,6 +51,9 @@ export function KindIcon({ kind, size = 20 }: { kind: UrlKind; size?: number }) 
         )}
         {kind === "x" && (
           <path fill="#fff" fillRule="evenodd" d="M1.5 1.5h3.9l2.28 3.24 2.67-3.24H12l-3.6 4.38L13 14.5H9.1L6.63 11l-3 3.5H2l3.87-4.5zm2.1 1.2 6.6 9.6h1.2L4.8 2.7z" clipRule="evenodd" />
+        )}
+        {kind === "producthunt" && (
+          <path fill="#fff" fillRule="evenodd" d="M5.5 3h3.4a2.9 2.9 0 0 1 0 5.8H7.3V13H5.5V3zm1.8 1.7v2.4h1.6a1.2 1.2 0 0 0 0-2.4H7.3z" clipRule="evenodd" />
         )}
         {kind === "writing" && <path fill="#fff" d="M3 3h10v1.6H3V3zm0 3.2h10v1.6H3V6.2zM3 9.4h10V11H3V9.4zm0 3.2h6.5v1.6H3v-1.6z" />}
         {kind === "portfolio" && <path fill="#fff" d="M2.5 2.5h4.6v4.6H2.5V2.5zm6.4 0h4.6v4.6H8.9V2.5zM2.5 8.9h4.6v4.6H2.5V8.9zm6.4 0h4.6v4.6H8.9V8.9z" />}

@@ -48,6 +48,35 @@ _SKIP_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".ico",
                     ".css", ".js", ".woff", ".woff2", ".ttf"}
 
 
+# What Jina Reader returns when a site shows it a bot check instead of the page.
+_BOT_CHALLENGE = re.compile(
+    "|".join((
+        r"^Title: Just a moment\.\.\.$",  # Cloudflare's interstitial page title
+        r"^Title: Attention Required! \| Cloudflare$",  # Cloudflare's block page title
+        r"Performing security verification",  # Cloudflare's challenge heading
+        r"Enable JavaScript and cookies to continue",  # Cloudflare's no-script fallback text
+        r"Checking (?:if the site connection is secure|your browser before accessing)",  # older Cloudflare check text
+        r"cf[-_]chl",  # Cloudflare challenge ids in links and forms: cf-chl-widget, __cf_chl_tk
+        r"/cdn-cgi/challenge-platform/",  # Cloudflare's challenge script path
+        r"captcha-delivery\.com",  # DataDome's captcha host
+        r"Press & Hold to confirm you are",  # PerimeterX / HUMAN's hold-to-verify prompt
+    )),
+    re.M,
+)
+# A check page is a few hundred characters. A long page that merely mentions one of
+# these phrases (a post about Cloudflare) is a real page. Jina's own "This page maybe
+# requiring CAPTCHA" warning is left out: it also shows on real pages with a captcha form.
+_BOT_CHALLENGE_MAX_CHARS = 4_000
+
+
+class BotChallengeError(Exception):
+    """The site showed Jina Reader its bot check instead of the page."""
+
+
+def is_bot_challenge(markdown: str) -> bool:
+    return len(markdown) <= _BOT_CHALLENGE_MAX_CHARS and _BOT_CHALLENGE.search(markdown) is not None
+
+
 def _is_skip_host(host: str) -> bool:
     host = host.lower()
     return any(host == d or host.endswith("." + d) for d in _SKIP_DOMAINS)
@@ -69,7 +98,11 @@ async def _jina_fetch(url: str) -> str:
                 follow_redirects=False,
             )
             resp.raise_for_status()
-            return resp.text.strip()
+            text = resp.text.strip()
+    # Raised rather than returned so the check's text can never pass for the person's page.
+    if is_bot_challenge(text):
+        raise BotChallengeError(f"bot check instead of page: {url}")
+    return text
 
 
 def _extract_urls(markdown: str) -> list[str]:

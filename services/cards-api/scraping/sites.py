@@ -43,6 +43,22 @@ def portfolio_platform(url: str) -> str | None:
     return None
 
 
+# One path segment "@<username>": the profile itself, or one of its tabs below it (/made, /submitted).
+_PH_PROFILE_SEGMENT = re.compile(r"^@(?P<user>[A-Za-z0-9_]{1,40})$")
+
+
+def producthunt_maker(url: str) -> str | None:
+    """The username a pasted Product Hunt profile belongs to: producthunt.com/@ada.
+
+    A product or launch page (/products/…, /posts/…) is not a profile: it gives None
+    and is read as an ordinary page."""
+    if _host(url) != "producthunt.com":
+        return None
+    first = urlparse(url).path.strip("/").split("/")[0]
+    m = _PH_PROFILE_SEGMENT.match(first)
+    return m.group("user").lower() if m else None
+
+
 # ── newsletter / blog posts ──────────────────────────────────────────────────
 
 _LINK = re.compile(r"(?<!!)\[(?P<text>[^\]\n]{12,220})\]\((?P<href>https?://[^)\s]+)\)")

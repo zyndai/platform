@@ -89,6 +89,8 @@ def text_preview(kind: str, text: str, stats: dict | None) -> dict:
         facts.append(f"{len(stats['posts_raw'])} recent posts")
     if gallery:
         facts.append(f"{len(gallery)} projects")
+    if stats.get("link_only"):
+        facts.append("Link added to your card")
     preview = {
         "name": _labelled(text, _LABELLED["name"]),
         "headline": _labelled(text, _LABELLED["headline"]),

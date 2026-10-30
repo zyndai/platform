@@ -125,3 +125,17 @@ def test_source_kinds():
     assert sites.portfolio_platform("https://www.behance.net/ada") == "behance"
     assert sites.portfolio_platform("https://dribbble.com/ada") == "dribbble"
     assert sites.portfolio_platform("https://example.com") is None
+
+
+def test_producthunt_profile_urls():
+    assert sites.producthunt_maker("https://www.producthunt.com/@Ada") == "ada"
+    assert sites.producthunt_maker("https://producthunt.com/@ada_l/made?ref=x") == "ada_l"
+    for url in (
+        "https://www.producthunt.com/products/orbit",
+        "https://www.producthunt.com/posts/orbit",
+        "https://www.producthunt.com/",
+        "https://www.producthunt.com/@",
+        "https://evil.example/@ada",
+        "https://producthunt.com.evil.example/@ada",
+    ):
+        assert sites.producthunt_maker(url) is None, url

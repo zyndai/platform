@@ -178,6 +178,7 @@ function LinkedinGlyph({ size = 16 }: { size?: number }) {
 const LINK_LABELS: Record<string, string> = {
   github: "GitHub", x: "X", twitter: "X", linkedin: "LinkedIn",
   website: "Website", portfolio: "Portfolio", linktree: "Linktree",
+  producthunt: "Product Hunt",
 };
 
 function LinkGlyph({ platform, size = 15 }: { platform: string; size?: number }) {

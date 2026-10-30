@@ -40,6 +40,7 @@ const SIMPLE: Record<string, string> = {
   api: "postman",
   ai: "openai",
   "product manager": "producthunt",
+  "product hunt": "producthunt",
   agile: "jira",
   scrum: "jira",
   "agile/scrum": "jira",

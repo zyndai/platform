@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { profileUrlDisplay } from "@/lib/cards";
 import { recapStats, selectedHighlights, type Recap } from "@/lib/recaps";
 
 // Shared by the live preview and PNG renderer. Flex-only CSS also works in next/og.
@@ -28,7 +29,7 @@ export function RecapArt({ recap }: { recap: Recap }) {
         {highlights.filter((h) => h.kind !== "github").slice(0, 2).map((h) => `${h.kind === "shipped" ? "Shipped" : h.kind === "learned" ? "Learned" : "Explored"} ${h.title}`).join("  /  ").slice(0, 120)}
       </div>
       <div style={{ ...row, position: "absolute", bottom: 36, left: 56, right: 56, paddingTop: 20, borderTop: "1px solid #47455f", justifyContent: "space-between", fontSize: 18, color: "#c8c3e0" }}>
-        <div style={{ display: "flex" }}>cards.zynd.ai/p/{recap.handle.slice(0, 40)}</div>
+        <div style={{ display: "flex" }}>{profileUrlDisplay(recap.handle.slice(0, 40))}</div>
         <div style={{ display: "flex", color: "#d5ff75" }}>Your work deserves to be seen ↗</div>
       </div>
     </div>

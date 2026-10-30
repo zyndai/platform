@@ -1,6 +1,5 @@
 """Feedback invitation markup, with inline styles and no browser-only assets."""
-from urllib.parse import quote
-
+import config
 from services.weekly_email import ACCENT, BORDER, DASHBOARD_URL, INK, MUTED, esc, table
 
 
@@ -14,7 +13,7 @@ def render_feedback_html(name: str, paragraphs: list[str], calendar_url: str, fo
 
     account = esc(name.strip() or "Your Zynd profile")
     if handle:
-        profile = "https://cards.zynd.ai/p/" + quote(handle, safe="")
+        profile = config.profile_url(handle)
         account += f' &middot; <a href="{esc(profile)}" style="color:{ACCENT};text-decoration:none;">@{esc(handle)}</a>'
     greeting = (f'<p style="display:inline-block;max-width:100%;box-sizing:border-box;margin:0 0 18px;padding:6px 9px;background:#f1f3f7;border-radius:6px;color:#687489;font-size:11px;line-height:1.6;word-break:break-word;">{account}</p>'
                 f'<h1 style="margin:0 0 16px;font-size:26px;line-height:1.3;letter-spacing:-.6px;color:{INK};">{esc(paragraphs[0])}</h1>'

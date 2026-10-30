@@ -107,7 +107,7 @@ def _shape(rows: list[dict], needle: str, limit: int) -> list[dict]:
             "linkedin_url": (identity.get("links") or {}).get("linkedin") or "",
             "match_score": _SCORES[rank],
             "match_reasons": [_REASONS[rank]],
-            "url": f"{config.SITE_BASE_URL}/p/{handle}" if handle else f"{config.SITE_BASE_URL}/profile/{row.get('id')}",
+            "url": config.profile_url(handle) if handle else f"{config.SITE_BASE_URL}/profile/{row.get('id')}",
         })
         if len(out) >= limit:
             break

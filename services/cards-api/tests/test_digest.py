@@ -33,7 +33,7 @@ def test_render_digest_includes_topics_posts_and_people():
         ],
     }
     people = {
-        "people": [{"handle": "bob", "name": "Bob", "headline": "Founder", "url": "https://zynd.ai/p/bob",
+        "people": [{"handle": "bob", "name": "Bob", "headline": "Founder", "url": "https://cards.zynd.ai/p/bob",
                     "why": ["Founder of an AI tools startup", "Mentions ai", "Based in Pune"]}],
         "outside": [{"name": "Pat", "title": "Recruiter", "company": "Acme", "linkedin_url": "https://linkedin.com/in/pat"}],
     }
@@ -44,7 +44,7 @@ def test_render_digest_includes_topics_posts_and_people():
     assert "AI is busy today" in body
     assert "https://x.com/a/1" in body
     assert "Bob" in body
-    assert "https://zynd.ai/p/bob" in body
+    assert "https://cards.zynd.ai/p/bob" in body
     assert "  Founder of an AI tools startup · Mentions ai\n" in body          # one reason line, two reasons
     assert "Pat, Recruiter at Acme (not on Zynd yet, LinkedIn)" in body
     assert "Hide:" not in body                                         # no feedback links without a token
@@ -60,10 +60,10 @@ def test_render_digest_includes_topics_posts_and_people():
     assert "Read on X" in html
     assert "https://x.com/a/1" in html
     assert "People for you" in html
-    assert "Bob" in html and "https://zynd.ai/p/bob" in html
+    assert "Bob" in html and "https://cards.zynd.ai/p/bob" in html
     assert "Recruiter at Acme &middot; Not on Zynd yet" in html
     assert "https://linkedin.com/in/pat" in html
-    assert "zynd.ai/p/alice" in html
+    assert "https://cards.zynd.ai/p/alice" in html
     assert "/assets/zynd-logo.png" in html
     assert "Open your dashboard" in html
     assert "#4338ca" in html
@@ -97,8 +97,8 @@ def test_owner_blocks_render_from_extras():
         "feedback_base": "https://api.test/cards/suggestions/feedback/tok",
     }
     people = {"people": [
-        {"handle": "lena", "name": "Lena Fischer", "url": "https://zynd.ai/p/lena"},
-        {"handle": "arjun", "name": "Arjun Mehta", "url": "https://zynd.ai/p/arjun", "two_way": True, "verified": True,
+        {"handle": "lena", "name": "Lena Fischer", "url": "https://cards.zynd.ai/p/lena"},
+        {"handle": "arjun", "name": "Arjun Mehta", "url": "https://cards.zynd.ai/p/arjun", "two_way": True, "verified": True,
          "why": ["Wants to meet founders like you", "Backs developer tools", "Based in Berlin", "Payments"]},
     ], "outside": []}
     html = digest_service.render_digest_html("alice", None, people, name="Alice", extras=extras)

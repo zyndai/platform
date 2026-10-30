@@ -14,7 +14,7 @@ BING_SUBMIT_URL = (
 
 def profile_url(card_id: str, handle: str | None = None) -> str:
     if handle:
-        return f"{config.SITE_BASE_URL}/p/{handle}"
+        return config.profile_url(handle)
     return f"{config.SITE_BASE_URL}/profile/{card_id}"
 
 

@@ -13,6 +13,7 @@ import {
   type CompanionDevice,
   type FromExtension,
 } from "@/lib/companion";
+import { profileUrlDisplay } from "@/lib/cards";
 
 type Phase = "searching" | "missing" | "ready" | "connecting" | "connected" | "error";
 
@@ -162,7 +163,7 @@ export function ConnectClient({
           {(phase === "ready" || phase === "connecting") && (
             <>
               <h2 className="text-lg font-bold">Connect Zynd Companion to {account.name || account.handle}?</h2>
-              <p className="mt-1 text-sm text-zinc-400">cards.zynd.ai/p/{account.handle}</p>
+              <p className="mt-1 text-sm text-zinc-400">{profileUrlDisplay(account.handle)}</p>
               <div className="mt-5 grid gap-5 sm:grid-cols-2">
                 <div>
                   <h3 className="text-sm font-bold text-white">It can</h3>

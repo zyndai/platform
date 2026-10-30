@@ -1,6 +1,5 @@
 """Weekly receipt HTML: inline styling and presentation tables for mail clients."""
 import html
-from urllib.parse import quote
 
 import config
 
@@ -15,7 +14,7 @@ def visitor_profile_url(visitor: dict) -> str | None:
     handle = visitor.get("handle")
     if not isinstance(handle, str) or not handle.strip():
         return None
-    return "https://cards.zynd.ai/p/" + quote(handle.strip(), safe="")
+    return config.profile_url(handle.strip())
 
 
 def esc(value) -> str:
@@ -100,7 +99,7 @@ def render_weekly_html(data: dict, insights: dict, agent_fallback: list[str], vi
                        unsubscribe_url: str | None, preview_label: str, network_html: str) -> str:
     base = config.SITE_BASE_URL.rstrip("/")
     home = DASHBOARD_URL
-    profile = base + "/p/" + quote(data["handle"], safe="")
+    profile = config.profile_url(data["handle"])
     inbox = profile + "/edit#inbox"
     name = data.get("name") or data["handle"]
     metrics = data["activity"]

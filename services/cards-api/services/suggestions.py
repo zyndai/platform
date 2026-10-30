@@ -326,7 +326,7 @@ def _stored(row: dict) -> list[dict] | None:
         people.append({
             "handle": c["handle"], "card_id": c["id"], "name": card.identity.name, "headline": card.identity.headline,
             "location": card.identity.location, "avatar_url": card.identity.avatar_url or "",
-            "company": current_company(card), "url": f"{config.SITE_BASE_URL.rstrip('/')}/p/{c['handle']}",
+            "company": current_company(card), "url": config.profile_url(c["handle"]),
             "score": float(s.get("score") or 0.0), "two_way": bool(s.get("two_way")), "two_way_kinds": [],
             "target": s.get("target") or "", "why": list(s.get("why") or []), "relaxed": [],
         })

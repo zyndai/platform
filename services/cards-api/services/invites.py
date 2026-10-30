@@ -69,7 +69,7 @@ def _find_by_linkedin(url: str) -> dict | None:
 
 
 def _card_url(handle: str) -> str:
-    return f"{config.SITE_BASE_URL.rstrip('/')}/p/{handle}"
+    return config.profile_url(handle)
 
 
 def _invites():

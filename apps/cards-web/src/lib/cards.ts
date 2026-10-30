@@ -362,9 +362,17 @@ export function cardsSiteOrigin(): string {
   return (process.env.NEXT_PUBLIC_SITE_URL || "https://cards.zynd.ai").replace(/\/$/, "");
 }
 
+export function profileUrl(handle: string): string {
+  return `${cardsSiteOrigin()}/p/${encodeURIComponent(handle)}`;
+}
+
+/** The same URL without the scheme, for showing in copy ("cards.zynd.ai/p/ada"). */
+export function profileUrlDisplay(handle: string): string {
+  return profileUrl(handle).replace(/^https?:\/\//, "");
+}
+
 export function cardCanonicalUrl(card: AgentProfileCard): string {
-  const base = cardsSiteOrigin();
-  return card.handle ? `${base}/p/${card.handle}` : `${base}/profile/${card.id}`;
+  return card.handle ? profileUrl(card.handle) : `${cardsSiteOrigin()}/profile/${card.id}`;
 }
 
 export async function searchAgents(

@@ -108,8 +108,7 @@ def shape_fact(fact: dict) -> CardFact:
 
 
 def cite_as(handle: str) -> str:
-    base = (config.SITE_BASE_URL or "https://zynd.ai").rstrip("/")
-    return f"{base}/p/{handle}" if handle else base
+    return config.profile_url(handle) if handle else config.SITE_BASE_URL.rstrip("/")
 
 
 def build_card_view(card: AgentProfileCard, *, claimed: bool) -> CardView:

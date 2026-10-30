@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 
@@ -153,7 +154,8 @@ CLOUDFLARE_AI_KEY: str = os.getenv("CLOUDFLARE_AI_KEY", "")
 CLOUDFLARE_AI_MODEL: str = "@cf/meta/llama-3.1-8b-instruct-fast"
 
 # ── Site / indexing ──
-SITE_BASE_URL: str = os.getenv("SITE_BASE_URL", "https://zynd.ai")
+# The Cards web origin: profile pages, owner home and email links all live here.
+SITE_BASE_URL: str = os.getenv("SITE_BASE_URL") or "https://cards.zynd.ai"
 API_BASE_URL: str = os.getenv("API_BASE_URL", "https://api.zynd.ai")
 FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
 INDEXNOW_KEY: str = os.getenv("INDEXNOW_KEY", "")
@@ -238,3 +240,10 @@ def get_openai_client():
 
         _openai_client = OpenAI(api_key=OPENAI_API_KEY)
     return _openai_client
+
+
+def profile_url(handle: str) -> str:
+    """The one public profile URL, ``<SITE_BASE_URL>/p/<handle>``. Reads SITE_BASE_URL per call
+    so tests and per-environment settings apply; quoting keeps a hostile handle inside its path
+    segment when the URL lands in email HTML or a tweet."""
+    return f"{SITE_BASE_URL.rstrip('/')}/p/{quote(handle, safe='')}"

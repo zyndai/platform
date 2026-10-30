@@ -12,6 +12,7 @@ import {
   type AgentProfileCard,
   updateCard,
   githubLoginFromUrl,
+  profileUrlDisplay,
   refreshCardGithub,
   refreshCardLinkedIn,
 } from "@/lib/cards";
@@ -241,7 +242,7 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
               <div style={{ minWidth: 0 }}>
                 <h1 className="pe-h1">Edit your card</h1>
                 <div className="pe-head-meta">
-                  <span className="pe-url">cards.zynd.ai/p/{handle}</span>
+                  <span className="pe-url">{profileUrlDisplay(handle)}</span>
                   {ownerHomeEnabled && (
                     <span className="pe-save">
                       <span role="status" aria-live="polite" className={`pe-save-state is-${saveState}`}>

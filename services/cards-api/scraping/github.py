@@ -12,6 +12,34 @@ GITHUB_GRAPHQL = "https://api.github.com/graphql"
 _MAX_EVENTS = 30
 _MAX_COMMIT_MSG_CHARS = 120
 
+
+async def fetch_period_contributions(handle: str, start: datetime, end: datetime) -> int | None:
+    """Exact contribution total for [start, end), or unknown. Never infer counts from heatmap levels."""
+    if not config.GITHUB_TOKEN or not handle or end <= start:
+        return None
+    query = """query($login: String!, $from: DateTime!, $to: DateTime!) {
+      user(login: $login) {
+        contributionsCollection(from: $from, to: $to) {
+          contributionCalendar { totalContributions }
+        }
+      }
+    }"""
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(GITHUB_GRAPHQL,
+                headers={"Authorization": f"Bearer {config.GITHUB_TOKEN}", "Accept": "application/vnd.github+json"},
+                json={"query": query, "variables": {"login": handle,
+                    "from": start.astimezone(timezone.utc).isoformat(),
+                    "to": (end - timedelta(seconds=1)).astimezone(timezone.utc).isoformat()}})
+        response.raise_for_status()
+        body = response.json()
+        if body.get("errors"):
+            return None
+        count = body["data"]["user"]["contributionsCollection"]["contributionCalendar"]["totalContributions"]
+        return count if type(count) is int and count >= 0 else None
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return None
+
 _CONTRIB_QUERY = """
 query($login: String!) {
   user(login: $login) {

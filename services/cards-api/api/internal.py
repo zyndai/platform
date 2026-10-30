@@ -168,6 +168,16 @@ def _require_cron(authorization: str | None) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+@router.post("/recaps/generate")
+async def generate_recaps(authorization: str | None = Header(default=None), dry_run: bool = Query(default=False)):
+    _require_cron(authorization)
+    from services.recaps import run_scheduled
+    result = await run_scheduled(dry_run=dry_run)
+    if result["failed"]:
+        raise HTTPException(503, detail=result)
+    return result
+
+
 @router.post("/morning-digest")
 def morning_digest(
     authorization: str | None = Header(default=None),

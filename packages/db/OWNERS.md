@@ -27,6 +27,7 @@ every service listed as a reader.
 | `identity.*` (empty today; Zynd Account tables in Stage 2) | shared | persona, cards |
 | `persona_intro_requests`, `persona_intro_rules`, `persona_intro_audit` | persona | cards-api via Persona HTTP; persona-web (requests only, participant RLS) |
 | `cards.intro_requests` | cards | cards-api; minimal Persona status projection and activity events |
+| `cards.card_milestones`, `cards.card_recaps` | cards | cards-api only; dated owner-confirmed milestones and private-until-published recap snapshots; cards-web uses Cards HTTP |
 
 ## Functions, triggers, publication
 

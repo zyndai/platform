@@ -4,6 +4,7 @@
  * pointed at this instead (NEXT_PUBLIC_API_URL=http://127.0.0.1:3030).
  */
 import http from "node:http";
+import { recapFixtureApi } from "./recaps";
 
 const PORT = 3030;
 
@@ -133,6 +134,7 @@ export function startFixtureServer(): Promise<void> {
   let reports: unknown[] = [];
   let onboardUrls: string[] = [];
   let onboardPolls = 0;
+  const handleRecaps = recapFixtureApi();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
     const path = url.pathname;
@@ -142,6 +144,7 @@ export function startFixtureServer(): Promise<void> {
     };
 
     if (req.method === "OPTIONS") return json(200, {});
+    if (handleRecaps(req, res, path)) return;
     if (path === "/__s10/warm-matches") { showWarmMatches = true; return json(200, {}); }
     // The directory list (/directory): two claimed people and one unclaimed.
     if (req.method === "GET" && path === "/cards") {

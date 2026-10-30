@@ -24,7 +24,7 @@ import { ProfileTab } from "./profile-tab";
 import { ExploringEditor, InterestsTab } from "./interests-tab";
 import { ImportedTab } from "./imported-tab";
 import { AiTab } from "./ai-tab";
-import { BeaconEditor } from "@/components/BeaconEditor";
+import { EditPageAsk } from "@/components/asks/EditPageAsk";
 
 const geist = Geist({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--pe-sans" });
 const geistMono = Geist_Mono({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--pe-mono" });
@@ -316,7 +316,14 @@ export function EditProfileClient({ initialCard, handle, token }: Props) {
           <div role="tabpanel" id="pe-panel-interests" aria-labelledby="pe-tab-interests" className="pe-panel" hidden={tab !== "interests"}>
             <InterestsTab form={form} set={set} />
             <ExploringEditor token={token} initial={initialCard.exploring ?? []} showToast={showToast} />
-            {ownerHomeEnabled && <BeaconEditor key={handle} handle={handle} token={token} initial={initialCard.beacon} />}
+            {ownerHomeEnabled && (
+              <EditPageAsk
+                key={handle}
+                token={token}
+                initial={initialCard.beacon}
+                author={{ handle, name: initialCard.identity.name, headline: initialCard.identity.headline, avatar_url: initialCard.identity.avatar_url || null, location: initialCard.identity.location }}
+              />
+            )}
           </div>
           <div role="tabpanel" id="pe-panel-imported" aria-labelledby="pe-tab-imported" className="pe-panel" hidden={tab !== "imported"}>
             <ImportedTab card={draft} links={formLinks(form)} refreshing={refreshing} disabled={saving}

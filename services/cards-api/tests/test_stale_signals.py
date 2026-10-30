@@ -26,7 +26,7 @@ def card(**kwargs):
 # ── freshness rules ──
 
 def test_legacy_card_without_a_stamp_is_never_stale():
-    # #given a card from before migration 0033: Working on set, no stamp
+    # #given a card from before migration 0035: Working on set, no stamp
     legacy = card()
     # #then unknown reads as fresh, however old the card is
     assert stale_signals.working_on_is_stale(legacy, NOW) is False
@@ -95,7 +95,7 @@ def _public_reads(client: TestClient) -> dict[str, dict]:
 
 
 def test_unknown_stamp_public_reads_carry_no_key(monkeypatch):
-    # #given a card from before migration 0033 (or with it not applied): no stamp, no memory facts
+    # #given a card from before migration 0035 (or with it not applied): no stamp, no memory facts
     stored = card()
     # #when it is read through every public route
     for path, body in _public_reads(_public_routes(monkeypatch, stored)).items():
@@ -113,7 +113,7 @@ def test_unknown_stamp_card_view_and_derived_card_have_no_key():
 
 
 def test_derived_stamp_leaves_the_stored_card_alone():
-    # The mirror in the stored card belongs to the 0033 trigger; deriving never rewrites it.
+    # The mirror in the stored card belongs to the 0035 trigger; deriving never rewrites it.
     stored = card(working_on_updated_at=NOW - timedelta(days=200),
                   zynd_memory=[{"predicate": "is_working_on", "object": "X", "approved_at": NOW.isoformat()}])
     assert derive_public_signals(stored, NOW).working_on_updated_at == NOW
@@ -152,7 +152,7 @@ def test_full_card_writes_never_send_the_column(monkeypatch):
     # #when the publish upsert and the editor's full-card PATCH write it
     cards.insert_card(stale_copy, None, None, owner_email="alice@example.com")
     cards.update_card("alice", stale_copy, "alice@example.com")
-    # #then only the card JSON carries it (the 0033 trigger rewrites that mirror from the column);
+    # #then only the card JSON carries it (the 0035 trigger rewrites that mirror from the column);
     # the column itself is never in a payload, so these writes cannot move the stamp
     payloads = [c.args[0] for c in q.upsert.call_args_list + q.update.call_args_list]
     assert len(payloads) == 2

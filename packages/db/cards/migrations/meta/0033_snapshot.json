@@ -1,5 +1,5 @@
 {
-  "id": "9d0b2ea3-289b-47ca-8b83-3a39b7a17c4c",
+  "id": "6fa28a10-f769-4484-9070-0ae1708fe34f",
   "prevId": "bca665a3-f6c6-4ab6-b23f-782fdb7cfce1",
   "version": "7",
   "dialect": "postgresql",
@@ -205,12 +205,6 @@
         "timezone": {
           "name": "timezone",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "working_on_updated_at": {
-          "name": "working_on_updated_at",
-          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         }
@@ -4800,6 +4794,419 @@
         "companion_devices_label_check": {
           "name": "companion_devices_label_check",
           "value": "char_length(label) <= 80"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "cards.ask_offers": {
+      "name": "ask_offers",
+      "schema": "cards",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "ask_id": {
+          "name": "ask_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "helper_user_id": {
+          "name": "helper_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "helper_card_id": {
+          "name": "helper_card_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "channel": {
+          "name": "channel",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "credited_at": {
+          "name": "credited_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "credit_hidden_at": {
+          "name": "credit_hidden_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "credit_notified_at": {
+          "name": "credit_notified_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "ask_offers_ask_helper_key": {
+          "name": "ask_offers_ask_helper_key",
+          "columns": [
+            {
+              "expression": "ask_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "helper_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ask_offers_credited_idx": {
+          "name": "ask_offers_credited_idx",
+          "columns": [
+            {
+              "expression": "helper_card_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "credited_at IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ask_offers_ask_id_fkey": {
+          "name": "ask_offers_ask_id_fkey",
+          "tableFrom": "ask_offers",
+          "tableTo": "asks",
+          "schemaTo": "cards",
+          "columnsFrom": [
+            "ask_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ask_offers_helper_card_id_fkey": {
+          "name": "ask_offers_helper_card_id_fkey",
+          "tableFrom": "ask_offers",
+          "tableTo": "agent_profile_cards",
+          "schemaTo": "cards",
+          "columnsFrom": [
+            "helper_card_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "service role full access on ask_offers": {
+          "name": "service role full access on ask_offers",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "service_role"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "ask_offers_channel_check": {
+          "name": "ask_offers_channel_check",
+          "value": "channel IN ('dm', 'request')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "cards.ask_routes": {
+      "name": "ask_routes",
+      "schema": "cards",
+      "columns": {
+        "ask_id": {
+          "name": "ask_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "helper_card_id": {
+          "name": "helper_card_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "score": {
+          "name": "score",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "digest_sent_at": {
+          "name": "digest_sent_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "ask_routes_helper_idx": {
+          "name": "ask_routes_helper_idx",
+          "columns": [
+            {
+              "expression": "helper_card_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "digest_sent_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ask_routes_ask_id_fkey": {
+          "name": "ask_routes_ask_id_fkey",
+          "tableFrom": "ask_routes",
+          "tableTo": "asks",
+          "schemaTo": "cards",
+          "columnsFrom": [
+            "ask_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ask_routes_helper_card_id_fkey": {
+          "name": "ask_routes_helper_card_id_fkey",
+          "tableFrom": "ask_routes",
+          "tableTo": "agent_profile_cards",
+          "schemaTo": "cards",
+          "columnsFrom": [
+            "helper_card_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "ask_routes_pkey": {
+          "name": "ask_routes_pkey",
+          "columns": [
+            "ask_id",
+            "helper_card_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "service role full access on ask_routes": {
+          "name": "service role full access on ask_routes",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "service_role"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "cards.asks": {
+      "name": "asks",
+      "schema": "cards",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "card_id": {
+          "name": "card_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "owner_user_id": {
+          "name": "owner_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "text": {
+          "name": "text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ended_at": {
+          "name": "ended_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "end_reason": {
+          "name": "end_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "outcome_at": {
+          "name": "outcome_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "outcome_prompted_at": {
+          "name": "outcome_prompted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "asks_card_created_idx": {
+          "name": "asks_card_created_idx",
+          "columns": [
+            {
+              "expression": "card_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "asks_card_id_fkey": {
+          "name": "asks_card_id_fkey",
+          "tableFrom": "asks",
+          "tableTo": "agent_profile_cards",
+          "schemaTo": "cards",
+          "columnsFrom": [
+            "card_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "service role full access on asks": {
+          "name": "service role full access on asks",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "service_role"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {
+        "asks_text_check": {
+          "name": "asks_text_check",
+          "value": "char_length(text) BETWEEN 1 AND 280"
+        },
+        "asks_end_reason_check": {
+          "name": "asks_end_reason_check",
+          "value": "end_reason IS NULL OR end_reason IN ('dismissed', 'replaced', 'solved')"
+        },
+        "asks_outcome_check": {
+          "name": "asks_outcome_check",
+          "value": "outcome IS NULL OR outcome IN ('helped', 'solved_elsewhere', 'still_looking')"
         }
       },
       "isRLSEnabled": false

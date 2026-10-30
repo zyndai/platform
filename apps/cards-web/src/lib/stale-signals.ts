@@ -1,6 +1,6 @@
 /** Stale "Working on" (cards-api services/stale_signals.py). The API sends
  *  `working_on_updated_at`: when the list last changed or the owner confirmed it,
- *  stamped by the database (cards migration 0033). Missing = unknown = not stale:
+ *  stamped by the database (cards migration 0035). Missing = unknown = not stale:
  *  cards from before the stamp existed must never be dimmed for lack of data. */
 
 /** Keep in step with STALE_DAYS in cards-api services/stale_signals.py. */

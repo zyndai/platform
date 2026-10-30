@@ -22,6 +22,43 @@ test.describe("S10 owner home", () => {
     await signIn(context);
   });
 
+  test("filters agent traffic and exports the visible real counts", async ({ page }) => {
+    await page.goto("/home");
+    const panel = page.getByRole("region", { name: "Which agents visited" });
+    await expect(panel.locator(".oh-agent-row")).toHaveCount(4);
+    for (const provider of ["claude", "openai"]) {
+      const logo = panel.locator(`img[src="/assets/agents/${provider}.svg"]`);
+      await expect(logo).toBeVisible();
+      await expect.poll(() => logo.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+    }
+    await panel.getByRole("button", { name: /^MCP/ }).click();
+    await expect(panel.locator(".oh-agent-row")).toHaveCount(1);
+    await expect(panel.getByText("Zynd-MCP", { exact: true })).toBeVisible();
+    await expect(panel.getByText("42.9% of requests", { exact: true })).toBeVisible();
+    await panel.getByRole("textbox", { name: "Search agent traffic" }).fill("Claude");
+    await expect(panel.getByText("No clients match your filters.")).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Export CSV" })).toBeDisabled();
+    await panel.getByRole("button", { name: "Clear filters" }).click();
+    await panel.getByRole("textbox", { name: "Search agent traffic" }).fill("OpenAI");
+    await expect(panel.locator(".oh-agent-row")).toHaveCount(1);
+    const downloading = page.waitForEvent("download");
+    await panel.getByRole("button", { name: "Export CSV" }).click();
+    const download = await downloading;
+    const { readFile } = await import("node:fs/promises");
+    const csv = await readFile((await download.path())!, "utf8");
+    expect(csv).toContain('"ChatGPT / OpenAI","GPTBot","Crawlers","1"');
+    expect(csv).not.toContain("Zynd-MCP");
+    await panel.getByRole("button", { name: "Clear agent search" }).click();
+    await panel.getByRole("button", { name: /^Crawlers/ }).click();
+    await expect(panel.getByText("GPTBot", { exact: true })).toBeVisible();
+    await expect(panel.locator(".oh-agent-row")).toHaveCount(1);
+    await panel.getByRole("button", { name: /^All clients/ }).click();
+    await panel.screenshot({ path: "/tmp/zynd-agent-traffic-desktop.png" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await panel.screenshot({ path: "/tmp/zynd-agent-traffic-mobile.png" });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+
   test("shows real activity, review count and editable preferences", async ({
     page,
   }) => {
@@ -38,7 +75,7 @@ test.describe("S10 owner home", () => {
         .evaluate((el) => getComputedStyle(el).webkitTextFillColor),
     ).toBe("rgb(23, 32, 51)");
     await expect(page.getByText("12", { exact: true })).toBeVisible();
-    await expect(page.getByText("4", { exact: true })).toBeVisible();
+    await expect(page.locator(".oh-discovery-agent strong").filter({ hasText: /^7$/ })).toBeVisible();
     const agentBreakdown = page.getByRole("region", { name: "Which agents visited" });
     await expect(agentBreakdown.getByText("Claude-User", { exact: true })).toBeVisible();
     await expect(agentBreakdown.getByText("GPTBot", { exact: true })).toBeVisible();

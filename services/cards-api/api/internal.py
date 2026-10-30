@@ -113,6 +113,52 @@ async def test_owner_notification(
     return await send_all_test_notifications(kind=kind)
 
 
+@router.post("/weekly-agent-digest")
+async def weekly_agent_digest(
+    authorization: str | None = Header(default=None),
+    dry_run: bool = Query(default=False),
+    email: str | None = Query(default=None),
+):
+    """Weekly receipts only; shares preference checks and the existing weekly delivery key."""
+    _require_cron(authorization)
+    from services.owner_notifications import run_notifications
+    return await run_notifications(dry_run=dry_run, weekly_only=True, email=email)
+
+
+@router.post("/weekly-agent-digest/test")
+async def test_weekly_agent_digest(
+    email: str = Query(...), authorization: str | None = Header(default=None),
+):
+    """Explicit single-recipient resend; does not claim a weekly delivery."""
+    _require_cron(authorization)
+    from services.owner_notifications import send_test_notification
+    return await send_test_notification(email=email, kind="weekly")
+
+
+@router.post("/profile-feedback/test")
+async def test_profile_feedback(
+    email: str | None = Query(default=None), authorization: str | None = Header(default=None),
+):
+    """Repeatable resend to one owner or all owners; never claims the one-time invitation."""
+    _require_cron(authorization)
+    from services.owner_notifications import send_test_notification, send_all_test_notifications
+    if email is not None:
+        return await send_test_notification(email=email, kind="feedback")
+    return await send_all_test_notifications(kind="feedback")
+
+
+@router.post("/profile-feedback")
+async def profile_feedback(
+    authorization: str | None = Header(default=None),
+    email: str | None = Query(default=None),
+    dry_run: bool = Query(default=False),
+):
+    """One lifetime invitation per eligible owner; email optionally narrows the recipient."""
+    _require_cron(authorization)
+    from services.profile_feedback import run_feedback
+    return await run_feedback(email=email, dry_run=dry_run)
+
+
 def _require_cron(authorization: str | None) -> None:
     secret = (config.CRON_SECRET or "").strip()
     if not secret:
@@ -120,6 +166,16 @@ def _require_cron(authorization: str | None) -> None:
     token = (authorization or "").removeprefix("Bearer ").strip()
     if not hmac.compare_digest(token, secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+@router.post("/recaps/generate")
+async def generate_recaps(authorization: str | None = Header(default=None), dry_run: bool = Query(default=False)):
+    _require_cron(authorization)
+    from services.recaps import run_scheduled
+    result = await run_scheduled(dry_run=dry_run)
+    if result["failed"]:
+        raise HTTPException(503, detail=result)
+    return result
 
 
 @router.post("/morning-digest")

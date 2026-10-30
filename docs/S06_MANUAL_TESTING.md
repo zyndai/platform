@@ -74,7 +74,7 @@ production data; a dev hostname does not provide an isolated database.
 | Cards API | `FEATURE_S06_CARDVIEW=true`, and the intended Cards database/schema. The API flag defaults to true. |
 | Cards web build | `NEXT_PUBLIC_FEATURE_S06_CARDVIEW=true`. The web env example defaults to false. |
 | Web API origin | `NEXT_PUBLIC_API_URL=https://cards.api.zynd.ai`. |
-| Public citations | API `SITE_BASE_URL=https://cards.zynd.ai` and web `NEXT_PUBLIC_SITE_URL=https://cards.zynd.ai`. The API default is still `https://zynd.ai`. |
+| Public citations | API `SITE_BASE_URL=https://cards.zynd.ai` and web `NEXT_PUBLIC_SITE_URL=https://cards.zynd.ai`. Both default to it. |
 | Public snapshot bridge | Working `MEMORY_LAYER_URL` and matching `MEMORY_SERVICE_TOKEN`; Alice's sign-in and Memory connection identify the same owner. |
 | Snapshot refresh | Existing approve/revoke flow can refresh Alice's stored `zynd_memory` snapshot. |
 | Cache invalidation | API `WEB_REVALIDATE_URL` reaches the web revalidation route; its configured `WEB_REVALIDATE_SECRET` matches the web setting. Do not copy the secret into notes. |

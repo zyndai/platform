@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useMyCard } from "@/hooks/useMyCard";
-import { updateCard, type AgentProfileCard } from "@/lib/cards";
+import { profileUrlDisplay, updateCard, type AgentProfileCard } from "@/lib/cards";
 import { createClient } from "@/lib/supabase/client";
 import { imgProxyUrl } from "@/lib/avatar";
 import { HeroCardStack } from "./hero-card-stack";
@@ -90,7 +90,7 @@ function PublishedPanel({ card, handle }: { card: AgentProfileCard; handle: stri
       )}
 
       <div className="flex items-center justify-between text-[10px] font-mono text-[#7d7d77] border-t border-white/[0.08] pt-4">
-        <span className="truncate">cards.zynd.ai/p/{handle}</span>
+        <span className="truncate">{profileUrlDisplay(handle)}</span>
         <span className="text-emerald-400 flex items-center gap-1.5 shrink-0">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> discoverable
         </span>
@@ -154,7 +154,7 @@ function PendingPanel({ card, handle }: { card: AgentProfileCard; handle: string
       </p>
 
       <div className="flex items-center justify-between text-[10px] font-mono text-[#7d7d77] border-t border-white/[0.08] pt-4">
-        <span className="truncate">cards.zynd.ai/p/{handle}</span>
+        <span className="truncate">{profileUrlDisplay(handle)}</span>
         <span className="text-amber-400 flex items-center gap-1.5 shrink-0">
           <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> not public yet
         </span>

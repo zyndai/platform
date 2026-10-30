@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { cardsSiteOrigin, fetchCardByHandle } from "@/lib/cards";
+import { fetchCardByHandle, profileUrl } from "@/lib/cards";
 import { ownerHomeEnabled } from "@/lib/owner-home";
 
 export const revalidate = 3600;
@@ -33,7 +33,7 @@ export async function GET(_req: Request, { params }: RouteProps) {
   const name = (card.identity?.name || handle).trim();
   const { family, given } = splitName(name);
   const headline = (card.identity?.headline || "").trim();
-  const profileUrl = `${cardsSiteOrigin()}/p/${encodeURIComponent(card.handle || handle)}`;
+  const url = profileUrl(card.handle || handle);
   const email = (card.identity?.links?.email || "").trim();
   const photo = (card.identity?.avatar_url || "").trim();
 
@@ -44,7 +44,7 @@ export async function GET(_req: Request, { params }: RouteProps) {
     `N:${vcardEscape(family)};${vcardEscape(given)};;;`,
   ];
   if (headline) lines.push(`TITLE:${vcardEscape(headline)}`);
-  lines.push(`URL:${vcardEscape(profileUrl)}`);
+  lines.push(`URL:${vcardEscape(url)}`);
   if (email && email.includes("@")) lines.push(`EMAIL;TYPE=INTERNET:${vcardEscape(email)}`);
   if (/^https?:\/\//i.test(photo)) lines.push(`PHOTO;VALUE=URI:${vcardEscape(photo)}`);
   lines.push("END:VCARD", "");

@@ -305,7 +305,7 @@ def main():
             print(f"  skip {row['handle']} (already exists)")
             continue
         sb.table("agent_profile_cards").insert(row).execute()
-        print(f"  created zynd.ai/p/{row['handle']}  ({p['name']})")
+        print(f"  created {config.profile_url(row['handle'])}  ({p['name']})")
         inserted += 1
     print(f"\nDone. {inserted} profiles created.")
 

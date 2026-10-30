@@ -22,7 +22,7 @@ def reply_help(username: str, tweet_id: str) -> str | None:
     text = (
         f"@{username} Hey! 👋 I'm Zynd — I turn your public profiles into a discoverable card.\n\n"
         f"Try: @ZyndAI create my profile\n\n"
-        f"I'll pull your GitHub, bio, posts, and build your card at {_SITE}/p/you"
+        f"I'll pull your GitHub, bio, posts, and build your card at {config.profile_url('you')}"
     )
     return _post(text, tweet_id)
 
@@ -44,7 +44,7 @@ def reply_creating(username: str, tweet_id: str) -> str | None:
 
 
 def reply_profile_ready(username: str, tweet_id: str, handle: str, first_question: str | None) -> str | None:
-    url = f"{_SITE}/p/{handle}"
+    url = config.profile_url(handle)
     if first_question:
         text = (
             f"@{username} Your Zynd profile is live 🎉\n{url}\n\n"
@@ -56,7 +56,7 @@ def reply_profile_ready(username: str, tweet_id: str, handle: str, first_questio
 
 
 def reply_already_exists(username: str, tweet_id: str, handle: str) -> str | None:
-    url = f"{_SITE}/p/{handle}"
+    url = config.profile_url(handle)
     text = (
         f"@{username} You already have a Zynd profile 👀\n{url}\n\n"
         f"Reply \"update my profile\" and I'll refresh it."
@@ -77,7 +77,7 @@ def reply_error(username: str, tweet_id: str) -> str | None:
 
 
 def reply_profile_updated(username: str, tweet_id: str, handle: str, next_question: str | None) -> str | None:
-    url = f"{_SITE}/p/{handle}"
+    url = config.profile_url(handle)
     if next_question:
         text = f"@{username} Got it, profile updated ✓\n\n{next_question}"
     else:

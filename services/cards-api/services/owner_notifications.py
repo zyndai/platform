@@ -6,7 +6,6 @@ import html
 import re
 import smtplib
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
 
 from postgrest.exceptions import APIError
 from fastapi import HTTPException
@@ -51,7 +50,7 @@ def week_key(now: datetime) -> str:
 
 def render_weekly(data: dict, unsubscribe_url: str | None, *, preview_label: str = "Preview only") -> tuple[str, str]:
     base = config.SITE_BASE_URL.rstrip("/")
-    inbox = base + "/p/" + quote(data["handle"], safe="") + "/edit#inbox"
+    inbox = config.profile_url(data["handle"]) + "/edit#inbox"
     metrics = data["activity"]
     from services.read_receipt_topics import question_insights
     insights = question_insights(metrics, data.get("name") or "")

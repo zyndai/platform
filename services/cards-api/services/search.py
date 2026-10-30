@@ -587,7 +587,7 @@ def _search_pass(
                 "two_way": fits,
                 "match_score": round(score, 3),
                 "match_reasons": reasons[:6],
-                "url": f"{config.SITE_BASE_URL}/p/{card.handle}" if card.handle else f"{config.SITE_BASE_URL}/profile/{card.id}",
+                "url": config.profile_url(card.handle) if card.handle else f"{config.SITE_BASE_URL}/profile/{card.id}",
             }
         )
 

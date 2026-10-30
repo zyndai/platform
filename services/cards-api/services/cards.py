@@ -1195,7 +1195,7 @@ def _notify_takedown(handle: str, requester_user_id: str | None, note: str | Non
         "text": (
             f"**Takedown request — manual review**\n"
             f"- handle: `{handle}`\n"
-            f"- url: {config.SITE_BASE_URL}/p/{handle}\n"
+            f"- url: {config.profile_url(handle)}\n"
             f"- requester_user_id: `{requester_user_id or 'anonymous'}`\n"
             f"- note: {note or ''}\n"
             f"- status: `pending` (card hidden from all surfaces, now `takedown_requested`)"

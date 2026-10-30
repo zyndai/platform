@@ -7,6 +7,7 @@ import {
   type OwnerStatus,
 } from "@/lib/owner-home";
 import { OwnerHome } from "./owner-home";
+import { AskCloseout } from "./ask-closeout";
 import { introsEnabled, type Intro } from "@/lib/intros";
 import { IntroInbox } from "@/components/intros/IntroInbox";
 import "./owner-home.css";
@@ -62,6 +63,7 @@ export default async function HomePage() {
       {/* eslint-disable-next-line @next/next/no-page-custom-font */}
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Space+Mono:wght@400;700&display=swap" />
       <OwnerHome initial={data} token={session.access_token} />
+      <AskCloseout token={session.access_token} profile={`/p/${encodeURIComponent(data.handle)}`} />
       {introsEnabled && (
         <div className="oh-intro-section">
           <IntroInbox initial={intros} token={session.access_token} />

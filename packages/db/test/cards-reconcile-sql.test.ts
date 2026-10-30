@@ -86,7 +86,7 @@ test('Cards reconciliation preserves the live view contract and every existing r
     const definition = (await client.query("select pg_get_viewdef('cards.v_funnel_daily'::regclass,true) as value")).rows[0].value;
     await apply(client);
     await apply(client);
-    // 0029 adds a nullable `timezone` and 0033 a nullable `working_on_updated_at` (no backfill);
+    // 0029 adds a nullable `timezone` and 0035 a nullable `working_on_updated_at` (no backfill);
     // every pre-existing row keeps its values, card JSON included, and gets null for both.
     assert.deepEqual((await client.query('select to_jsonb(c) as value from cards.agent_profile_cards c order by id')).rows,
       before.rows.map(row => ({ value: { ...row.value, timezone: null, working_on_updated_at: null } })));

@@ -23,9 +23,11 @@ every service listed as a reader.
 | `cards.group_memory`, `cards.group_memory_state`, `cards.group_message_memory` | cards | cards-api only; rolling group summary/facts, never raw messages |
 | `cards.group_agent_jobs`, `cards.group_agent_preferences` | cards | cards-api only; durable mention queue and per-user agent opt-out |
 | `cards.card_suggestions`, `cards.card_suggestion_impressions` | cards | cards-api only (`services/suggestions.py`); nightly people-to-meet list, and what the digest/owner home showed and the owner did |
+| `cards.asks`, `cards.ask_offers`, `cards.ask_routes` | cards | cards-api only (`services/asks.py`); a posted beacon as an ask, who it was routed to, who offered help and the asker's credit; service role only |
 | `identity.*` (empty today; Zynd Account tables in Stage 2) | shared | persona, cards |
 | `persona_intro_requests`, `persona_intro_rules`, `persona_intro_audit` | persona | cards-api via Persona HTTP; persona-web (requests only, participant RLS) |
 | `cards.intro_requests` | cards | cards-api; minimal Persona status projection and activity events |
+| `cards.card_milestones`, `cards.card_recaps` | cards | cards-api only; dated owner-confirmed milestones and private-until-published recap snapshots; cards-web uses Cards HTTP |
 
 ## Functions, triggers, publication
 
@@ -49,7 +51,7 @@ every service listed as a reader.
 | `realtime.messages` policy `cards network can receive broadcasts` | cards | cards 0023 | Supabase Realtime private `cards:*` topics; review alongside any other `realtime.messages` policy |
 | message/connection/invitation/member triggers in `cards` | cards | cards 0023 | sequence assignment, inbox summaries, read-state init, and Realtime Broadcast |
 | `cards.v_funnel_daily`, `cards.v_funnel_daily_totals`, `cards.purge_card_events` | cards | cards 0022 | Cards analytics/retention; deployed daily-view contract preserved |
-| `cards.stamp_working_on_updated_at()` + trigger `agent_profile_cards_working_on_stamp` | cards | cards 0033 | keeps `agent_profile_cards.working_on_updated_at` (and its `card->'working_on_updated_at'` mirror) current on every write that changes `card->'working_on'`; read by cards-api `services/stale_signals.py` |
+| `cards.stamp_working_on_updated_at()` + trigger `agent_profile_cards_working_on_stamp` | cards | cards 0035 | keeps `agent_profile_cards.working_on_updated_at` (and its `card->'working_on_updated_at'` mirror) current on every write that changes `card->'working_on'`; read by cards-api `services/stale_signals.py` |
 | publication `supabase_realtime` (9 persona tables) | persona | persona 0000 | persona-web realtime |
 | extension `vector` (schema `extensions`) | cards | cards 0000 | — |
 | schemas `cards`, `identity` + their grants | cards / shared | cards 0000, identity 0000 | — |

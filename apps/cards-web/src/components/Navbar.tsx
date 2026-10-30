@@ -178,6 +178,7 @@ export function Navbar(): React.ReactElement {
                         <div className="navbar-link-b">
                           <Link href="/directory" className="navbar-link w-nav-link">Directory</Link>
                           <Link href="/for-ai" className="navbar-link w-nav-link">For AI</Link>
+                          {authenticated && <Link href="/feed" className="navbar-link w-nav-link">Feed</Link>}
                           {authenticated && <Link href="/network" className="navbar-link w-nav-link">Network</Link>}
                         </div>
                         <div className="navbar-button-w">
@@ -265,6 +266,7 @@ export function Navbar(): React.ReactElement {
             </div>
             <Link href="/directory" onClick={() => setMobileOpen(false)}>Directory</Link>
             <Link href="/for-ai" onClick={() => setMobileOpen(false)}>For AI</Link>
+            {authenticated && <Link href="/feed" onClick={() => setMobileOpen(false)}>Feed</Link>}
             {authenticated && <Link href="/network" onClick={() => setMobileOpen(false)}>Network</Link>}
             {authenticated && (
               <Link href={profileHref} onClick={() => setMobileOpen(false)} style={{ color: "#6366F1" }}>

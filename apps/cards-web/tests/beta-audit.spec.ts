@@ -36,19 +36,27 @@ test("expired beacons disappear from profile and entity metadata", async ({ page
 test("owner can publish, renew and dismiss a seven-day beacon", async ({ page, context, request }) => {
   await request.get("http://127.0.0.1:3030/__s10/reset");
   await signIn(context);
+  await request.post("http://127.0.0.1:3030/__feed/reset");
   await page.goto("/p/owner/edit#beacon");
-  await page.getByLabel("Your current request").fill("Seeking a design partner for my developer tool");
-  await page.getByRole("button", { name: "Publish beacon for 7 days" }).click();
-  await expect(page.getByText("Beacon published for seven days")).toBeVisible();
+  // The edit page shows a summary and opens the same composer as the feed's Post button.
+  await page.getByRole("button", { name: "Post an ask" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("radio", { name: "Looking for early users" }).check();
+  await dialog.getByRole("textbox", { name: "Your ask" }).fill("Seeking a design partner for my developer tool");
+  await dialog.getByRole("button", { name: "Post", exact: true }).click();
+  await expect(page.getByText("Your ask is live for 7 days.")).toBeVisible();
   await page.reload();
-  await expect(page.getByLabel("Your current request")).toHaveValue("Seeking a design partner for my developer tool");
-  await page.getByRole("button", { name: "Renew beacon for 7 days" }).click();
-  await expect(page.getByText("Beacon published for seven days")).toBeVisible();
+  await expect(page.getByRole("group", { name: "Your live ask" })).toContainText("Seeking a design partner for my developer tool");
+  await expect(page.getByRole("group", { name: "Your live ask" })).toContainText("Looking for early users");
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: "/tmp/zynd-beta-editor-mobile.png", fullPage: true });
-  await page.getByRole("button", { name: "Dismiss beacon" }).click();
-  await expect(page.getByText("Beacon dismissed")).toBeVisible();
+  await page.getByRole("button", { name: "Edit your ask" }).click();
+  await expect(dialog.getByText("Posting this replaces your current ask.")).toBeVisible();
+  await dialog.getByRole("button", { name: "Take it down" }).click();
+  await dialog.getByRole("button", { name: "Yes, take it down" }).click();
+  await expect(page.getByText("Your ask is down.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Post an ask" })).toBeVisible();
 });
 
 test("expired onboarding job gives an actionable error and keeps inputs", async ({ page }) => {

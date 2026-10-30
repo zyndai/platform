@@ -61,7 +61,7 @@ export const agentProfileCards = cards.table(
     // local. Set from the owner's browser on /home; NULL falls back to cards-api's default.
     timezone: text('timezone'),
     // When card->'working_on' last changed, or the owner confirmed it is still
-    // true. Written only by the trigger in migration 0033 (and the owner's
+    // true. Written only by the trigger in migration 0035 (and the owner's
     // confirm, which sets it explicitly); NULL = unknown, never "stale".
     workingOnUpdatedAt: tstz('working_on_updated_at'),
   },

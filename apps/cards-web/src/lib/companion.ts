@@ -1,3 +1,4 @@
+import type { ExploringItem } from "@/lib/cards";
 import { ownerRequest } from "@/lib/owner-home";
 
 /**
@@ -48,6 +49,12 @@ export async function listCompanionDevices(token: string): Promise<CompanionDevi
 
 export function revokeCompanionDevice(token: string, id: string) {
   return ownerRequest<null>(`companion/devices/${encodeURIComponent(id)}`, token, "DELETE");
+}
+
+/** Take a Currently exploring clip off the card. Returns what is stored afterwards. */
+export async function removeMyExploring(token: string, url: string): Promise<ExploringItem[]> {
+  const lists = await ownerRequest<{ exploring: ExploringItem[] }>("companion/mine/exploring/remove", token, "POST", { url });
+  return lists.exploring;
 }
 
 /** "Chrome on Linux": enough for the person to recognise this browser in their device list. */

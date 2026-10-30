@@ -84,7 +84,10 @@ session ends.
   are refused in the extension and again in the API (a clipped Jira or admin
   URL must not land on a public card).
 - Tracking parameters (`utm_*`, `fbclid`, `gclid`, …) and fragments are removed
-  before sending.
+  before sending, and so are query parameters that carry a secret (`pwd`,
+  `token`, `access_token`, `sig`, `code`, `state`, `X-Amz-*`, `X-Goog-*`, …),
+  by the extension and again by the API. The popup shows the full address that
+  will be published, query included.
 - Incognito is off (Chrome's default for extensions; we do not ask for it).
 - The API never fetches a clipped URL, so there is no SSRF surface.
 - Least privilege: `activeTab`, `scripting`, `storage`, `contextMenus`,
@@ -98,11 +101,13 @@ session ends.
 | `POST /pair` | website session | Create a device, return its token once |
 | `GET /devices` | website session | List the person's devices (no tokens) |
 | `DELETE /devices/{id}` | website session | Revoke one |
+| `POST /mine/exploring/remove` | website session | Remove one exploring item (the card editor's Interests tab; section saves cannot write `exploring`) |
 | `GET /me` | device token | Header profile, current Working on, current exploring |
-| `POST /working-on` | device token | Put one line on top; capped at the public limit (4, `WORKING_ON_CAP`) |
+| `POST /working-on` | device token | Put one line on top; refused (422) once 20 are stored, never drops a line |
 | `POST /working-on/remove` | device token | Remove one line |
 | `POST /exploring` | device token | Add or bump an item; capped at 8 |
 | `POST /exploring/remove` | device token | Remove one item |
+| `POST /working-on/confirm` | device token | "Still working on this": the card page's confirm (503 before migration 0033) |
 | `POST /disconnect` | device token | Revoke this device |
 
 Writes go through a new `cards.companion_save_fields` SQL function: the same
@@ -117,7 +122,10 @@ stop showing it (it stays stored). "Currently" should not outlive the person.
 No new environment variables and no flags (AGENTS.md §9). Sizes, TTLs and caps
 are named constants in `services/companion.py` (and `EXPLORING_VISIBLE_DAYS` in
 `services/signals.py`, where public reads are derived). Remove routes are `POST`
-because some proxies drop a `DELETE` body.
+because some proxies drop a `DELETE` body. Writes are rate limited per device
+(20 a minute) and pairing per person (10 an hour), in-process like the other
+cards-api limits: every write invalidates the card cache and revalidates the
+page, and a Working on write also re-embeds the card.
 
 ## 5. Extension (`apps/zynd-companion`)
 
@@ -137,7 +145,9 @@ Extras in Phase 1 (beyond the requirement), each cheap and aimed at the
 - **Keyboard shortcut** (Alt+Shift+Z) opens the popup.
 - **Freshness nudge.** If the person has not touched their card from the
   extension for 10 days, the toolbar icon gets a dot and the popup asks "Still
-  working on this?" with Keep / Update. Local-only, no notifications.
+  working on this?" with Keep / Update. Keep also calls `POST /working-on/confirm`,
+  so the card's own freshness resets; where the server cannot record it yet,
+  only the local reminder resets. No notifications.
 - **Undo and manage.** Recent clips and Working on lines are listed with a
   remove button, so a mistaken click is a five-second fix.
 

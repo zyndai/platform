@@ -81,4 +81,6 @@ export const removeWorkingOn = (text: string) => request<Lists>("/working-on/rem
 export const addExploring = (item: { url: string; title: string; kind: Kind; note: string }) =>
   request<Lists>("/exploring", "POST", item);
 export const removeExploring = (url: string) => request<Lists>("/exploring/remove", "POST", { url });
+/** The card's own "Still working on this": resets the freshness visitors see, without changing the list. */
+export const confirmWorkingOn = () => request<{ working_on_updated_at: string }>("/working-on/confirm", "POST");
 export const disconnect = () => request<void>("/disconnect", "POST");

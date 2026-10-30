@@ -20,6 +20,18 @@ const TRACKING_PARAMS = new Set([
   "_hsenc", "_hsmi", "mkt_tok", "yclid", "twclid",
 ]);
 const NO_QUERY_HOSTS = new Set(["x.com", "twitter.com", "mobile.twitter.com"]);
+// Query parameters that carry a credential or a one-time grant (a ?pwd= share link, a token, a
+// presigned S3 / GCS link, an OAuth code and state, a session id). A card is public and read by AI
+// agents, and nobody spots these in a long address, so they are dropped. Mirrors _SECRET_PARAMS in
+// cards-api services/companion.py, which drops them again whatever the extension sends.
+const SECRET_PARAMS = new Set([
+  "pwd", "passwd", "password", "pass", "token", "access_token", "refresh_token", "id_token",
+  "auth", "authorization", "key", "apikey", "api_key", "secret", "client_secret", "sig",
+  "signature", "code", "state", "session", "sessionid", "session_id", "sid", "jwt", "otp",
+  "ticket", "nonce", "credential", "credentials",
+]);
+const SECRET_PARAM_PREFIXES = ["x-amz-", "x-goog-"];
+const SECRET_PARAM_SUFFIXES = ["token", "secret", "password", "signature"];
 const PRIVATE_SUFFIXES = [".local", ".localhost", ".internal", ".lan", ".home", ".corp", ".intranet", ".private"];
 
 export const URL_MAX = 500;
@@ -53,6 +65,16 @@ export function isPrivateHost(rawHost: string): boolean {
   return !host.includes(".") || host === "localhost" || PRIVATE_SUFFIXES.some((s) => host.endsWith(s));
 }
 
+function isPublicParam(key: string): boolean {
+  const name = key.trim().toLowerCase();
+  if (TRACKING_PARAMS.has(name) || name.startsWith("utm_")) return false;
+  return !(
+    SECRET_PARAMS.has(name) ||
+    SECRET_PARAM_PREFIXES.some((p) => name.startsWith(p)) ||
+    SECRET_PARAM_SUFFIXES.some((s) => name.endsWith(s))
+  );
+}
+
 export type Clippable = { ok: true; url: string } | { ok: false; reason: string };
 
 /** The public form of a page address, or the reason it cannot go on a public card. */
@@ -77,8 +99,8 @@ export function cleanUrl(raw: string): Clippable {
   if (NO_QUERY_HOSTS.has(host.replace(/^www\./, ""))) {
     url.search = "";
   } else {
-    for (const key of [...url.searchParams.keys()]) {
-      if (TRACKING_PARAMS.has(key.toLowerCase()) || key.toLowerCase().startsWith("utm_")) url.searchParams.delete(key);
+    for (const key of [...new Set(url.searchParams.keys())]) {
+      if (!isPublicParam(key)) url.searchParams.delete(key);
     }
   }
   const cleaned = url.toString();

@@ -17,7 +17,10 @@ import {
 type Phase = "searching" | "missing" | "ready" | "connecting" | "connected" | "error";
 
 const FIND_EXTENSION_MS = 2500;
-const CONFIRM_MS = 8000;
+// The extension checks the token with one API call (10s timeout, apps/zynd-companion/src/api.ts)
+// after its service worker wakes, which can take seconds. Taking the token back before that call
+// can finish would revoke a token the extension is about to keep.
+const CONFIRM_MS = 20_000;
 
 const PANEL = "rounded-2xl border border-white/10 bg-white/5 p-6";
 const PRIMARY = "rounded-full bg-[#5b7cfa] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#4a6af0] disabled:opacity-50";
@@ -41,6 +44,8 @@ export function ConnectClient({
   const [message, setMessage] = useState("");
   const [devices, setDevices] = useState<CompanionDevice[] | null>(null);
   const minted = useRef<string | null>(null);
+  // Set once an unconfirmed token is taken back: a "paired" arriving after that is for a dead token.
+  const gaveUp = useRef(false);
 
   const loadDevices = useCallback(async () => {
     try {
@@ -65,6 +70,7 @@ export function ConnectClient({
       if (!data || data.source !== BRIDGE_FROM_EXTENSION || data.state !== state) return;
       if (data.type === "ready") setPhase((p) => (p === "searching" || p === "missing" ? "ready" : p));
       if (data.type === "paired") {
+        if (gaveUp.current) return;
         minted.current = null;
         setPhase("connected");
         void loadDevices();
@@ -89,6 +95,7 @@ export function ConnectClient({
   async function connect() {
     setPhase("connecting");
     setMessage("");
+    gaveUp.current = false;
     try {
       const paired = await pairCompanion(token, browserLabel(navigator.userAgent));
       minted.current = paired.device.id;
@@ -100,8 +107,10 @@ export function ConnectClient({
       window.setTimeout(() => {
         if (minted.current !== paired.device.id) return;
         minted.current = null;
+        gaveUp.current = true;
         void revokeCompanionDevice(token, paired.device.id).then(loadDevices, () => undefined);
-        setMessage("The extension did not confirm. Open it and choose Connect again.");
+        // Keep the extension's own reason when it already said no.
+        setMessage((shown) => shown || "The extension did not confirm. Open it and choose Connect again.");
         setPhase("error");
       }, CONFIRM_MS);
     } catch (error) {

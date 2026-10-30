@@ -121,7 +121,7 @@ test("Currently exploring: the page is read, shown, and only sent when added", a
   await expect(popup.getByLabel("Title")).toHaveValue("How chips got hot");
   await expect(popup.getByRole("button", { name: "News", pressed: true })).toBeVisible();
   await expect(popup.getByLabel("Note")).toHaveValue("Some paragraph the reader selected.");
-  await expect(popup.getByText("Public link: theverge.com/2026/10/1/chips")).toBeVisible();
+  await expect(popup.getByText("Public link: https://www.theverge.com/2026/10/1/chips", { exact: true })).toBeVisible();
   expect(mock.db.exploring).toEqual([]); // looking is not sending
 
   await popup.getByRole("button", { name: "Blog" }).click();
@@ -178,9 +178,21 @@ test("a card left alone for too long gets a nudge, and one click settles it", as
   await expect(again.getByText("Still working on this?")).toBeVisible();
   await again.getByRole("button", { name: "Yes, keep it" }).click();
   await expect(again.getByText("Still working on this?")).toHaveCount(0);
+  await expect(again.getByText("Your card shows Working on as current.")).toBeVisible();
+  expect(mock.db.requests).toContain("POST /working-on/confirm");
   const { touchedAt } = (await worker.evaluate(() => chrome.storage.local.get("touchedAt"))) as { touchedAt: number };
   expect(Date.now() - touchedAt).toBeLessThan(60_000);
   await again.close();
+
+  // Before the server can record it, the reminder still resets here and nothing reads as an error.
+  mock.db.confirmStatus = 503;
+  await worker.evaluate(() => chrome.storage.local.set({ touchedAt: Date.now() - 11 * 86_400_000 }));
+  const offline = await openPopup(page);
+  await offline.getByRole("button", { name: "Yes, keep it" }).click();
+  await expect(offline.getByText("Still working on this?")).toHaveCount(0);
+  await expect(offline.locator(".status.error")).toHaveCount(0);
+  mock.db.confirmStatus = 200;
+  await offline.close();
   await page.close();
 });
 
@@ -194,7 +206,7 @@ test("a clip started from the right-click menu opens prefilled for checking, and
   })));
   await expect(popup.getByRole("button", { name: "Repo", pressed: true })).toBeVisible();
   await expect(popup.getByLabel("Note")).toHaveValue("worth a read");
-  await expect(popup.getByText("Public link: github.com/zyndai/platform")).toBeVisible();
+  await expect(popup.getByText("Public link: https://github.com/zyndai/platform", { exact: true })).toBeVisible();
   expect(mock.db.exploring.length).toBe(sent);
   const left = await worker.evaluate(() => chrome.storage.session.get("draft"));
   expect(left.draft).toBeUndefined(); // used once

@@ -17,7 +17,7 @@ import time
 from uuid import UUID
 
 import jwt
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 import config
@@ -100,6 +100,15 @@ class ConnectionCreate(BaseModel):
 class ConnectionDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: str = Field(pattern="^(accept|decline|block|revoke)$")
+
+
+class WarmIntroTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    target_handle: str = Field(min_length=1, max_length=128)
+
+
+class WarmIntroSend(WarmIntroTarget):
+    message: str = Field(min_length=1, max_length=2000, pattern=r"\S")
 
 
 class MessageCreate(BaseModel):
@@ -284,6 +293,19 @@ def request_connection(body: ConnectionCreate, authorization: str | None = Heade
             search_id=str(found.search_id), rank=found.rank, source=found.source, action="connect",
             handle=body.target_handle.strip().lstrip("@"), connection_id=result["connection"]["id"])
     return result
+
+
+@router.post("/network/warm-intros/draft")
+def draft_warm_intro(body: WarmIntroTarget, response: Response, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    from services import warm_intros
+    response.headers["Cache-Control"] = "no-store"
+    return warm_intros.draft(_uid(authorization, x_zynd_user), body.target_handle)
+
+
+@router.post("/network/warm-intros")
+def send_warm_intro(body: WarmIntroSend, authorization: str | None = Header(default=None), x_zynd_user: str | None = Header(default=None)):
+    from services import warm_intros
+    return warm_intros.send(_uid(authorization, x_zynd_user), body.target_handle, body.message.strip())
 
 
 @router.post("/network/connections/{connection_id}/respond")

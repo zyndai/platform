@@ -52,6 +52,11 @@ ALLOWED_EVENTS = frozenset({
 AI_READ_ALERT_EVENT = "ai_read_alert_sent"
 
 SERVER_EVENTS = frozenset({
+    "feed_view",
+    "feed_reply",
+    "ask_published",
+    "ask_offer",
+    "ask_outcome",
     "search",
     "search_result_action",
     # The AI-read email throttle (services/ai_read_alerts.py): a forged row would silence an

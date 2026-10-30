@@ -154,6 +154,7 @@ export async function GET(req: Request, { params }: Params) {
     "zynd:card_id": card.id,
     ...(activeBeacon ? { "zynd:beacon": activeBeacon } : {}),
     ...(workingOnUpdatedAt ? { "zynd:working_on_updated_at": workingOnUpdatedAt } : {}),
+    ...(card.helped?.count ? { "zynd:helped": card.helped } : {}),
     ...(card.citation_snippet ? { "zynd:citation": card.citation_snippet } : {}),
     ...(facts.length
       ? {

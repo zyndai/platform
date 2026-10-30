@@ -29,8 +29,10 @@ def test_attribution_on_both_event_paths(monkeypatch, header, name):
     insert = MagicMock()
     monkeypatch.setattr(events, "_insert_rows", insert)
     meta = {"endpoint": "data.json", "agent_name": "forged"}
-    events.insert_batch([{"event": "agent_fetch", "handle": "alice", "meta": meta}], user_agent=header, ip=None)
+    events.insert_batch([{"event": "agent_fetch", "handle": "alice", "meta": meta}], user_agent=header, ip=None,
+                        server_observed=True)
     events.emit("view", handle="alice", meta=meta, user_agent=header)
+    assert insert.call_count == 2
     for call in insert.call_args_list:
         row = call.args[0][0]
         assert row["meta"].get("agent_name") == name
@@ -93,18 +95,49 @@ def test_agent_breakdown_groups_known_clients_and_preserves_legacy_unknown():
     assert owner_home.agent_clients(sb, "alice", "2026-10-20") is None
 
 
+def _request(headers: dict):
+    from starlette.datastructures import Headers
+
+    return SimpleNamespace(headers=Headers(headers), client=None)
+
+
 def test_node_stays_unknown_and_internal_website_reads_are_not_events(monkeypatch):
     monkeypatch.setattr(config, "FEATURE_S04_EVENTS", True)
     monkeypatch.setattr(config, "SUPABASE_DB_SCHEMA", "cards")
+    monkeypatch.setattr(config, "EVENTS_SERVER_TOKEN", "server-token")
     insert = MagicMock()
     monkeypatch.setattr(events, "_insert_rows", insert)
-    events.emit("view", handle="alice", user_agent=ua_class.INTERNAL_CARDS_CLIENT)
+    # #given our own server reading a card to render it, with the token
+    for ua in (ua_class.INTERNAL_CARDS_CLIENT, ua_class.INTERNAL_MEMORY_CLIENT):
+        events.emit("view", handle="alice", request=_request({"User-Agent": ua, "X-Zynd-Server-Event": "server-token"}))
+    # #then it is not a reader
     insert.assert_not_called()
     events.emit("view", handle="alice", user_agent="node")
     row = insert.call_args.args[0][0]
     assert row["actor_class"] == "unknown"
     assert row["meta"] == {"client_name": "Node.js"}
     assert events.attributed_meta({"client_name": "ChatGPT"}, "curl/8") == {"client_name": "curl"}
+
+
+@pytest.mark.parametrize("token_header", [None, "wrong"])
+def test_internal_user_agent_alone_does_not_hide_a_read(monkeypatch, token_header):
+    monkeypatch.setattr(config, "FEATURE_S04_EVENTS", True)
+    monkeypatch.setattr(config, "SUPABASE_DB_SCHEMA", "cards")
+    monkeypatch.setattr(config, "EVENTS_SERVER_TOKEN", "server-token")
+    insert = MagicMock()
+    monkeypatch.setattr(events, "_insert_rows", insert)
+    headers = {"User-Agent": ua_class.INTERNAL_CARDS_CLIENT}
+    if token_header:
+        headers["X-Zynd-Server-Event"] = token_header
+    events.emit("view", handle="alice", request=_request(headers))
+    row = insert.call_args.args[0][0]
+    assert row["actor_class"] == "unknown" and row["meta"] == {"client_name": "Unidentified"}
+
+
+def test_cards_web_sentinel_for_a_missing_user_agent_is_unidentified():
+    # lib/track.ts sends this when the visitor sent no User-Agent, instead of Node's own "node".
+    assert ua_class.classify("Zynd-Unidentified-Visitor") == "unknown"
+    assert ua_class.unidentified_client("Zynd-Unidentified-Visitor") == "Unidentified"
 
 
 def test_unidentified_breakdown_is_separate_and_excludes_legacy_internal_reads():
@@ -135,7 +168,7 @@ def test_event_write_failure_is_not_acknowledged_as_success(monkeypatch):
     app = FastAPI()
     app.include_router(router)
     events._hits.clear()
-    assert TestClient(app).post("/events", json={"events": [{"event": "agent_fetch", "handle": "alice"}]}).status_code == 503
+    assert TestClient(app).post("/events", json={"events": [{"event": "view", "handle": "alice"}]}).status_code == 503
 
 
 def test_event_connection_uses_http1_and_preserves_schema(monkeypatch):
@@ -166,3 +199,58 @@ def test_event_connection_uses_http1_and_preserves_schema(monkeypatch):
         events._event_store.cache_clear()
         for transport in clients:
             transport.close()
+
+
+def _stored_batch(monkeypatch, batch, *, server_observed):
+    monkeypatch.setattr(config, "FEATURE_S04_EVENTS", True)
+    monkeypatch.setattr(config, "SUPABASE_DB_SCHEMA", "cards")
+    insert = MagicMock(return_value=True)
+    monkeypatch.setattr(events, "_insert_rows", insert)
+    assert events.insert_batch(batch, user_agent="ChatGPT-User/1.0", ip=None, server_observed=server_observed) is True
+    return insert.call_args.args[0] if insert.called else []
+
+
+def test_client_sent_agent_fetch_is_dropped_but_other_events_are_kept(monkeypatch):
+    # #given a public POST mixing a forged AI read with a real browser event
+    rows = _stored_batch(monkeypatch, [{"event": "agent_fetch", "handle": "alice"},
+                                       {"event": "share_click", "handle": "alice"}], server_observed=False)
+    # #then only the browser event is stored
+    assert [r["event"] for r in rows] == ["share_click"]
+    assert _stored_batch(monkeypatch, [{"event": "agent_fetch", "handle": "alice"}], server_observed=False) == []
+
+
+def test_attested_agent_fetch_is_stored(monkeypatch):
+    rows = _stored_batch(monkeypatch, [{"event": "agent_fetch", "handle": "alice"}], server_observed=True)
+    assert [(r["event"], r["actor_class"]) for r in rows] == [("agent_fetch", "ai_agent")]
+
+
+@pytest.mark.parametrize("server_observed, keeps_query", [(False, False), (True, True)])
+def test_query_meta_needs_the_server_token(monkeypatch, server_observed, keeps_query):
+    meta = {"endpoint": "ask", "query": "find me a rust engineer", "question": "forged", "question_source": "x"}
+    rows = _stored_batch(monkeypatch, [{"event": "view", "handle": "alice", "meta": meta}],
+                         server_observed=server_observed)
+    stored = rows[0]["meta"]
+    assert ("query" in stored) is keeps_query
+    # Question history is only ever written by the chat handler, attested or not.
+    assert "question" not in stored and "question_source" not in stored
+    assert stored["endpoint"] == "ask"
+
+
+def test_public_post_cannot_forge_agent_reads_through_the_api(monkeypatch):
+    from api.events import router
+
+    monkeypatch.setattr(config, "FEATURE_S04_EVENTS", True)
+    monkeypatch.setattr(config, "SUPABASE_DB_SCHEMA", "cards")
+    monkeypatch.setattr(config, "EVENTS_SERVER_TOKEN", "server-token")
+    sb = MagicMock()
+    monkeypatch.setattr(events, "_event_store", lambda: sb)
+    app = FastAPI()
+    app.include_router(router)
+    events._hits.clear()
+    body = {"events": [{"event": "agent_fetch", "handle": "alice"}]}
+    client = TestClient(app)
+    assert client.post("/events", json=body, headers={"User-Agent": "ChatGPT-User/1.0"}).status_code == 204
+    sb.table.assert_not_called()
+    assert client.post("/events", json=body, headers={"User-Agent": "ChatGPT-User/1.0",
+                                                       "X-Zynd-Server-Event": "server-token"}).status_code == 204
+    assert sb.table.return_value.insert.call_args.args[0][0]["event"] == "agent_fetch"

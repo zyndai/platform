@@ -37,6 +37,14 @@ AGENT_RANGE_URLS = {
     "Perplexity-MCP": PERPLEXITY_USER_RANGES_URL,
 }
 
+# Who publishes each list, for the alert email. The list belongs to the company, not the product
+# name the User-Agent carries: Claude-User is checked against Anthropic's list.
+RANGE_PUBLISHERS = {
+    OPENAI_USER_RANGES_URL: "OpenAI",
+    ANTHROPIC_RANGES_URL: "Anthropic",
+    PERPLEXITY_USER_RANGES_URL: "Perplexity",
+}
+
 # The providers update these lists rarely; a day keeps us to one fetch per list per worker per day.
 CACHE_TTL_SECONDS = 24 * 3600
 # After a failed refresh, wait this long before trying that list again instead of paying the
@@ -57,6 +65,11 @@ _retry_at: dict[str, float] = {}
 
 def has_published_ranges(agent: str | None) -> bool:
     return (agent or "") in AGENT_RANGE_URLS
+
+
+def range_publisher(agent: str | None) -> str | None:
+    url = AGENT_RANGE_URLS.get(agent or "")
+    return RANGE_PUBLISHERS[url] if url else None
 
 
 def is_provider_ip(agent: str | None, ip: str | None) -> bool:

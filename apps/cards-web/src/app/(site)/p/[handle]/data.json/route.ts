@@ -129,7 +129,7 @@ export async function GET(req: Request, { params }: Params) {
   const activeBeacon = beacon && Date.parse(beacon.created_at) <= Date.now() && Date.parse(beacon.expires_at) > Date.now() ? beacon : null;
 
   // When the Working on list last changed or its owner confirmed it, so agents can judge how far
-  // to trust it. Left out when unknown (cards from before cards migration 0033).
+  // to trust it. Left out when unknown (cards from before cards migration 0035).
   const workingOnStamp = view?.working_on_updated_at ?? card.working_on_updated_at;
   const workingOnUpdatedAt = parseWorkingOnStamp(workingOnStamp) !== null ? workingOnStamp : null;
 

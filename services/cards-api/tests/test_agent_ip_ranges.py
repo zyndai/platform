@@ -54,6 +54,14 @@ def test_mcp_labels_use_their_providers_list(lists):
     assert ranges.is_provider_ip("ChatGPT-MCP", "203.0.113.5") is False
 
 
+def test_range_publisher_names_the_company_behind_each_list():
+    assert ranges.range_publisher("Claude-User") == "Anthropic"
+    assert ranges.range_publisher("ChatGPT-MCP") == "OpenAI"
+    assert ranges.range_publisher("Perplexity-User") == "Perplexity"
+    assert ranges.range_publisher("Codex") is None and ranges.range_publisher(None) is None
+    assert set(ranges.RANGE_PUBLISHERS) == set(ranges.AGENT_RANGE_URLS.values())
+
+
 def test_list_is_cached_for_a_day(lists):
     _, calls, clock = lists
     for _ in range(3):

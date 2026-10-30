@@ -1,4 +1,5 @@
 """Public-card reads returned by MCP, with advertised client attribution only."""
+import asyncio
 import logging
 import re
 
@@ -15,6 +16,9 @@ SERVER_EVENT_HEADER = "X-Zynd-Server-Event"
 # cards-api emails an owner about an AI read only when this address is in the claimed provider's
 # published ranges (cards-api services/agent_ip_ranges.py); it trusts it only next to the token.
 CLIENT_IP_HEADER = "X-Zynd-Client-IP"
+# Label for memory's own reads of a card (get_card's /view); cards-api skips counting them by the
+# token, not by this string.
+INTERNAL_USER_AGENT = "Zynd-Memory/1.0"
 CLIENT_LABELS = {
     "codex": "Codex", "chatgpt": "ChatGPT-MCP", "claude": "Claude-MCP",
     "perplexity": "Perplexity-MCP",
@@ -59,6 +63,14 @@ def caller_ip() -> str | None:
     return request.client.host if request.client else None
 
 
+def internal_read_headers() -> dict[str, str]:
+    """Headers for memory reading a card itself, so cards-api does not count it as a reader."""
+    headers = {"User-Agent": INTERNAL_USER_AGENT}
+    if settings.events_server_token:
+        headers[SERVER_EVENT_HEADER] = settings.events_server_token
+    return headers
+
+
 def delivery_headers() -> dict[str, str]:
     headers = {"User-Agent": advertised_user_agent()}
     if settings.events_server_token:
@@ -69,30 +81,82 @@ def delivery_headers() -> dict[str, str]:
     return headers
 
 
+# Delivery runs after the tool has answered. Tasks are held here because the event loop keeps only
+# weak references to them, and one client is shared so each delivery reuses its connections.
+_pending: set[asyncio.Task] = set()
+_client: httpx.AsyncClient | None = None
+_client_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _http() -> httpx.AsyncClient:
+    global _client, _client_loop
+    loop = asyncio.get_running_loop()
+    # A client's pooled connections belong to the loop that opened them. A server has one loop;
+    # only tests run several, each getting its own client.
+    if _client is None or _client_loop is not loop:
+        _client, _client_loop = httpx.AsyncClient(timeout=EVENT_TIMEOUT_SECONDS), loop
+    return _client
+
+
+def _finished(task: asyncio.Task) -> None:
+    _pending.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning("MCP card analytics task failed: %s", type(task.exception()).__name__)
+
+
 async def record_fetches(handles: list[str | None], *, endpoint: str, tool: str, category: str = "card") -> None:
-    """Count returned cards, including cached reads; never log queries or caller IDs."""
+    """Count returned cards, including cached reads; never log queries or caller IDs. Returns as
+    soon as delivery is scheduled: a slow cards-api must not hold up the tool's answer."""
     if not settings.cards_api_base_url:
         logger.warning("MCP card analytics unavailable endpoint=%s tool=%s", endpoint, tool)
         return
     unique = list(dict.fromkeys(handles))
     try:
+        # Read now: the caller's headers and session belong to this request.
         headers = delivery_headers()
-        async with httpx.AsyncClient(timeout=EVENT_TIMEOUT_SECONDS) as client:
-            for start in range(0, len(unique), EVENT_BATCH_SIZE):
-                response = await client.post(
-                    f"{settings.cards_api_base_url.rstrip('/')}/events",
-                    headers=headers,
-                    json={"events": [{"event": "agent_fetch", "handle": handle,
-                          "meta": {"endpoint": endpoint, "tool": tool, "category": category}}
-                         for handle in unique[start:start + EVENT_BATCH_SIZE]]},
-                )
-                response.raise_for_status()
+    except Exception:
+        logger.warning("MCP card analytics unavailable endpoint=%s tool=%s", endpoint, tool)
+        return
+    task = asyncio.create_task(_deliver(unique, headers, endpoint=endpoint, tool=tool, category=category))
+    _pending.add(task)
+    task.add_done_callback(_finished)
+
+
+async def _deliver(unique: list[str | None], headers: dict[str, str], *, endpoint: str, tool: str,
+                   category: str) -> None:
+    try:
+        client = _http()
+        for start in range(0, len(unique), EVENT_BATCH_SIZE):
+            response = await client.post(
+                f"{settings.cards_api_base_url.rstrip('/')}/events",
+                headers=headers,
+                json={"events": [{"event": "agent_fetch", "handle": handle,
+                      "meta": {"endpoint": endpoint, "tool": tool, "category": category}}
+                     for handle in unique[start:start + EVENT_BATCH_SIZE]]},
+            )
+            response.raise_for_status()
         logger.info("MCP card analytics recorded endpoint=%s tool=%s profiles=%d", endpoint, tool, len(unique))
     except httpx.HTTPStatusError as exc:
         logger.warning("MCP card analytics delivery failed endpoint=%s tool=%s status=%d",
                        endpoint, tool, exc.response.status_code)
     except Exception:
         logger.warning("MCP card analytics delivery failed endpoint=%s tool=%s", endpoint, tool)
+
+
+async def drain() -> None:
+    """Wait for every scheduled delivery, including ones scheduled while waiting (tests)."""
+    while _pending:
+        await asyncio.gather(*list(_pending), return_exceptions=True)
+
+
+async def aclose() -> None:
+    """App shutdown: give in-flight deliveries one timeout to finish, then close the client."""
+    global _client, _client_loop
+    if _pending:
+        await asyncio.wait(list(_pending), timeout=EVENT_TIMEOUT_SECONDS)
+    if _client is not None:
+        await _client.aclose()
+    _client, _client_loop = None, None
 
 
 async def record_people(result: dict, *, endpoint: str, tool: str) -> None:

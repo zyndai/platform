@@ -59,6 +59,17 @@ SERVER_EVENTS = frozenset({
     AI_READ_ALERT_EVENT,
 })
 
+# Only our own servers (cards-web's server-side read log, memory's MCP reads) report these, with
+# EVENTS_SERVER_TOKEN. From anyone else a POST could inflate an owner's AI-read counts with
+# whatever User-Agent it likes, so they are dropped.
+SERVER_ATTESTED_EVENTS = frozenset({"agent_fetch"})
+SERVER_EVENT_HEADER = "X-Zynd-Server-Event"
+# Only the validated chat handler may populate owner question history.
+_CLIENT_META_STRIPPED = frozenset({"question", "question_truncated", "question_source"})
+# `query` is shown to the owner as what agents asked (services/owner_home.py query_summaries), so
+# only an attested batch may carry it.
+_UNATTESTED_META_STRIPPED = _CLIENT_META_STRIPPED | {"query"}
+
 # Who ran a search: the Cards website, Memory's find_people for a signed-in owner, the public
 # Cards MCP, or an agent calling /ask. Unknown or absent means the endpoint's own default. A caller can claim any of these, which is fine for a
 # count of searches; only the server-emitted search_result_action below is relied on.
@@ -96,6 +107,15 @@ def session_hash_for_ip(ip: str | None, now: datetime | None = None) -> str | No
     if not ip or not ip.strip():
         return None
     return hashlib.sha256(f"{daily_salt(now)}{ip.strip()}".encode()).hexdigest()
+
+
+def from_our_server(request: Request | None) -> bool:
+    """The caller holds EVENTS_SERVER_TOKEN. Empty token = nobody does."""
+    expected = config.EVENTS_SERVER_TOKEN
+    supplied = request.headers.get(SERVER_EVENT_HEADER) if request is not None else None
+    if not expected or supplied is None:
+        return False
+    return hmac.compare_digest(supplied.encode(), expected.encode())
 
 
 def client_ip(request: Request | None) -> str | None:
@@ -250,10 +270,15 @@ def insert_batch(
     server_observed: bool = False,
     visitor_ip: str | None = None,
 ) -> bool:
-    if not events_enabled() or not events:
+    if not events_enabled():
+        return True
+    if not server_observed:
+        events = [e for e in events if e["event"] not in SERVER_ATTESTED_EVENTS]
+    if not events:
         return True
     actor = ua_class.classify(user_agent)
     sh = session_hash_for_ip(ip)
+    stripped = _CLIENT_META_STRIPPED if server_observed else _UNATTESTED_META_STRIPPED
     rows = [
         _build_row(
             event=e["event"],
@@ -261,9 +286,8 @@ def insert_batch(
             actor_class=actor,
             ref=e.get("ref"),
             session_hash=sh,
-            # Only the validated chat handler may populate owner question history.
             meta=attributed_meta({k: v for k, v in (e.get("meta") or {}).items()
-                  if k not in {"question", "question_truncated", "question_source"}} if isinstance(e.get("meta"), dict) else None,
+                  if k not in stripped} if isinstance(e.get("meta"), dict) else None,
                   user_agent),
         )
         for e in events
@@ -288,7 +312,9 @@ def emit(
     if request is not None:
         ua = ua or request.headers.get("user-agent")
         ip = client_ip(request)
-    if event in {"view", "agent_fetch"} and ua == ua_class.INTERNAL_CARDS_CLIENT:
+    # Our own servers reading a card to render it (cards-web's page, memory's get_card) are not
+    # readers. The token decides; their User-Agent is only a label anyone could send.
+    if event in {"view", "agent_fetch"} and from_our_server(request):
         return
     actor = ua_class.classify(ua)
     sh = session_hash_for_ip(ip)

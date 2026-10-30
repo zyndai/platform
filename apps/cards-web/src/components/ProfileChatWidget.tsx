@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import Link from "next/link";
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { MessageCircle, X, ArrowUp } from "lucide-react";
 
 export interface ChatMessage {
@@ -21,6 +22,8 @@ interface ProfileChatWidgetProps {
   defaultOpen?: boolean;
   prompts?: string[];
   bookingLinks?: BookingLink[];
+  /** Offer "make your own" after the first answer; the page turns it off for owners and card holders. */
+  showCreateCta?: boolean;
 }
 
 const CONTACT_WORDS = ["contact", "email", "call", "meet", "book", "intro", "calendly", "linkedin"];
@@ -77,12 +80,15 @@ export function ProfileChatWidget({
   defaultOpen = false,
   prompts = [],
   bookingLinks = [],
+  showCreateCta = false,
 }: ProfileChatWidgetProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>(() => initialMessages ?? []);
   const [sending, setSending] = useState(false);
   const [introReady, setIntroReady] = useState(false);
+  // Pinned under the first real answer so the CTA appears once per session, not after every reply.
+  const [createCtaAfter, setCreateCtaAfter] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const seededRef = useRef(false);
@@ -191,6 +197,8 @@ export function ProfileChatWidget({
           copy[assistantIndex] = { role: "assistant", content: "No response — try again." };
           return copy;
         });
+      } else if (showCreateCta) {
+        setCreateCtaAfter((current) => current ?? assistantIndex);
       }
     } catch {
       setMessages((prev) => {
@@ -310,7 +318,8 @@ export function ProfileChatWidget({
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+          <Fragment key={i}>
+          <div style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
             <div style={{
               maxWidth: "82%",
               padding: "9px 13px",
@@ -334,6 +343,21 @@ export function ProfileChatWidget({
               )}
             </div>
           </div>
+          {i === createCtaAfter && (
+            <div data-testid="ask-card-create-cta" style={{
+              alignSelf: "flex-start", maxWidth: "82%",
+              padding: "8px 12px", borderRadius: "12px",
+              background: "#fff", border: "1px dashed #E0E0D8",
+              fontSize: "12px", lineHeight: "1.45", color: "#56565d",
+            }}>
+              Want an AI that answers like this for you?{" "}
+              {/* prefetch off: proxy.ts records ?ref= on prefetches too, which would credit ask_card without a click. */}
+              <Link href="/create?ref=ask_card" prefetch={false} style={{ color: "#4f46e5", fontWeight: 600, textDecoration: "underline" }}>
+                Create your card
+              </Link>
+            </div>
+          )}
+          </Fragment>
         ))}
       </div>
 

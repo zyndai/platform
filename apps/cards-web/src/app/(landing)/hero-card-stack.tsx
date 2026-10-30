@@ -230,8 +230,10 @@ function ProfileCard({ profile }: { profile: Profile }) {
         <span className="text-[#7d7d77] flex items-center gap-1.5">
           <span className="text-[#7b72e9]">●</span> {profile.updated}
         </span>
-        <span className="text-white font-medium flex items-center gap-1 text-xs">
-          📅 Book 20m Intro
+        {/* Dealt-away cards stay mounted at opacity 0 over the page, so a link here
+            would be an invisible click target: this stays a plain status line. */}
+        <span className="text-[#a0a09a] flex items-center gap-1">
+          📅 Open to 20m intros
         </span>
       </div>
     </div>

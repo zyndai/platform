@@ -623,12 +623,14 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
   let isOwner = false;
   let isSignedIn = false;
+  let viewerHasCard = false;
   try {
     const supabase = await createClient();
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.access_token && !visitorPreview) {
       isSignedIn = true;
       const myCard = await getMyCard(session.access_token);
+      viewerHasCard = !!myCard;
       isOwner = !!(myCard && myCard.handle === handle);
     }
   } catch {
@@ -1531,6 +1533,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
           personName={identity.name}
           prompts={chatPrompts}
           bookingLinks={bookingLinks}
+          showCreateCta={!isOwner && !viewerHasCard}
         />
       )}
     </>

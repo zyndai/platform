@@ -24,7 +24,7 @@ test.describe("S10 owner home", () => {
 
   test("filters agent traffic and exports the visible real counts", async ({ page }) => {
     await page.goto("/home");
-    const panel = page.getByRole("region", { name: "Which agents visited" });
+    const panel = page.getByRole("region", { name: "Which agents fetched your card" });
     await expect(panel.locator(".oh-agent-row")).toHaveCount(4);
     for (const provider of ["claude", "openai"]) {
       const logo = panel.locator(`img[src="/assets/agents/${provider}.svg"]`);
@@ -76,7 +76,7 @@ test.describe("S10 owner home", () => {
     ).toBe("rgb(23, 32, 51)");
     await expect(page.getByText("12", { exact: true })).toBeVisible();
     await expect(page.locator(".oh-discovery-agent strong").filter({ hasText: /^7$/ })).toBeVisible();
-    const agentBreakdown = page.getByRole("region", { name: "Which agents visited" });
+    const agentBreakdown = page.getByRole("region", { name: "Which agents fetched your card" });
     await expect(agentBreakdown.getByText("Claude-User", { exact: true })).toBeVisible();
     await expect(agentBreakdown.getByText("GPTBot", { exact: true })).toBeVisible();
     await expect(agentBreakdown.getByText("2 requests", { exact: true })).toBeVisible();

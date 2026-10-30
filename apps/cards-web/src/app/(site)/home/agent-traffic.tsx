@@ -58,7 +58,7 @@ export function AgentTraffic({ clients }: { clients: OwnerStatus["activity"]["ag
       <header className="oh-agent-header">
         <div className="oh-agent-heading">
           <span className="oh-agent-emblem"><Sparkles size={19} aria-hidden="true" /></span>
-          <div><span className="oh-agent-eyebrow">PROFILE DISCOVERY</span><h3 id="agent-clients">Which agents visited</h3></div>
+          <div><span className="oh-agent-eyebrow">PROFILE READS</span><h3 id="agent-clients">Which agents fetched your card</h3></div>
         </div>
         <div className="oh-agent-window"><span>Latest 1,000</span><span>Last 7 days</span></div>
       </header>

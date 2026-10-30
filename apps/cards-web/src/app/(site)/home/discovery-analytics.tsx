@@ -22,7 +22,7 @@ export function DiscoveryAnalytics({ activity, profile, visitors }: {
       <header className="oh-discovery-header">
         <div className="oh-discovery-title">
           <span className="oh-discovery-emblem"><Zap size={16} aria-hidden="true" /></span>
-          <h2 id="discovery-heading">Who found you · Last 7 days</h2>
+          <h2 id="discovery-heading">Who read your card · Last 7 days</h2>
         </div>
         <span className={`oh-discovery-state${activity.available ? " is-active" : ""}`}>
           <i aria-hidden="true" />{activity.available ? "Activity recorded" : "Activity unavailable"}

@@ -1,9 +1,9 @@
 from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_serializer, model_validator
+from pydantic import AfterValidator, BaseModel, Field, ValidationError, field_validator, model_serializer, model_validator
 from services.profile_quality import clean_topic, clean_topics
 
 
@@ -223,10 +223,72 @@ class Review(BaseModel):
     reviewed_at: str = ""
 
 
+# What an ask is for, in the order the composer lists them. The one place the kinds and their labels
+# live: the web mirrors it in src/lib/asks.ts, and the feed filter, the digest and the API validate
+# against it. A beacon without a kind (posted before kinds existed) reads as "other".
+ASK_KINDS: dict[str, str] = {
+    "team": "Building a team",
+    "cofounder": "Looking for a co-founder",
+    "hiring": "Hiring",
+    "work": "Open to work",
+    "feedback": "Want feedback",
+    "users": "Looking for early users",
+    "investors": "Raising money",
+    "other": "Something else",
+}
+AskKind = Literal[tuple(ASK_KINDS)]  # type: ignore[valid-type]  # the keys above, so the two cannot drift
+ASK_URL_MAX = 500
+
+
+def ask_kind_label(kind: str | None) -> str:
+    return ASK_KINDS.get(kind or "other", ASK_KINDS["other"])
+
+
+def clean_ask_url(value) -> str | None:
+    """The link on an ask: http(s) only, 500 characters at most, no spaces. None when blank; a bad one
+    raises ValueError (a 422 on write). It ends up as a clickable link on other people's pages."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("The link must be text")
+    text = value.strip()
+    if not text:
+        return None
+    if len(text) > ASK_URL_MAX:
+        raise ValueError(f"The link can be at most {ASK_URL_MAX} characters")
+    parsed = urlparse(text)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or any(c.isspace() or ord(c) < 32 for c in text):
+        raise ValueError("The link must be a web address starting with http:// or https://")
+    return text
+
+
+# For request bodies: a bad link is a 422 rather than quietly dropped (Beacon is the forgiving reader).
+AskUrl = Annotated[str | None, AfterValidator(clean_ask_url)]
+
+
 class Beacon(BaseModel):
+    # The ask this beacon is (services/asks.py). Beacons posted before asks existed have none.
+    id: str | None = None
     text: str = Field(min_length=1, max_length=280)
     created_at: datetime
     expires_at: datetime
+    # Both optional, so beacons stored before they existed parse unchanged. Reading is forgiving: a
+    # stored value that is not valid becomes None rather than making the whole card unreadable.
+    kind: AskKind | None = None
+    url: str | None = None
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _known_kind(cls, value):
+        return value if value in ASK_KINDS else None
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _safe_url(cls, value):
+        try:
+            return clean_ask_url(value)
+        except ValueError:
+            return None
 
     @model_validator(mode="after")
     def _seven_days(self):
@@ -353,8 +415,8 @@ class AgentProfileCard(TopicFields):
     availability: str = ""
     working_on: list[str] = Field(default_factory=list)
     # Mirror of agent_profile_cards.working_on_updated_at, written into the card JSON by the
-    # database trigger from cards migration 0033; cards-api never sets it on a write (the trigger
-    # rewrites it from the column). None = unknown: a card from before 0033, or it is not applied.
+    # database trigger from cards migration 0035; cards-api never sets it on a write (the trigger
+    # rewrites it from the column). None = unknown: a card from before 0035, or it is not applied.
     working_on_updated_at: datetime | None = None
     # Clipped from the browser by the Zynd Companion extension (services/companion.py).
     exploring: list[ExploringItem] = Field(default_factory=list)

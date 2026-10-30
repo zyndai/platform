@@ -1,4 +1,4 @@
-"""Every cards-api write path to Working on, replayed against cards migration 0033 on a disposable
+"""Every cards-api write path to Working on, replayed against cards migration 0035 on a disposable
 local Postgres: the trigger must stamp each one that changes the list and no other.
 
 STALE_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5547/postgres pytest tests/test_stale_working_on_postgres.py
@@ -52,7 +52,7 @@ def db():
     dsn = url._replace(path=f"/{name}").geturl()
     try:
         _psql(dsn, BASE + "".join((MIGRATIONS / f).read_text() for f in
-                                  ("0011_s10_owner_operations.sql", "0032_companion_devices.sql", "0033_stale_working_on.sql")))
+                                  ("0011_s10_owner_operations.sql", "0032_companion_devices.sql", "0035_stale_working_on.sql")))
         yield lambda statement: _psql(dsn, statement)
     finally:
         _psql(SERVER, f"DROP DATABASE IF EXISTS {name} WITH (FORCE);")
@@ -153,7 +153,7 @@ def test_every_write_path(db):
 
 
 def test_legacy_row_stays_unknown(db):
-    # #given a row written before 0033 (no stamp), simulated with the trigger off
+    # #given a row written before 0035 (no stamp), simulated with the trigger off
     db("ALTER TABLE cards.agent_profile_cards DISABLE TRIGGER agent_profile_cards_working_on_stamp;")
     db(f"INSERT INTO cards.agent_profile_cards(id,handle,owner_email,card) VALUES('legacy','legacy','{OWNER}',"
        f"{_j({'id': 'legacy', 'working_on': ['Something old']})});")

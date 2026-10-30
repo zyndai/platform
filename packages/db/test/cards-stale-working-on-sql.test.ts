@@ -8,7 +8,7 @@ import { migrationsFolder } from '../scripts/projects';
 
 const server = process.env.CARDS_TEST_DATABASE_URL;
 
-// 0033: working_on_updated_at is stamped by a trigger, so every writer of card->'working_on' is
+// 0035: working_on_updated_at is stamped by a trigger, so every writer of card->'working_on' is
 // covered: cards-api's full-card writes and upserts, s10_save_section and companion_save_fields.
 test('working_on_updated_at follows working_on on every write path', { skip: !server }, async () => {
   const url = new URL(server!);

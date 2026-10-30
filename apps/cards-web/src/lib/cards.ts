@@ -1,4 +1,5 @@
 import { claimHeaders, forgetClaimToken } from "./claim-tokens";
+import type { AskKind } from "./asks";
 import type { CardEdition } from "./editions";
 import type { MatchReason } from "./match-reason";
 import { ownerHomeEnabled } from "./owner-home";
@@ -21,7 +22,21 @@ export interface Skill {
   evidence?: { label: string; url: string; kind?: string }[];
 }
 
-export interface Beacon { text: string; created_at: string; expires_at: string; }
+export interface Beacon {
+  id?: string | null;
+  text: string;
+  /** Absent on beacons posted before ask types existed: shown as "Something else". */
+  kind?: AskKind | null;
+  /** An http(s) link the owner attached; absent when there is none. */
+  url?: string | null;
+  created_at: string;
+  expires_at: string;
+}
+
+/** People this card's owner helped through asks (cards-api services/asks.py). Each entry is a
+ *  credit the asker gave and the helper has not hidden; absent on older APIs. */
+export interface HelpedCredit { asker_handle: string; asker_name: string; ask: string; }
+export interface Helped { count: number; items: HelpedCredit[]; }
 
 export interface Project {
   demo_url?: string | null;
@@ -113,11 +128,13 @@ export interface AgentProfileCard {
   industries: string[];
   availability: string;
   working_on: string[];
-  /** When Working on last changed or the owner confirmed it (cards migration 0033).
+  /** When Working on last changed or the owner confirmed it (cards migration 0035).
    *  Absent = unknown, which is never shown as stale (lib/stale-signals.ts). */
   working_on_updated_at?: string | null;
   /** Clipped by Zynd Companion; the API only sends the last 30 days on public reads. */
   exploring?: ExploringItem[];
+  /** "Helped N people": credits from asks; only on the public by-handle read. */
+  helped?: Helped;
   can_help_with: string[];
   connect_with: string[];
   love_talking_about: string[];

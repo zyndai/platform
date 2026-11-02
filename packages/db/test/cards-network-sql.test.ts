@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
-import { migrationsFolder } from '../scripts/projects';
+import { migrationsFolder, readJournal } from '../scripts/projects';
 
 const server = process.env.CARDS_TEST_DATABASE_URL;
 
@@ -36,7 +36,10 @@ test('Cards network migrations preserve invitation and membership invariants', {
     });
     await apply();
     await apply();
-    assert.equal((await client.query('select count(*)::int as n from drizzle.__cards_migrations')).rows[0].n, 34);
+    // Applying twice records each migration exactly once. Counted from the journal so a new
+    // migration doesn't break this test (0034_builder_recaps did, by leaving a hard-coded 34).
+    const expected = readJournal(migrationsFolder('cards')).entries.length;
+    assert.equal((await client.query('select count(*)::int as n from drizzle.__cards_migrations')).rows[0].n, expected);
     assert.equal((await client.query("select to_regclass('drizzle.__persona_migrations') as table")).rows[0].table, null);
     await client.query("set request.jwt.claim.role='service_role'");
 

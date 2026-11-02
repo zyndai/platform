@@ -1,5 +1,7 @@
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import httpx
 
@@ -9,6 +11,34 @@ GITHUB_API = "https://api.github.com"
 GITHUB_GRAPHQL = "https://api.github.com/graphql"
 _MAX_EVENTS = 30
 _MAX_COMMIT_MSG_CHARS = 120
+
+
+async def fetch_period_contributions(handle: str, start: datetime, end: datetime) -> int | None:
+    """Exact contribution total for [start, end), or unknown. Never infer counts from heatmap levels."""
+    if not config.GITHUB_TOKEN or not handle or end <= start:
+        return None
+    query = """query($login: String!, $from: DateTime!, $to: DateTime!) {
+      user(login: $login) {
+        contributionsCollection(from: $from, to: $to) {
+          contributionCalendar { totalContributions }
+        }
+      }
+    }"""
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(GITHUB_GRAPHQL,
+                headers={"Authorization": f"Bearer {config.GITHUB_TOKEN}", "Accept": "application/vnd.github+json"},
+                json={"query": query, "variables": {"login": handle,
+                    "from": start.astimezone(timezone.utc).isoformat(),
+                    "to": (end - timedelta(seconds=1)).astimezone(timezone.utc).isoformat()}})
+        response.raise_for_status()
+        body = response.json()
+        if body.get("errors"):
+            return None
+        count = body["data"]["user"]["contributionsCollection"]["contributionCalendar"]["totalContributions"]
+        return count if type(count) is int and count >= 0 else None
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return None
 
 _CONTRIB_QUERY = """
 query($login: String!) {
@@ -188,3 +218,103 @@ def _parse_events(events: list) -> list[dict]:
             break
 
     return out
+
+
+# --- Notable activity for the feed -------------------------------------------------------------
+# _parse_events above drops event timestamps and links because card synthesis only needs a summary.
+# The feed needs to say WHEN something happened and link to it, so it reads the same public events
+# again through these two functions. They are separate on purpose: _parse_events' output feeds the
+# synthesis prompt and must not change shape.
+
+_HANDLE_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+_REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$")
+_GITHUB_WEB = "https://github.com/"
+_FEED_TITLE_CHARS = 140
+_FEED_EVENTS = 50              # one page of public events
+_FEED_TIMEOUT_SECONDS = 10
+
+
+def github_handle_from_url(url: str | None) -> str | None:
+    """The username in a profile link such as https://github.com/octocat, or None when the link is
+    not a plain github.com profile. Checked against GitHub's username rules, so it is safe to put
+    into an API path."""
+    if not isinstance(url, str) or not url.strip():
+        return None
+    raw = url.strip()
+    if "://" not in raw:
+        raw = "https://" + raw
+    parsed = urlparse(raw)
+    if (parsed.hostname or "").lower().removeprefix("www.") != "github.com":
+        return None
+    first = parsed.path.strip("/").split("/")[0]
+    return first if _HANDLE_RE.match(first) else None
+
+
+def _web_url(candidate, fallback: str) -> str:
+    """A GitHub web link from the event, or the fallback: the feed renders it as an <a href>."""
+    return candidate if isinstance(candidate, str) and candidate.startswith(_GITHUB_WEB) else fallback
+
+
+def parse_notable_events(events: list, handle: str = "") -> list[dict]:
+    """Releases, new public repositories and merged pull requests from a user's public events, each
+    with its timestamp and link: [{"id", "type": "release"|"repo"|"pull_request", "repo", "title",
+    "url", "at"}], in the order GitHub returns them (newest first).
+
+    Pushes, branches, tags and issues are noise in a feed and are skipped. A pull request counts for
+    the person who wrote it: the events of a maintainer who merges someone else's pull request carry
+    the same "closed + merged" payload, so with a `handle` the pull request's author must match.
+    """
+    out: list[dict] = []
+    for ev in events if isinstance(events, list) else []:
+        if not isinstance(ev, dict):
+            continue
+        at = ev.get("created_at")
+        repo = (ev.get("repo") or {}).get("name", "")
+        if not at or not isinstance(repo, str) or not _REPO_RE.match(repo):
+            continue
+        payload = ev.get("payload") or {}
+        repo_url = _GITHUB_WEB + repo
+        kind = ev.get("type")
+        item = None
+
+        if kind == "ReleaseEvent" and payload.get("action") == "published":
+            release = payload.get("release") or {}
+            title = release.get("name") or release.get("tag_name") or ""
+            if title and not release.get("draft"):
+                item = {"type": "release", "title": title, "url": _web_url(release.get("html_url"), repo_url)}
+
+        elif kind == "CreateEvent" and payload.get("ref_type") == "repository":
+            item = {"type": "repo", "title": payload.get("description") or "", "url": repo_url}
+
+        elif kind == "PublicEvent":
+            item = {"type": "repo", "title": "", "url": repo_url}
+
+        elif kind == "PullRequestEvent" and payload.get("action") == "closed":
+            pr = payload.get("pull_request") or {}
+            author = ((pr.get("user") or {}).get("login") or "").lower()
+            if pr.get("merged") and pr.get("title") and (not handle or author == handle.lower()):
+                item = {"type": "pull_request", "title": pr["title"], "url": _web_url(pr.get("html_url"), repo_url)}
+
+        if item:
+            item["title"] = " ".join(str(item["title"]).split())[:_FEED_TITLE_CHARS]
+            out.append({"id": str(ev.get("id") or f"{kind}:{repo}:{at}"), "repo": repo, "at": at, **item})
+    return out
+
+
+def fetch_notable_activity(handle: str) -> list[dict] | None:
+    """The person's recent notable GitHub activity (see parse_notable_events), read with a blocking
+    call because it runs on a feed background thread, never on a request. None when GitHub could
+    not be read (rate limit, unknown user, network): the caller keeps what it had and tries later."""
+    if not _HANDLE_RE.match(handle or ""):
+        return None
+    headers = {"Accept": "application/vnd.github+json"}
+    if config.GITHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {config.GITHUB_TOKEN}"
+    try:
+        resp = httpx.get(f"{GITHUB_API}/users/{handle}/events/public", params={"per_page": _FEED_EVENTS},
+                         headers=headers, timeout=_FEED_TIMEOUT_SECONDS)
+        if not resp.is_success:
+            return None
+        return parse_notable_events(resp.json(), handle)
+    except Exception:  # noqa: BLE001 — a feed refresh must never raise into its thread
+        return None

@@ -16,7 +16,7 @@ const RESERVED = new Set([
   "zynd", "www", "assets", "images", "icons", "icon", "apple-icon",
   "favicon.ico", "llms.txt", "llms-full.txt", "agents.txt", "sitemap.xml",
   "robots.txt", "data.json", "opengraph-image", "_next", "web",
-  "privacy", "terms", "support", "claude",
+  "privacy", "terms", "support", "claude", "feed",
 ]);
 
 export default async function AliasRedirectPage({ params }: PageProps) {

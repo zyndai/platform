@@ -264,6 +264,19 @@ test.describe("S10 owner home", () => {
   });
 });
 
+test("owner home lists sign-in methods and shows why a link failed", async ({ page, context }) => {
+  await signIn(context);
+  await page.goto("/home?auth_error=Identity%20is%20already%20linked%20to%20another%20user");
+  const panel = page.locator("section.sim");
+  await expect(panel.getByRole("heading", { name: "Sign-in methods" })).toBeVisible();
+  await expect(panel).toContainText("alice.personal@gmail.com");
+  await expect(panel.getByRole("button", { name: "Connect LinkedIn" })).toBeVisible();
+  // The only sign-in method can't be removed.
+  await expect(panel.getByRole("button", { name: "Remove" })).toHaveCount(0);
+  await expect(panel.locator(".sim-error")).toHaveText("Identity is already linked to another user");
+  await expect(page).toHaveURL(/\/home$/);
+});
+
 test("owner home sends anonymous visitors to sign-in", async ({ page }) => {
   await page.goto("/home");
   await expect(page).toHaveURL(/\/auth\?next=/);

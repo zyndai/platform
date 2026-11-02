@@ -811,7 +811,7 @@ test("the sign-in page keeps a next path with a query, as a same-site cookie val
   await page.goto(`/auth?next=${encodeURIComponent(next)}`);
   // Starting the LinkedIn flow stores the path before leaving; the callback reads it back
   // (lib/auth/next-cookie.ts, covered by the unit test) and refuses anything off-site.
-  await page.getByRole("button", { name: "Sign in with LinkedIn" }).click();
+  await page.getByRole("button", { name: "Continue with LinkedIn" }).click();
   await expect.poll(async () => (await context.cookies()).find((cookie) => cookie.name === "zynd_next")?.value)
     .toBe(encodeURIComponent(next));
 });

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { startLinkedInOAuth, signOutAndLeave } from "@/lib/auth/session";
+import { goToSignIn, signOutAndLeave } from "@/lib/auth/session";
 import { useMyCard } from "@/hooks/useMyCard";
 import { useAuth } from "@/hooks/useAuth";
 import { displayUserName, initialsOf, pickUserAvatar } from "@/lib/identity";
@@ -132,7 +132,7 @@ export function AgentCardAuthBar() {
   const { user } = useAuth();
 
   function signIn() {
-    void startLinkedInOAuth("/", "card");
+    goToSignIn("/");
   }
 
   const md = (user?.user_metadata ?? {}) as Record<string, unknown>;

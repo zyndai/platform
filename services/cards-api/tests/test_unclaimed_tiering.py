@@ -1,7 +1,7 @@
 """
 S03 unclaimed-card tiering + S14 honest chat prompt.
 
-Claim-by-LinkedIn matching, takedown hiding, owner_email never appearing in
+Open claiming (LinkedIn decides only the badge), takedown hiding, owner_email never appearing in
 public responses, agent-endpoint default exclusion, and the chat prompt that
 discloses it is an AI assistant.
 """
@@ -31,52 +31,118 @@ def _card_json(handle="alice", linkedin="https://www.linkedin.com/in/alice-engin
     ).model_dump(mode="json")
 
 
-# ── claim by LinkedIn match ─────────────────────────────────────────
+# ── open claim: any signed-in account, LinkedIn only decides the badge ──
 
-def test_claim_card_by_owner_matching_linkedin(monkeypatch):
+LINKEDIN_APP_MD = {"provider": "linkedin_oidc", "providers": ["linkedin_oidc"]}
+GOOGLE_APP_MD = {"provider": "google", "providers": ["google"]}
+
+
+def _claim_world(monkeypatch, row: dict, *, owns_a_card: bool = False,
+                 owned_linkedin: str = "https://www.linkedin.com/in/someone-else/"):
+    """A Supabase mock holding one card row, plus a record of LinkedIn badges given."""
     sb = MagicMock()
-    sb.table("agent_profile_cards").select("id,owner_email,claim_token_hash,card,status").eq("handle", "alice").execute.return_value = MagicMock(
-        data=[{"id": "c1", "owner_email": None, "claim_token_hash": "h", "card": _card_json()}]
-    )
+    cards_table = sb.table.return_value
+    cards_table.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[row])
+    owned = [{"handle": "mine", "card": _card_json(handle="mine", linkedin=owned_linkedin)}] if owns_a_card else []
+    cards_table.select.return_value.ilike.return_value.neq.return_value.execute.return_value = MagicMock(data=owned)
+    cards_table.update.return_value.eq.return_value.is_.return_value.execute.return_value = MagicMock(data=[{"id": "c1"}])
     monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+    badges: list[tuple[str, str]] = []
+    from services import trust
+    monkeypatch.setattr(trust, "record_verification", lambda card_id, provider: badges.append((card_id, provider)))
+    return sb, badges
 
-    principal = Principal("alice@example.com", "sub", "iss", user_metadata={"preferred_username": "alice-engineer"})
+
+def _unclaimed(linkedin="https://www.linkedin.com/in/alice-engineer/") -> dict:
+    return {"id": "c1", "owner_email": None, "claim_token_hash": "h", "card": _card_json(linkedin=linkedin)}
+
+
+def test_claim_with_matching_linkedin_claims_and_earns_the_badge(monkeypatch):
+    sb, badges = _claim_world(monkeypatch, _unclaimed())
+    principal = Principal("alice@example.com", "sub", "iss",
+                          user_metadata={"preferred_username": "alice-engineer"}, app_metadata=LINKEDIN_APP_MD)
+
     claimed, msg = cards_service.claim_card_by_owner("alice", principal)
 
-    assert claimed is True
+    assert claimed is True, msg
     update = sb.table("agent_profile_cards").update
     update.assert_called_once()
     assert update.call_args.args[0]["owner_email"] == "alice@example.com"
     assert update.call_args.args[0]["claim_token_hash"] is None
+    assert badges == [("c1", "linkedin")]
 
 
-def test_claim_card_by_owner_refuses_mismatched_linkedin(monkeypatch):
-    sb = MagicMock()
-    sb.table("agent_profile_cards").select("id,owner_email,claim_token_hash,card,status").eq("handle", "alice").execute.return_value = MagicMock(
-        data=[{"id": "c1", "owner_email": None, "claim_token_hash": "h", "card": _card_json()}]
-    )
-    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+def test_a_google_account_can_claim_but_gets_no_linkedin_badge(monkeypatch):
+    sb, badges = _claim_world(monkeypatch, _unclaimed())
+    principal = Principal("alice.personal@gmail.com", "sub", "iss", user_metadata={"full_name": "Alice"},
+                          app_metadata=GOOGLE_APP_MD)
 
-    principal = Principal("mallory@example.com", "sub", "iss", user_metadata={"preferred_username": "mallory"})
+    claimed, msg = cards_service.claim_card_by_owner("alice", principal)
+
+    assert claimed is True, msg
+    assert sb.table("agent_profile_cards").update.call_args.args[0]["owner_email"] == "alice.personal@gmail.com"
+    assert badges == []
+
+
+def test_a_different_linkedin_account_can_claim_but_gets_no_badge(monkeypatch):
+    _, badges = _claim_world(monkeypatch, _unclaimed())
+    principal = Principal("alice@work.com", "sub", "iss",
+                          user_metadata={"preferred_username": "alice-old-profile"}, app_metadata=LINKEDIN_APP_MD)
+
+    assert cards_service.claim_card_by_owner("alice", principal)[0] is True
+    assert badges == []
+
+
+def test_a_self_written_linkedin_handle_without_a_linkedin_sign_in_earns_no_badge(monkeypatch):
+    # user_metadata is user-editable (supabase.auth.updateUser), so it alone proves nothing.
+    _, badges = _claim_world(monkeypatch, _unclaimed())
+    principal = Principal("alice@example.com", "sub", "iss",
+                          user_metadata={"preferred_username": "alice-engineer"}, app_metadata={"provider": "email"})
+
+    assert cards_service.claim_card_by_owner("alice", principal)[0] is True
+    assert badges == []
+
+
+def test_a_card_without_linkedin_can_be_claimed(monkeypatch):
+    _, badges = _claim_world(monkeypatch, _unclaimed(linkedin=""))
+    principal = Principal("alice@example.com", "sub", "iss", app_metadata={"provider": "email"})
+
+    assert cards_service.claim_card_by_owner("alice", principal)[0] is True
+    assert badges == []
+
+
+def test_claim_refused_when_the_account_already_owns_a_card(monkeypatch):
+    sb, _ = _claim_world(monkeypatch, _unclaimed(), owns_a_card=True)
+    principal = Principal("alice@example.com", "sub", "iss", app_metadata=GOOGLE_APP_MD)
+
     claimed, msg = cards_service.claim_card_by_owner("alice", principal)
 
     assert claimed is False
-    assert "does not match" in msg
+    assert "already has a card" in msg
     sb.table("agent_profile_cards").update.assert_not_called()
 
 
-def test_claim_card_by_owner_refuses_when_card_has_no_linkedin(monkeypatch):
-    sb = MagicMock()
-    sb.table("agent_profile_cards").select("id,owner_email,claim_token_hash,card,status").eq("handle", "alice").execute.return_value = MagicMock(
-        data=[{"owner_email": None, "claim_token_hash": "h", "card": _card_json(linkedin="")}]
-    )
-    monkeypatch.setattr(cards_service.config, "get_supabase", lambda: sb)
+def test_an_owner_can_claim_a_duplicate_of_their_card_to_merge_it(monkeypatch):
+    # Owner home lists unclaimed cards sharing the owner's LinkedIn: "claim it, then merge".
+    _claim_world(monkeypatch, _unclaimed(), owns_a_card=True,
+                 owned_linkedin="https://linkedin.com/in/Alice-Engineer")
+    principal = Principal("alice@example.com", "sub", "iss", app_metadata=GOOGLE_APP_MD)
 
-    principal = Principal("alice@example.com", "sub", "iss", user_metadata={"preferred_username": "alice"})
     claimed, msg = cards_service.claim_card_by_owner("alice", principal)
 
-    assert claimed is False
-    assert "no LinkedIn" in msg
+    assert claimed is True, msg
+
+
+def test_claim_refused_when_someone_else_claimed_it_first(monkeypatch):
+    sb, badges = _claim_world(monkeypatch, _unclaimed())
+    sb.table.return_value.update.return_value.eq.return_value.is_.return_value.execute.return_value = MagicMock(data=[])
+    principal = Principal("alice@example.com", "sub", "iss",
+                          user_metadata={"preferred_username": "alice-engineer"}, app_metadata=LINKEDIN_APP_MD)
+
+    claimed, msg = cards_service.claim_card_by_owner("alice", principal)
+
+    assert claimed is False and "already claimed" in msg
+    assert badges == []
 
 
 def test_claim_card_by_owner_refuses_already_claimed(monkeypatch):

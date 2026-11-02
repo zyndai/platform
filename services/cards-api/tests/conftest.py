@@ -3,12 +3,13 @@ fake the database per test and check the database path, so the copy is off by de
 outlives a test; tests/test_card_cache.py turns it on."""
 import pytest
 
-from services import card_cache, search, trust
+from services import asks, card_cache, search, trust
 
 
 @pytest.fixture(autouse=True)
 def _no_card_snapshot(request, monkeypatch):
     card_cache.invalidate()
+    asks.reset()                # "the asks tables are missing" must not leak between tests
     trust._verified_cache.clear()
     search._query_vectors.clear()
     if "card_snapshot" not in request.keywords:

@@ -8,7 +8,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { useMyCard } from "@/hooks/useMyCard";
 import { CARDS_API } from "@/lib/cards";
 import { setClaimHandle } from "@/lib/auth/next-cookie";
-import { startLinkedInOAuth } from "@/lib/auth/session";
+import { goToSignIn } from "@/lib/auth/session";
+import { markClaimIntent } from "@/lib/claim-tokens";
 import { CardEditor } from "./card-editor";
 import {
   CHIP_GROUPS, DEFAULT_PERSONA, addCustomValues, emptySelections, hasLabel, isPersona, optionsFor, sameLabel,
@@ -169,12 +170,14 @@ export function CreateBuilder() {
 
   const signIn = () => {
     saveDraft({ urls, picks, persona: personaPick, location: locationEdit, calendly, googleCalendar, handle: customHandle });
-    void startLinkedInOAuth("/create", "card");
+    goToSignIn("/create");
   };
   const claim = () => {
     if (!published) return;
     setClaimHandle(published.handle);
-    void startLinkedInOAuth(`/p/${encodeURIComponent(published.handle)}`, "card");
+    // The card page finishes the claim by itself once the sign-in returns there.
+    markClaimIntent(published.handle);
+    goToSignIn(`/p/${encodeURIComponent(published.handle)}`);
   };
 
   async function publish() {

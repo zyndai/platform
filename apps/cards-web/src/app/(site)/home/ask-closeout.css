@@ -1,0 +1,53 @@
+/* "Did your ask get answered?" panels, in the owner home's light look (tokens from owner-home.css). */
+.ac-wrap { display: grid; gap: 16px; }
+.ac-panel {
+  min-width: 0;
+  background: #fff;
+  border: 1px solid var(--oh-border);
+  border-radius: 20px;
+  padding: 24px;
+  color: var(--oh-ink);
+}
+.ac-panel h2 {
+  margin: 0 0 14px;
+  font-size: 20px;
+  text-transform: none !important;
+  font-family: inherit !important;
+  letter-spacing: normal !important;
+  color: var(--oh-ink);
+}
+.ac-ask { padding: 16px 0; border-top: 1px solid var(--oh-border); }
+.ac-ask:first-of-type { border-top: 0; padding-top: 0; }
+.ac-text { margin: 0 0 12px; font-weight: 600; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+.ac-muted { margin: 0 0 12px; color: var(--oh-muted); font-size: 13px; line-height: 1.5; }
+.ac-done { margin: 0; color: var(--oh-ink); font-size: 14px; }
+.ac-done a, .ac-who a, .ac-credits a { color: var(--oh-accent); font-weight: 600; text-underline-offset: 3px; }
+.ac-offers { margin: 0 0 14px; padding: 0; border: 0; display: grid; gap: 8px; min-width: 0; }
+.ac-offers legend { padding: 0; margin-bottom: 8px; font-size: 13px; color: var(--oh-muted); }
+.ac-offer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid var(--oh-border);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.ac-offer input { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--oh-accent); }
+.ac-who { display: grid; min-width: 0; font-size: 14px; }
+.ac-who span { color: var(--oh-muted); font-size: 12px; overflow-wrap: anywhere; }
+.ac-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.ac-actions .oh-button:disabled, .ac-credits .oh-button:disabled { opacity: .55; cursor: default; }
+.ac-credits { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.ac-credits li { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; line-height: 1.5; }
+.ac-credits li span { min-width: 0; overflow-wrap: anywhere; }
+.ac-error { margin: 0; color: #b91c1c; font-size: 13px; }
+.ac-error:empty { display: none; }
+.ac-wrap :is(a, button, input):focus-visible { outline: 3px solid var(--oh-accent); outline-offset: 3px; }
+
+@media (max-width: 640px) {
+  .ac-panel { padding: 18px; border-radius: 16px; }
+  .ac-actions .oh-button { flex: 1 1 100%; }
+  .ac-credits li { flex-direction: column; align-items: flex-start; }
+}

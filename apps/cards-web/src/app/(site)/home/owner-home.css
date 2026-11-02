@@ -716,3 +716,14 @@
 .oh-fallback {
   padding-top: 64px;
 }
+
+/* Sign-in methods (components/account/sign-in-methods.tsx) */
+.oh-fallback-methods { margin-top: 20px; }
+.sim .sim-lede { margin: 8px 0 0; font-size: 13px; line-height: 1.6; color: var(--oh-muted); }
+.sim .sim-lede strong { color: var(--oh-ink); }
+.sim .sim-error { margin: 14px 0 0; padding: 10px 12px; border-radius: 12px; font-size: 13px; background: #fff1f2; border: 1px solid #fecdd3; color: #be123c; }
+.sim .sim-list { list-style: none; margin: 16px 0 0; padding: 0; }
+.sim .sim-list li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--oh-border); font-size: 13px; color: var(--oh-ink); }
+.sim .sim-list li:last-child { border-bottom: 0; }
+.sim .sim-list small { display: block; margin-top: 4px; font-size: 11px; color: var(--oh-muted); }
+.sim button:disabled { opacity: .6; cursor: wait; }

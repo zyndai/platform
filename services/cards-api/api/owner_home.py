@@ -12,7 +12,7 @@ from postgrest.exceptions import APIError
 
 import config
 from api.mcp import _principal, _owner_email
-from models.card import AgentProfileCard
+from models.card import AgentProfileCard, AskKind, AskUrl
 from services import card_cache, owner_home, cards
 from services.digest import valid_zone
 from services.zynd_memory import ping_revalidate
@@ -141,6 +141,8 @@ class Section(BaseModel):
 
 class BeaconRequest(BaseModel):
     text: str = Field(min_length=1, max_length=280)
+    kind: AskKind | None = None
+    url: AskUrl = None
 
 
 @router.put("/by-handle/{handle}/beacon")
@@ -149,7 +151,7 @@ async def publish_beacon(handle: str, body: BeaconRequest, authorization: str | 
     if not body.text.strip():
         raise HTTPException(422, "Write a short request before publishing")
     from services.beacons import save_beacon
-    result = await asyncio.to_thread(save_beacon, handle, email, body.text)
+    result = await asyncio.to_thread(save_beacon, handle, email, body.text, body.kind, body.url)
     await asyncio.to_thread(ping_revalidate, handle)
     return {"beacon": result}
 

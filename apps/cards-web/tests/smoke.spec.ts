@@ -6,7 +6,7 @@ test("unclaimed profile shows claim banner and no chat", async ({ page }) => {
   await page.goto("/p/unclaimed");
 
   await expect(page.getByText("Is this you?")).toBeVisible();
-  await expect(page.getByText("Claim with LinkedIn").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign in to claim" })).toBeVisible();
   await expect(page.getByText("This isn't", { exact: false }).first()).toBeVisible();
   await expect(page.getByText("UNCLAIMED", { exact: true }).first()).toBeVisible();
   await expect(page.locator(".pf-chat-fab")).toHaveCount(0);

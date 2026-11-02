@@ -1,0 +1,137 @@
+/* The Post button and the ask composer, in the feed's look (tokens come from .fd-page / .fd-scope in
+ * components/feed/feed.css). A modal on a desktop, a bottom sheet on a phone. */
+
+/* ── The floating Post button ─────────────────────────────────────────────── */
+.ac-fab {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 0 22px 0 18px;
+  border: 1px solid var(--fd-accent);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #7C6CF0, #6C5CE7);
+  color: #fff;
+  font: 800 15px/1 var(--fd-ui);
+  box-shadow: 0 16px 32px -14px rgba(76, 63, 201, .8);
+  cursor: pointer;
+}
+.ac-fab:hover { background: var(--fd-accent-hi); }
+.ac-fab:focus-visible { outline: 3px solid var(--fd-ink); outline-offset: 3px; }
+
+/* ── The dialog ───────────────────────────────────────────────────────────── */
+.ac-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(30, 27, 75, .5);
+}
+.ac-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 580px);
+  max-height: min(100%, 780px);
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 30px 80px -30px rgba(30, 27, 75, .7);
+  overflow: hidden;
+}
+.ac-dialog:focus { outline: none; }
+.ac-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px 12px; border-bottom: 1px solid var(--fd-line); }
+.ac-head h2 { font-size: 20px !important; }
+.ac-close {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--fd-edge);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--fd-soft);
+  cursor: pointer;
+}
+.ac-close:hover:not(:disabled) { background: var(--fd-tint); color: var(--fd-ink); }
+.ac-form { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.ac-body { display: grid; gap: 18px; padding: 16px 20px; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+.ac-foot { padding: 12px 20px calc(14px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--fd-line); display: grid; gap: 10px; background: #fff; }
+.ac-foot-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.ac-foot-row .ac-hint { flex: 1 1 200px; margin: 0; }
+
+.ac-label { margin: 0; padding: 0; font-size: 13px; font-weight: 700; }
+.ac-hint { margin: 0; color: var(--fd-faint); font-size: 12px; font-weight: 500; line-height: 1.5; }
+.ac-lead { margin: 0; font-size: 18px; font-weight: 800; }
+.ac-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.ac-field { display: grid; gap: 6px; min-width: 0; }
+.ac-field :is(textarea, input[type="text"]) {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--fd-edge);
+  border-radius: 12px;
+  background: #FBFAFF;
+  color: var(--fd-ink);
+  font: 400 15px/1.5 var(--fd-ui);
+}
+.ac-field textarea { resize: vertical; min-height: 96px; }
+.ac-field :is(textarea, input)::placeholder { color: var(--fd-faint); }
+.ac-field input[aria-invalid="true"] { border-color: var(--fd-danger); }
+.ac-count { margin: 0; text-align: right; color: var(--fd-faint); font: 400 12px/1 var(--fd-mono); }
+
+/* The kinds: a radio group drawn as chips. The input is the real control (arrow keys, one tab stop). */
+.ac-kinds { margin: 0; padding: 0; border: 0; min-width: 0; display: grid; gap: 8px; }
+.ac-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.ac-kind { position: relative; }
+.ac-kind input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.ac-kind span {
+  display: inline-block;
+  padding: 9px 14px;
+  border: 1px solid var(--fd-edge);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--fd-soft);
+  font: 600 13px/1.2 var(--fd-ui);
+}
+.ac-kind:hover span { color: var(--fd-ink); background: var(--fd-tint); }
+.ac-kind input:checked + span { background: var(--fd-accent); border-color: var(--fd-accent); color: #fff; }
+.ac-kind input:focus-visible + span { outline: 3px solid var(--fd-ink); outline-offset: 2px; }
+
+/* The live ask, with the warning that posting replaces it. */
+.ac-live { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--fd-edge); border-radius: 16px; background: var(--fd-tint); }
+.ac-live-top { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.ac-live-text { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
+.ac-warn { margin: 0; color: #92400E; font-size: 13px; font-weight: 700; }
+.ac-live .fd-linkbutton { justify-self: start; }
+
+.ac-preview { display: grid; gap: 8px; min-width: 0; }
+.ac-preview .fd-item { box-shadow: none; }
+
+/* ── Opening: a modal fades in, a sheet rises. Skipped for people who ask for less motion. ── */
+@media (prefers-reduced-motion: no-preference) {
+  .ac-backdrop { animation: ac-fade .16s ease-out; }
+  .ac-dialog { animation: ac-pop .2s ease-out; }
+}
+@keyframes ac-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ac-pop { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes ac-rise { from { transform: translateY(100%); } to { transform: none; } }
+
+/* ── Phones: a bottom sheet ───────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .ac-backdrop { align-items: flex-end; padding: 0; }
+  .ac-dialog { width: 100%; max-height: 92dvh; border-radius: 22px 22px 0 0; }
+  .ac-head { padding: 14px 16px 10px; }
+  .ac-body { padding: 14px 16px; }
+  .ac-foot { padding-inline: 16px; }
+  .ac-foot-row .fd-button { flex: 1 1 100%; }
+  .ac-fab { right: max(12px, env(safe-area-inset-right, 0px)); }
+}
+@media (max-width: 640px) and (prefers-reduced-motion: no-preference) {
+  .ac-dialog { animation: ac-rise .22s ease-out; }
+}

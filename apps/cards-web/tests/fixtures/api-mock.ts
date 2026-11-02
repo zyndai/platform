@@ -4,6 +4,7 @@
  * pointed at this instead (NEXT_PUBLIC_API_URL=http://127.0.0.1:3030).
  */
 import http from "node:http";
+import { recapFixtureApi } from "./recaps";
 
 const PORT = 3030;
 
@@ -111,8 +112,29 @@ export function startFixtureServer(): Promise<void> {
     duplicates: hasDuplicate ? [{ id: "id-old-owner", handle: "old-owner", name: "Alice Chen", status: "published" }] : [],
     nudges: [{ id: "n1", kind: "expiring", title: "What you are looking for expires within 3 days", href: "/p/owner/edit#memory" }],
   });
+  // The feed and the owner's asks (/feed fetches them from the Next server, which page.route cannot reach).
+  const feedAsk = (n: number, handle: string, name: string, kind: string | undefined, text: string, url: string | null = null) => ({
+    id: `ask:${handle}:k${n}`, kind: "ask", at: new Date(Date.now() - n * 3_600_000).toISOString(), earlier: false, reason: "",
+    author: { handle, name, headline: "Founder", avatar_url: null, location: "Pune", claimed: true },
+    content: { text, kind: kind ?? "other", url }, connection: null,
+  });
+  const feedItems = () => [
+    feedAsk(1, "sarah", "Sarah Iyer", "team", "Building a team for ETHGlobal Bangkok, need a Solidity dev", "https://ethglobal.com/events/bangkok"),
+    feedAsk(2, "dan", "Dan Wu", "hiring", "Hiring two backend engineers (Go, Postgres), remote in India"),
+    feedAsk(3, "meera", "Meera Rao", "cofounder", "Looking for a technical co-founder for a B2B payments idea"),
+    feedAsk(4, "ravi", "Ravi Das", undefined, "Anyone who knows Stripe Connect well?"),
+    feedAsk(5, "kim", "Kim Lee", "feedback", "Want feedback on my pitch deck"),
+    feedAsk(6, "omar", "Omar Haddad", "team", "Need a designer for a weekend hackathon team"),
+    feedAsk(7, "lena", "Lena Fox", "users", "Looking for 20 early users for my invoicing tool"),
+  ];
+  const FEED_PAGE = 5;
+  const feedDefaults = () => ({ hasCard: true, live: null as Record<string, unknown> | null, postStatus: 0, postDetail: "" });
+  let feedCfg = feedDefaults();
+  let askPosts: unknown[] = [];
+  let reports: unknown[] = [];
   let onboardUrls: string[] = [];
   let onboardPolls = 0;
+  const handleRecaps = recapFixtureApi();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
     const path = url.pathname;
@@ -122,6 +144,7 @@ export function startFixtureServer(): Promise<void> {
     };
 
     if (req.method === "OPTIONS") return json(200, {});
+    if (handleRecaps(req, res, path)) return;
     if (path === "/__s10/warm-matches") { showWarmMatches = true; return json(200, {}); }
     // The directory list (/directory): two claimed people and one unclaimed.
     if (req.method === "GET" && path === "/cards") {
@@ -140,6 +163,55 @@ export function startFixtureServer(): Promise<void> {
         hit("bob", "Bob Okafor", 0.61),
       ];
       return json(200, { query: q, results, numberOfItems: results.length });
+    }
+    if (path === "/__feed/reset") { feedCfg = feedDefaults(); askPosts = []; reports = []; return json(200, {}); }
+    if (path === "/__feed/posts") return json(200, { posts: askPosts, reports });
+    if (req.method === "POST" && path === "/__feed/config") {
+      let raw = "";
+      req.on("data", chunk => { raw += chunk; });
+      req.on("end", () => { feedCfg = { ...feedCfg, ...JSON.parse(raw || "{}") }; return json(200, feedCfg); });
+      return;
+    }
+    if (req.method === "GET" && path === "/cards/feed") {
+      const kind = url.searchParams.get("kind");
+      const cursor = url.searchParams.get("cursor");
+      let items = feedItems();
+      if (url.searchParams.get("filter") === "asks" && kind) items = items.filter(i => i.content.kind === kind);
+      const start = cursor ? Number(cursor.replace("p", "")) : 0;
+      const page = items.slice(start, start + FEED_PAGE);
+      const viewer = feedCfg.hasCard
+        ? { has_card: true, handle: "owner", name: "Alice Chen", headline: "Engineer", avatar_url: null, location: "Bangalore" }
+        : { has_card: false, handle: null, name: "", headline: "", avatar_url: null, location: "" };
+      return json(200, { items: page, next_cursor: start + FEED_PAGE < items.length ? `p${start + FEED_PAGE}` : null, viewer });
+    }
+    if (req.method === "GET" && path === "/cards/mine/asks") {
+      if (!feedCfg.hasCard) return json(404, { detail: "Create your card first" });
+      return json(200, { asks: feedCfg.live ? [{ ...feedCfg.live, status: "active", offers: [] }] : [] });
+    }
+    if (path === "/cards/mine/ask") {
+      if (!req.headers.authorization) return json(401, { detail: "Unauthorized" });
+      if (req.method === "DELETE") { feedCfg.live = null; ownerCard = { ...ownerCard, beacon: null }; return json(204, {}); }
+      if (req.method === "POST") {
+        let raw = "";
+        req.on("data", chunk => { raw += chunk; });
+        req.on("end", () => {
+          const body = JSON.parse(raw || "{}");
+          askPosts.push(body);
+          if (feedCfg.postStatus) return json(feedCfg.postStatus, { detail: feedCfg.postDetail });
+          const created_at = new Date().toISOString();
+          const beacon = { id: "ask-live-1", text: body.text, kind: body.kind, url: body.url ?? null, created_at, expires_at: new Date(Date.now() + 7 * 86400000).toISOString() };
+          feedCfg.live = { ...beacon, routed: 0, offer_count: 0 };
+          ownerCard = { ...ownerCard, beacon };
+          return json(200, { beacon, ask_id: beacon.id });
+        });
+        return;
+      }
+    }
+    if (req.method === "POST" && /^\/cards\/network\/cards\/[^/]+\/report$/.test(path)) {
+      let raw = "";
+      req.on("data", chunk => { raw += chunk; });
+      req.on("end", () => { reports.push({ handle: path.split("/")[4], ...JSON.parse(raw || "{}") }); return json(200, { reported: true }); });
+      return;
     }
     if (path === "/cards/by-handle/owner/beacon") {
       if (!req.headers.authorization) return json(401, { detail: "Unauthorized" });
@@ -228,7 +300,11 @@ export function startFixtureServer(): Promise<void> {
       });
       return;
     }
-    if (path === "/auth/v1/user") return json(200, { id: "11111111-1111-4111-8111-111111111111", aud: "authenticated", role: "authenticated", email: "owner@example.test", user_metadata: { name: "Alice Chen" } });
+    if (path === "/auth/v1/user") return json(200, {
+      id: "11111111-1111-4111-8111-111111111111", aud: "authenticated", role: "authenticated", email: "owner@example.test",
+      user_metadata: { name: "Alice Chen" },
+      identities: [{ identity_id: "g-1", id: "g-1", user_id: "11111111-1111-4111-8111-111111111111", provider: "google", identity_data: { email: "alice.personal@gmail.com" } }],
+    });
     if (path === "/cards/mine/status") return json(200, ownerStatus());
     if (path === "/cards/mine/digest-preview") return json(200, { html: "<h1>Your week on Zynd</h1><p>12 views</p>" });
     if (req.method === "POST" && path === "/cards/mine/summary-draft") {
@@ -320,6 +396,9 @@ export function startFixtureServer(): Promise<void> {
     if (path === "/cards/by-handle/designer") {
       // A designer's published card: no GitHub, a newsletter's posts and a portfolio's project covers.
       return json(200, { ...cardFixture("designer", { name: "Ada Okoye" }), ...DESIGNER_DRAFT, identity: { name: "Ada Okoye", headline: "Brand designer", location: "Lagos", avatar_url: "", links: { linkedin: "https://www.linkedin.com/in/ada-okoye/" } } });
+    }
+    if (req.method === "POST" && path === "/cards/by-handle/unclaimed/claim") {
+      return json(200, { claimed: true, handle: "unclaimed" });
     }
     if (path === "/cards/by-handle/unclaimed" || path === "/cards/by-handle/claimed") {
       const handle = path.split("/").pop()!;

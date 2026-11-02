@@ -13,3 +13,6 @@
 */30 * * * * /home/ubuntu/zynd-platform/infra/single-box/cron/run-job.sh morning-digest /internal/morning-digest 900
 # 05:00 IST: stores each claimed card's top people to meet, before the first digests.
 30 * * * * [ "$(date -u +\%H)" = 23 ] && /home/ubuntu/zynd-platform/infra/single-box/cron/run-job.sh suggestions-refresh /internal/suggestions/refresh 1800
+# Prepare the previous calendar month and quarter, with daily catch-up after outages.
+# Deploy only after cards migration 0034; drafts stay private and owners get an in-app nudge.
+15 * * * * [ "$(date -u +\%H)" = 0 ] && /home/ubuntu/zynd-platform/infra/single-box/cron/run-job.sh builder-recaps /internal/recaps/generate 1800

@@ -27,7 +27,7 @@ export function PublishedScreen({ handle, authenticated, onClaim }: { handle: st
           </button>
         </span>
         <p className="cr-sub" style={{ maxWidth: 360 }}>
-          Discoverable by AI agents right now. Sign in to claim it so you can edit it anytime.
+          Discoverable by AI agents right now. Sign in with Google, LinkedIn or email to claim it, so you can edit it anytime.
         </p>
       </div>
       <div className="cr-actions">
@@ -35,7 +35,7 @@ export function PublishedScreen({ handle, authenticated, onClaim }: { handle: st
         {authenticated ? (
           <Link href={`/p/${encodeURIComponent(handle)}/edit`} className="dc-btn dc-btn-ghost cr-ghost-btn">Edit my card</Link>
         ) : (
-          <button type="button" className="dc-btn dc-btn-ghost cr-ghost-btn" onClick={onClaim}>Claim with LinkedIn</button>
+          <button type="button" className="dc-btn dc-btn-ghost cr-ghost-btn" onClick={onClaim}>Sign in to claim</button>
         )}
       </div>
     </section>
@@ -79,7 +79,7 @@ export function CardExists({ handle, authenticated }: { handle: string; authenti
         <p className="cr-sub" style={{ maxWidth: 400 }}>
           {authenticated
             ? "Each person has one card, so this one wasn't published. Edit your existing card to add anything new."
-            : "A card for this GitHub or X profile already exists. If it's yours, open it and sign in with LinkedIn to claim it."}
+            : "A card for this GitHub or X profile already exists. If it's yours, open it and sign in to claim it."}
         </p>
       </div>
       <div className="cr-actions">

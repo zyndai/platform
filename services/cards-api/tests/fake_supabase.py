@@ -1,7 +1,7 @@
 """A tiny in-memory stand-in for the supabase-py query builder, enough for the Cards network tests.
 
 Supports the calls the network services make: table().select(cols, count=) / insert / update /
-upsert / delete with eq, neq, gte, lte, in_, is_, not_.is_, order, limit, then execute().
+upsert / delete with eq, neq, ilike, gte, lte, in_, is_, not_.is_, order, limit, then execute().
 Rows are plain dicts; inserts get an id and created_at like the real tables do.
 """
 from __future__ import annotations
@@ -48,6 +48,12 @@ class _Query:
 
     def neq(self, col, val):
         self.filters.append(lambda r: r.get(col) != val)
+        return self
+
+    def ilike(self, col, pattern):
+        """Case-insensitive exact match on an escaped literal (cards._like_literal); no wildcards."""
+        literal = pattern.replace("\\%", "%").replace("\\_", "_").replace("\\\\", "\\").casefold()
+        self.filters.append(lambda r: isinstance(r.get(col), str) and r[col].casefold() == literal)
         return self
 
     def gte(self, col, val):

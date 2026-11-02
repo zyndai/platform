@@ -128,6 +128,9 @@ export interface AgentProfileCard {
   industries: string[];
   availability: string;
   working_on: string[];
+  /** When Working on last changed or the owner confirmed it (cards migration 0035).
+   *  Absent = unknown, which is never shown as stale (lib/stale-signals.ts). */
+  working_on_updated_at?: string | null;
   /** Clipped by Zynd Companion; the API only sends the last 30 days on public reads. */
   exploring?: ExploringItem[];
   /** "Helped N people": credits from asks; only on the public by-handle read. */
@@ -205,6 +208,7 @@ export interface CardView {
   skills: Skill[];
   projects: Project[];
   working_on: string[];
+  working_on_updated_at?: string | null;
   exploring?: ExploringItem[];
   can_help_with: string[];
   love_talking_about: string[];

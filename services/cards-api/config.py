@@ -101,6 +101,12 @@ FEATURE_S08_ONBOARDING_V2: bool = os.getenv("FEATURE_S08_ONBOARDING_V2", "false"
 # Optional fixed prefix for the daily-rotating IP salt. Empty = derive from
 # SUPABASE_JWT_SECRET + UTC date.
 EVENTS_IP_SALT: str = os.getenv("EVENTS_IP_SALT", "")
+# Shared secret our own servers (cards-web's server-side agent-fetch log, Memory's MCP reads)
+# send as X-Zynd-Server-Event on POST /events, with the visitor IP they saw. Only batches carrying
+# it can trigger an AI-read alert email (services/ai_read_alerts.py): the endpoint is public and
+# actor_class comes from a User-Agent anyone can set. Empty = nothing is trusted, so no alert is
+# ever sent from POST /events.
+EVENTS_SERVER_TOKEN: str = os.getenv("EVENTS_SERVER_TOKEN", "")
 
 # S03 "Not me" takedown: when a visitor reports a scraped card isn't theirs,
 # cards-api posts the request to the shared Mattermost incoming webhook so a

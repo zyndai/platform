@@ -60,6 +60,10 @@ export const agentProfileCards = cards.table(
     // IANA zone name (e.g. 'Asia/Kolkata') the morning digest uses to land at 07:00
     // local. Set from the owner's browser on /home; NULL falls back to cards-api's default.
     timezone: text('timezone'),
+    // When card->'working_on' last changed, or the owner confirmed it is still
+    // true. Written only by the trigger in migration 0035 (and the owner's
+    // confirm, which sets it explicitly); NULL = unknown, never "stale".
+    workingOnUpdatedAt: tstz('working_on_updated_at'),
   },
   (t) => [
     fk('agent_profile_cards_owner_user_id_fkey', t.ownerUserId, authUsers.id, 'set null'),

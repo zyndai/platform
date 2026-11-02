@@ -22,6 +22,7 @@ from api.owner_home import router as owner_home_router
 from api.intros import router as intros_router
 from api.visitors import router as visitors_router
 from api.network import router as network_router
+from api.visibility import router as visibility_router
 from api.feed import router as feed_router
 from api.asks import router as asks_router
 from api.recaps import router as recaps_router
@@ -119,6 +120,7 @@ app.include_router(visitors_router, prefix="/cards", tags=["Visitor privacy"])
 app.include_router(network_router, prefix="/cards", tags=["Cards network"])
 app.include_router(feed_router, prefix="/cards", tags=["Feed"])
 app.include_router(owner_home_router, prefix="/cards", tags=["Owner home"])
+app.include_router(visibility_router, prefix="/cards/visibility", tags=["AI visibility"])
 app.include_router(asks_router, prefix="/cards", tags=["Asks"])
 app.include_router(recaps_router, prefix="/cards", tags=["Recaps"])
 app.include_router(intros_router,prefix="/cards",tags=["Intros"])

@@ -3,9 +3,12 @@
 /**
  * Session state for cards.zynd.ai — deliberately minimal compared to the
  * dashboard's useAuth: no `developer`/Prisma coupling (that's the dashboard's
- * own product, not ours) and LinkedIn-only login (D12 — Google, GitHub and
- * the email magic link are removed). Ported callers only ever destructure
- * `ready` / `authenticated` / `user`, so that's all this exposes.
+ * own product, not ours). LinkedIn is the default login (D12); Google and the
+ * email magic link show only when lib/auth/providers.ts allows them (Google:
+ * enabled on Supabase; email: also off in code for now). GitHub stays removed. Every
+ * method ends in the same Supabase session, so nothing here depends on which
+ * one was used. Ported callers only ever destructure `ready` /
+ * `authenticated` / `user`, so that's all this exposes.
  */
 
 import {

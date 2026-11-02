@@ -1,10 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { setAuthNext } from "@/lib/auth/next-cookie";
 import { oauthCallbackUrl } from "@/lib/auth/origin";
+import { hasAlternateSignIn } from "@/lib/auth/providers";
+import { useSignInMethods } from "@/hooks/useSignInMethods";
 import { getMyCard, updateCard, type AgentProfileCard } from "@/lib/cards";
 import { hasClaimToken, markClaimIntent, subscribeClaimTokens, takeClaimIntent } from "@/lib/claim-tokens";
 import { useAuth } from "@/hooks/useAuth";
@@ -25,9 +28,13 @@ function useCanClaim(handle: string): boolean {
   return useSyncExternalStore(subscribeClaimTokens, () => hasClaimToken(handle), () => false);
 }
 
-/** Signed-out header action: "Claim this card" for its creator, "Sign In" for everyone else. */
+/** Signed-out header action: "Claim this card" for its creator, "Sign In" for everyone else.
+ *  The pill is LinkedIn (the default, D12). When Google or email is enabled, a link
+ *  next to it opens /auth for those; the claim itself uses the claim token, so
+ *  any sign-in method can complete it. */
 export function ProfileSignIn({ handle }: { handle: string }) {
   const canClaim = useCanClaim(handle);
+  const signInMethods = useSignInMethods();
 
   function signIn() {
     if (canClaim) markClaimIntent(handle);
@@ -38,10 +45,24 @@ export function ProfileSignIn({ handle }: { handle: string }) {
     });
   }
 
-  return (
+  const linkedInButton = (
     <button type="button" onClick={signIn} className={PILL_CLASS} style={PILL_STYLE}>
       {canClaim ? "Claim this card" : "Sign In"}
     </button>
+  );
+  if (!hasAlternateSignIn(signInMethods)) return linkedInButton;
+
+  return (
+    <>
+      {linkedInButton}
+      <Link
+        href={`/auth?next=${encodeURIComponent(`/p/${encodeURIComponent(handle)}`)}`}
+        onClick={() => { if (canClaim) markClaimIntent(handle); }}
+        className="font-mono text-[11px] font-semibold text-slate-500 hover:text-slate-700 underline underline-offset-2"
+      >
+        Other sign-in options
+      </Link>
+    </>
   );
 }
 

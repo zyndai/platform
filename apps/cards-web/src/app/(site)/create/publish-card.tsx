@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, TriangleAlert } from "lucide-react";
 
+import { AlternateSignIn, type AlternateSignInMethod } from "@/components/auth/alternate-sign-in";
 import { slugifyHandle } from "./model";
 import { handleIsFree } from "./publish";
 
@@ -10,7 +11,7 @@ import { handleIsFree } from "./publish";
 const CHECK_DELAY_MS = 400;
 
 /** The last step: pick a link, and publish when the draft is ready. */
-export function PublishCard({ ready, building, hasSource, statusText, handle, onHandle, authenticated, onSignIn, onPublish, publishing, error }: {
+export function PublishCard({ ready, building, hasSource, statusText, handle, onHandle, authenticated, onSignIn, onBeforeAlternateSignIn, onPublish, publishing, error }: {
   ready: boolean;
   building: boolean;
   hasSource: boolean;
@@ -19,6 +20,8 @@ export function PublishCard({ ready, building, hasSource, statusText, handle, on
   onHandle: (slug: string) => void;
   authenticated: boolean;
   onSignIn: () => void;
+  /** Google / email sign-in (behind flags): save the draft before leaving. */
+  onBeforeAlternateSignIn: (method: AlternateSignInMethod) => void;
   onPublish: () => void;
   publishing: boolean;
   error: string | null;
@@ -83,6 +86,10 @@ export function PublishCard({ ready, building, hasSource, statusText, handle, on
             Sign in first to own your card from the start, or publish now and claim it afterwards.
           </div>
           <button type="button" className="dc-btn dc-btn-ghost cr-ghost-btn" onClick={onSignIn}>Sign in with LinkedIn</button>
+          <AlternateSignIn
+            next="/create" intent="card" onBeforeSignIn={onBeforeAlternateSignIn}
+            buttonClassName="dc-btn dc-btn-ghost cr-ghost-btn"
+          />
         </>
       )}
     </section>

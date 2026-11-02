@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     feature_s11_public_mcp: bool = False
     # Internal cards-api base (compose: http://cards:8000; single-box: :8002).
     cards_api_base_url: str = "http://cards:8000"
+    # Same value as cards-api's EVENTS_SERVER_TOKEN. Sent as X-Zynd-Server-Event with MCP card
+    # reads so cards-api may email the card owner; empty = no header, reads are only counted.
+    events_server_token: str = ""
     cards_site_base_url: str = "https://cards.zynd.ai"
     s11_rate_limit_per_minute: int = 60
     s11_get_card_cache_ttl_seconds: int = 60

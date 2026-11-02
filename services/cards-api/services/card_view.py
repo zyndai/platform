@@ -134,6 +134,7 @@ def build_card_view(card: AgentProfileCard, *, claimed: bool) -> CardView:
         skills=list(card.skills),
         projects=list(card.projects),
         working_on=list(card.working_on),
+        working_on_updated_at=card.working_on_updated_at,
         exploring=list(card.exploring),
         can_help_with=list(card.can_help_with),
         love_talking_about=list(card.love_talking_about),

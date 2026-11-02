@@ -165,6 +165,16 @@ async def dismiss_beacon(handle: str, authorization: str | None = Header(default
     return Response(status_code=204)
 
 
+@router.post("/by-handle/{handle}/working-on/confirm")
+async def confirm_working_on(handle: str, authorization: str | None = Header(default=None)):
+    """"Still working on this": the owner resets their Working on freshness without editing it."""
+    from services import stale_signals
+    email = email_for(authorization)
+    confirmed = await asyncio.to_thread(stale_signals.confirm_working_on, handle, email)
+    await asyncio.to_thread(ping_revalidate, handle)
+    return {"working_on_updated_at": confirmed.isoformat()}
+
+
 SECTIONS = {
     "identity": {"identity"}, "summary": {"summary", "availability", "industries"},
     "signals": {"working_on", "connect_with", "love_talking_about", "can_help_with"},

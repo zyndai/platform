@@ -12,6 +12,7 @@ import {
   cardCanonicalUrl,
   featureS06CardView,
   getMyCard,
+  lookupMyCardHandle,
   type AgentProfileCard,
   type CardFact,
   type CardView,
@@ -32,6 +33,7 @@ import { AutoScroll } from "./auto-scroll";
 import { ContributionHeatmap } from "./contribution-heatmap";
 import { ProfileView } from "@/components/ProfileView";
 import { logAgentFetch } from "@/lib/track";
+import { isAiAgent, visitorFrom } from "@/lib/visitor";
 import { parseSearchRef } from "@/lib/search-link";
 import { ProfileChatWidget } from "@/components/ProfileChatWidget";
 import { FallbackAvatar } from "@/components/FallbackAvatar";
@@ -41,11 +43,14 @@ import { ProjectsCard } from "./projects-card";
 import { WorkGallery } from "./work-gallery";
 import { MemoryCard } from "./memory-card";
 import { ClaimBanner } from "./claim-banner";
+import { VisitorCtaBar } from "./visitor-cta-bar";
 import { ConnectionButton } from "@/components/network/ConnectionButton";
 import { memoryFactFamily, memoryFactKey } from "@/lib/memory-facts";
 import { readEdition } from "@/lib/editions";
 import { EditionHero } from "./edition-banner";
 import { EditionSignals } from "./edition-signals";
+import { StaleWorkingOnPrompt } from "./stale-working-on";
+import { isWorkingOnStale } from "@/lib/stale-signals";
 import { ExploringCard } from "./exploring-card";
 import { HelpedCard } from "./helped-card";
 import { cleanTopic, publicTopics } from "@/lib/profile-quality";
@@ -418,13 +423,15 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
     redirect(`/p/${encodeURIComponent(card.handle)}`);
   }
 
-  // Crawlers may read HTML without mounting ProfileView. Preserve their header
-  // at this boundary; our backend fetches otherwise identify only the web server.
-  // Human view counts still come from ProfileView (agent_fetch is separate).
+  // AI agents read the HTML without mounting ProfileView, so count them here,
+  // with their header; our backend fetches otherwise identify only the web
+  // server. Browsers are counted by ProfileView's view beacon, so a human
+  // render posts nothing here.
   const requestHeaders = await headers();
-  if (!requestHeaders.has("next-router-prefetch") && requestHeaders.get("purpose") !== "prefetch") {
-    const userAgent = requestHeaders.get("user-agent");
-    after(() => logAgentFetch("profile-page", userAgent, handle));
+  const visitor = visitorFrom(requestHeaders);
+  if (isAiAgent(visitor.userAgent)
+    && !requestHeaders.has("next-router-prefetch") && requestHeaders.get("purpose") !== "prefetch") {
+    after(() => logAgentFetch("profile-page", visitor, handle));
   }
 
   const { identity } = card;
@@ -623,13 +630,16 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
   let isOwner = false;
   let isSignedIn = false;
+  let viewerMayHaveCard = false;
   try {
     const supabase = await createClient();
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.access_token && !visitorPreview) {
       isSignedIn = true;
-      const myCard = await getMyCard(session.access_token);
-      isOwner = !!(myCard && myCard.handle === handle);
+      const mine = await lookupMyCardHandle(session.access_token);
+      isOwner = !!(mine.card && mine.handle === handle);
+      // A failed lookup is not proof of "no card": card holders must never get the sign-up bar.
+      viewerMayHaveCard = mine.failed || !!mine.handle;
     }
   } catch {
     // Auth check is best-effort
@@ -637,6 +647,13 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
 
   // The Connect / Message button: for visitors to a claimed Card (never the owner, never an unclaimed one).
   const showConnect = claimed && !isOwner;
+  const showVisitorCta = !isOwner && !viewerMayHaveCard;
+
+  // Everyone sees stale Working on chips dimmed; only the owner gets Confirm / Update.
+  const workingOnStale = isWorkingOnStale(card.working_on_updated_at, card.working_on, nowMs);
+  // The prompt stays mounted on the owner's Working on card even when it isn't stale, so its
+  // "Thanks" survives the refresh that un-dims the chips; it renders nothing otherwise.
+  const ownerConfirmsWorkingOn = isOwner;
 
   const showLinkedin = !!(linkedinHandle || linkedinUrl || liJobs.length > 0);
   const showX = !!(v.x.handle || v.x.followers != null);
@@ -750,6 +767,14 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
         .pf-social-mid { margin-top: 12px; padding-top: 12px; flex: 1; min-height: 0; }
         .pf-social-cta { margin-top: auto; display: flex; align-items: center; justify-content: center; min-height: 36px; padding: 9px 14px; border-radius: 10px; font-size: 0.68rem; font-weight: 700; text-decoration: none; }
         .pf-obs-row { display: grid; grid-template-columns: var(--obs-cols, 1fr); gap: 16px; }
+        /* Working on unchanged for STALE_DAYS (lib/stale-signals.ts) */
+        .pf-obs-chip-stale { opacity: .55; }
+        .pf-obs-stale:empty { display: none; }
+        .pf-obs-stale { margin-top: 10px; font-size: 0.62rem; line-height: 1.45; font-weight: 700; opacity: .85; }
+        .pf-obs-stale p { margin: 0; }
+        .pf-obs-stale .stale-wo-action { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+        .pf-obs-stale .stale-wo-action:disabled { opacity: .6; cursor: default; }
+        .pf-obs-stale .stale-wo-error { color: #b91c1c; }
         .pf-gh-row { display: grid; grid-template-columns: var(--gh-cols, 1fr 1fr); gap: 16px; }
         .pf-proj-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
         .pf-gallery-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
@@ -997,7 +1022,18 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
             {/* ── RIGHT STACK: Dossier + Signals (8 col); edition cards draw their own ── */}
             {edition && (
               <EditionSignals
-                signals={obsessions.map((obs) => ({ key: obs.key, label: obs.label, items: obs.items.filter((item) => !isBlank(item)) }))}
+                signals={obsessions.map((obs) => {
+                  const stale = obs.key === "working_on" && workingOnStale;
+                  return {
+                    key: obs.key,
+                    label: obs.label,
+                    items: obs.items.filter((item) => !isBlank(item)),
+                    ...(stale ? { stale } : {}),
+                    ...(obs.key === "working_on" && ownerConfirmsWorkingOn ? {
+                      staleFooter: <StaleWorkingOnPrompt handle={card.handle ?? handle} stale={stale} className="ed-signal-stale-prompt" />,
+                    } : {}),
+                  };
+                })}
               />
             )}
             {!edition && (
@@ -1028,8 +1064,14 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
               {/* Signal cards row */}
               {obsessions.length > 0 && (
                 <div className="pf-obs-row" style={{ "--obs-cols": `repeat(${obsessions.length}, 1fr)` } as React.CSSProperties}>
-                  {obsessions.map((obs) => (
-                    <div key={obs.key} className={`pf-obs-card ${obs.card} rounded-[20px] p-[18px] flex flex-col justify-between`}>
+                  {obsessions.map((obs) => {
+                    const stale = obs.key === "working_on" && workingOnStale;
+                    return (
+                    <div
+                      key={obs.key}
+                      id={stale ? "working-on" : undefined}
+                      className={`pf-obs-card ${obs.card} rounded-[20px] p-[18px] flex flex-col justify-between${stale ? " is-stale" : ""}`}
+                    >
                       <div className={`${label_} pf-mono`} style={{ color: "inherit", opacity: 0.8 }}>
                         <span>┌ {obs.label.toUpperCase()}</span>
                         <span className={`${obs.chip} text-[0.6rem] px-2 py-0.5 rounded-full font-mono font-bold`}>
@@ -1038,13 +1080,20 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
                       </div>
                       <div className="pf-obs-chips" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
                         {obsessionSources[obs.key].slice(0, 4).map((item) => (
-                          <span key={item} className={`${obs.chip} text-[0.65rem] font-bold font-mono px-2.5 py-1 rounded-full`}>
+                          <span key={item} className={`${obs.chip} text-[0.65rem] font-bold font-mono px-2.5 py-1 rounded-full${stale ? " pf-obs-chip-stale" : ""}`}>
                             {item}
                           </span>
                         ))}
                       </div>
+                      {(stale || (obs.key === "working_on" && ownerConfirmsWorkingOn)) && (
+                        <div className="pf-obs-stale pf-mono">
+                          {stale && <p>Not updated in 3+ months</p>}
+                          {obs.key === "working_on" && ownerConfirmsWorkingOn && <StaleWorkingOnPrompt handle={card.handle ?? handle} stale={stale} />}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1521,6 +1570,8 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
               <Link href="/create" className="hover:text-slate-800">CREATE</Link>
             </div>
           </footer>
+
+          {showVisitorCta && <VisitorCtaBar handle={card.handle ?? handle} />}
 
         </div>
       </div>

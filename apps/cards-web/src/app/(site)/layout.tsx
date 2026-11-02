@@ -5,6 +5,7 @@ import { Providers } from "@/components/providers";
 import { MyCardServerSnapshot } from "@/components/MyCardServerSnapshot";
 import { GoogleTags } from "@/components/GoogleTags";
 import { getServerAuth } from "@/lib/auth/server";
+import { getSignInMethods } from "@/lib/auth/sign-in-methods";
 import "../globals.css";
 import "@/zynd-ui.css";
 
@@ -55,7 +56,7 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user } = await getServerAuth();
+  const [{ user }, signInMethods] = await Promise.all([getServerAuth(), getSignInMethods()]);
 
   return (
     <html lang="en" className="w-mod-js" suppressHydrationWarning>
@@ -88,7 +89,7 @@ export default async function RootLayout({
           {" — "}
           <Link href="/for-ai">Guide for AI: /for-ai</Link>
         </p>
-        <Providers initialAuth={{ user }}>
+        <Providers initialAuth={{ user }} signInMethods={signInMethods}>
           <MyCardServerSnapshot>{children}</MyCardServerSnapshot>
         </Providers>
         {/* Loaded after hydration, same ordering rationale as the dashboard. */}

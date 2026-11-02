@@ -64,15 +64,57 @@ export function markClaimIntent(handle: string): void {
   }
 }
 
-/** True once, right after a sign-in started from "Claim this card" on `handle`. */
-export function takeClaimIntent(handle: string): boolean {
+// An email magic link finishes the sign-in in a new tab, which can't read this
+// tab's sessionStorage, so the email path copies the intent here. It lives as
+// long as the link does (an hour, per the "check your email" notice).
+const CROSS_TAB_INTENT_KEY = "zynd_claim_intent_xtab";
+const CROSS_TAB_INTENT_TTL_MS = 60 * 60 * 1000;
+
+/** Call when a sign-in that finishes in another tab starts: carries this tab's claim intent, if any, over to it. */
+export function shareClaimIntentAcrossTabs(): void {
+  let handle: string | null;
   try {
-    if (sessionStorage.getItem(INTENT_KEY) !== handle) return false;
-    sessionStorage.removeItem(INTENT_KEY);
-    return true;
+    handle = sessionStorage.getItem(INTENT_KEY);
   } catch {
-    return false;
+    return; // storage unavailable — no intent was saved to carry
   }
+  if (!handle) return;
+  try {
+    localStorage.setItem(CROSS_TAB_INTENT_KEY, JSON.stringify({ handle, expiresAt: Date.now() + CROSS_TAB_INTENT_TTL_MS }));
+  } catch (err) {
+    console.warn("claim intent: could not keep a copy for the sign-in link's tab", err);
+  }
+}
+
+function readCrossTabIntent(): string | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CROSS_TAB_INTENT_KEY) || "null") as { handle?: unknown; expiresAt?: unknown } | null;
+    const fresh = typeof parsed?.expiresAt === "number" && parsed.expiresAt > Date.now();
+    return fresh && typeof parsed?.handle === "string" ? parsed.handle : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True once, right after a sign-in started from "Claim this card" on `handle`.
+ *  Taking it clears both copies, so the original tab and the magic-link tab can't both auto-claim. */
+export function takeClaimIntent(handle: string): boolean {
+  let sameTab = false;
+  try {
+    sameTab = sessionStorage.getItem(INTENT_KEY) === handle;
+    if (sameTab) sessionStorage.removeItem(INTENT_KEY);
+  } catch {
+    sameTab = false;
+  }
+  const crossTab = readCrossTabIntent() === handle;
+  if (crossTab) {
+    try {
+      localStorage.removeItem(CROSS_TAB_INTENT_KEY);
+    } catch (err) {
+      console.warn("claim intent: could not clear the cross-tab copy", err);
+    }
+  }
+  return sameTab || crossTab;
 }
 
 /** `{ "X-Claim-Token": … }` when this browser published `handle` anonymously. */

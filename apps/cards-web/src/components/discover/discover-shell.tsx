@@ -4,7 +4,13 @@ import { EDITION_FONT_VARS } from "@/components/editions/fonts";
 import { DiscoverNav, type DiscoverPage } from "./discover-nav";
 import "./discover.css";
 
-const CRUMBS: Record<DiscoverPage, string> = { directory: "Directory", feed: "Feed", network: "Network", create: "Create" };
+const CRUMBS: Record<DiscoverPage, string> = {
+  directory: "Directory",
+  feed: "Feed",
+  network: "Network",
+  create: "Create",
+  visibility: "AI visibility",
+};
 
 /**
  * The page around Directory, Network and Create: the public card's lavender canvas,

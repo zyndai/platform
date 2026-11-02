@@ -3,10 +3,19 @@ import { createServerClient } from "@supabase/ssr";
 import { safeNextPath } from "@/lib/auth/next-cookie";
 import { requestOrigin } from "@/lib/auth/origin";
 
+const MAX_REASON_LENGTH = 200;
+
+function withParam(url: string, key: string, value: string): string {
+  const u = new URL(url);
+  u.searchParams.set(key, value);
+  return u.toString();
+}
+
 /**
- * OAuth (LinkedIn, D12) callback. Deliberately simpler than the dashboard's:
- * no Prisma developer lookup, no destinationAfterLogin routing table — just
- * "go back where the user was trying to go, or the directory."
+ * OAuth callback (Google, LinkedIn, and linking either to an account).
+ * Deliberately simpler than the dashboard's: no Prisma developer lookup, no
+ * destinationAfterLogin routing table — just "go back where the user was
+ * trying to go, or the directory."
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -19,12 +28,6 @@ export async function GET(request: NextRequest) {
     res.cookies.delete("zynd_next");
     res.cookies.delete("zynd_intent");
   };
-
-  if (!code) {
-    const failure = NextResponse.redirect(`${origin}/auth?error=auth_callback_failed`);
-    clearAuthCookies(failure);
-    return failure;
-  }
 
   const pending: { name: string; value: string; options?: Record<string, unknown> }[] = [];
   const supabase = createServerClient(
@@ -41,6 +44,24 @@ export async function GET(request: NextRequest) {
       },
     },
   );
+
+  if (!code) {
+    // No code: the provider or Supabase refused, e.g. that Google account
+    // already belongs to another Zynd account. Someone already signed in was
+    // linking a sign-in method, so send them back where they started, with
+    // the reason. Everyone else goes back to the sign-in page.
+    const reason = (searchParams.get("error_description") || "").slice(0, MAX_REASON_LENGTH);
+    const { data: { user } } = await supabase.auth.getUser();
+    const target = user && cookieNext
+      ? withParam(`${origin}${cookieNext}`, "auth_error", reason || "Could not connect that account")
+      : reason
+        ? `${origin}/auth?error=${encodeURIComponent(reason)}`
+        : `${origin}/auth?error=auth_callback_failed`;
+    const failure = NextResponse.redirect(target);
+    pending.forEach(({ name, value, options }) => failure.cookies.set(name, value, options));
+    clearAuthCookies(failure);
+    return failure;
+  }
 
   const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {

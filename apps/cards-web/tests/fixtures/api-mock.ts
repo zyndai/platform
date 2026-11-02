@@ -300,7 +300,11 @@ export function startFixtureServer(): Promise<void> {
       });
       return;
     }
-    if (path === "/auth/v1/user") return json(200, { id: "11111111-1111-4111-8111-111111111111", aud: "authenticated", role: "authenticated", email: "owner@example.test", user_metadata: { name: "Alice Chen" } });
+    if (path === "/auth/v1/user") return json(200, {
+      id: "11111111-1111-4111-8111-111111111111", aud: "authenticated", role: "authenticated", email: "owner@example.test",
+      user_metadata: { name: "Alice Chen" },
+      identities: [{ identity_id: "g-1", id: "g-1", user_id: "11111111-1111-4111-8111-111111111111", provider: "google", identity_data: { email: "alice.personal@gmail.com" } }],
+    });
     if (path === "/cards/mine/status") return json(200, ownerStatus());
     if (path === "/cards/mine/digest-preview") return json(200, { html: "<h1>Your week on Zynd</h1><p>12 views</p>" });
     if (req.method === "POST" && path === "/cards/mine/summary-draft") {
@@ -392,6 +396,9 @@ export function startFixtureServer(): Promise<void> {
     if (path === "/cards/by-handle/designer") {
       // A designer's published card: no GitHub, a newsletter's posts and a portfolio's project covers.
       return json(200, { ...cardFixture("designer", { name: "Ada Okoye" }), ...DESIGNER_DRAFT, identity: { name: "Ada Okoye", headline: "Brand designer", location: "Lagos", avatar_url: "", links: { linkedin: "https://www.linkedin.com/in/ada-okoye/" } } });
+    }
+    if (req.method === "POST" && path === "/cards/by-handle/unclaimed/claim") {
+      return json(200, { claimed: true, handle: "unclaimed" });
     }
     if (path === "/cards/by-handle/unclaimed" || path === "/cards/by-handle/claimed") {
       const handle = path.split("/").pop()!;

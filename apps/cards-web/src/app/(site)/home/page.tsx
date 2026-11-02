@@ -8,6 +8,7 @@ import {
 } from "@/lib/owner-home";
 import { OwnerHome } from "./owner-home";
 import { AskCloseout } from "./ask-closeout";
+import { SignInMethods } from "@/components/account/sign-in-methods";
 import { introsEnabled, type Intro } from "@/lib/intros";
 import { IntroInbox } from "@/components/intros/IntroInbox";
 import "./owner-home.css";
@@ -47,8 +48,12 @@ export default async function HomePage() {
       <main className="oh-page oh oh-fallback">
         <div className="oh-shell oh-panel">
           <h1>Welcome home</h1>
-          <p>Create your card to start seeing how people find you.</p>
+          <p>Create your card to start seeing how people find you, or open the card
+            Zynd already made for you and press Claim.</p>
           <Link className="oh-button" href="/create">Create your card →</Link>
+        </div>
+        <div className="oh-shell oh-fallback-methods">
+          <SignInMethods />
         </div>
       </main>
     );

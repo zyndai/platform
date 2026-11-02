@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { SignInMethods } from "@/components/account/sign-in-methods";
 import Link from "next/link";
 import {
   ArrowUpRight,
@@ -446,6 +447,7 @@ export function OwnerHome({
               ))}
             </section>
           )}
+          <SignInMethods />
         </div>
         {mergeId && (
           <div className="oh-modal-backdrop">

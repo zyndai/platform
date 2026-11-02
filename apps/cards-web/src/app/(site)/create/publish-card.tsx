@@ -82,7 +82,7 @@ export function PublishCard({ ready, building, hasSource, statusText, handle, on
           <div className="cr-note">
             Sign in first to own your card from the start, or publish now and claim it afterwards.
           </div>
-          <button type="button" className="dc-btn dc-btn-ghost cr-ghost-btn" onClick={onSignIn}>Sign in with LinkedIn</button>
+          <button type="button" className="dc-btn dc-btn-ghost cr-ghost-btn" onClick={onSignIn}>Sign in</button>
         </>
       )}
     </section>

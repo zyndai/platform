@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { setAuthNext } from "@/lib/auth/next-cookie";
-import { oauthCallbackUrl } from "@/lib/auth/origin";
+import { goToSignIn } from "@/lib/auth/session";
 import { getMyCard, updateCard, type AgentProfileCard } from "@/lib/cards";
 import { hasClaimToken, markClaimIntent, subscribeClaimTokens, takeClaimIntent } from "@/lib/claim-tokens";
 import { useAuth } from "@/hooks/useAuth";
@@ -31,11 +30,7 @@ export function ProfileSignIn({ handle }: { handle: string }) {
 
   function signIn() {
     if (canClaim) markClaimIntent(handle);
-    setAuthNext(`/p/${encodeURIComponent(handle)}`, "card");
-    createClient().auth.signInWithOAuth({
-      provider: "linkedin_oidc",
-      options: { redirectTo: oauthCallbackUrl() },
-    });
+    goToSignIn(`/p/${encodeURIComponent(handle)}`);
   }
 
   return (

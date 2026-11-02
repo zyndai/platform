@@ -127,3 +127,15 @@ async def test_login_page_names_the_brand_the_way_the_site_does(app):
         page = (await client.get("/oauth/login", params={"zynd_oauth": "sealed-request"})).text
     assert "<title>Sign in to Zynd</title>" in page and "<h1 id=\"title\">Sign in to Zynd</h1>" in page
     assert "ZYND" not in page
+
+
+async def test_login_offers_an_email_code_for_existing_accounts_only(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        page = (await client.get("/oauth/login", params={"zynd_oauth": "sealed-request"})).text
+    assert 'id="otp-email-form"' in page and 'id="otp-code-form" class="otp" hidden' in page
+    # New accounts are made on the Cards site; this page only signs existing ones in.
+    assert "signInWithOtp({email: otpEmail, options: {shouldCreateUser: false}})" in page
+    assert "verifyOtp({email: otpEmail, token: code, type: 'email'})" in page
+    # A code sign-in still goes through the explicit consent screen.
+    verify = page.index("verifyOtp(")
+    assert page.index("preview(r.data.session.access_token)", verify) < page.index("var reviewerForm")

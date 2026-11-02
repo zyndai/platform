@@ -26,9 +26,12 @@ class Principal(NamedTuple):
     sub: str   # only trustworthy against auth.users when iss == config.AAFO_ISSUER
     iss: str
     # Raw Supabase claims the JWT carries (linkedin_oidc puts the public
-    # LinkedIn handle in user_metadata.preferred_username — used by the
-    # S03 "Claim with LinkedIn" flow).
+    # LinkedIn handle in user_metadata.preferred_username — used to award the
+    # LinkedIn badge when a card is claimed).
     user_metadata: dict = {}
+    # Server-set claims (`provider`, `providers`): unlike user_metadata the
+    # user cannot write these, so they prove which sign-in methods are linked.
+    app_metadata: dict = {}
 
 
 # One JWKS client per trusted issuer URL, fetched and cached lazily.
@@ -85,7 +88,8 @@ def verify_supabase_jwt(authorization: str | None) -> Principal | None:
                 logger.warning("JWT valid (ES256) but missing email claim")
                 return None
             return Principal(email=email, sub=payload.get("sub", ""), iss=token_iss,
-                             user_metadata=payload.get("user_metadata") or {})
+                             user_metadata=payload.get("user_metadata") or {},
+                             app_metadata=payload.get("app_metadata") or {})
         except jwt.ExpiredSignatureError:
             logger.debug("JWT expired")
             return None
@@ -112,7 +116,8 @@ def verify_supabase_jwt(authorization: str | None) -> Principal | None:
             logger.warning("JWT valid (HS256) but missing email claim")
             return None
         return Principal(email=email, sub=payload.get("sub", ""), iss=payload.get("iss", ""),
-                         user_metadata=payload.get("user_metadata") or {})
+                         user_metadata=payload.get("user_metadata") or {},
+                         app_metadata=payload.get("app_metadata") or {})
     except jwt.ExpiredSignatureError:
         logger.debug("JWT expired (HS256)")
         return None

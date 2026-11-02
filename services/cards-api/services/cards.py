@@ -1026,13 +1026,59 @@ def _aafo_user_id(principal) -> str | None:
         return None
 
 
-def claim_card_by_owner(handle: str, principal: dict) -> tuple[bool, str]:
-    """Claim an unowned card when the signed-in LinkedIn identity matches the
-    card's LinkedIn URL. Returns (claimed, message).
+def _owned_cards(sb, email: str) -> list[dict]:
+    """The cards this account already owns. Merged rows don't count: they were folded into another."""
+    resp = (
+        sb.table("agent_profile_cards")
+        .select("handle,card")
+        .ilike("owner_email", _like_literal(email))
+        .neq("status", "merged")
+        .execute()
+    )
+    return resp.data or []
 
-    Kept separate from the legacy claim-token path (update_card): this one is
-    driven by the S03 "Claim with LinkedIn" CTA and requires the OAuth identity
-    to match, not a one-time token.
+
+def _is_a_duplicate_of(card: AgentProfileCard, owned: list[dict]) -> bool:
+    """Does this card share a LinkedIn profile with one the account owns? Owner home offers
+    exactly these ("claim it, then merge it into yours"), so they stay claimable."""
+    target = linkedin_handle_from_url(card.identity.links.get("linkedin"))
+    if not target:
+        return False
+    return any(
+        linkedin_handle_from_url(((r.get("card") or {}).get("identity") or {}).get("links", {}).get("linkedin")) == target
+        for r in owned
+    )
+
+
+def signed_in_with_linkedin(principal) -> bool:
+    """Is a LinkedIn sign-in linked to this account? Read from app_metadata,
+    which Supabase sets and the user cannot edit (user_metadata they can)."""
+    app_md = getattr(principal, "app_metadata", None) or {}
+    providers = app_md.get("providers") or [app_md.get("provider")]
+    return "linkedin_oidc" in providers
+
+
+def linkedin_matches_card(card: AgentProfileCard, principal) -> bool:
+    """True when the account signed in with the LinkedIn profile this card
+    links to. Only this earns the LinkedIn badge; claiming no longer needs it."""
+    card_linkedin = linkedin_handle_from_url(card.identity.links.get("linkedin"))
+    user_linkedin = owner_user_metadata_linkedin(principal)
+    return bool(card_linkedin and user_linkedin and card_linkedin == user_linkedin
+                and signed_in_with_linkedin(principal))
+
+
+def claim_card_by_owner(handle: str, principal) -> tuple[bool, str]:
+    """Claim an unowned card for the signed-in account. Returns (claimed, message).
+
+    Open to anyone signed in, with any sign-in method (Google, LinkedIn, email
+    code). It used to require the signed-in LinkedIn profile to match the
+    card's LinkedIn URL, which shut out everyone who signed in with Google, an
+    email, or a different LinkedIn account than the one the card was built
+    from. A wrong claim is handled after the fact by the "This isn't me"
+    report. The only rules left: the card is unclaimed, and the account owns
+    no other card, unless this one shares its LinkedIn profile (a duplicate
+    owner home asks them to claim and merge). The LinkedIn badge is still
+    given only on a real match.
     """
     sb = config.get_supabase()
     resp = (
@@ -1049,27 +1095,28 @@ def claim_card_by_owner(handle: str, principal: dict) -> tuple[bool, str]:
     owner_email = (getattr(principal, "email", "") or "").strip()
     if not owner_email:
         return False, "signed-in account has no email"
-
     card = _row_to_card(row)
-    card_linkedin = linkedin_handle_from_url(card.identity.links.get("linkedin"))
-    user_linkedin = owner_user_metadata_linkedin(principal)
-    if not card_linkedin:
-        return False, "this card has no LinkedIn profile to match against"
-    if not user_linkedin:
-        return False, "your LinkedIn identity could not be read — sign in with LinkedIn and try again"
-    if card_linkedin != user_linkedin:
-        return False, "your LinkedIn account does not match this card's LinkedIn profile"
+    owned = _owned_cards(sb, owner_email)
+    if owned and not _is_a_duplicate_of(card, owned):
+        return False, "your account already has a card — each person has one"
 
     update: dict = {"owner_email": owner_email, "claim_token_hash": None}
     owner_user_id = _aafo_user_id(principal)
     if owner_user_id and config.WRITES_OWNER_USER_ID:
         update["owner_user_id"] = owner_user_id      # Cards networking identifies owners by this
-    sb.table("agent_profile_cards").update(update).eq("handle", handle).execute()
+    # The owner_email filter makes the claim atomic: if two people press Claim
+    # at once, only the first update matches a row.
+    claimed = (
+        sb.table("agent_profile_cards").update(update)
+        .eq("handle", handle).is_("owner_email", "null").execute()
+    )
+    if isinstance(claimed.data, list) and not claimed.data:
+        return False, "this card is already claimed"
     card_cache.invalidate()
     card_id = row.get("id")
-    if card_id:
+    if card_id and linkedin_matches_card(card, principal):
         from services import trust
-        trust.record_verification(card_id, "linkedin")        # claim required the matching LinkedIn sign-in
+        trust.record_verification(card_id, "linkedin")
     if owner_user_id and card_id:
         from services import invites
         invites.deliver_for_card(card_id, owner_user_id)     # invitations that were waiting for this Card

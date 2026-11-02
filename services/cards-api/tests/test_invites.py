@@ -209,7 +209,7 @@ def test_opening_connections_delivers_invitations_waiting_for_your_card(world, m
     assert [c["status"] for c in listed["connections"]] == ["pending"] and listed["connections"][0]["incoming"] is True
 
 
-def test_claiming_via_linkedin_records_the_owner_and_delivers(world, monkeypatch):
+def test_claiming_records_the_owner_and_delivers(world, monkeypatch):
     monkeypatch.setattr(config, "AAFO_ISSUER", "https://aafo.example/auth/v1")
     monkeypatch.setattr(config, "WRITES_OWNER_USER_ID", True)
     monkeypatch.setattr(cards_service, "owner_user_metadata_linkedin", lambda p: "grace-hopper")

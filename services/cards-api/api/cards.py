@@ -206,14 +206,15 @@ async def claim_card(
     request: Request,
     authorization: str | None = Header(default=None),
 ):
-    """Claim an unowned card by matching the signed-in LinkedIn identity to the
-    card's LinkedIn URL. The legacy claim-token path stays as a fallback."""
+    """Claim an unowned card for whoever is signed in, with any sign-in method.
+    Refused only when the card is already claimed or the account owns another
+    card. Wrong claims are handled by the "This isn't me" report."""
     principal = verify_supabase_jwt(authorization)
     if not principal:
         raise HTTPException(status_code=401, detail="Sign in to claim this card")
     claimed, message = await asyncio.to_thread(cards_service.claim_card_by_owner, handle, principal)
     if not claimed:
-        status = 404 if message == "card not found" else 403
+        status = 404 if message == "card not found" else 409
         raise HTTPException(status_code=status, detail=message)
     events_service.emit("claim_done", handle=handle, request=request)
     return {"claimed": True, "handle": handle}

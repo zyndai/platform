@@ -1,7 +1,8 @@
 """Self-hosted OAuth sign-in and explicit consent for MCP connectors.
 
 Platform-agnostic: the memory layer signs the user in itself through Supabase
-(Google / LinkedIn OIDC) — the providers already trusted by app.supabase_auth.py
+(Google / LinkedIn OIDC, or a 6-digit code sent to the account's email) — the
+providers already trusted by app.supabase_auth.py
 — with no cards/persona dependency. After sign-in, the server verifies the
 session and displays the existing account before an explicit Allow or Cancel.
 
@@ -120,6 +121,17 @@ _CSS = """<style>
     border:1px solid var(--edge);background:#fff;color:var(--ink);font:600 14px/1 var(--ui)}
   .reviewer input:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 4px rgba(108,92,231,.14)}
   .reviewer .btn{margin-top:10px}
+  .or{display:flex;align-items:center;gap:12px;margin:16px 0;font:400 11px/1 var(--mono);
+    letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+  .or::before,.or::after{content:"";flex:1;height:1px;background:var(--edge)}
+  .otp input{display:block;width:100%;height:48px;margin-bottom:10px;padding:0 14px;border-radius:13px;
+    border:1px solid var(--edge);background:#fff;color:var(--ink);font:600 14px/1 var(--ui)}
+  .otp input:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 4px rgba(108,92,231,.14)}
+  .otp #otp-code{text-align:center;letter-spacing:.4em;font:700 20px/1 var(--mono)}
+  .otp .hint{margin:0 0 10px;font:500 13px/1.5 var(--ui);color:var(--soft)}
+  .sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .otp .linkbtn{margin-top:10px;padding:0;border:0;background:none;color:var(--accent);
+    font:700 12px/1.4 var(--ui);cursor:pointer}
   .legal{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 16px;padding:0 16px 28px;
     font:400 12px/1.4 var(--mono);letter-spacing:.04em;color:var(--faint)}
   .legal a{color:var(--faint);font-weight:400}
@@ -203,6 +215,19 @@ _LOGIN_BODY = """<div class="wrap">
       <button type="button" class="btn" data-provider="google">%%GOOGLE_ICON%%Continue with Google</button>
       <button type="button" class="btn" data-provider="linkedin_oidc">%%LINKEDIN_ICON%%Continue with LinkedIn</button>
     </div>
+    <div class="or" aria-hidden="true">or</div>
+    <form id="otp-email-form" class="otp" autocomplete="on">
+      <label for="otp-email" class="sr">Email address</label>
+      <input id="otp-email" type="email" placeholder="you@example.com" required autocomplete="email">
+      <button type="submit" class="btn primary">Email me a code</button>
+    </form>
+    <form id="otp-code-form" class="otp" hidden>
+      <p class="hint" id="otp-hint"></p>
+      <label for="otp-code" class="sr">Sign-in code</label>
+      <input id="otp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" required>
+      <button type="submit" class="btn primary">Sign in</button>
+      <button type="button" class="linkbtn" id="otp-back">Use a different email</button>
+    </form>
     %%REVIEWER%%
   </div>
   <div class="card" id="consent" hidden>
@@ -307,6 +332,49 @@ _LOGIN_BODY = """<div class="wrap">
       sb.auth.signInWithOAuth({provider: provider, options: {redirectTo: CALLBACK}})
         .then(function(r){ if (r.error) { showError(r.error.message); } });
     });
+  });
+  // Email code: existing accounts only (shouldCreateUser false). New accounts
+  // are made on the Cards site, like the lede says.
+  var otpEmailForm = document.getElementById('otp-email-form');
+  var otpCodeForm = document.getElementById('otp-code-form');
+  var otpEmail = '';
+  otpEmailForm.addEventListener('submit', function(ev){
+    ev.preventDefault();
+    var submit = otpEmailForm.querySelector('button');
+    otpEmail = document.getElementById('otp-email').value.trim().toLowerCase();
+    if (!otpEmail) return;
+    submit.disabled = true;
+    sb.auth.signInWithOtp({email: otpEmail, options: {shouldCreateUser: false}})
+      .then(function(r){
+        if (r.error) { showError(r.error.message); return; }
+        document.getElementById('error').hidden = true;
+        document.getElementById('otp-hint').textContent = 'We sent a 6-digit code to ' + otpEmail + '.';
+        otpEmailForm.hidden = true;
+        otpCodeForm.hidden = false;
+        document.getElementById('otp-code').focus();
+      }).catch(function(){ showError('Could not send the code. Try again.'); })
+      .finally(function(){ submit.disabled = false; });
+  });
+  otpCodeForm.addEventListener('submit', function(ev){
+    ev.preventDefault();
+    var submit = otpCodeForm.querySelector('button[type=submit]');
+    var code = document.getElementById('otp-code').value.replace(/[^0-9]/g, '');
+    submit.disabled = true;
+    sb.auth.verifyOtp({email: otpEmail, token: code, type: 'email'})
+      .then(function(r){
+        if (r.error || !r.data || !r.data.session) {
+          showError("That code didn't work. Check it, or go back and send a new one.");
+          return;
+        }
+        document.getElementById('error').hidden = true;
+        preview(r.data.session.access_token);
+      }).catch(function(){ showError('Sign-in failed. Try again.'); })
+      .finally(function(){ submit.disabled = false; });
+  });
+  document.getElementById('otp-back').addEventListener('click', function(){
+    otpCodeForm.hidden = true;
+    otpEmailForm.hidden = false;
+    document.getElementById('otp-code').value = '';
   });
   var reviewerForm = document.getElementById('reviewer-form');
   if (reviewerForm) {

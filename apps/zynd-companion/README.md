@@ -57,6 +57,10 @@ applied to the database they use.
   No `tabs`, `history`, `cookies` or `<all_urls>`; host access is the Cards API only.
 - **Nothing is sent that was not shown.** The popup shows the title, kind, note and
   public link before **Add to my card**. The right-click menu only pre-fills it.
+- **Titles are read defensively.** On single-page sites (YouTube, X, LinkedIn) the `og:`
+  tags stay as they were on the first page loaded, so `resolvePage()` in `classify.ts`
+  ignores them when `og:url` names another page or `og:title` is only the site's own
+  name, and uses the tab title instead. Real YouTube's home page has no `og:url`.
 - **Private pages are refused** in `classify.ts` and again by cards-api.
 - **No incognito** (`"incognito": "not_allowed"`).
 - Text from pages is only ever drawn as text. `readPage()` must stay self-contained

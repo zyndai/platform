@@ -1,6 +1,10 @@
+import type { PageInfo } from "./page-info";
+
 /**
  * What may be clipped, and what kind of thing it is. Pure functions, no browser APIs.
  * The URL rules mirror cards-api services/companion.py (clean_url): the server checks again.
+ * (Stripping a few extra share-tracking parameters on video sites here is cosmetic: the server
+ * never puts them back, and what is safe to publish is still decided there.)
  */
 export type Kind = "repo" | "paper" | "video" | "post" | "newsletter" | "blog" | "news" | "link";
 
@@ -20,6 +24,9 @@ const TRACKING_PARAMS = new Set([
   "_hsenc", "_hsmi", "mkt_tok", "yclid", "twclid",
 ]);
 const NO_QUERY_HOSTS = new Set(["x.com", "twitter.com", "mobile.twitter.com"]);
+/** Parameters YouTube adds when a link is shared or clicked from a list: they identify the sharer, not the video. */
+const YOUTUBE_NOISE = new Set(["si", "pp", "feature", "ab_channel", "start_radio"]);
+const isYouTube = (host: string) => host === "youtu.be" || host === "youtube.com" || host.endsWith(".youtube.com");
 const PRIVATE_SUFFIXES = [".local", ".localhost", ".internal", ".lan", ".home", ".corp", ".intranet", ".private"];
 
 export const URL_MAX = 500;
@@ -79,6 +86,14 @@ export function cleanUrl(raw: string): Clippable {
   } else {
     for (const key of [...url.searchParams.keys()]) {
       if (TRACKING_PARAMS.has(key.toLowerCase()) || key.toLowerCase().startsWith("utm_")) url.searchParams.delete(key);
+    }
+    if (isYouTube(host)) {
+      for (const key of [...url.searchParams.keys()]) if (YOUTUBE_NOISE.has(key.toLowerCase())) url.searchParams.delete(key);
+      // An auto-generated "Mix" (list=RD…) is not a page anyone else can open the same way.
+      if ((url.searchParams.get("list") || "").startsWith("RD")) {
+        url.searchParams.delete("list");
+        url.searchParams.delete("index");
+      }
     }
   }
   const cleaned = url.toString();
@@ -164,9 +179,14 @@ export function tidyTitle(raw: string, address: string): string {
   } catch {
     /* A title is still a title. */
   }
+  // "(3) " in front of a title is the site's unread-notifications count, not part of the title.
+  if (isYouTube(host) || host === "x.com" || host === "twitter.com" || host.endsWith("linkedin.com")) {
+    title = title.replace(/^\(\d+\+?\)\s*/, "");
+  }
   if (host === "github.com") title = title.replace(/^GitHub\s*-\s*/, "");
-  if (host.endsWith("youtube.com") || host === "youtu.be") title = title.replace(/\s*-\s*YouTube$/, "");
+  if (isYouTube(host)) title = title.replace(/\s*-\s*YouTube$/, "");
   if (host === "x.com" || host === "twitter.com") title = title.replace(/\s*\/\s*X$/, "");
+  if (host.endsWith("linkedin.com")) title = title.replace(/\s*\|\s*LinkedIn$/, "");
   return title.slice(0, TITLE_MAX).trim() || host;
 }
 
@@ -174,4 +194,80 @@ export function tidyTitle(raw: string, address: string): string {
 export function tidyText(raw: string, limit: number): string {
   // eslint-disable-next-line no-control-regex
   return (raw || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, limit).trim();
+}
+
+/** True unless the page's own og:url says it is describing a different page than the one open now. */
+export function ogUrlMatches(ogUrl: string, pageUrl: string): boolean {
+  if (!ogUrl || !pageUrl) return true; // nothing to contradict
+  try {
+    const claimed = new URL(ogUrl, pageUrl);
+    const open = new URL(pageUrl);
+    const bare = (u: URL) => u.hostname.toLowerCase().replace(/^www\./, "");
+    if (bare(claimed) !== bare(open)) return false;
+    if (claimed.pathname.replace(/\/$/, "") !== open.pathname.replace(/\/$/, "")) return false;
+    for (const [key, value] of claimed.searchParams) if (open.searchParams.get(key) !== value) return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+const alnum = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+/** "youtube" for www.youtube.com, "bbc" for news.bbc.co.uk: the name a site goes by in its own title. */
+function siteBrand(host: string): string {
+  const labels = host.toLowerCase().replace(/^www\./, "").split(".");
+  if (labels.length < 2) return labels[0] || "";
+  const second = labels[labels.length - 2] || "";
+  const compound = ["co", "com", "org", "net", "ac", "gov", "edu"].includes(second) && (labels[labels.length - 1] || "").length === 2;
+  return labels[Math.max(labels.length - (compound ? 3 : 2), 0)] || "";
+}
+
+/**
+ * What the open page says about itself, with the stale parts left out.
+ * Single-page sites (YouTube, X, LinkedIn…) change the address and the tab title as you click
+ * around but leave the og: tags from the first page load in place. Two tells that they are left
+ * over: og:url names a different page than the one open now, or og:title is only the site's own
+ * name ("YouTube", from the home page it was first loaded on) while the tab title says more.
+ * In both cases only the tab title, which those sites keep current, is trusted.
+ */
+export function resolvePage(info: Partial<PageInfo>): PageHints & { title: string; selection: string; channel: string } {
+  const documentTitle = info.documentTitle || "";
+  const ogTitle = info.ogTitle || "";
+  let host = "";
+  try {
+    host = new URL(info.pageUrl || "").hostname;
+  } catch {
+    /* No address: nothing to compare the og: tags with. */
+  }
+  const siteLevel = [siteBrand(host), alnum(info.siteName || "")].includes(alnum(ogTitle)) && alnum(ogTitle) !== "";
+  const fresh = ogUrlMatches(info.ogUrl || "", info.pageUrl || "") && !(siteLevel && alnum(documentTitle) !== alnum(ogTitle) && documentTitle !== "");
+  return {
+    title: fresh ? ogTitle || documentTitle : documentTitle,
+    siteName: fresh ? info.siteName || "" : "",
+    ogType: fresh ? info.ogType || "" : "",
+    generator: info.generator || "",
+    selection: info.selection || "",
+    channel: info.channel || "",
+  };
+}
+
+/** Two spellings of one page compare equal: no www, no trailing slash, same query. Mirrors cards-api url_key. */
+export function urlKey(address: string): string {
+  try {
+    const url = new URL(address);
+    return `${url.hostname.toLowerCase().replace(/^www\./, "")}${url.pathname.replace(/\/+$/, "")}?${url.search.replace(/^\?/, "")}`;
+  } catch {
+    return address;
+  }
+}
+
+/** The address as the person should see it: the host and everything that identifies the page, never the scheme or the fragment. */
+export function displayAddress(address: string): string {
+  try {
+    const url = new URL(address);
+    return `${url.hostname.replace(/^www\./, "")}${url.pathname === "/" ? "" : url.pathname}${url.search}`;
+  } catch {
+    return address;
+  }
 }

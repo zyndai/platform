@@ -71,7 +71,14 @@ docker compose -p zynd -f infra/api-box/docker-compose.prod.yml \
 (cd apps/cards-web && npm ci && npm run build)
 # 4. persona-api venv
 python3 -m venv services/persona-api/.venv && services/persona-api/.venv/bin/pip install -r services/persona-api/requirements.txt
-# 5. Caddy + pm2
+# 5. Caddy + pm2. First the Prometheus basic-auth file (not in git): without it Caddy
+#    still starts, but metrics.zynd.ai and :9443 answer 503. The password goes to
+#    ~/.zynd-obs/.metrics-password (docs/MONITORING.md, "Public URLs").
+PW=$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-28)
+printf 'basicauth {\n\tprometheus %s\n}\n' "$(caddy hash-password --plaintext "$PW")" | sudo tee /etc/caddy/metrics-basicauth.conf >/dev/null
+sudo chown root:caddy /etc/caddy/metrics-basicauth.conf && sudo chmod 640 /etc/caddy/metrics-basicauth.conf
+mkdir -p ~/.zynd-obs && (umask 077; printf 'prometheus:%s\n' "$PW" > ~/.zynd-obs/.metrics-password)
+sudo caddy validate --config infra/single-box/Caddyfile --adapter caddyfile
 sudo install -m644 infra/single-box/Caddyfile /etc/caddy/Caddyfile && sudo systemctl restart caddy
 pm2 start infra/single-box/ecosystem.config.js --only web,cards-web && pm2 save
 # 6. firewall (SSH first, then the service ports, in and out)
@@ -80,9 +87,14 @@ for p in 80 443 3000 3002 8001 8002 8090; do sudo ufw allow in $p/tcp; sudo ufw 
 sudo ufw enable
 ```
 
-Docker publishes 8001/8002/8090 through its own iptables chain, which bypasses
+Docker publishes 8001/8002/8090/8091 through its own iptables chain, which bypasses
 ufw's INPUT rules; publishing them in the override is what exposes them. A
-provider-level (cloud) firewall, if any, is separate from ufw.
+provider-level (cloud) firewall, if any, is separate from ufw. They bypass Caddy
+too, so the 404 Caddy gives `/metrics` on the domains does not apply there:
+`http://<ip>:8001/metrics` and `:8002/metrics` are public. Nothing in this repo
+calls those ports from off the box (Caddy, persona-api and Prometheus all use
+127.0.0.1), so binding them to `127.0.0.1:` in the override is the fix once
+nobody outside relies on the direct-IP access described above.
 
 **persona-api is started separately**: `pm2 start infra/single-box/ecosystem.config.js --only api`.
 It refuses to boot without the Zynd developer keypair at

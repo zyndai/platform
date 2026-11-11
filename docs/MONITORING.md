@@ -37,14 +37,24 @@ ports, with self-signed certificates (Caddy's internal CA), so the browser warns
 | **https://169.58.17.193:3443** | Grafana | Grafana's own accounts |
 | **https://169.58.17.193:9443** | Prometheus | basic auth, as above |
 
-The ports must be allowed in ufw by hand: `sudo ufw allow 3443/tcp && sudo ufw allow 9443/tcp`
-(better: `sudo ufw allow from <your IP> to any port 3443,9443 proto tcp`). To check that the
+The ports must be allowed in ufw by hand, and only from the operators' own addresses (one rule
+per person; these are admin tools, not something the internet needs to reach):
+`sudo ufw allow from <your IP> to any port 3443,9443,4443 proto tcp`. To check that the
 warning is for this box's own CA, compare the **root** certificate's SHA-256 in the browser's
 certificate viewer with `DF:6B:3C:DF:43:33:9A:54:65:AF:B6:41:6F:25:86:68:06:56:B6:ED:AD:22:E3:15:63:F3:A5:75:49:23:06:C3`
 (CN "Caddy Local Authority - 2026 ECC Root", valid to 2036, from
 `/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt`). The server certificate
 itself is renewed about every 12 hours, so its fingerprint is not stable; to remove the warning,
 trust that root on your machine.
+
+For scripts, fetch that root once and pin it instead of turning verification off with
+`curl -k` (which would accept anyone in the middle, and the logs API key with it):
+
+```bash
+ssh <user>@<box> sudo cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt > zynd-box-root.crt
+openssl x509 -in zynd-box-root.crt -noout -fingerprint -sha256   # must equal the fingerprint above
+curl --cacert zynd-box-root.crt https://169.58.17.193:4443/health
+```
 
 Loki stays on loopback; search logs through Grafana's Explore. The tunnel is the fallback
 if a public name is down:
@@ -57,24 +67,32 @@ ssh -L 3030:127.0.0.1:3030 -L 9090:127.0.0.1:9090 <user>@<box>   # localhost:303
 not a shared `admin`. The first-run `admin` password is `GRAFANA_ADMIN_PASSWORD` in
 `~/.zynd-obs/.env` on the box; change it in Grafana, after which that value is stale.
 Give most people the Viewer role: **a Viewer can still search every log line**, and the
-logs hold user emails (in request paths such as `/v1/service/findability/<email>`),
-client IPs and OAuth query strings, so keep the account list short.
+logs hold user emails (in request paths such as `/v1/service/findability/<email>`) and
+client IPs, so keep the account list short. Credentials are kept out: Caddy blanks the
+secret-bearing headers and query parameters (`token`, `code`, `state`, ...) in its access log,
+and Alloy redacts the same patterns, plus anything shaped like a JWT, from every source
+before Loki (`alloy/config.alloy`, "redact"). A new header or parameter that carries a secret
+needs adding to both lists.
 
 ### Public URLs
 
 **metrics.zynd.ai credentials.** Prometheus has no login, so Caddy asks for one. The
 bcrypt hash is in `/etc/caddy/metrics-basicauth.conf` on the box (`root:caddy`, 640, not in
 git, imported by the Caddyfile); the password is in `~ubuntu/.zynd-obs/.metrics-password`
-as `user:password`. To change it:
+as `user:password` (`apply.sh` leaves that file alone). If the hash file is missing, Caddy
+still starts and serves every other site, but metrics.zynd.ai and `:9443` answer 503 to
+everyone, and each deploy prints a NOTE saying so. To create or change it:
 
 ```bash
 PW=$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-28)
 printf 'basicauth {\n\tprometheus %s\n}\n' "$(caddy hash-password --plaintext "$PW")" | sudo tee /etc/caddy/metrics-basicauth.conf >/dev/null
-printf 'prometheus:%s\n' "$PW" > ~/.zynd-obs/.metrics-password && sudo systemctl reload caddy
+sudo chown root:caddy /etc/caddy/metrics-basicauth.conf && sudo chmod 640 /etc/caddy/metrics-basicauth.conf
+(umask 077; printf 'prometheus:%s\n' "$PW" > ~/.zynd-obs/.metrics-password) && sudo systemctl reload caddy
 ```
 
-Prometheus's `/-/quit` and `/-/reload` are enabled for `apply.sh` (it reloads on loopback),
-so Caddy answers 403 for them on the public name. Don't enable Prometheus's admin API.
+Prometheus runs without its lifecycle API (`apply.sh` reloads it with SIGHUP), so `/-/quit`
+and `/-/reload` are refused; Caddy also answers 403 for them on the public names in case it
+is ever turned back on. Don't enable Prometheus's admin API either.
 
 **Moving a name.** The hostnames are constants in `infra/single-box/Caddyfile` and, for
 Grafana's redirect URLs, `GF_SERVER_DOMAIN` and `GF_SERVER_ROOT_URL` in
@@ -107,14 +125,14 @@ sum by (host) (count_over_time({source="caddy", status=~"5.."}[5m]))
 
 ## Pull logs from a script: the logs API
 
-`https://169.58.17.193:4443` (self-signed, so `curl -k`; needs ufw port 4443) lists what is collected and
+`https://169.58.17.193:4443` (self-signed: pin the box's root with `--cacert`, as above; needs ufw port 4443 from your IP) lists what is collected and
 returns filtered logs as JSON, with a bearer key from `LOGS_API_KEYS` in `~/.zynd-obs/.env`. It is a
 bounded front for Loki, which stays private. Full reference and examples: "Logs API" in
 `infra/observability/README.md`, and the live page at `/docs`.
 
 ```bash
-curl -sk -H "Authorization: Bearer $KEY" "https://169.58.17.193:4443/v1/sources?since=6h"      # what exists
-curl -sk -H "Authorization: Bearer $KEY" "https://169.58.17.193:4443/v1/logs?project=cards-api&env=prod&level=error&since=2h&q=timeout"
+curl -s --cacert zynd-box-root.crt -H "Authorization: Bearer $KEY" "https://169.58.17.193:4443/v1/sources?since=6h"      # what exists
+curl -s --cacert zynd-box-root.crt -H "Authorization: Bearer $KEY" "https://169.58.17.193:4443/v1/logs?project=cards-api&env=prod&level=error&since=2h&q=timeout"
 ```
 
 ## Add something
@@ -141,7 +159,9 @@ Instrumentator(excluded_handlers=["/metrics"]).instrument(app).expose(app, inclu
 ```
 
 then add a scrape job for its host port in `prometheus/prometheus.yml`. Caddy already
-answers 404 for `/metrics` on every public host. The MCP and plugin servers are not
+answers 404 for `/metrics` on every hostname it serves, but that does nothing for a port
+Docker publishes on the public IP (see "Known gaps"), so publish the new port on
+`127.0.0.1:` only. The MCP and plugin servers are not
 instrumented (FastMCP apps with their own host checks and streaming transport); their
 traffic is in the Caddy log and the container series.
 

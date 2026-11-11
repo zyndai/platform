@@ -2,6 +2,13 @@
 # and proxies to the API container. Requires the DNS A record api.zynd.ai -> this
 # server's IP, and ports 80/443 open.
 api.zynd.ai {
+	# memory and cards-api serve Prometheus metrics at /metrics; keep them off the public
+	# name (same rule as the shared snippet in infra/single-box/Caddyfile). Caddy sorts
+	# this handle ahead of the others (`caddy adapt` shows it first), so it wins.
+	@metrics path /metrics /metrics/*
+	handle @metrics {
+		respond 404
+	}
 	# Remote MCP endpoint (streamable-HTTP) for Claude/Cursor/any MCP client.
 	handle /chatgpt/mcp* {
 		reverse_proxy chatgpt-plugin:8091

@@ -34,7 +34,9 @@ LOKI_TIMEOUT = 30.0
 FILTER_LABELS = ("source", "env", "project", "level", "container", "process", "stream", "host", "status")
 GROUP_LABELS = ("level", "project", "env", "source", "host", "status", "container", "process")
 SAFE_VALUE = re.compile(r"^[A-Za-z0-9_.:/\- ]{1,100}$")
-DURATION = re.compile(r"^(\d+)([smhd])$")
+# A positive whole number and a unit: 30s, 15m, 6h, 2d. Zero is refused, since a 0s step
+# would divide by zero and a 0s range is empty.
+DURATION = re.compile(r"^([1-9]\d*)([smhd])$")
 UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 app = FastAPI(title="Zynd logs API", version="1.0.0", description=__doc__)
@@ -225,6 +227,21 @@ async def logs(
 ):
     start_ns, end_ns = resolve_range(since, start, end)
     query = build_query(_filters(source, env, project, level, container, process, stream, host, status), q, not_q, regex)
+    entries = await _fetch_entries(query, start_ns, end_ns, limit, order)
+    truncated = len(entries) >= limit
+    next_end = None
+    if truncated and order == "desc":
+        entries, next_end = await _page_boundary(query, entries)
+    for e in entries:
+        e["ts"] = _rfc3339(int(e["ts_ns"]))
+    out = {"query": query, "start": _rfc3339(start_ns), "end": _rfc3339(end_ns), "order": order,
+           "count": len(entries), "truncated": truncated, "entries": entries}
+    if next_end is not None:
+        out["next"] = {"end": str(next_end)}
+    return out
+
+
+async def _fetch_entries(query: str, start_ns: int, end_ns: int, limit: int, order: str) -> list[dict]:
     data = await loki_get("/loki/api/v1/query_range", {
         "query": query, "start": start_ns, "end": end_ns, "limit": limit,
         "direction": "backward" if order == "desc" else "forward"})
@@ -233,15 +250,27 @@ async def logs(
         for ts, line in st["values"]:
             entries.append({"ts_ns": ts, "labels": st["stream"], "line": line})
     entries.sort(key=lambda e: int(e["ts_ns"]), reverse=(order == "desc"))
-    entries = entries[:limit]
-    for e in entries:
-        e["ts"] = _rfc3339(int(e["ts_ns"]))
-    truncated = len(entries) >= limit
-    out = {"query": query, "start": _rfc3339(start_ns), "end": _rfc3339(end_ns), "order": order,
-           "count": len(entries), "truncated": truncated, "entries": entries}
-    if truncated and entries and order == "desc":
-        out["next"] = {"end": entries[-1]["ts_ns"]}
-    return out
+    return entries[:limit]
+
+
+async def _page_boundary(query: str, entries: list[dict]) -> tuple[list[dict], int]:
+    """Where a truncated newest-first page ends, and the `end` that continues it.
+
+    Loki's `end` is exclusive and it has no cursor within a nanosecond, and when several entries
+    share the page's oldest timestamp, which of them made the cut is arbitrary. Using that
+    timestamp as the next `end` would skip the ones that didn't. So the whole oldest-timestamp
+    group is held back and the next page ends just past it (ts + 1), which returns that group in
+    full and nothing newer: no entry is lost or repeated.
+
+    If the page is that one group, holding it back would hand out the same cursor forever, so the
+    group is fetched on its own (a 1 ns range, up to MAX_LIMIT entries) and the next page starts
+    below it. Only a single nanosecond holding more than MAX_LIMIT entries can still lose lines.
+    """
+    oldest = int(entries[-1]["ts_ns"])
+    newer = [e for e in entries if int(e["ts_ns"]) != oldest]
+    if newer:
+        return newer, oldest + 1
+    return await _fetch_entries(query, oldest, oldest + 1, MAX_LIMIT, "desc"), oldest
 
 
 @app.get("/v1/stats", dependencies=[Depends(require_key)])

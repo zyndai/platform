@@ -51,6 +51,7 @@ import { HelpedCard } from "./helped-card";
 import { cleanTopic, publicTopics } from "@/lib/profile-quality";
 import { BeaconCard } from "@/components/BeaconCard";
 import { BookingAvailability } from "@/components/BookingAvailability";
+import { HelpChip } from "@/components/HelpChip";
 
 interface PageProps {
   params: Promise<{ handle: string }>;
@@ -654,6 +655,8 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
   const xImpressions = v.x.impressions != null && String(v.x.impressions).trim() !== "—" ? v.x.impressions : null;
   const showMemory = claimed && memoryTotal > 0;
   const showBooking = claimed && bookingLinks.length > 0;
+  // Priced help chips link to the same booking page as the "Book intro call" CTA.
+  const helpRequestUrl = claimed ? (bookingLinks[0]?.url ?? null) : null;
   const socialSlots = [showLinkedin, showX, showMemory, showBooking].filter(Boolean).length;
 
   /* ── shared card style ─────────────────────────────────── */
@@ -960,9 +963,7 @@ export default async function PersonPage({ params, searchParams }: PageProps) {
               {helpWith.length > 0 && (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 10 }}>
                   {helpWith.map((item) => (
-                    <span key={item} style={{ background: "rgba(255,255,255,0.16)", borderRadius: 999, padding: "3px 8px", fontSize: "0.62rem", fontWeight: 600 }}>
-                      {item}
-                    </span>
+                    <HelpChip key={item} label={item} requestUrl={helpRequestUrl} />
                   ))}
                 </div>
               )}

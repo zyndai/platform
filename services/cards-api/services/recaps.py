@@ -14,6 +14,7 @@ from fastapi import HTTPException
 
 import config
 from scraping.github import fetch_period_contributions, github_handle_from_url
+from scraping.github_recaps import fetch_period_activity
 from services import owner_home
 from services.companion import clean_url
 
@@ -145,6 +146,8 @@ def default_caption(snapshot: dict) -> str:
             lines.append(f"{h['count']} GitHub contributions.")
         elif h["kind"] in ("learned", "exploring"):
             lines.append(f"{'Learned' if h['kind'] == 'learned' else 'Explored'} {h['title']}.")
+        elif h["kind"] in ("release", "pull_request"):
+            lines.append(f"{'Released' if h['kind'] == 'release' else 'Merged PR'} {h['title']}.")
     return "\n".join(lines)[:2000]
 
 
@@ -165,7 +168,26 @@ async def generate(email: str, period: str, refresh: bool = False, row: dict | N
     highlights = _highlights(row, milestones, start, end)
     identity = (row.get("card") or {}).get("identity") or {}
     login = github_handle_from_url((identity.get("links") or {}).get("github"))
-    count = await fetch_period_contributions(login, start, min(end, now)) if login else None
+    activity = {"items": [], "releases": "not_connected", "pull_requests": "not_connected"}
+    count = None
+    if login:
+        count, activity = await asyncio.gather(
+            fetch_period_contributions(login, start, min(end, now)),
+            fetch_period_activity(login, start, min(end, now)))
+    # Temporary outages must not erase evidence already fetched for this profile and period.
+    if existing and login and existing["snapshot"].get("github_login") == login.lower():
+        seen_ids = {h["id"] for h in activity["items"]}
+        for h in existing["snapshot"]["highlights"]:
+            status = {"release": "releases", "pull_request": "pull_requests"}.get(h["kind"])
+            if status and activity[status] != "complete" and h["id"] not in seen_ids:
+                activity["items"].append(h)
+                seen_ids.add(h["id"])
+    # A manual milestone linking the exact same GitHub evidence wins over its imported copy.
+    evidence = {h["url"].rstrip("/") for h in highlights if h.get("url")}
+    imported = [h for h in activity["items"] if h["url"].rstrip("/") not in evidence]
+    # Give both sources room in the bounded snapshot, instead of letting PRs hide manual milestones.
+    room = max(0, MAX_HIGHLIGHTS - len(highlights))
+    highlights.extend(imported[:room])
     if count is not None:
         highlights.append({"id": "github", "kind": "github", "title": "GitHub contributions", "count": count,
                            "url": f"https://github.com/{login}", "source": "github"})
@@ -173,7 +195,10 @@ async def generate(email: str, period: str, refresh: bool = False, row: dict | N
                 "timezone": zone_for(row).key, "in_progress": now < end,
                 "generated_at": now.isoformat(), "highlights": highlights,
                 "github_available": count is not None,
-                "history_note": "Includes dated milestones you confirmed and exploring links still on your card."}
+                "github_login": login.lower() if login else None,
+                "github_activity": {"releases": activity["releases"], "pull_requests": activity["pull_requests"],
+                                    "truncated": len(imported) > room},
+                "history_note": "Includes public GitHub releases and merged PRs, dated milestones you confirmed, and exploring links still on your card."}
     values = {"snapshot": snapshot, "selected_ids": [h["id"] for h in highlights],
               "caption": default_caption(snapshot)}
     def save():

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { fetchPublicRecap, recapOrigin, recapPath } from "@/lib/recaps";
+import { fetchPublicRecap, highlightLabel, recapOrigin, recapPath } from "@/lib/recaps";
 import { RecapPreview } from "@/components/recaps/recap-preview";
 import { RecapShare } from "@/components/recaps/recap-share";
 import "@/components/recaps/recaps.css";
@@ -30,7 +30,7 @@ export default async function PublicRecap({ params }: Props) {
     <RecapPreview recap={recap} />
     <p className="recap-caption">{recap.caption}</p>
     <ul className="recap-source-list">{recap.snapshot.highlights.map((h) => <li key={h.id}>
-      <strong>{h.kind === "github" ? `${h.count} GitHub contributions` : `${h.kind === "shipped" ? "Shipped" : h.kind === "learned" ? "Learned" : "Explored"} ${h.title}`}</strong>
+      <strong>{highlightLabel(h)}</strong>
       <div className="recap-muted">{h.date ? `${h.date} · ` : ""}{h.source === "owner_confirmed" ? "Self-reported milestone" : h.source === "github" ? "From GitHub" : "From their public card"}
         {h.url && <> · <a href={h.url} target="_blank" rel="noopener noreferrer">View source ↗</a></>}</div>
     </li>)}</ul>

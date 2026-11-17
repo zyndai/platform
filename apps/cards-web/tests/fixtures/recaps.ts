@@ -7,12 +7,16 @@ export function recapFixtureApi() {
   let recap: Recap | null = null;
   const draft = (): Recap => ({
     id: RECAP_ID, period: "2026-09", handle: "owner", published_at: null, can_publish: true,
-    selected_ids: ["launch", "vue", "github"], caption: "My September on Zynd. Shipped a project and explored Vue.",
+    selected_ids: ["launch", "vue", "release", "pr", "github"], caption: "My September on Zynd. Shipped a project and explored Vue.",
     snapshot: { name: "Alice Chen", label: "September 2026", timezone: "Asia/Kolkata", in_progress: false,
-      generated_at: "2026-10-01T06:00:00Z", github_available: true, history_note: "Includes dated milestones you confirmed.",
+      generated_at: "2026-10-01T06:00:00Z", github_available: true,
+      github_activity: { releases: "complete", pull_requests: "partial", truncated: false },
+      history_note: "Includes public GitHub releases, merged PRs, and dated milestones you confirmed.",
       highlights: [
         { id: "launch", kind: "shipped", title: "Launchpad", date: "2026-09-12", source: "owner_confirmed", url: "https://example.com/launch" },
         { id: "vue", kind: "exploring", title: "Vue", date: "2026-09-20", source: "public_card", url: "https://vuejs.org/" },
+        { id: "release", kind: "release", title: "alice/launchpad: v1.0", date: "2026-09-20", source: "github", url: "https://github.com/alice/launchpad/releases/tag/v1.0" },
+        { id: "pr", kind: "pull_request", title: "team/project: Fix auth redirect", date: "2026-09-22", source: "github", url: "https://github.com/team/project/pull/1" },
         { id: "github", kind: "github", title: "GitHub contributions", count: 34, source: "github", url: "https://github.com/alice" },
       ] },
   });

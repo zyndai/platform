@@ -32,6 +32,9 @@ def db(monkeypatch):
     async def contributions(*args):
         return 34
     monkeypatch.setattr(recaps, "fetch_period_contributions", contributions)
+    async def activity(*args):
+        return {"items": [], "releases": "complete", "pull_requests": "complete"}
+    monkeypatch.setattr(recaps, "fetch_period_activity", activity)
     return fake
 
 
@@ -203,3 +206,46 @@ def test_generate_route_normalizes_period_before_building_snapshot(monkeypatch, 
     response = TestClient(app).post("/mine/recaps", json={"period": entered})
     assert response.status_code == 200
     assert response.json() == {"period": expected}
+
+
+@pytest.mark.asyncio
+async def test_github_highlights_import_on_refresh_without_manual_milestones(db, monkeypatch):
+    original = await recaps.generate(EMAIL, "2026-10", now=NOW)
+    item = {"id": "github:release:1", "kind": "release", "title": "alice/tool: v1", "url": "https://github.com/alice/tool/releases/tag/v1",
+            "date": "2026-10-02", "source": "github"}
+    async def activity(*args):
+        return {"items": [item], "releases": "complete", "pull_requests": "complete"}
+    monkeypatch.setattr(recaps, "fetch_period_activity", activity)
+    refreshed = await recaps.generate(EMAIL, "2026-10", refresh=True, now=NOW)
+    assert item in refreshed["snapshot"]["highlights"]
+    assert item["id"] in refreshed["selected_ids"]
+    assert "Released alice/tool: v1." in refreshed["caption"]
+    assert refreshed["id"] == original["id"]
+    assert len(db.rows("card_milestones")) == 0
+    again = await recaps.generate(EMAIL, "2026-10", refresh=True, now=NOW)
+    assert len([h for h in again["snapshot"]["highlights"] if h["id"] == item["id"]]) == 1
+    async def unavailable(*args):
+        return {"items": [], "releases": "unavailable", "pull_requests": "unavailable"}
+    monkeypatch.setattr(recaps, "fetch_period_activity", unavailable)
+    outage = await recaps.generate(EMAIL, "2026-10", refresh=True, now=NOW)
+    assert item in outage["snapshot"]["highlights"]
+    recaps.update(EMAIL, again["id"], ["github"], "Only contributions", True)
+    assert item not in recaps.public(again["id"], "alice")["snapshot"]["highlights"]
+
+
+@pytest.mark.asyncio
+async def test_manual_evidence_dedupes_import_and_github_failure_keeps_manual_work(db, monkeypatch):
+    url = "https://github.com/alice/tool/releases/tag/v1"
+    recaps.add_milestone(EMAIL, "shipped", "My launch", url, date(2026, 10, 2))
+    async def activity(*args):
+        return {"items": [{"id": "release-1", "kind": "release", "title": "v1", "url": url,
+                           "date": "2026-10-02", "source": "github"}], "releases": "complete", "pull_requests": "complete"}
+    monkeypatch.setattr(recaps, "fetch_period_activity", activity)
+    result = await recaps.generate(EMAIL, "2026-10", now=NOW)
+    assert len([h for h in result["snapshot"]["highlights"] if h["url"] == url]) == 1
+    async def unavailable(*args):
+        return {"items": [], "releases": "unavailable", "pull_requests": "unavailable"}
+    monkeypatch.setattr(recaps, "fetch_period_activity", unavailable)
+    result = await recaps.generate(EMAIL, "2026-10", refresh=True, now=NOW)
+    assert any(h["kind"] == "shipped" for h in result["snapshot"]["highlights"])
+    assert result["snapshot"]["github_activity"]["releases"] == "unavailable"

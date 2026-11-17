@@ -10,11 +10,16 @@ test.beforeEach(async ({ context, request }) => {
 test("review, render a PNG, publish selected highlights and unpublish", async ({ page, request }) => {
   await page.goto("/home/recaps");
   await expect(page.getByRole("heading", { name: /A little less blank page/ })).toBeVisible();
+  const generating = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith("/cards/mine/recaps"));
   await page.getByRole("button", { name: "Generate recap" }).click();
+  expect((await generating).postDataJSON()).toEqual({ period: "2026-09", refresh: true });
   await expect(page.getByText("Private draft", { exact: true })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: /Released alice\/launchpad: v1.0/ })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: /Merged PR team\/project: Fix auth redirect/ })).toBeChecked();
+  await expect(page.getByText(/Some activity may be missing/)).toBeVisible();
   const publicPath = `/p/owner/recaps/${RECAP_ID}`;
   expect((await request.get(publicPath)).status()).toBe(404);
-  await page.getByRole("checkbox", { name: /Explored: Vue/ }).uncheck();
+  await page.getByRole("checkbox", { name: /Explored Vue/ }).uncheck();
   await page.getByRole("textbox", { name: "Your caption" }).fill("September: shipped Launchpad and made 34 GitHub contributions.");
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.getByRole("status").first()).toHaveText("Private draft saved.");
@@ -31,6 +36,8 @@ test("review, render a PNG, publish selected highlights and unpublish", async ({
   await page.goto(publicPath);
   await expect(page.getByRole("heading", { name: "Alice Chen’s chapter." }).or(page.getByRole("heading", { name: "Alice Chen's chapter." }))).toBeVisible();
   await expect(page.getByRole("list").getByText("Shipped Launchpad", { exact: true })).toBeVisible();
+  await expect(page.getByRole("list").getByText("Released alice/launchpad: v1.0", { exact: true })).toBeVisible();
+  await expect(page.getByRole("list").getByText("Merged PR team/project: Fix auth redirect", { exact: true })).toBeVisible();
   await expect(page.getByText("Explored Vue", { exact: true })).toHaveCount(0);
   const meta = page.locator('meta[property="og:image"]');
   await expect(meta).toHaveAttribute("content", new RegExp(`/api/recaps/${RECAP_ID}/image`));

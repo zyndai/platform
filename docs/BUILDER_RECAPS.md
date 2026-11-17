@@ -8,6 +8,29 @@ downloaded images or social-platform copies cannot be withdrawn by Zynd.
 
 ## Facts and privacy
 
+- Public GitHub releases and merged pull requests are imported automatically
+  from the GitHub profile linked on the card. Manual milestones are optional.
+  A release is labelled **Released**, a pull request **Merged PR**; neither is
+  counted as a whole project shipped. The editor, PNG, caption, and public page
+  use these labels. Imported items can be hidden before publication.
+- Release discovery scans the 30 most recently updated public repositories
+  owned by the linked profile, up to 200 releases per repository. Only stable,
+  published releases authored by that profile are included, using `published_at`.
+  Merged PR search covers authored PRs in any public repository, up to 60
+  results, verifying each PR's public repository, author, and exact `merged_at`.
+  These scans support historical periods rather than relying on recent events.
+  Partial scans, missing connections, and unavailable APIs are shown separately
+  in the editor. They never imply zero activity. Counters describe selected
+  highlights, not exhaustive GitHub totals.
+- REST imports work without a token for public data; the existing `GITHUB_TOKEN`
+  increases rate limits. Private repositories are excluded even when that token
+  can access them. The scans use a four-request concurrency limit and 40-second
+  timeout per source. No new settings, auth scopes, or migrations are required.
+- Imported evidence is saved in the existing recap JSON snapshot with stable
+  source URLs. Duplicate evidence (including a manual milestone with the same
+  URL) appears once. On partial/failed refreshes, previously imported evidence
+  from the same linked profile and period is retained. A complete scan replaces
+  its source's old evidence. Published snapshots are never refreshed automatically.
 - A profile project or “Working on” string has no completion timestamp and
   never counts as shipped. Owners record dated shipped/learning milestones,
   optionally using a project already on their card. These are self-reported,
@@ -31,7 +54,10 @@ downloaded images or social-platform copies cannot be withdrawn by Zynd.
   transferred card cannot serve an old owner's public recap.
 - Published facts and captions stay frozen. Owners unpublish before editing
   or refreshing. Refresh replaces a draft's facts, selection, and caption;
-  the UI requires saving local edits first.
+  the UI requires saving local edits first. Generate now also refreshes existing
+  private drafts so new GitHub activity and recently recorded milestones appear
+  without a separate refresh step. The owner API's default remains retrieve-only
+  unless `refresh: true` is sent; cron does not regenerate existing snapshots.
 - Links to X/LinkedIn open their sharing composers. They share a recap link
   with an OG image, rather than uploading media or posting without review.
   PNG download and copy-caption support native image posts. Existing

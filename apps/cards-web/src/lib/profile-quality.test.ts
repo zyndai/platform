@@ -19,3 +19,8 @@ test("claiming a card never declares interests as learning", () => {
     { predicate: "is_located_in", value: "Delhi" },
   ]);
 });
+
+test("a priced help topic declares its expertise without the price", () => {
+  const card = { can_help_with: ["Code review · $50"], skills: [], identity: {} };
+  assert.deepEqual(cardDeclarations(card), [{ predicate: "has_expertise_in", value: "Code review" }]);
+});

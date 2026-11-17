@@ -14,6 +14,13 @@ const ARTICLE = `<!doctype html><title>The Verge story</title>
 <meta property="og:title" content="How chips got hot"><meta property="og:type" content="article">
 <h1>Story</h1><p id="p">Some paragraph the reader selected.</p>`;
 
+// YouTube as it behaves after a click: the page was loaded at the home address, so its og:title still says
+// "YouTube" (the real home page has no og:url); the script then changes the address and the tab title the
+// way the site's own navigation does.
+const YOUTUBE_HOME = `<!doctype html><title>YouTube</title>
+<meta property="og:title" content="YouTube">
+<ytd-watch-metadata><ytd-channel-name><a>Fireship</a></ytd-channel-name></ytd-watch-metadata>`;
+
 test.beforeAll(async () => {
   await mock.listen();
   context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), "zynd-companion-")), {
@@ -25,6 +32,7 @@ test.beforeAll(async () => {
   // Sites the tests visit are served here, so no network is needed.
   await context.route("https://**/*", (route) => route.fulfill({ contentType: "text/html", body: ARTICLE }));
   await context.route("http://localhost:4777/**", (route) => route.fulfill({ contentType: "text/html", body: ARTICLE }));
+  await context.route("https://www.youtube.com/**", (route) => route.fulfill({ contentType: "text/html", body: YOUTUBE_HOME }));
 });
 
 test.afterAll(async () => {
@@ -130,6 +138,35 @@ test("Currently exploring: the page is read, shown, and only sent when added", a
   expect(mock.db.exploring).toHaveLength(1);
   expect(mock.db.exploring[0]).toMatchObject({ url: "https://www.theverge.com/2026/10/1/chips", kind: "blog", title: "How chips got hot" });
   await popup.getByRole("button", { name: /Remove How chips/ }).click();
+  await expect(popup.getByRole("list", { name: "Recently added" })).toHaveCount(0);
+  expect(mock.db.exploring).toEqual([]);
+  await popup.close();
+  await page.close();
+});
+
+test("a video opened by clicking inside YouTube gets its real title, channel and full link, and shows once added", async () => {
+  const page = await context.newPage();
+  await page.goto("https://www.youtube.com/");
+  await page.evaluate(() => {
+    history.pushState({}, "", "/watch?v=abc123&si=sharer&feature=shared");
+    document.title = "(2) Cool talk - YouTube";
+  });
+  const popup = await openPopup(page);
+  await expect(popup.getByLabel("Title")).toHaveValue("Cool talk");
+  await expect(popup.getByRole("button", { name: "Video", pressed: true })).toBeVisible();
+  await expect(popup.getByLabel("Note")).toHaveValue("by Fireship");
+  await expect(popup.getByText("Public link: youtube.com/watch?v=abc123", { exact: true })).toBeVisible();
+
+  await popup.getByRole("button", { name: "Add to my card" }).click();
+  // Now it is on the card: the form says so and offers to update, instead of looking like a fresh add.
+  await expect(popup.getByText("This page is already on your card")).toBeVisible();
+  expect(mock.db.exploring[0]).toMatchObject({ url: "https://www.youtube.com/watch?v=abc123", title: "Cool talk", kind: "video", note: "by Fireship" });
+  await popup.getByLabel("Note").fill("great on agents");
+  await popup.getByRole("button", { name: "Update on my card" }).click();
+  await expect(popup.getByText("Updated. It is on your card now.")).toBeVisible();
+  expect(mock.db.exploring).toHaveLength(1);
+  expect(mock.db.exploring[0]).toMatchObject({ note: "great on agents" });
+  await popup.getByRole("button", { name: /Remove Cool talk/ }).click();
   await expect(popup.getByRole("list", { name: "Recently added" })).toHaveCount(0);
   expect(mock.db.exploring).toEqual([]);
   await popup.close();

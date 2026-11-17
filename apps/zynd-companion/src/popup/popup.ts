@@ -3,7 +3,8 @@ import {
   type ExploringItem, type Lists, type Profile,
 } from "../api";
 import {
-  KINDS, NOTE_MAX, TITLE_MAX, WORKING_ON_MAX, cleanUrl, detectKind, tidyText, tidyTitle, type Kind,
+  KINDS, NOTE_MAX, TITLE_MAX, WORKING_ON_MAX, cleanUrl, detectKind, displayAddress, resolvePage, tidyText, tidyTitle, urlKey,
+  type Kind,
 } from "../classify";
 import { STALE_AFTER_DAYS } from "../config";
 import { readPage, type PageInfo } from "../page-info";
@@ -77,17 +78,20 @@ interface Clippable {
 
 type Candidate = { ok: true; clip: Clippable } | { ok: false; reason: string };
 
-function candidateFrom(rawUrl: string, fallbackTitle: string, note: string, hints: Partial<PageInfo>): Candidate {
+function candidateFrom(rawUrl: string, fallbackTitle: string, note: string, info: Partial<PageInfo>): Candidate {
   const checked = cleanUrl(rawUrl);
   if (!checked.ok) return checked;
+  // Which of the page's own titles to trust is decided in resolvePage: on single-page sites
+  // (YouTube…) the og: tags can still describe the page the person started on.
+  const page = resolvePage(info);
   return {
     ok: true,
     clip: {
-      // What the page calls itself (og:title) is usually cleaner than the tab's title.
       url: checked.url,
-      title: tidyTitle(hints.title || fallbackTitle, checked.url),
-      note: tidyText(note || hints.selection || "", NOTE_MAX),
-      kind: detectKind(checked.url, hints),
+      title: tidyTitle(page.title || fallbackTitle, checked.url),
+      // What the person wrote or selected wins; for a video the channel is the useful context.
+      note: tidyText(note || page.selection || (page.channel ? `by ${page.channel}` : ""), NOTE_MAX),
+      kind: detectKind(checked.url, page),
     },
   };
 }
@@ -96,18 +100,19 @@ function candidateFrom(rawUrl: string, fallbackTitle: string, note: string, hint
 async function currentCandidate(): Promise<Candidate> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const draft = await takeDraft();
-  let hints: Partial<PageInfo> = {};
+  let info: Partial<PageInfo> = {};
   if (tab?.id !== undefined) {
     try {
       const [result] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readPage });
-      hints = (result?.result as PageInfo | undefined) ?? {};
+      info = (result?.result as PageInfo | undefined) ?? {};
     } catch {
       // Pages the browser keeps to itself (the Web Store, about: pages): the tab's own title will do.
     }
   }
-  if (draft) return candidateFrom(draft.url, draft.title, draft.note, draft.url === tab?.url ? hints : { title: draft.title });
+  // A clip from the menu may be for a link on the page, not the page: then only its own title is known.
+  if (draft) return candidateFrom(draft.url, draft.title, draft.note, draft.url === tab?.url ? info : { documentTitle: draft.title });
   if (!tab?.url) return { ok: false, reason: "There is no page to add." };
-  return candidateFrom(tab.url, tab.title || "", "", hints);
+  return candidateFrom(tab.url, tab.title || "", "", info);
 }
 
 function chipList(items: string[], onRemove: (item: string) => void, label: string): HTMLElement {
@@ -187,22 +192,26 @@ async function renderMain(): Promise<void> {
 
   function clipForm(found: Candidate): Node {
     if (!found.ok) return h("p", { class: "hint" }, found.reason);
-    let kind = found.clip.kind;
-    const title = h("input", { type: "text", maxlength: String(TITLE_MAX), value: found.clip.title, "aria-label": "Title" });
+    // The server keeps one entry per page, so adding a page that is already there replaces it:
+    // show what is saved and offer to update it, rather than a blank-looking second "add".
+    const saved = lists.exploring.find((item) => urlKey(item.url) === urlKey(found.clip.url));
+    const start = saved ?? found.clip;
+    let kind = start.kind;
+    const title = h("input", { type: "text", maxlength: String(TITLE_MAX), value: start.title, "aria-label": "Title" });
     const note = h("textarea", { maxlength: String(NOTE_MAX), placeholder: "Add a note (optional)", "aria-label": "Note" });
-    note.value = found.clip.note;
-    const add = h("button", { type: "button", class: "primary" }, "Add to my card");
+    note.value = start.note;
+    const add = h("button", { type: "button", class: "primary" }, saved ? "Update on my card" : "Add to my card");
     const kinds = h("div", { class: "kinds", role: "group", "aria-label": "Kind" });
     const drawKinds = () => kinds.replaceChildren(...KINDS.map(({ kind: k, label }) =>
       h("button", { type: "button", "aria-pressed": String(k === kind), onclick: () => { kind = k; drawKinds(); } }, label)));
     drawKinds();
     add.addEventListener("click", () => void changeLists(() => addExploring({
       url: found.clip.url, title: tidyText(title.value, TITLE_MAX), kind, note: tidyText(note.value, NOTE_MAX),
-    }), "Added to Currently exploring. It is on your card now."));
-    const shown = new URL(found.clip.url);
+    }), saved ? "Updated. It is on your card now." : "Added to Currently exploring. It is on your card now."));
     return h("div", {},
+      saved ? h("p", { class: "hint saved" }, "This page is already on your card. Change it here if you like.") : null,
       title, kinds, note,
-      h("p", { class: "addr", title: found.clip.url }, `Public link: ${shown.hostname.replace(/^www\./, "")}${shown.pathname === "/" ? "" : shown.pathname}`),
+      h("p", { class: "addr", title: found.clip.url }, `Public link: ${displayAddress(found.clip.url)}`),
       h("div", { class: "row", style: "margin-top:8px;justify-content:flex-end" }, add),
     );
   }

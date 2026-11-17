@@ -60,7 +60,7 @@ export function RecapEditor({ initial, token, initialId }: { initial: RecapHome;
     <div className="recap-layout"><div>
       <section className="recap-panel"><h2>Choose your chapter</h2>
         <div className="recap-controls"><label>Month or quarter<input aria-label="Recap period" value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="2026-10 or 2026-Q3" maxLength={7} /></label>
-          <button disabled={busy || dirty} onClick={() => generate()}>Generate recap</button></div>
+          <button disabled={busy || dirty} onClick={() => generate()}>{busy ? "Working…" : "Generate recap"}</button></div>
         <p className="recap-muted">Use YYYY-MM or YYYY-Q1. Completed months and quarters are prepared automatically. Current periods are labelled “so far.”</p>
       </section>
       {recap ? <section className="recap-panel" aria-label="Recap editor">

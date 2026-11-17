@@ -184,3 +184,22 @@ def test_routes_require_existing_session_and_validate_input(db, monkeypatch):
     monkeypatch.setattr(routes, "_principal", lambda auth: SimpleNamespace(email=EMAIL))
     assert client.post("/mine/milestones", json={"kind": "mastered", "title": "Vue", "occurred_on": "2026-10-01"}).status_code == 422
     assert client.post("/mine/recaps", json={"period": "2026-13"}).status_code == 422
+
+
+@pytest.mark.parametrize("entered,expected", [
+    ("2026-9", "2026-09"), ("2026-09", "2026-09"),
+    (" 2026-9 ", "2026-09"), ("2026-q3", "2026-Q3"),
+])
+def test_generate_route_normalizes_period_before_building_snapshot(monkeypatch, entered, expected):
+    app = FastAPI()
+    app.include_router(routes.router)
+    monkeypatch.setattr(routes, "_principal", lambda auth: SimpleNamespace(email=EMAIL))
+    async def generate(email, period, refresh):
+        assert email == EMAIL
+        assert period == expected
+        assert refresh is False
+        return {"period": period}
+    monkeypatch.setattr(recaps, "generate", generate)
+    response = TestClient(app).post("/mine/recaps", json={"period": entered})
+    assert response.status_code == 200
+    assert response.json() == {"period": expected}

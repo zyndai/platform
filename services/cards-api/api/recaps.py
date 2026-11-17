@@ -1,11 +1,12 @@
 """Owner controls reuse the existing Cards principal. Public reads require explicit publication."""
 import asyncio
+import re
 from datetime import date
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from api.mcp import _owner_email, _principal
 from services import recaps
@@ -27,6 +28,15 @@ class Milestone(BaseModel):
 class Generate(BaseModel):
     period: str = Field(max_length=7)
     refresh: bool = False
+
+    @field_validator("period", mode="before")
+    @classmethod
+    def normalize_period(cls, value):
+        if not isinstance(value, str):
+            return value
+        value = value.strip().upper()
+        match = re.fullmatch(r"([0-9]{4})-([0-9]{1,2})", value)
+        return f"{match[1]}-{match[2].zfill(2)}" if match else value
 
 
 class Edit(BaseModel):

@@ -1,10 +1,11 @@
 import type { CSSProperties } from "react";
-import { highlightLabel, recapStats, selectedHighlights, type Recap } from "@/lib/recaps";
+import { generatedCaption, recapStats, selectedHighlights, type Recap } from "@/lib/recaps";
 
 // Shared by the live preview and PNG renderer. Flex-only CSS also works in next/og.
 export function RecapArt({ recap }: { recap: Recap }) {
   const highlights = selectedHighlights(recap);
   const stats = recapStats(highlights);
+  const paragraph = recap.caption || generatedCaption(recap);
   const row: CSSProperties = { display: "flex", flexDirection: "row" };
   return (
     <div style={{ display: "flex", flexDirection: "column", width: 1200, height: 630, padding: "48px 56px", background: "#191b33", color: "#faf7ef", fontFamily: "sans-serif", position: "relative", overflow: "hidden" }}>
@@ -24,8 +25,8 @@ export function RecapArt({ recap }: { recap: Recap }) {
         ))}
         {!stats.length && <div style={{ display: "flex", fontSize: 32, color: "#c8c3e0" }}>Your next chapter starts here.</div>}
       </div>
-      <div style={{ display: "flex", marginTop: 30, fontSize: 21, color: "#e4dfff", height: 52, overflow: "hidden" }}>
-        {highlights.filter((h) => h.kind !== "github").slice(0, 2).map(highlightLabel).join("  /  ").slice(0, 120)}
+      <div style={{ display: "flex", position: "absolute", top: 430, left: 56, right: 56, fontSize: 20, lineHeight: 1.4, color: "#e4dfff", height: 96, overflow: "hidden" }}>
+        {paragraph.length > 400 ? `${paragraph.slice(0, 397)}…` : paragraph}
       </div>
       <div style={{ ...row, position: "absolute", bottom: 36, left: 56, right: 56, paddingTop: 20, borderTop: "1px solid #47455f", justifyContent: "space-between", fontSize: 18, color: "#c8c3e0" }}>
         <div style={{ display: "flex" }}>cards.zynd.ai/p/{recap.handle.slice(0, 40)}</div>

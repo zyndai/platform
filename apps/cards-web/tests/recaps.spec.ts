@@ -14,12 +14,13 @@ test("review, render a PNG, publish selected highlights and unpublish", async ({
   await page.getByRole("button", { name: "Generate recap" }).click();
   expect((await generating).postDataJSON()).toEqual({ period: "2026-09", refresh: true });
   await expect(page.getByText("Private draft", { exact: true })).toBeVisible();
-  await expect(page.getByRole("checkbox", { name: /Released alice\/launchpad: v1.0/ })).toBeChecked();
-  await expect(page.getByRole("checkbox", { name: /Merged PR team\/project: Fix auth redirect/ })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: /New public repository alice\/launchpad/ })).toBeChecked();
   await expect(page.getByText(/Some activity may be missing/)).toBeVisible();
+  await expect(page.getByLabel("Your caption")).toHaveValue(/^Hi connections, September 2026/);
+  await expect(page.getByRole("checkbox", { name: /Merged PR|Released/ })).toHaveCount(0);
   const publicPath = `/p/owner/recaps/${RECAP_ID}`;
   expect((await request.get(publicPath)).status()).toBe(404);
-  await page.getByRole("checkbox", { name: /Explored Vue/ }).uncheck();
+  await page.getByRole("checkbox", { name: /Learned Vue/ }).uncheck();
   await page.getByRole("textbox", { name: "Your caption" }).fill("September: shipped Launchpad and made 34 GitHub contributions.");
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.getByRole("status").first()).toHaveText("Private draft saved.");
@@ -36,9 +37,8 @@ test("review, render a PNG, publish selected highlights and unpublish", async ({
   await page.goto(publicPath);
   await expect(page.getByRole("heading", { name: "Alice Chen’s chapter." }).or(page.getByRole("heading", { name: "Alice Chen's chapter." }))).toBeVisible();
   await expect(page.getByRole("list").getByText("Shipped Launchpad", { exact: true })).toBeVisible();
-  await expect(page.getByRole("list").getByText("Released alice/launchpad: v1.0", { exact: true })).toBeVisible();
-  await expect(page.getByRole("list").getByText("Merged PR team/project: Fix auth redirect", { exact: true })).toBeVisible();
-  await expect(page.getByText("Explored Vue", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("list").getByText("New public repository alice/launchpad", { exact: true })).toBeVisible();
+  await expect(page.getByText("Learned Vue", { exact: true })).toHaveCount(0);
   const meta = page.locator('meta[property="og:image"]');
   await expect(meta).toHaveAttribute("content", new RegExp(`/api/recaps/${RECAP_ID}/image`));
   await page.screenshot({ path: "/tmp/zynd-recap-desktop.png", fullPage: true });
@@ -62,4 +62,20 @@ test("record a milestone and keep owner downloads private", async ({ page, brows
   const response = await anonymous.request.get(`http://127.0.0.1:3010/api/recaps/${RECAP_ID}/image?preview=1`);
   expect(response.status()).toBe(401);
   await anonymous.close();
+});
+
+test("rewrite the caption with AI using only the selected highlights", async ({ page }) => {
+  await page.goto("/home/recaps");
+  await page.getByRole("button", { name: "Generate recap" }).click();
+  for (const name of [/Shipped Launchpad/, /Learned Vue/, /New public repository/]) {
+    await page.getByRole("checkbox", { name }).uncheck();
+  }
+  const rewriting = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith(`/recaps/${RECAP_ID}/caption`));
+  await page.getByRole("button", { name: "Rewrite with AI" }).click();
+  expect((await rewriting).postDataJSON()).toEqual({ selected_ids: ["github"] });
+  await expect(page.getByLabel("Your caption")).toHaveValue(/^Hi connections, September 2026 brought steady progress/);
+  await expect(page.getByRole("status").first()).toHaveText("AI caption saved. Review it and make it yours.");
+  await page.reload();
+  await expect(page.getByLabel("Your caption")).not.toHaveValue(/Vue|Launchpad/);
+  await expect(page.getByRole("checkbox", { name: /Learned Vue/ })).not.toBeChecked();
 });

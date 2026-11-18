@@ -33,8 +33,9 @@ def db(monkeypatch):
         return 34
     monkeypatch.setattr(recaps, "fetch_period_contributions", contributions)
     async def activity(*args):
-        return {"items": [], "releases": "complete", "pull_requests": "complete"}
+        return {"items": [], "repositories": "complete"}
     monkeypatch.setattr(recaps, "fetch_period_activity", activity)
+    monkeypatch.setattr(recaps, "generate_social_caption", lambda snapshot, fallback: {"caption": fallback, "source": "template"})
     return fake
 
 
@@ -60,7 +61,7 @@ async def test_only_dated_evidence_and_exact_period_counts(db):
     result = await recaps.generate(EMAIL, "2026-10", now=NOW)
     highlights = result["snapshot"]["highlights"]
     assert [h["kind"] for h in highlights].count("shipped") == 1
-    assert any(h["kind"] == "exploring" and h["title"] == "Vue" for h in highlights)
+    assert not any(h["kind"] == "exploring" for h in highlights)
     assert not any(h["kind"] == "learned" for h in highlights)
     assert not any("Undated" in h["title"] for h in highlights)
     assert highlights[-1]["count"] == 34
@@ -134,8 +135,9 @@ async def test_published_snapshot_is_frozen_then_can_be_unpublished(db):
 
 @pytest.mark.asyncio
 async def test_hiding_a_highlight_updates_generated_caption_and_legacy_email_case(db):
+    recaps.add_milestone(EMAIL, "learned", "Vue", "", date(2026, 10, 1))
     result = await recaps.generate(EMAIL, "2026-10", now=NOW)
-    assert "Explored Vue" in result["caption"]
+    assert "learned Vue" in result["caption"]
     db.rows("agent_profile_cards")[0]["owner_email"] = EMAIL.upper()
     saved = recaps.update(EMAIL, result["id"], ["github"], result["caption"], True)
     assert "Vue" not in saved["caption"]
@@ -211,21 +213,22 @@ def test_generate_route_normalizes_period_before_building_snapshot(monkeypatch, 
 @pytest.mark.asyncio
 async def test_github_highlights_import_on_refresh_without_manual_milestones(db, monkeypatch):
     original = await recaps.generate(EMAIL, "2026-10", now=NOW)
-    item = {"id": "github:release:1", "kind": "release", "title": "alice/tool: v1", "url": "https://github.com/alice/tool/releases/tag/v1",
+    item = {"id": "github:repository:1", "kind": "repository", "title": "alice/tool", "url": "https://github.com/alice/tool",
             "date": "2026-10-02", "source": "github"}
     async def activity(*args):
-        return {"items": [item], "releases": "complete", "pull_requests": "complete"}
+        return {"items": [item], "repositories": "complete"}
     monkeypatch.setattr(recaps, "fetch_period_activity", activity)
     refreshed = await recaps.generate(EMAIL, "2026-10", refresh=True, now=NOW)
     assert item in refreshed["snapshot"]["highlights"]
     assert item["id"] in refreshed["selected_ids"]
-    assert "Released alice/tool: v1." in refreshed["caption"]
+    assert "created 1 new public repository (alice/tool)" in refreshed["caption"]
+    assert "\n" not in refreshed["caption"]
     assert refreshed["id"] == original["id"]
     assert len(db.rows("card_milestones")) == 0
     again = await recaps.generate(EMAIL, "2026-10", refresh=True, now=NOW)
     assert len([h for h in again["snapshot"]["highlights"] if h["id"] == item["id"]]) == 1
     async def unavailable(*args):
-        return {"items": [], "releases": "unavailable", "pull_requests": "unavailable"}
+        return {"items": [], "repositories": "unavailable"}
     monkeypatch.setattr(recaps, "fetch_period_activity", unavailable)
     outage = await recaps.generate(EMAIL, "2026-10", refresh=True, now=NOW)
     assert item in outage["snapshot"]["highlights"]
@@ -235,17 +238,80 @@ async def test_github_highlights_import_on_refresh_without_manual_milestones(db,
 
 @pytest.mark.asyncio
 async def test_manual_evidence_dedupes_import_and_github_failure_keeps_manual_work(db, monkeypatch):
-    url = "https://github.com/alice/tool/releases/tag/v1"
+    url = "https://github.com/alice/tool"
     recaps.add_milestone(EMAIL, "shipped", "My launch", url, date(2026, 10, 2))
     async def activity(*args):
-        return {"items": [{"id": "release-1", "kind": "release", "title": "v1", "url": url,
-                           "date": "2026-10-02", "source": "github"}], "releases": "complete", "pull_requests": "complete"}
+        return {"items": [{"id": "repository-1", "kind": "repository", "title": "alice/tool", "url": url,
+                           "date": "2026-10-02", "source": "github"}], "repositories": "complete"}
     monkeypatch.setattr(recaps, "fetch_period_activity", activity)
     result = await recaps.generate(EMAIL, "2026-10", now=NOW)
     assert len([h for h in result["snapshot"]["highlights"] if h["url"] == url]) == 1
     async def unavailable(*args):
-        return {"items": [], "releases": "unavailable", "pull_requests": "unavailable"}
+        return {"items": [], "repositories": "unavailable"}
     monkeypatch.setattr(recaps, "fetch_period_activity", unavailable)
     result = await recaps.generate(EMAIL, "2026-10", refresh=True, now=NOW)
     assert any(h["kind"] == "shipped" for h in result["snapshot"]["highlights"])
-    assert result["snapshot"]["github_activity"]["releases"] == "unavailable"
+    assert result["snapshot"]["github_activity"]["repositories"] == "unavailable"
+
+
+def test_summary_is_one_short_paragraph_from_selected_new_sources():
+    snapshot = {"label": "October 2026", "in_progress": False, "highlights": [
+        {"kind": "repository", "title": "alice/tool"}, {"kind": "github", "count": 34},
+        {"kind": "shipped", "title": "Launchpad"}, {"kind": "learned", "title": "Vue"},
+    ]}
+    assert recaps.default_caption(snapshot) == (
+        "Hi connections, in October 2026, I created 1 new public repository (alice/tool), made 34 GitHub contributions, shipped Launchpad and learned Vue. Looking forward to sharing what comes next.")
+    snapshot["highlights"] = [{"kind": "github", "count": 0}]
+    assert recaps.default_caption(snapshot) == "Hi connections, in October 2026, I made 0 GitHub contributions. Looking forward to sharing what comes next."
+    snapshot["highlights"] = []
+    assert recaps.default_caption(snapshot) == "My October 2026 on Zynd: no highlights recorded yet."
+
+
+@pytest.mark.asyncio
+async def test_refresh_drops_previous_release_and_pr_highlights(db, monkeypatch):
+    result = await recaps.generate(EMAIL, "2026-10", now=NOW)
+    db.rows("card_recaps")[0]["snapshot"]["highlights"] += [
+        {"id": "old-pr", "kind": "pull_request", "title": "Old PR", "url": "https://github.com/alice/tool/pull/1"},
+        {"id": "old-release", "kind": "release", "title": "v1", "url": "https://github.com/alice/tool/releases/tag/v1"},
+    ]
+    async def unavailable(*args):
+        return {"items": [], "repositories": "unavailable"}
+    monkeypatch.setattr(recaps, "fetch_period_activity", unavailable)
+    refreshed = await recaps.generate(EMAIL, "2026-10", refresh=True, now=NOW)
+    assert not any(h["kind"] in ("release", "pull_request", "exploring") for h in refreshed["snapshot"]["highlights"])
+
+
+@pytest.mark.asyncio
+async def test_ai_caption_rewrite_uses_selected_facts_and_hides_private_draft_metadata(db, monkeypatch):
+    recaps.add_milestone(EMAIL, "learned", "Hidden learning milestone", "", date(2026, 10, 1))
+    result = await recaps.generate(EMAIL, "2026-10", now=NOW)
+    seen = []
+    def write(snapshot, fallback):
+        seen.append(snapshot)
+        return {"caption": "Hi connections, here is my October 2026 progress: 34 GitHub contributions.", "source": "llm"}
+    monkeypatch.setattr(recaps, "generate_social_caption", write)
+    rewritten = recaps.rewrite_caption(EMAIL, result["id"], ["github"])
+    assert [h["id"] for h in seen[0]["highlights"]] == ["github"]
+    assert "_caption_draft" not in seen[0]
+    assert rewritten["snapshot"]["_caption_draft"]["source"] == "llm"
+    assert rewritten["selected_ids"] == ["github"]
+    recaps.update(EMAIL, result["id"], ["github"], rewritten["caption"], True)
+    public = recaps.public(result["id"], "alice")
+    assert "Hidden learning milestone" not in str(public)
+    assert "_caption_draft" not in public["snapshot"]
+    with pytest.raises(HTTPException) as exc:
+        recaps.rewrite_caption(EMAIL, result["id"], ["github"])
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_custom_caption_is_preserved_and_rewrite_rejects_other_owners(db, monkeypatch):
+    result = await recaps.generate(EMAIL, "2026-10", now=NOW)
+    def unexpected(*args):
+        pytest.fail("Custom captions must not be replaced by AI on save")
+    monkeypatch.setattr(recaps, "generate_social_caption", unexpected)
+    assert recaps.update(EMAIL, result["id"], ["github"], "My own words", False)["caption"] == "My own words"
+    with pytest.raises(HTTPException):
+        recaps.rewrite_caption("other@example.com", result["id"], ["github"])
+    with pytest.raises(HTTPException):
+        recaps.rewrite_caption(EMAIL, result["id"], ["invented"])

@@ -45,6 +45,10 @@ class Edit(BaseModel):
     publish: bool = False
 
 
+class Caption(BaseModel):
+    selected_ids: list[str] = Field(min_length=1, max_length=101)
+
+
 @router.get("/mine/recaps")
 async def list_recaps(authorization: str | None = Header(default=None)):
     return await asyncio.to_thread(recaps.list_owned, email_for(authorization))
@@ -74,6 +78,11 @@ async def edit(recap_id: UUID, body: Edit, authorization: str | None = Header(de
 @router.post("/mine/recaps/{recap_id}/unpublish")
 async def unpublish(recap_id: UUID, authorization: str | None = Header(default=None)):
     return await asyncio.to_thread(recaps.unpublish, email_for(authorization), str(recap_id))
+
+
+@router.post("/mine/recaps/{recap_id}/caption")
+async def rewrite_caption(recap_id: UUID, body: Caption, authorization: str | None = Header(default=None)):
+    return await asyncio.to_thread(recaps.rewrite_caption, email_for(authorization), str(recap_id), body.selected_ids)
 
 
 @router.get("/by-handle/{handle}/recaps/{recap_id}")

@@ -6,6 +6,8 @@ const nextConfig: NextConfig = {
   async redirects() {
     return [
       { source: "/agent-card", destination: "/", permanent: true },
+      // The redesigned landing was previewed at /v2 before it replaced /.
+      { source: "/v2", destination: "/", permanent: true },
       // The footer's AGENT_API link used to point at /p/<handle>/agent, which
       // never had a route (it 404'd on the dashboard too). The machine-readable
       // card is data.json; keep already-shared /agent URLs working.

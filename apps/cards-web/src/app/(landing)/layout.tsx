@@ -11,10 +11,12 @@ export const metadata: Metadata = {
   description:
     "Zynd synthesizes GitHub, LinkedIn, X and your website into one living professional profile — browsable by people, searchable by AI agents.",
   alternates: { canonical: "/" },
+  // Kept at /classic as a fallback after the redesigned landing replaced it at `/`.
+  robots: { index: false, follow: true },
 };
 
 /**
- * Standalone root layout for `/`. The landing page deliberately sits OUTSIDE
+ * Standalone root layout for `/classic`, the previous landing page. It deliberately sits OUTSIDE
  * the `(site)` route group so it does not inherit globals.css / zynd-ui.css —
  * the page ships its own compiled Tailwind v3 stylesheet and would otherwise
  * fight the app's Tailwind 4 preflight.

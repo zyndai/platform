@@ -6,9 +6,9 @@ import { useState, useRef } from "react";
 
 const CARDS_API = process.env.NEXT_PUBLIC_API_URL ?? "https://api.zynd.ai";
 
-import { Typewriter } from "./typewriter";
-import { AgentCardAuthBar } from "./auth-bar";
-import { YourCardPanel } from "./your-card-panel";
+import { Typewriter } from "../typewriter";
+import { AgentCardAuthBar } from "../auth-bar";
+import { YourCardPanel } from "../your-card-panel";
 import { useMyCard } from "@/hooks/useMyCard";
 
 /**

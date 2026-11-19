@@ -1,0 +1,22 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="305" height="220" viewBox="0 0 305 220" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="Rectangle 1430106979" filter="url(#filter0_d_0_129)">
+<use xlink:href="#stroke0_0_129" fill="#F8F6F4"/>
+<mask id="stroke1_0_129" fill="white">
+<use xlink:href="#stroke0_0_129"/>
+</mask>
+<path d="M148.988 2.00072C109.264 2.0499 53.0021 4.67275 26.8802 6.00785C18.5814 6.432 11.8702 12.8073 11.0782 21.079C9.16226 41.09 6.01714 77.966 6.00007 104.569C5.9827 131.638 9.19055 169.245 11.1133 189.34C11.8912 197.469 18.4051 203.782 26.5506 204.366C52.5203 206.228 109.073 209.93 148.988 209.999C190.824 210.071 250.297 206.215 276.806 204.33C284.796 203.762 291.224 197.665 292.165 189.711C294.652 168.7 299 127.59 299 96.9357C299 72.549 294.942 38.9042 292.424 20.3773C291.344 12.4301 284.774 6.45451 276.764 6.04797C250.229 4.70116 190.778 1.94898 148.988 2.00072Z" stroke-width="0.8" stroke="#D3D3D3" mask="url(#stroke1_0_129)"/>
+</g>
+<defs>
+<filter id="filter0_d_0_129" x="0" y="0" width="305" height="220" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="4"/>
+<feGaussianBlur stdDeviation="3"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.18 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_0_129"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_0_129" result="shape"/>
+</filter>
+<path id="stroke0_0_129" d="M11.0782 21.079C11.8702 12.8073 18.5814 6.432 26.8802 6.00785C53.0021 4.67275 109.264 2.0499 148.988 2.00072C190.778 1.94898 250.229 4.70116 276.764 6.04797C284.774 6.45451 291.344 12.4301 292.424 20.3773C294.942 38.9042 299 72.549 299 96.9357C299 127.59 294.652 168.7 292.165 189.711C291.224 197.665 284.796 203.762 276.806 204.33C250.297 206.215 190.824 210.071 148.988 209.999C109.073 209.93 52.5203 206.228 26.5506 204.366C18.4051 203.782 11.8912 197.469 11.1133 189.34C9.19055 169.245 5.9827 131.638 6.00007 104.569C6.01714 77.966 9.16226 41.09 11.0782 21.079Z"/>
+</defs>
+</svg>

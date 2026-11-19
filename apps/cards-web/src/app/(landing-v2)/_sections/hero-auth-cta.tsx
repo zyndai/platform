@@ -21,7 +21,7 @@ export function HeroAuthCta() {
     <>
       {ready && !authenticated && (
         <a
-          href={signInHref("/v2")}
+          href={signInHref("/")}
           className="-translate-x-1/2 absolute font-normal leading-[1.178] left-[1086px] text-[16px] text-black text-center top-[55px] tracking-[-0.8px] whitespace-nowrap hover:opacity-60 transition-opacity"
         >
           Sign in

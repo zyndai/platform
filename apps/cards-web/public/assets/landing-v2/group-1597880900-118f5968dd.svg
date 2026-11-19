@@ -1,0 +1,22 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="60" height="60" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Group 1597880900">
+<g id="Ellipse 14377" filter="url(#filter0_i_0_4)">
+<circle cx="30" cy="30" r="30" fill="#262627"/>
+</g>
+<g id="ant-design:bulb-filled">
+<path id="Vector" d="M25.1953 34.8076C22.3242 33.1465 20.3906 30.041 20.3906 26.4844C20.3906 21.1787 24.6943 16.875 30 16.875C35.3057 16.875 39.6094 21.1787 39.6094 26.4844C39.6094 30.041 37.6758 33.1465 34.8047 34.8076V38.2031C34.8047 38.7217 34.3857 39.1406 33.8672 39.1406H26.1328C25.6143 39.1406 25.1953 38.7217 25.1953 38.2031V34.8076ZM26.4844 41.0156H33.5156C33.6445 41.0156 33.75 41.1211 33.75 41.25V42.1875C33.75 42.7061 33.3311 43.125 32.8125 43.125H27.1875C26.6689 43.125 26.25 42.7061 26.25 42.1875V41.25C26.25 41.1211 26.3555 41.0156 26.4844 41.0156Z" fill="#FFFAFA"/>
+</g>
+</g>
+<defs>
+<filter id="filter0_i_0_4" x="0" y="0" width="60" height="64" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="4"/>
+<feGaussianBlur stdDeviation="2"/>
+<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.25 0"/>
+<feBlend mode="normal" in2="shape" result="effect1_innerShadow_0_4"/>
+</filter>
+</defs>
+</svg>

@@ -13,10 +13,9 @@ const inter = Inter({ subsets: ["latin"], display: "swap" });
 export const metadata: Metadata = {
   metadataBase: new URL("https://cards.zynd.ai"),
   title: "Zynd — Your Work Has a World Beyond Your Profile",
-  description: "Turn what you build into a living identity, ready to be discovered by people and AI agents.",
-  // Preview of the redesigned landing page; `/` stays canonical until it replaces it.
+  description:
+    "Zynd synthesizes GitHub, LinkedIn, X and your website into one living professional profile — browsable by people, searchable by AI agents.",
   alternates: { canonical: "/" },
-  robots: { index: false, follow: true },
 };
 
 const CANVAS_WIDTH = 1440;
@@ -25,8 +24,8 @@ const CANVAS_WIDTH = 1440;
 const FIT_CANVAS_SCRIPT = `(function(){var d=document.documentElement;function f(){d.style.setProperty("--landing-v2-zoom",String(Math.min(1,d.clientWidth/${CANVAS_WIDTH})))}f();addEventListener("resize",f)})();`;
 
 /**
- * Standalone root layout for the redesigned landing page. Like `(landing)`, it
- * sits outside `(site)` so it doesn't inherit the app's dark globals.css, and
+ * Standalone root layout for `/`. Like `(landing)`, it sits outside `(site)`
+ * so it doesn't inherit the app's dark globals.css, and
  * seeds auth + my-card state server-side the same way so the signed-in CTA
  * paints without waiting for a client round-trip.
  */

@@ -104,7 +104,10 @@ something, never raise it to turn a build green.
 **prod**) and to `dev` (deploys **dev**): it calls CI, and if that passes it
 SSHes to the box and runs [`deploy.sh`](deploy.sh) for that environment, which
 moves that checkout to the new commit, rebuilds and restarts **only the
-services whose files changed**, and health-checks them. A failed web build
+services whose files changed** since the last commit that deployed
+successfully (recorded in `~/.zynd-box/deployed-<env>.sha` after the health
+checks pass, so a failed build is retried by the next deploy even though the
+checkout already moved), and health-checks them. A failed web build
 restores the previous `.next` and restarts nothing. It never applies DB
 migrations and never touches Caddy (it prints a note if the Caddyfile
 drifted). Manual runs (Actions -> deploy-single-box -> Run workflow) skip the

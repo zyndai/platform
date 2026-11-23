@@ -119,7 +119,8 @@ jobs:
           # Compare with what the server actually presents, and say so if they differ
           # (fingerprints of public host keys only).
           if [[ "$hostkey" == ssh-ed25519* ]]; then
-            scanned="$(ssh-keyscan -T 10 -t ed25519 "$DEPLOY_HOST" 2>/dev/null | awk '{print $2, $3}' | head -n 1)"
+            # Newer ssh-keyscan prints a "# host:port banner" comment on stdout before the key; skip it.
+            scanned="$(ssh-keyscan -T 10 -t ed25519 "$DEPLOY_HOST" 2>/dev/null | awk '!/^#/ {print $2, $3; exit}')"
             if [[ -z "$scanned" ]]; then
               echo "::warning::could not reach the server on port 22 to double-check the pinned host key"
             elif [[ "$scanned" != "$hostkey" ]]; then

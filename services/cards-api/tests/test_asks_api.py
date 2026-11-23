@@ -1,12 +1,14 @@
 """The owner's asks routes: authentication, validation and that nobody can touch another owner's ask
 or credit."""
+from datetime import datetime
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api import asks as routes
 from services import beacons, owner_home, zynd_memory
-from tests.asks_support import ASK_1, HELPER, OWNER, ask_row, iso, offer_row, use_db  # noqa: F401
+from tests.asks_support import ASK_1, HELPER, OWNER, NOW, ask_row, iso, offer_row, use_db  # noqa: F401
 from tests.test_asks import cards_db
 
 OFFER = "00000000-0000-4000-8000-0000000000d1"
@@ -17,6 +19,14 @@ def client(monkeypatch, use_db):
     db = use_db(cards_db(asks=[ask_row(created_days=1)],
                          ask_offers=[offer_row("card-b", offer_id=OFFER, credited_at=iso(days=1))]))
     monkeypatch.setattr(owner_home, "enabled", lambda: True)
+
+    # The routes read the wall clock, the fixtures are dated from NOW: pin the former to the latter, or the
+    # fixture ask ages out of the "ended in the last 14 days" window and the test fails once the calendar moves on.
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW
+    monkeypatch.setattr(routes, "datetime", FrozenDatetime)
     emails = {"Bearer ana": "ana@x.test", "Bearer bob": "bob@x.test", "Bearer cy": "cy@x.test", "Bearer nobody": "nobody@x.test"}
 
     def principal(authorization):

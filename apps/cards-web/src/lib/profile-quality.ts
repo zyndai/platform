@@ -1,3 +1,5 @@
+import { helpTopic } from "./help-offer";
+
 /** Public topics are short labels; biography text stays in the biography. */
 const PLACEHOLDERS = new Set(["general", "misc", "miscellaneous", "other", "none", "null", "undefined", "unknown", "n/a"]);
 
@@ -29,7 +31,8 @@ export function cardDeclarations(card: {
   for (const value of (card.working_on ?? []).slice(0, 5)) {
     if (value.trim() && value.trim().length <= 120) out.push({ predicate: "is_building", value: value.trim() });
   }
-  const expertise = publicTopics((card.can_help_with ?? []).map(name => ({ name })));
+  // A priced help topic declares its expertise, not its price (see help-offer.ts).
+  const expertise = publicTopics((card.can_help_with ?? []).map(name => ({ name: helpTopic(name) })));
   for (const value of (expertise.length ? expertise : publicTopics(card.skills)).slice(0, 5)) {
     out.push({ predicate: "has_expertise_in", value });
   }

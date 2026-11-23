@@ -20,8 +20,10 @@ export const metadata: Metadata = {
 
 const CANVAS_WIDTH = 1440;
 
-// Runs before first paint so narrow screens never flash the unscaled 1440px canvas.
-const FIT_CANVAS_SCRIPT = `(function(){var d=document.documentElement;function f(){d.style.setProperty("--landing-v2-zoom",String(Math.min(1,d.clientWidth/${CANVAS_WIDTH})))}f();addEventListener("resize",f)})();`;
+// Runs before first paint so the desktop canvas is already scaled (the zoom only applies from
+// 1024px up; see landing-v2.css). It also makes `#section` links work in the phone layout, whose
+// section ids are prefixed `m-` so they don't clash with the (hidden) canvas ids.
+const FIT_CANVAS_SCRIPT = `(function(){var d=document.documentElement;function f(){d.style.setProperty("--landing-v2-zoom",String(Math.min(1,d.clientWidth/${CANVAS_WIDTH})))}f();addEventListener("resize",f);function go(h,e){var m=innerWidth<1024&&h&&h.length>1&&document.getElementById("m-"+h.slice(1));if(m){if(e)e.preventDefault();m.scrollIntoView();if(e)history.replaceState(null,"",h)}}document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest('a[href^="#"]');if(a&&a.getAttribute("href").indexOf("#m-")!==0)go(a.getAttribute("href"),e)});addEventListener("load",function(){go(location.hash)})})();`;
 
 /**
  * Standalone root layout for `/`. Like `(landing)`, it sits outside `(site)`

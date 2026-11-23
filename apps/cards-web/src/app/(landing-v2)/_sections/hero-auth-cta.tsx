@@ -13,9 +13,14 @@ function primaryCta(authenticated: boolean, handle: string | null, published: bo
   return published ? { label: "My card", href: path } : { label: "Finish card", href: `${path}/edit` };
 }
 
-export function HeroAuthCta() {
+export function useHeroCta() {
   const { ready, authenticated, handle, card } = useMyCard();
   const cta = primaryCta(ready && authenticated, handle, card?.status === "published");
+  return { ready, authenticated, cta };
+}
+
+export function HeroAuthCta() {
+  const { ready, authenticated, cta } = useHeroCta();
 
   return (
     <>

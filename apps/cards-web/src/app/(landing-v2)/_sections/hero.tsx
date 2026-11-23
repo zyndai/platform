@@ -5,13 +5,10 @@ import Link from "next/link";
 import { HeroAuthCta } from "./hero-auth-cta";
 import { HeroCarousel } from "./hero-carousel";
 import { HeroUrlForm } from "./hero-url-form";
+import { HERO, NAV_LINKS } from "./copy";
 
-const NAV_LINKS = [
-  { label: "Product", href: "#product", centerX: 538.5 },
-  { label: "How it works", href: "#how-it-works", centerX: 672 },
-  { label: "Discover", href: "#discover", centerX: 808.5 },
-  { label: "FAQ", href: "#faq", centerX: 914.5 },
-];
+// Desktop-only x positions (canvas px) for the shared NAV_LINKS, in order.
+const NAV_CENTERS = [538.5, 672, 808.5, 914.5];
 
 export function HeroSection() {
   return (
@@ -24,11 +21,12 @@ export function HeroSection() {
         </div>
         <div className="absolute bg-white blur-[143px] h-[637px] left-0 rounded-[15px] top-[658px] w-[1419px]" />
         <h1 className="-translate-x-1/2 [word-break:break-word] absolute font-bold leading-[0] left-[710.5px] not-italic text-[#262627] text-[63px] text-center top-[238px] tracking-[-3.15px] whitespace-nowrap">
-          <span className="block leading-[1.028]">Your Work Has a World</span>
-          <span className="block leading-[1.028]">Beyond Your Profile.</span>
+          {HERO.headline.map((line) => (
+            <span key={line} className="block leading-[1.028]">{line}</span>
+          ))}
         </h1>
         <p className="-translate-x-1/2 [word-break:break-word] absolute font-normal leading-[normal] left-[709.5px] not-italic text-[21px] text-black text-center top-[382px] w-[445px]">
-          Turn what you build into a living identity, ready to be discovered.
+          {HERO.sub}
         </p>
         <HeroAuthCta />
         <HeroCarousel />
@@ -42,12 +40,12 @@ export function HeroSection() {
           </div>
         </div>
         <nav aria-label="Primary" className="absolute bg-[#f1f1f1] border-[#b9b9b9] border-[0.8px] border-solid h-[62px] left-[417px] rounded-[71px] top-[35px] w-[602px]">
-          {NAV_LINKS.map((link) => (
+          {NAV_LINKS.map((link, i) => (
             <a
               key={link.href}
               href={link.href}
               className="-translate-x-1/2 [word-break:break-word] absolute font-normal leading-[1.178] not-italic text-[16px] text-black text-center top-[19.2px] tracking-[-0.8px] whitespace-nowrap hover:opacity-60 transition-opacity"
-              style={{ left: link.centerX - 417.8 }}
+              style={{ left: NAV_CENTERS[i] - 417.8 }}
             >
               {link.label}
             </a>

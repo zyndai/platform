@@ -8,30 +8,64 @@ downloaded images or social-platform copies cannot be withdrawn by Zynd.
 
 ## Facts and privacy
 
-- A profile project or “Working on” string has no completion timestamp and
-  never counts as shipped. Owners record dated shipped/learning milestones,
-  optionally using a project already on their card. These are self-reported,
-  labelled as such, and private until selected in a published recap.
-- Dated exploring links still present on the card may be included as
-  **Explored**, never “mastered.” Historical clipped links that have already
-  disappeared cannot be reconstructed. The editor states this limitation.
-- GitHub uses `contributionsCollection(from:, to:)` and the exact calendar
-  total for the requested period, using the existing `GITHUB_TOKEN`. This is
-  a contribution count, not a commit count; visibility depends on that token.
-  Missing credentials, rate limits, and upstream errors omit the count. A
-  confirmed zero remains zero. See [GitHub's reference](https://docs.github.com/en/graphql/reference/users).
+- New public GitHub repositories are imported from the profile linked on the
+  card. The scan uses `created_at` within the recap's exact calendar period;
+  recent pushes to old repositories and later visibility changes do not count
+  as new creation. Owned public forks may appear too; the label is **New public
+  repository**, never an inferred shipped project. Private repositories are
+  excluded even when the existing token can read them.
+- Repository lists are requested in creation-descending order, up to five pages
+  of 100, stopping at older creation dates. Partial results, outages, and missing
+  profile links are distinguished in the editor. A 20-second overall timeout
+  bounds the scan. REST public imports work without a token; `GITHUB_TOKEN`
+  increases rate limits. No new settings, scopes, or migrations are required.
+- Dated manual shipped/learning milestones remain optional and private until
+  selected in a published recap. Exact duplicate evidence URLs are shown once.
+  Previously imported repositories from the same profile/period survive a
+  failed or partial refresh, while a complete scan replaces its old evidence.
+- Contribution totals still use `contributionsCollection(from:, to:)` with the
+  existing `GITHUB_TOKEN`. Missing credentials or upstream errors omit the
+  count; an observed zero stays zero. Contributions are not a commit count.
+- New drafts combine new public repositories, contribution totals, and manual
+  milestones. Release, merged-PR, and browser-exploring imports have been removed.
+  Refresh a private draft to replace older imported sources; published snapshot
+  data remains unchanged until the owner unpublishes and refreshes it.
+- The generated caption is a short first-person paragraph summarizing selected
+  repositories, contributions, shipped projects, and learning milestones. It
+  includes at most two names per category plus a remainder count. The editor,
+  shared page, and PNG show the paragraph (long custom PNG text is excerpted).
+  Owners may edit it. Generated paragraphs follow selection changes; custom
+  captions stay under the owner's control.
+- Caption writing uses the existing OpenRouter client/model/key. It starts
+  with “Hi connections,”, names the recap period, shares progress naturally,
+  and ends with a friendly invitation to connect. The model writes the opening
+  and closing around a verified factual sentence.
+  The prompt receives only the period and whether it is in progress, never
+  project names, counts, owner email, or hidden highlights. Facts are inserted
+  verbatim, and model framing is checked for unsupported claims. Malformed,
+  unsupported, timed-out, or unavailable responses fall
+  back to an editable factual greeting. The model timeout is 15 seconds with
+  no retries. The editor identifies fallback copy and allows another attempt.
+- **Rewrite with AI** saves the current selection and replaces only the
+  caption, without fetching GitHub again. Caption generation metadata is
+  owner-only and stripped from public snapshots, since old draft copy may
+  refer to a highlight the owner subsequently hid. Published recaps require
+  unpublishing before rewriting. No new environment settings or migrations.
 - Boundaries use the card's stored IANA timezone, falling back to UTC.
   Current periods say “so far”; future periods are rejected.
-- Captions are generated from selected facts using a deterministic template,
-  with no new AI dependency or inferred achievements. Generated copy follows
-  highlight selection; manually edited copy is preserved for user review.
+- Captions are generated from selected facts with a deterministic fallback.
+  Saving changed selections regenerates automatic copy; manually edited copy
+  is preserved for user review.
 - Public responses contain selected highlights only, never owner emails,
   draft snapshots, or hidden highlights. They recheck current card ownership
   and published status on every request. A private, merged, deleted, or
   transferred card cannot serve an old owner's public recap.
 - Published facts and captions stay frozen. Owners unpublish before editing
   or refreshing. Refresh replaces a draft's facts, selection, and caption;
-  the UI requires saving local edits first.
+  the UI requires saving local edits first. Generate now also refreshes existing
+  private drafts so new GitHub activity and recently recorded milestones appear
+  without a separate refresh step. The owner API's default remains retrieve-only
+  unless `refresh: true` is sent; cron does not regenerate existing snapshots.
 - Links to X/LinkedIn open their sharing composers. They share a recap link
   with an OG image, rather than uploading media or posting without review.
   PNG download and copy-caption support native image posts. Existing
@@ -49,6 +83,7 @@ on the server; they accept no owner identifier from the browser.
 | `POST /cards/mine/recaps` | Generate/retrieve a period; `refresh: true` refreshes private drafts |
 | `GET /cards/mine/recaps/{uuid}` | Owner-only snapshot |
 | `PATCH /cards/mine/recaps/{uuid}` | Save selection/caption; `publish: true` explicitly publishes |
+| `POST /cards/mine/recaps/{uuid}/caption` | Rewrite a private draft's caption with AI from supplied `selected_ids`; save selection and copy |
 | `POST /cards/mine/recaps/{uuid}/unpublish` | Hide a published recap before editing |
 | `GET /cards/by-handle/{handle}/recaps/{uuid}` | Selected public snapshot, only while its card is public |
 | `POST /internal/recaps/generate?dry_run=true` | Inspect scheduled generation without writes |

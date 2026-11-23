@@ -68,6 +68,21 @@ export interface OutsidePerson {
 
 export type SuggestionFeedback = "hide" | "not_relevant";
 
+/** FastAPI returns a string for application errors and an array for validation errors. */
+export function ownerErrorMessage(detail: unknown): string {
+  const fallback = "Could not save. Please try again.";
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (!Array.isArray(detail)) return fallback;
+  const messages = detail.flatMap((item: unknown) => {
+    if (!item || typeof item !== "object" || !("msg" in item) || typeof item.msg !== "string") return [];
+    const location = "loc" in item && Array.isArray(item.loc)
+      ? item.loc.filter((part: unknown) => typeof part === "string" && !["body", "query", "path", "header"].includes(part)).join(".")
+      : "";
+    return [location ? `${location}: ${item.msg}` : item.msg];
+  });
+  return messages.length ? messages.join("; ") : fallback;
+}
+
 export async function ownerRequest<T>(
   path: string,
   token: string,
@@ -89,7 +104,7 @@ export async function ownerRequest<T>(
   if (!res.ok) {
     let message = "Could not save. Please try again.";
     try {
-      message = (await res.json()).detail || message;
+      message = ownerErrorMessage((await res.json()).detail);
     } catch {
       /* Keep useful fallback. */
     }

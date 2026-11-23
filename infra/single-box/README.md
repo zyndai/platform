@@ -104,7 +104,10 @@ something, never raise it to turn a build green.
 **prod**) and to `dev` (deploys **dev**): it calls CI, and if that passes it
 SSHes to the box and runs [`deploy.sh`](deploy.sh) for that environment, which
 moves that checkout to the new commit, rebuilds and restarts **only the
-services whose files changed**, and health-checks them. A failed web build
+services whose files changed** since the last commit that deployed
+successfully (recorded in `~/.zynd-box/deployed-<env>.sha` after the health
+checks pass, so a failed build is retried by the next deploy even though the
+checkout already moved), and health-checks them. A failed web build
 restores the previous `.next` and restarts nothing. It never applies DB
 migrations and never touches Caddy (it prints a note if the Caddyfile
 drifted). Manual runs (Actions -> deploy-single-box -> Run workflow) skip the
@@ -144,19 +147,26 @@ so forks can't reach the secrets.
 
 ## Scheduled jobs (cron)
 
-Two of prod's recurring jobs run from the `ubuntu` user's crontab on the box instead of
+Prod's recurring digest jobs run from the `ubuntu` user's crontab on the box instead of
 GitHub Actions, because GitHub throttles scheduled workflows (morning-digest got about 10%
 of its runs, suggestions-refresh 3 of 7). [`crontab`](crontab) lists them;
 [`cron/run-job.sh`](cron/run-job.sh) calls cards-api's `/internal/*` endpoint on
 `127.0.0.1:8002` with `CRON_SECRET` read from `services/cards-api/.env.prod`, so there is
 nothing new to configure. Prod only: dev shares prod's database, so a second set would
 email the same owners. The `morning-digest` and `suggestions-refresh` workflows are gone;
-`saved-searches` and `owner-notifications` still run from GitHub Actions, which ran them on
+Weekly agent digest runs Monday at 08:00 IST (02:30 UTC), using a UTC weekday/hour
+guard so the server's Berlin timezone and DST cannot shift delivery. It calls
+`/internal/weekly-agent-digest` for all eligible owners and reads the existing
+production `CRON_SECRET` through `cron/run-job.sh`. Logs are in
+`~/.zynd-box/cron/weekly-agent-digest.log`. The owner-notifications workflow is manual-only.
+
+`saved-searches` still runs from GitHub Actions, which ran it on
 schedule. Verified over the first 21 h: 42 of 42 digest ticks from cron (GitHub managed 4).
 
 | Job | Schedule (UTC) | Endpoint |
 |---|---|---|
 | morning-digest | every 30 min | `/internal/morning-digest` |
+| weekly-agent-digest | Monday 02:30 (08:00 IST) | `/internal/weekly-agent-digest` |
 | suggestions-refresh | 23:30 daily | `/internal/suggestions/refresh` |
 
 `deploy.sh` (prod) re-installs the crontab when `crontab` or `cron/` change, as a marked

@@ -141,7 +141,7 @@ async def send_test_notification(*, email: str, kind: str = "weekly") -> dict:
     notice = "Test email requested manually; email preferences and delivery limits were bypassed."
     if kind == "weekly":
         body, markup = await asyncio.to_thread(render_weekly, data, None, preview_label=notice)
-        subject = "[TEST] Your week on Zynd"
+        subject = "[TEST] Weekly digest"
     elif kind == "feedback":
         from services.profile_feedback import render_feedback, SUBJECT
         body, markup = render_feedback(data.get("name") or "", None,
@@ -292,7 +292,7 @@ async def run_notifications(*, dry_run: bool = False, now: datetime | None = Non
             if prefs["weekly_digest"]:
                 # Claim first: repeated scheduler ticks must not regenerate an
                 # LLM topic summary for an email already sent this week.
-                messages.append(("weekly", week_key(now), "Your week on Zynd", None, None))
+                messages.append(("weekly", week_key(now), "Weekly digest", None, None))
             if not weekly_only and config.FEATURE_S10_DIGEST and prefs["email_nudges"] and data["nudges"]:
                 # Only send newly created nudges, once daily. Older reminders
                 # remain in-app without generating another email each day.

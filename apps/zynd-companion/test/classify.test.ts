@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { cleanUrl, detectKind, isPrivateHost, tidyText, tidyTitle } from "../src/classify";
+import { cleanUrl, detectKind, displayAddress, isPrivateHost, ogUrlMatches, resolvePage, tidyText, tidyTitle, urlKey } from "../src/classify";
+import type { PageInfo } from "../src/page-info";
 
 describe("cleanUrl", () => {
   it.each([
@@ -8,6 +9,11 @@ describe("cleanUrl", () => {
     ["https://x.com/dil/status/123?s=20&t=abc", "https://x.com/dil/status/123"],
     ["https://youtu.be/abc?t=42", "https://youtu.be/abc?t=42"],
     ["  https://8.8.8.8/x  ", "https://8.8.8.8/x"],
+    ["https://www.youtube.com/watch?v=abc&si=xyz&pp=0gcJ&feature=shared&t=42", "https://www.youtube.com/watch?v=abc&t=42"],
+    ["https://youtu.be/abc?si=xyz", "https://youtu.be/abc"],
+    ["https://www.youtube.com/watch?v=abc&list=RDabc&index=3", "https://www.youtube.com/watch?v=abc"],
+    ["https://www.youtube.com/watch?v=abc&list=PLreal&index=3", "https://www.youtube.com/watch?v=abc&list=PLreal&index=3"],
+    ["https://example.com/a?si=1&feature=2", "https://example.com/a?si=1&feature=2"],
   ])("keeps the public form of %s", (raw, expected) => {
     expect(cleanUrl(raw)).toEqual({ ok: true, url: expected });
   });
@@ -90,11 +96,91 @@ describe("text tidying", () => {
   it("drops site boilerplate from titles", () => {
     expect(tidyTitle("GitHub - zyndai/platform: Zynd", "https://github.com/zyndai/platform")).toBe("zyndai/platform: Zynd");
     expect(tidyTitle("Attention explained - YouTube", "https://www.youtube.com/watch?v=1")).toBe("Attention explained");
+    expect(tidyTitle("(3) Attention explained - YouTube", "https://www.youtube.com/watch?v=1")).toBe("Attention explained");
+    expect(tidyTitle("(12+) Home / X", "https://x.com/home")).toBe("Home");
+    expect(tidyTitle("Dil on shipping | LinkedIn", "https://www.linkedin.com/posts/x")).toBe("Dil on shipping");
+    expect(tidyTitle("(500) Days of Summer", "https://example.com/film")).toBe("(500) Days of Summer");
     expect(tidyTitle("", "https://www.example.com/x")).toBe("example.com");
     expect(tidyTitle("x".repeat(300), "https://example.com/").length).toBe(140);
   });
   it("collapses whitespace and control characters and cuts to length", () => {
     expect(tidyText("  a\n\tb\u0000c  ", 10)).toBe("a b c");
     expect(tidyText("z".repeat(500), 200).length).toBe(200);
+  });
+});
+
+const page = (over: Partial<PageInfo>): Partial<PageInfo> => ({
+  documentTitle: "", ogTitle: "", ogUrl: "", pageUrl: "", siteName: "", ogType: "", generator: "", selection: "", channel: "", ...over,
+});
+
+describe("ogUrlMatches", () => {
+  it("accepts the same page spelled differently", () => {
+    expect(ogUrlMatches("https://example.com/a/", "https://www.example.com/a?utm_source=x#top")).toBe(true);
+    expect(ogUrlMatches("https://www.youtube.com/watch?v=abc", "https://www.youtube.com/watch?v=abc&t=9")).toBe(true);
+    expect(ogUrlMatches("/a", "https://example.com/a")).toBe(true);
+  });
+  it("has nothing to say when either side is missing", () => {
+    expect(ogUrlMatches("", "https://example.com/a")).toBe(true);
+    expect(ogUrlMatches("https://example.com/a", "")).toBe(true);
+  });
+  it("spots tags left over from another page", () => {
+    expect(ogUrlMatches("https://www.youtube.com/", "https://www.youtube.com/watch?v=abc")).toBe(false);
+    expect(ogUrlMatches("https://www.youtube.com/watch?v=old", "https://www.youtube.com/watch?v=new")).toBe(false);
+    expect(ogUrlMatches("https://example.com/a", "https://other.example/a")).toBe(false);
+  });
+});
+
+describe("resolvePage", () => {
+  it("prefers the clean og:title when the tags belong to this page", () => {
+    const r = resolvePage(page({
+      documentTitle: "How chips got hot | The Verge", ogTitle: "How chips got hot", ogType: "article",
+      ogUrl: "https://www.theverge.com/chips", pageUrl: "https://www.theverge.com/chips",
+    }));
+    expect(r.title).toBe("How chips got hot");
+    expect(r.ogType).toBe("article");
+  });
+  it("falls back to the tab title when the og: tags are left over (YouTube after a click)", () => {
+    const r = resolvePage(page({
+      documentTitle: "(2) Cool talk - YouTube", ogTitle: "YouTube", ogType: "website", siteName: "YouTube",
+      ogUrl: "https://www.youtube.com/", pageUrl: "https://www.youtube.com/watch?v=abc", channel: "Fireship",
+    }));
+    expect(r.title).toBe("(2) Cool talk - YouTube");
+    expect(r.ogType).toBe("");
+    expect(r.siteName).toBe("");
+    expect(r.channel).toBe("Fireship");
+    expect(tidyTitle(r.title, "https://www.youtube.com/watch?v=abc")).toBe("Cool talk");
+  });
+  it("catches the real YouTube home page, which has og:title but no og:url", () => {
+    const r = resolvePage(page({
+      documentTitle: "Cool talk - YouTube", ogTitle: "YouTube", pageUrl: "https://www.youtube.com/watch?v=abc",
+    }));
+    expect(r.title).toBe("Cool talk - YouTube");
+  });
+  it("keeps a site-name og:title when the tab title has nothing better (a home page)", () => {
+    expect(resolvePage(page({ documentTitle: "Example", ogTitle: "Example", pageUrl: "https://www.example.com/" })).title).toBe("Example");
+    expect(resolvePage(page({ documentTitle: "", ogTitle: "Example", pageUrl: "https://www.example.com/" })).title).toBe("Example");
+  });
+  it("does not mistake a page title that merely contains the site name for a generic one", () => {
+    expect(resolvePage(page({
+      documentTitle: "YouTube tips | Blog", ogTitle: "YouTube tips", pageUrl: "https://blog.example.com/youtube-tips",
+    })).title).toBe("YouTube tips");
+  });
+  it("never uses a stale og:title, even with no tab title", () => {
+    expect(resolvePage(page({ ogTitle: "YouTube", ogUrl: "https://www.youtube.com/", pageUrl: "https://www.youtube.com/watch?v=x" })).title).toBe("");
+  });
+  it("copes with nothing at all (a page the browser would not let us read)", () => {
+    expect(resolvePage({})).toMatchObject({ title: "", selection: "", channel: "" });
+  });
+});
+
+describe("urlKey and displayAddress", () => {
+  it("treats spellings of one page alike, and different videos apart", () => {
+    expect(urlKey("https://www.example.com/a/")).toBe(urlKey("https://example.com/a"));
+    expect(urlKey("https://www.youtube.com/watch?v=a")).not.toBe(urlKey("https://www.youtube.com/watch?v=b"));
+  });
+  it("shows what identifies the page, including the video id", () => {
+    expect(displayAddress("https://www.youtube.com/watch?v=abc123")).toBe("youtube.com/watch?v=abc123");
+    expect(displayAddress("https://www.theverge.com/2026/10/1/chips")).toBe("theverge.com/2026/10/1/chips");
+    expect(displayAddress("https://example.com/")).toBe("example.com");
   });
 });

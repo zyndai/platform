@@ -41,6 +41,16 @@ reviewed Cards API changes before expecting new behavior at cards.zynd.ai.
   token cannot collide with a user UUID in the new project.
 - Named rows are created only for an opted-in visitor, on a published owned card,
   excluding self-visits. Counts still include anonymous and self browser visits.
+- The name recorder waits for browser sign-in state and also runs if a visitor
+  signs in while the profile is already open. Temporary request failures receive
+  two retries. Returning to the profile tab rechecks the server-side preference,
+  including changes made in another tab. Retries and focus checks reuse the same
+  visit ID so a recorded visit is not counted again; a local consent change gets
+  a fresh ID. These checks never opt a visitor into sharing automatically.
+- The same-origin visit endpoint preserves the API's `recorded` result for
+  debugging. A false result can mean anonymous mode, a self-visit, an ineligible
+  card, or an already-recorded ID. Exhausted request failures are reported in the
+  browser console without including identities or credentials.
 - Turning anonymous mode back on hides earlier named visits on subsequent owner
   reads. A later opt-in starts a new consent version and does not republish old
   history. It cannot retract a name the owner already saw or copied.

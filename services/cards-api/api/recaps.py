@@ -1,11 +1,12 @@
 """Owner controls reuse the existing Cards principal. Public reads require explicit publication."""
 import asyncio
+import re
 from datetime import date
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from api.mcp import _owner_email, _principal
 from services import recaps
@@ -28,11 +29,24 @@ class Generate(BaseModel):
     period: str = Field(max_length=7)
     refresh: bool = False
 
+    @field_validator("period", mode="before")
+    @classmethod
+    def normalize_period(cls, value):
+        if not isinstance(value, str):
+            return value
+        value = value.strip().upper()
+        match = re.fullmatch(r"([0-9]{4})-([0-9]{1,2})", value)
+        return f"{match[1]}-{match[2].zfill(2)}" if match else value
+
 
 class Edit(BaseModel):
     selected_ids: list[str] = Field(max_length=101)
     caption: str = Field(max_length=2000)
     publish: bool = False
+
+
+class Caption(BaseModel):
+    selected_ids: list[str] = Field(min_length=1, max_length=101)
 
 
 @router.get("/mine/recaps")
@@ -64,6 +78,11 @@ async def edit(recap_id: UUID, body: Edit, authorization: str | None = Header(de
 @router.post("/mine/recaps/{recap_id}/unpublish")
 async def unpublish(recap_id: UUID, authorization: str | None = Header(default=None)):
     return await asyncio.to_thread(recaps.unpublish, email_for(authorization), str(recap_id))
+
+
+@router.post("/mine/recaps/{recap_id}/caption")
+async def rewrite_caption(recap_id: UUID, body: Caption, authorization: str | None = Header(default=None)):
+    return await asyncio.to_thread(recaps.rewrite_caption, email_for(authorization), str(recap_id), body.selected_ids)
 
 
 @router.get("/by-handle/{handle}/recaps/{recap_id}")

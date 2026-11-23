@@ -14,8 +14,11 @@
 # (`main` and `latest` both mean "the newest commit of the environment's branch".)
 #
 # What it does: moves that environment's checkout to the target commit, works
-# out which services' files changed since the previous commit, rebuilds and
-# restarts only those, then health-checks them. A failed web build restores the
+# out which services' files changed since the last commit that deployed
+# SUCCESSFULLY there (recorded in $BOX/deployed-<env>.sha once the health checks
+# pass; not the checkout's HEAD, which moves even when a build fails, so a failed
+# build is retried by the next deploy), rebuilds and restarts only those, then
+# health-checks them. A failed web build restores the
 # previous .next and restarts nothing, so the old version keeps serving. It never
 # applies database migrations (packages/db is applied by a person) and never
 # touches Caddy or DNS.
@@ -81,7 +84,15 @@ if [[ -z "${ZYND_DEPLOY_STAGE:-}" ]]; then
   git fetch --quiet origin "$BRANCH"
   target="$(git rev-parse --verify "${ref:-origin/$BRANCH}^{commit}")" || die "unknown commit '$ref'"
   git merge-base --is-ancestor "$target" "origin/$BRANCH" || die "$target is not on origin/$BRANCH"
-  OLD_SHA="$(git rev-parse HEAD)"
+  # Diff against the last commit that deployed successfully, not HEAD: stage 1 moves HEAD before the
+  # build runs, so after a failed build HEAD already names the new commit and the next deploy would see
+  # "nothing changed" and skip the app whose build failed. First deploy (no record): HEAD, as before.
+  OLD_SHA=""
+  if [[ -f "$BOX/deployed-$ENV_NAME.sha" ]]; then
+    OLD_SHA="$(head -n1 "$BOX/deployed-$ENV_NAME.sha" | tr -d '[:space:]')"
+    git cat-file -e "${OLD_SHA}^{commit}" 2>/dev/null || OLD_SHA=""
+  fi
+  [[ -n "$OLD_SHA" ]] || OLD_SHA="$(git rev-parse HEAD)"
 
   if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
     die "checkout has local modifications to tracked files; refusing to overwrite them: $(git status --porcelain --untracked-files=no | head -5 | tr '\n' ' ')"
@@ -231,3 +242,6 @@ if [[ "$failed" == 1 ]]; then
   die "[$ZYND_ENV] health checks failed after deploying ${NEW_SHA:0:12}. Roll back with: deploy.sh --env=$ZYND_ENV ${OLD_SHA:0:12}"
 fi
 log "[$ZYND_ENV] deployed ${NEW_SHA:0:12} OK"
+# Only now is NEW_SHA "deployed": the next run diffs from here (see stage 1). Written last so a failed
+# build or health check leaves the old record and the next deploy redoes the work.
+printf '%s\n' "$NEW_SHA" > "$BOX/deployed-$ZYND_ENV.sha"

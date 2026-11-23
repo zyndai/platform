@@ -1,9 +1,7 @@
-# S10: scan daily, send the weekly digest at most once per ISO week.
-# Disabled flags/noop adapter make the endpoint a safe no-send operation.
+# Weekly delivery runs on the production server (infra/single-box/crontab).
+# Keep this workflow available only for explicit manual owner-notification runs.
 name: owner-notifications
 on:
-  schedule:
-    - cron: "30 2 * * *" # 08:00 IST
   workflow_dispatch:
 permissions:
   contents: read

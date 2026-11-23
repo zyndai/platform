@@ -23,9 +23,9 @@ export function SiteFooter() {
               The living professional identity for technical builders and AI agents. Synthesizing digital footprints into sovereign, discoverable assets.
             </p>
           </div>
-          <nav aria-label="Footer" className="flex flex-wrap gap-x-7 gap-y-3 text-[#262627] text-[14px]">
+          <nav aria-label="Footer" className="flex flex-wrap gap-x-7 gap-y-3 max-lg:gap-y-0 text-[#262627] text-[14px]">
             {FOOTER_LINKS.map((link) => (
-              <Link key={link.label} href={link.href} className="hover:opacity-60 transition-opacity">
+              <Link key={link.label} href={link.href} className="hover:opacity-60 transition-opacity max-lg:flex max-lg:min-h-[44px] max-lg:items-center max-lg:text-[16px]">
                 {link.label}
               </Link>
             ))}

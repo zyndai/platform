@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import calendar
-import hashlib
 import logging
 import re
 from datetime import date, datetime, timedelta, timezone
@@ -14,8 +13,10 @@ from fastapi import HTTPException
 
 import config
 from scraping.github import fetch_period_contributions, github_handle_from_url
+from scraping.github_recaps import fetch_period_activity
 from services import owner_home
 from services.companion import clean_url
+from services.recap_captions import generate_social_caption
 
 logger = logging.getLogger(__name__)
 MAX_HIGHLIGHTS = 100
@@ -105,20 +106,6 @@ def _highlights(row: dict, milestones: list[dict], start: datetime, end: datetim
         seen.add(key)
         items.append({"id": str(item["id"]), "kind": item["kind"], "title": item["title"],
                       "url": safe_url(item.get("url", "")), "date": day, "source": "owner_confirmed"})
-    for item in (row.get("card") or {}).get("exploring") or []:
-        try:
-            at = datetime.fromisoformat(item.get("added_at", "").replace("Z", "+00:00"))
-            if at.tzinfo is None or not start <= at < end:
-                continue
-        except (ValueError, TypeError):
-            continue
-        url = safe_url(item.get("url", ""))
-        if not url or ("exploring", url) in seen:
-            continue
-        seen.add(("exploring", url))
-        items.append({"id": "exploring:" + hashlib.sha256(url.encode()).hexdigest()[:24],
-                      "kind": "exploring", "title": (item.get("title") or url)[:140], "url": url,
-                      "date": at.astimezone(start.tzinfo).date().isoformat(), "source": "public_card"})
     return sorted(items, key=lambda i: (i["date"], i["id"]), reverse=True)[:MAX_HIGHLIGHTS]
 
 
@@ -131,21 +118,35 @@ def _existing(row: dict, email: str, period: str) -> dict | None:
 def visible_snapshot(recap: dict) -> dict:
     selected = set(recap.get("selected_ids") or [])
     snap = recap["snapshot"]
-    return {**snap, "highlights": [h for h in snap["highlights"] if h["id"] in selected]}
+    # Draft metadata may contain copy about subsequently hidden highlights. Owner-only.
+    return {**{k: v for k, v in snap.items() if k != "_caption_draft"},
+            "highlights": [h for h in snap["highlights"] if h["id"] in selected]}
 
 
 def default_caption(snapshot: dict) -> str:
     highlights = snapshot["highlights"]
-    shipped = sum(h["kind"] == "shipped" for h in highlights)
-    lines = [f"My {snapshot['label']} on Zynd" + (" (so far)" if snapshot["in_progress"] else "")]
+    def named(items):
+        names = [h["title"] for h in items[:2]]
+        text = " and ".join(names)
+        return text + (f" and {len(items) - 2} more" if len(items) > 2 else "")
+    parts = []
+    repos = [h for h in highlights if h["kind"] == "repository"]
+    shipped = [h for h in highlights if h["kind"] == "shipped"]
+    learned = [h for h in highlights if h["kind"] == "learned"]
+    contributions = next((h for h in highlights if h["kind"] == "github"), None)
+    if repos:
+        parts.append(f"created {len(repos)} new public {'repository' if len(repos) == 1 else 'repositories'} ({named(repos)})")
+    if contributions:
+        parts.append(f"made {contributions['count']} GitHub contributions")
     if shipped:
-        lines.append(f"Shipped {shipped} project{'s' if shipped != 1 else ''}.")
-    for h in highlights:
-        if h["kind"] == "github":
-            lines.append(f"{h['count']} GitHub contributions.")
-        elif h["kind"] in ("learned", "exploring"):
-            lines.append(f"{'Learned' if h['kind'] == 'learned' else 'Explored'} {h['title']}.")
-    return "\n".join(lines)[:2000]
+        parts.append(f"shipped {named(shipped)}")
+    if learned:
+        parts.append(f"learned {named(learned)}")
+    period = snapshot["label"] + (" so far" if snapshot["in_progress"] else "")
+    if not parts:
+        return f"My {period} on Zynd: no highlights recorded yet."
+    actions = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+    return f"Hi connections, in {period}, I {actions}. Looking forward to sharing what comes next."[:2000]
 
 
 async def generate(email: str, period: str, refresh: bool = False, row: dict | None = None,
@@ -165,7 +166,25 @@ async def generate(email: str, period: str, refresh: bool = False, row: dict | N
     highlights = _highlights(row, milestones, start, end)
     identity = (row.get("card") or {}).get("identity") or {}
     login = github_handle_from_url((identity.get("links") or {}).get("github"))
-    count = await fetch_period_contributions(login, start, min(end, now)) if login else None
+    activity = {"items": [], "repositories": "not_connected"}
+    count = None
+    if login:
+        count, activity = await asyncio.gather(
+            fetch_period_contributions(login, start, min(end, now)),
+            fetch_period_activity(login, start, min(end, now)))
+    # Temporary outages must not erase evidence already fetched for this profile and period.
+    if existing and login and existing["snapshot"].get("github_login") == login.lower():
+        seen_ids = {h["id"] for h in activity["items"]}
+        for h in existing["snapshot"]["highlights"]:
+            if h["kind"] == "repository" and activity["repositories"] != "complete" and h["id"] not in seen_ids:
+                activity["items"].append(h)
+                seen_ids.add(h["id"])
+    # A manual milestone linking the exact same GitHub evidence wins over its imported copy.
+    evidence = {h["url"].rstrip("/") for h in highlights if h.get("url")}
+    imported = [h for h in activity["items"] if h["url"].rstrip("/") not in evidence]
+    # Give both sources room in the bounded snapshot without hiding manual milestones.
+    room = max(0, MAX_HIGHLIGHTS - len(highlights))
+    highlights.extend(imported[:room])
     if count is not None:
         highlights.append({"id": "github", "kind": "github", "title": "GitHub contributions", "count": count,
                            "url": f"https://github.com/{login}", "source": "github"})
@@ -173,9 +192,13 @@ async def generate(email: str, period: str, refresh: bool = False, row: dict | N
                 "timezone": zone_for(row).key, "in_progress": now < end,
                 "generated_at": now.isoformat(), "highlights": highlights,
                 "github_available": count is not None,
-                "history_note": "Includes dated milestones you confirmed and exploring links still on your card."}
-    values = {"snapshot": snapshot, "selected_ids": [h["id"] for h in highlights],
-              "caption": default_caption(snapshot)}
+                "github_login": login.lower() if login else None,
+                "github_activity": {"repositories": activity["repositories"],
+                                    "truncated": len(imported) > room},
+                "history_note": "Includes newly created public GitHub repositories, contribution totals, and dated milestones you confirmed."}
+    draft = await asyncio.to_thread(generate_social_caption, snapshot, default_caption(snapshot))
+    snapshot["_caption_draft"] = draft
+    values = {"snapshot": snapshot, "selected_ids": [h["id"] for h in highlights], "caption": draft["caption"]}
     def save():
         sb = config.get_supabase()
         if existing:
@@ -227,10 +250,36 @@ def update(email: str, recap_id: str, selected_ids: list[str], caption: str, pub
     if recap.get("published_at"):
         raise HTTPException(409, "Unpublish this recap before editing it")
     # Keep generated copy in sync when a highlight is hidden. User-written copy remains editable.
-    if caption == recap["caption"] == default_caption(visible_snapshot(recap)):
-        caption = default_caption(visible_snapshot({**recap, "selected_ids": selected_ids}))
+    snapshot = recap["snapshot"]
+    original = (snapshot.get("_caption_draft") or {}).get("caption")
+    selected = visible_snapshot({**recap, "selected_ids": selected_ids})
+    generated = ((caption == recap["caption"] and caption in (original, default_caption(visible_snapshot(recap))))
+                 or caption == default_caption(selected))
+    if generated and set(selected_ids) != set(recap.get("selected_ids") or []):
+        draft = generate_social_caption(selected, default_caption(selected))
+        caption = draft["caption"]
+        snapshot = {**snapshot, "_caption_draft": draft}
     changes = {"selected_ids": list(dict.fromkeys(selected_ids)), "caption": caption.strip(),
+               "snapshot": snapshot,
                "published_at": datetime.now(timezone.utc).isoformat() if publish else None}
+    result = (config.get_supabase().table("card_recaps").update(changes).eq("id", recap_id)
+              .eq("owner_email", email).is_("published_at", "null").execute().data or [])
+    if not result:
+        raise HTTPException(409, "Recap changed in another session. Reload before saving.")
+    return owner_payload(result[0], row)
+
+
+def rewrite_caption(email: str, recap_id: str, selected_ids: list[str]) -> dict:
+    recap, row = owned(email, recap_id)
+    if recap.get("published_at"):
+        raise HTTPException(409, "Unpublish this recap before editing it")
+    valid = {h["id"] for h in recap["snapshot"]["highlights"]}
+    if not selected_ids or not set(selected_ids) <= valid:
+        raise HTTPException(422, "Select highlights from this recap before writing a caption")
+    selected = visible_snapshot({**recap, "selected_ids": selected_ids})
+    draft = generate_social_caption(selected, default_caption(selected))
+    changes = {"selected_ids": list(dict.fromkeys(selected_ids)), "caption": draft["caption"],
+               "snapshot": {**recap["snapshot"], "_caption_draft": draft}}
     result = (config.get_supabase().table("card_recaps").update(changes).eq("id", recap_id)
               .eq("owner_email", email).is_("published_at", "null").execute().data or [])
     if not result:

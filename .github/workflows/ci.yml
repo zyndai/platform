@@ -1,5 +1,7 @@
-# CI for the monorepo: web apps (lint ratchet, typecheck, build) and the three
-# Python services (tests against AGENTS.md §5's known baselines). Never
+# CI for the monorepo: cards-web (lint ratchet, typecheck, build) and the
+# Python services (cards-api, memory; tests against AGENTS.md §5's known
+# baselines). persona-web and persona-api are intentionally not checked: persona
+# is no longer used and its failures were blocking every deploy. Never
 # deploys. deploy-single-box.yml calls this before deploying `main`.
 #
 # The two gates are ratchets, not zero-tolerance: main has pre-existing failures
@@ -26,7 +28,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { app: persona-web, lint_baseline: 24 }
           - { app: cards-web, lint_baseline: 3 }
     defaults:
       run:
@@ -50,14 +51,10 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Build
-        # Turbopack first, like production. persona-web is pinned to next@16.2.1,
-        # whose Turbopack font handler fails on some Google Fonts responses
-        # ("next/font/google queries have exactly one entry": seen on a GitHub
-        # runner for Geist; the same build passes elsewhere, and cards-web on
-        # next@16.3.6 is unaffected). If that happens, retry with webpack: a real
-        # code error fails both builds and stays red; only the bundler bug is
-        # let through, with a warning. Fix at the source by bumping persona-web's
-        # Next to the version cards-web uses.
+        # Turbopack first, like production. If it fails on the next/font/google
+        # Turbopack bug (seen on a GitHub runner), retry with webpack: a real code
+        # error fails both builds and stays red; only the bundler bug is let
+        # through, with a warning.
         run: |
           npm run build && exit 0
           echo "::warning title=Turbopack build failed::retrying with webpack to tell a code error from the next/font/google Turbopack bug on old Next"
@@ -71,10 +68,6 @@ jobs:
       matrix:
         include:
           # baseline = the known failures in AGENTS.md §5 (measured on a clean checkout with no .env)
-          - service: persona-api
-            baseline: 5
-            install: pip install -r requirements.txt pytest pytest-asyncio
-            test: python -m pytest -q
           - service: cards-api
             baseline: 2
             install: pip install -r requirements.txt pytest pytest-asyncio

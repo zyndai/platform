@@ -2,9 +2,12 @@
 
 /*
  * The page is the Figma "Card" frame drawn on a fixed 1440px canvas. Below
- * 1440px the canvas is zoomed down to the viewport width (set by the inline
- * script in layout.tsx before first paint) so it never scrolls sideways.
+ * 1440px (but only from 1024px up) the canvas is zoomed down to the viewport width (set by the inline
+ * script in layout.tsx before first paint) so it never scrolls sideways. Below 1024px the canvas is hidden and
+ * the flow layout in ./_mobile is shown instead, so nothing is ever zoomed there.
  */
-.landing-v2-canvas {
-  zoom: var(--landing-v2-zoom, 1);
+@media (min-width: 64rem) {
+  .landing-v2-canvas {
+    zoom: var(--landing-v2-zoom, 1);
+  }
 }

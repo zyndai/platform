@@ -12,7 +12,7 @@ type Slot = {
   chip: { left: number; top: number; rotate: number };
 };
 
-type Person = {
+export type Person = {
   src: string;
   height: number;
   label: string;
@@ -30,7 +30,7 @@ const SLOTS: Slot[] = [
   { centerX: 947 + 323.467 / 2, centerY: 720 + 333.962 / 2, rotate: 33.74, imageOffset: { left: -10.78, top: -11.16 }, chip: { left: 34.5, top: 186.49, rotate: -0.29 } },
 ];
 
-const PEOPLE: Person[] = [
+export const PEOPLE: Person[] = [
   { src: "/assets/landing-v2/rectangle-1430106962-63d2a62404.png", height: 327, label: "GTM", chipWidth: 121.898 },
   { src: "/assets/landing-v2/rectangle-1430106961-ae8a5b24e1.png", height: 273, label: "Product Designer", chipWidth: 134.811, sheen: true },
   { src: "/assets/landing-v2/rectangle-1430106958-e209af98cd.png", height: 327, label: "Software Dev", chipWidth: 121.898 },
@@ -38,7 +38,7 @@ const PEOPLE: Person[] = [
   { src: "/assets/landing-v2/rectangle-1430106960-ddd2114224.png", height: 327, label: "Designer", chipWidth: 121.898 },
 ];
 
-const CARD_W = 218;
+export const CARD_W = 218;
 const CARD_H = 256;
 
 export function HeroCarousel() {
